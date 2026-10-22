@@ -78,9 +78,52 @@ func TestRenderEgress_LoopbackAppNoOwners(t *testing.T) {
 // in panel-api/internal/reconciler): a port without an owner has no username.
 func TestUserEgressApplyParams_DecodesLoopbackAppPorts(t *testing.T) {
 	var p userEgressApplyParams
-	require.NoError(t, json.Unmarshal([]byte(`{"users":[],"loopback_app_ports":[{"port":20001,"username":"alice"},{"port":10003}]}`), &p))
+	require.NoError(t, json.Unmarshal([]byte(`{"users":[],"loopback_app_ports":[{"port":20001,"username":"alice","kind":"python_app"},{"port":10003,"kind":"docker_app"}]}`), &p))
 	require.Equal(t, []userEgressLoopbackAppPort{
-		{Port: 20001, Username: "alice"},
-		{Port: 10003},
+		{Port: 20001, Username: "alice", Kind: "python_app"},
+		{Port: 10003, Kind: "docker_app"},
 	}, p.LoopbackAppPorts)
+}
+
+const aliceSlice = "jabali.slice/jabali-user.slice/jabali-user-alice.slice"
+
+func pythonApps(ino uint64) []LoopbackAppPort {
+	return []LoopbackAppPort{
+		{Port: 20007, UID: 1005, Slice: aliceSlice, SliceIno: ino},
+		{Port: 20001, UID: 1005, Slice: aliceSlice, SliceIno: ino},
+		{Port: 10003},                           // Docker: no slice
+		{Port: 30002, UID: 1006},                // reverse proxy: no slice
+		{Port: 20009, UID: 33, Slice: "x"},      // system uid
+		{Port: 0, UID: 1005, Slice: aliceSlice}, // invalid port
+	}
+}
+
+// Only a process in the owner's slice may answer on a Python app's port. The
+// rules are sorted by port and carry the slice's inode.
+func TestRenderEgress_PythonAppListenerRule(t *testing.T) {
+	out := RenderEgressNFT(nil, CanonicalDefaults(), pythonApps(4242), allExist)
+	want := "  counter loopback_app_squat_drops {}\n\n  chain input {\n" +
+		"    type filter hook input priority 0; policy accept;\n" +
+		"    # " + aliceSlice + " inode 4242\n" +
+		"    ip daddr 127.0.0.0/8 tcp dport 20001 tcp flags & (syn | ack) == syn socket cgroupv2 level 3 != \"" + aliceSlice + "\" counter name loopback_app_squat_drops drop\n" +
+		"    # " + aliceSlice + " inode 4242\n" +
+		"    ip daddr 127.0.0.0/8 tcp dport 20007 tcp flags & (syn | ack) == syn socket cgroupv2 level 3 != \"" + aliceSlice + "\" counter name loopback_app_squat_drops drop\n" +
+		"  }\n}\n"
+	require.True(t, strings.HasSuffix(out, want), "got:\n%s", out)
+}
+
+// A recreated slice has a new cgroup id, which nft resolved at load time; the
+// inode in the file makes the content differ so the next apply reloads.
+func TestRenderEgress_PythonAppListenerRuleFollowsSliceInode(t *testing.T) {
+	require.NotEqual(t,
+		RenderEgressNFT(nil, CanonicalDefaults(), pythonApps(4242), allExist),
+		RenderEgressNFT(nil, CanonicalDefaults(), pythonApps(4243), allExist))
+}
+
+// A slice missing on the host would make nft reject the whole file, and the
+// boot file holds no cgroup path at all: no listener rule in either.
+func TestRenderEgress_PythonAppListenerRuleNeedsSlice(t *testing.T) {
+	require.NotContains(t, RenderEgressNFT(nil, CanonicalDefaults(), pythonApps(4242), noneExist), "chain input")
+	require.NotContains(t, RenderEgressBootNFT(nil, CanonicalDefaults(), pythonApps(4242)), "chain input")
+	require.NotContains(t, RenderEgressNFT(nil, CanonicalDefaults(), loopbackTestApps(), allExist), "chain input")
 }

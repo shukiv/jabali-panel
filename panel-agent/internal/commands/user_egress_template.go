@@ -127,9 +127,16 @@ func RenderEgressBootNFT(users []EgressUser, defaults EgressDefaults, apps []Loo
 // a Docker app's published port or a reverse-proxy target). UID is the owning
 // account's uid, or 0 when no hosting account owns the port (an admin Docker
 // app).
+//
+// Slice is set for a Python app only: the owner's slice, in which the app's
+// unit always runs. SliceIno is the inode of that slice's cgroup directory,
+// written into the file next to the rule so a recreated slice changes the
+// content and the next apply reloads the rule.
 type LoopbackAppPort struct {
-	Port int
-	UID  int
+	Port     int
+	UID      int
+	Slice    string
+	SliceIno uint64
 }
 
 // loopbackAppSets returns the elements of the loopback_app_ports and
@@ -392,6 +399,32 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, apps []LoopbackAp
 		b.WriteString("    meta skuid vmap @uid_to_chain\n")
 	}
 	b.WriteString("  }\n")
+
+	// Only the app answers on a Python app's port: an opening SYN to it is
+	// dropped unless the listening socket is in the owner's slice, where the
+	// app's unit runs. Another process that takes the port while the app is
+	// stopped never gets nginx's connections. No listener: the rule does not
+	// match and the client gets a reset as before. The boot file has no
+	// cgroup paths, so it carries no such rule.
+	if !bootSafe {
+		var owned []LoopbackAppPort
+		for _, a := range apps {
+			if a.Slice != "" && a.Port >= 1 && a.Port <= 65535 && tenantUID(a.UID) && existsFn(a.Slice) {
+				owned = append(owned, a)
+			}
+		}
+		sort.Slice(owned, func(i, j int) bool { return owned[i].Port < owned[j].Port })
+		if len(owned) > 0 {
+			b.WriteString("\n  counter loopback_app_squat_drops {}\n")
+			b.WriteString("\n  chain input {\n")
+			b.WriteString("    type filter hook input priority 0; policy accept;\n")
+			for _, a := range owned {
+				fmt.Fprintf(&b, "    # %s inode %d\n", a.Slice, a.SliceIno)
+				fmt.Fprintf(&b, "    ip daddr 127.0.0.0/8 tcp dport %d tcp flags & (syn | ack) == syn socket cgroupv2 level 3 != \"%s\" counter name loopback_app_squat_drops drop\n", a.Port, a.Slice)
+			}
+			b.WriteString("  }\n")
+		}
+	}
 	b.WriteString("}\n")
 
 	return b.String()

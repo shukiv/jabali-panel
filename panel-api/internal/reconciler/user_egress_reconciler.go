@@ -172,13 +172,14 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 
 // buildLoopbackAppPortsPayload renders the loopback_app_ports list of the
 // user.egress.apply payload: every loopback TCP port allocated to an app, with
-// the username of its owner, or no username when no hosting account owns it.
-// The agent lets only the owner's uid and system users open a connection to
-// these ports.
+// its kind and the username of its owner, or no username when no hosting
+// account owns it. The agent lets only the owner's uid and system users open a
+// connection to these ports, and lets only a process in the owner's slice
+// answer on a Python app's port.
 func buildLoopbackAppPortsPayload(ports []repository.LoopbackAppPort) []map[string]any {
 	out := make([]map[string]any, 0, len(ports))
 	for _, p := range ports {
-		row := map[string]any{"port": p.Port}
+		row := map[string]any{"port": p.Port, "kind": p.Kind}
 		if p.Username != "" {
 			row["username"] = p.Username
 		}
