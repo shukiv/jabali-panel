@@ -238,6 +238,12 @@ treated like any other account, so reach an app port from a shell as root
 (`sudo curl http://127.0.0.1:<port>/`). The drops are counted in
 `nft list counter inet jabali_per_user loopback_app_drops`.
 
+A Python app's port also answers only from the app. A new connection to it is
+accepted only when the process listening on the port runs in the owner's slice,
+where the panel runs the app; any other listener gets nothing, and the drops
+are counted in `loopback_app_squat_drops`. A slice created again (a new cgroup)
+is picked up on the next reconciler pass, within a minute.
+
 ## Malware (M33, M33.2)
 
 - **Linux Malware Detect (LMD) 2.0** — native HEX, MD5 and SHA-256 scanner with the rfxn signature pack. It replaced ClamAV, which was removed in M33 (amendment 3).

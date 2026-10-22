@@ -54,10 +54,12 @@ type UserEgressPolicyRepository interface {
 // LoopbackAppPort is one loopback TCP port allocated to an app (a Python app,
 // a Docker app's published port or a reverse-proxy target) with the Linux
 // username of the account that owns it. Username is "" when no hosting account
-// owns the port, as for an admin Docker app.
+// owns the port, as for an admin Docker app. Kind is the models.PortOwner*
+// value of the app.
 type LoopbackAppPort struct {
 	Port     int
 	Username string
+	Kind     string
 }
 
 type userEgressPolicyRepo struct{ db *gorm.DB }
@@ -254,31 +256,33 @@ func (r *userEgressPolicyRepo) ListLoopbackAppPorts(ctx context.Context) ([]Loop
 	var rows []struct {
 		Port     int
 		Username *string
+		Kind     string
 	}
 	err := r.db.WithContext(ctx).Raw(`
-SELECT pa.loopback_port AS port, u.username AS username
+SELECT pa.loopback_port AS port, u.username AS username, ? AS kind
   FROM python_apps pa
   LEFT JOIN users u ON u.id = pa.user_id
  WHERE pa.loopback_port IS NOT NULL
 UNION ALL
-SELECT pp.host_port AS port, u.username AS username
+SELECT pp.host_port AS port, u.username AS username, ? AS kind
   FROM docker_app_published_ports pp
   JOIN docker_apps da ON da.id = pp.app_id
   LEFT JOIN users u ON u.id = da.user_id
  WHERE pp.bind_interface = 'loopback' AND pp.protocol = 'tcp'
 UNION ALL
-SELECT a.port AS port, u.username AS username
+SELECT a.port AS port, u.username AS username, ? AS kind
   FROM port_allocations a
   LEFT JOIN domains d ON d.id = a.owner_id
   LEFT JOIN users u ON u.id = d.user_id
  WHERE a.owner_kind = ? AND a.bind_interface = '127.0.0.1' AND a.protocol = 'tcp'`,
+		models.PortOwnerPythonApp, models.PortOwnerDockerApp, models.PortOwnerReverseProxy,
 		models.PortOwnerReverseProxy).Scan(&rows).Error
 	if err != nil {
 		return nil, translate(err)
 	}
 	out := make([]LoopbackAppPort, 0, len(rows))
 	for _, row := range rows {
-		p := LoopbackAppPort{Port: row.Port}
+		p := LoopbackAppPort{Port: row.Port, Kind: row.Kind}
 		if row.Username != nil {
 			p.Username = *row.Username
 		}

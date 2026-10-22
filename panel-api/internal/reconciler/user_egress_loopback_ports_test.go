@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -29,12 +30,12 @@ func loopbackFixture(repo *fakeLoopbackPolicyRepo) (*Reconciler, *fakeAgent) {
 	return r, ag
 }
 
-// Every egress apply carries the loopback app ports with their owners; a port
-// no account owns goes without a username.
+// Every egress apply carries the loopback app ports with their kind and owner;
+// a port no account owns goes without a username.
 func TestApplyUserEgress_SendsLoopbackAppPorts(t *testing.T) {
 	r, ag := loopbackFixture(&fakeLoopbackPolicyRepo{ports: []repository.LoopbackAppPort{
-		{Port: 20001, Username: "alice"},
-		{Port: 10003},
+		{Port: 20001, Username: "alice", Kind: models.PortOwnerPythonApp},
+		{Port: 10003, Kind: models.PortOwnerDockerApp},
 	}})
 	r.applyUserEgress(context.Background(), nil, nil)
 
@@ -43,8 +44,8 @@ func TestApplyUserEgress_SendsLoopbackAppPorts(t *testing.T) {
 	}
 	got := ag.calls[0].params.(map[string]any)["loopback_app_ports"]
 	want := []map[string]any{
-		{"port": 20001, "username": "alice"},
-		{"port": 10003},
+		{"port": 20001, "username": "alice", "kind": "python_app"},
+		{"port": 10003, "kind": "docker_app"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loopback_app_ports = %#v, want %#v", got, want)

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -47,6 +48,7 @@ type userEgressApplyParams struct {
 type userEgressLoopbackAppPort struct {
 	Port     int    `json:"port"`
 	Username string `json:"username,omitempty"`
+	Kind     string `json:"kind,omitempty"`
 }
 
 type userEgressApplyUser struct {
@@ -176,7 +178,8 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 
 	// An owner that does not resolve to a uid keeps its port protected, with
-	// no account allowed to open it.
+	// no account allowed to open it. A Python app's port also gets the owner's
+	// slice, when it exists, for the listener check.
 	apps := make([]LoopbackAppPort, 0, len(p.LoopbackAppPorts))
 	for _, a := range p.LoopbackAppPorts {
 		app := LoopbackAppPort{Port: a.Port}
@@ -185,6 +188,12 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 				if n, aerr := strconv.Atoi(ou.Uid); aerr == nil {
 					app.UID = n
 				}
+			}
+		}
+		if a.Kind == "python_app" && tenantUID(app.UID) {
+			slice := SlicePathFor(a.Username)
+			if ino := sliceInode(slice); ino != 0 {
+				app.Slice, app.SliceIno = slice, ino
 			}
 		}
 		apps = append(apps, app)
@@ -383,6 +392,19 @@ func extractUsernameFromCounter(name string) (string, bool) {
 // defaultSliceExists checks whether the M18 per-user slice has been
 // activated on this host. nftables rejects vmap elements whose
 // cgroupv2 path doesn't exist, so we filter at render time.
+// sliceInode returns the inode of a slice's cgroup directory, or 0 when it is
+// not a directory on this host.
+func sliceInode(slicePath string) uint64 {
+	st, err := os.Stat(filepath.Join(cgroupRoot, slicePath))
+	if err != nil || !st.IsDir() {
+		return 0
+	}
+	if sys, ok := st.Sys().(*syscall.Stat_t); ok {
+		return sys.Ino
+	}
+	return 0
+}
+
 func defaultSliceExists(slicePath string) bool {
 	full := filepath.Join(cgroupRoot, slicePath)
 	st, err := os.Stat(full)
