@@ -354,7 +354,7 @@ jabali appsec exclusion add [flags]
 
 - `--host` — hostname the exclusion applies to (required)
 - `--note` — why this exclusion exists
-- `--rule` — CRS rule ID to exclude, e.g. 942100 (required)
+- `--rule` — CRS rule ID or AppSec rule name to exclude, e.g. 942100 or crowdsecurity/vpatch-CVE-2025-29927 (required)
 - `--uri-prefix` — URI prefix the exclusion applies to, e.g. /wp-json/x/ (required)
 
 ##### `jabali appsec exclusion list`

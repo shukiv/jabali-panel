@@ -75,16 +75,21 @@ type InfraRule struct {
 	Note string `json:"note"`
 }
 
-// notExcludableNote explains a matched rule that an operator exclusion cannot
+// notExcludableNote explains a matched rule that an exclusion by id cannot
 // target. On a live box these are mostly 9- and 10-digit ids, far outside the
-// CRS range, next to CRS detections such as 930130.
-const notExcludableNote = "not a CRS detection rule — its id is outside the range an exclusion can target, so an exclusion cannot turn it off"
+// CRS range, next to CRS detections such as 930130: CrowdSec's virtual patches
+// and generic rules, whose id comes from their name. Their own alert carries
+// the name (scenario crowdsecurity/vpatch-…), and an exclusion by name can
+// turn one off.
+const notExcludableNote = "not a CRS detection rule, so an exclusion by id cannot turn it off. If it is a CrowdSec virtual patch, its alert names it (crowdsecurity/vpatch-…): exclude it by that name"
 
 // excludable reports whether an operator exclusion can target rule id. It is
 // the rule-id half of ValidateExclusion, run on a scope that always passes, so
-// the triage view never offers a rule the add would refuse.
+// the triage view never offers a rule the add would refuse. The ids here come
+// from cscli's rule_ids, which are numbers, never rule names.
 func excludable(id string) bool {
-	return appseccfg.ValidateExclusion(appseccfg.Exclusion{Host: "h", URIPrefix: "/", RuleID: id}) == nil
+	return !appseccfg.IsRuleName(id) &&
+		appseccfg.ValidateExclusion(appseccfg.Exclusion{Host: "h", URIPrefix: "/", RuleID: id}) == nil
 }
 
 // AnnotateRules splits an id list three ways:

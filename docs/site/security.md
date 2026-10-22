@@ -104,7 +104,8 @@ or the bot-detection challenge.
   **Load blocks**, because each alert is inspected on the server.
   - Red rules scored and can be excluded.
   - Purple rules are outside the CRS range, for example CrowdSec's own AppSec
-    rules, so an exclusion cannot turn them off.
+    rules, so an exclusion by id cannot turn them off. A CrowdSec virtual
+    patch can be excluded by its name instead (below).
   - Grey rules (901340, 949110, 949111, 980170) appear on almost every block and are
     never the one to exclude.
   - Many source IPs on one path usually means a false positive. One IP across
@@ -113,6 +114,19 @@ or the bot-detection challenge.
   exclusion always names a host, a path prefix and one rule. **Exclude…** on a
   block prefills all three. Every add and remove applies to the WAF at once.
   If crowdsec cannot be reloaded, the change is undone and the error says so.
+- The rule is a CRS rule id (`942100`) or the name of a CrowdSec virtual patch
+  or generic AppSec rule (`crowdsecurity/vpatch-CVE-2025-29927`). A virtual
+  patch's block is an alert of its own, named after it: the scenario in the
+  CrowdSec **Alerts** tab, or in `cscli alerts list`, is the name. `crowdsecurity/crs` and
+  `crowdsecurity/base-config` cannot be excluded: that would turn the WAF off
+  for the path.
+  - An exclusion by name is matched against the decoded path, without the
+    query string. A path that contains `..`, or a request URI that starts with
+    `//`, never matches.
+  - It goes into `/etc/crowdsec/appsec-configs/jabali-appsec.yaml`, and the
+    new config is checked with `crowdsec -t` before the reload.
+  - If no installed rule has the name, the exclusion is saved and the card says
+    it does nothing until a rule of that name is installed.
 - A row tagged with an app name is managed for that app's install:
   - **Flarum** (GH #1650): rule 920450 on the forum's API path. Removing it
     works, but the next change to that forum or `jabali appsec flarum-sync`

@@ -11,7 +11,7 @@ type CRSRuleExclusion struct {
 	ID        string    `gorm:"column:id;primaryKey;type:varchar(26)"      json:"id"`
 	Host      string    `gorm:"column:host;type:varchar(253);not null"     json:"host"`
 	URIPrefix string    `gorm:"column:uri_prefix;type:varchar(512);not null" json:"uri_prefix"`
-	RuleID    string    `gorm:"column:rule_id;type:varchar(16);not null"   json:"rule_id"`
+	RuleID    string    `gorm:"column:rule_id;type:varchar(128);not null"  json:"rule_id"`
 	Note      string    `gorm:"column:note;type:varchar(512);not null"     json:"note"`
 	CreatedAt time.Time `gorm:"column:created_at"                          json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"                          json:"updated_at"`

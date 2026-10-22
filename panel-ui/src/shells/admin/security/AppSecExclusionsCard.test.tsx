@@ -176,7 +176,7 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     const host = (await screen.findByLabelText("Host")) as HTMLInputElement;
     expect(host.value).toBe("shop.example.com");
     expect((screen.getByLabelText("Path prefix") as HTMLInputElement).value).toBe("/cart/add");
-    expect((screen.getByLabelText("Rule id") as HTMLInputElement).value).toBe("942100");
+    expect((screen.getByLabelText("Rule") as HTMLInputElement).value).toBe("942100");
 
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
     await waitFor(() => expect(mocked.post).toHaveBeenCalledTimes(1));
@@ -193,11 +193,42 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Add exclusion/i }));
     fireEvent.change(await screen.findByLabelText("Host"), { target: { value: "blog.example.com" } });
     fireEvent.change(screen.getByLabelText("Path prefix"), { target: { value: "/x/" } });
-    fireEvent.change(screen.getByLabelText("Rule id"), { target: { value: "949110" } });
+    fireEvent.change(screen.getByLabelText("Rule"), { target: { value: "949110" } });
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     expect(await screen.findByText(/anomaly-score blocker/)).toBeInTheDocument();
     expect(screen.getByLabelText("Host")).toBeInTheDocument();
+  });
+
+  it("adds an exclusion by virtual-patch name and says when no such rule is installed", async () => {
+    mocked.post.mockResolvedValue({
+      data: {
+        exclusion: { id: "01HXC" },
+        apply: { changed: true, reloaded: true, unknown_rules: ["crowdsecurity/vpatch-CVE-2025-2992"] },
+      },
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Add exclusion/i }));
+    fireEvent.change(await screen.findByLabelText("Host"), { target: { value: "shop.example.com" } });
+    fireEvent.change(screen.getByLabelText("Path prefix"), { target: { value: "/api/" } });
+    fireEvent.change(screen.getByLabelText("Rule"), { target: { value: "crowdsecurity/vpatch-CVE-2025-2992" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalledTimes(1));
+    expect(mocked.post.mock.calls[0][1]).toMatchObject({ rule_id: "crowdsecurity/vpatch-CVE-2025-2992" });
+    expect(await screen.findByText(/no rule named crowdsecurity\/vpatch-CVE-2025-2992 is installed/)).toBeInTheDocument();
+  });
+
+  it("refuses a rule that is neither a CRS id nor a virtual-patch name before calling the server", async () => {
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Add exclusion/i }));
+    fireEvent.change(await screen.findByLabelText("Host"), { target: { value: "shop.example.com" } });
+    fireEvent.change(screen.getByLabelText("Path prefix"), { target: { value: "/api/" } });
+    fireEvent.change(screen.getByLabelText("Rule"), { target: { value: "crowdsecurity/crs" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    expect(await screen.findByText(/a rule name such as/i)).toBeInTheDocument();
+    expect(mocked.post).not.toHaveBeenCalled();
   });
 
   it("refuses a host with a port before calling the server", async () => {
@@ -205,7 +236,7 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Add exclusion/i }));
     fireEvent.change(await screen.findByLabelText("Host"), { target: { value: "blog.example.com:8443" } });
     fireEvent.change(screen.getByLabelText("Path prefix"), { target: { value: "/x/" } });
-    fireEvent.change(screen.getByLabelText("Rule id"), { target: { value: "942100" } });
+    fireEvent.change(screen.getByLabelText("Rule"), { target: { value: "942100" } });
     fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
 
     expect(await screen.findByText(/no port/i)).toBeInTheDocument();

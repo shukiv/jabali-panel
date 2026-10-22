@@ -859,7 +859,9 @@ func csHubRemoveHandler(ctx context.Context, params json.RawMessage) (any, error
 // Earlier path /etc/crowdsec/appsec-rules/jabali-geoblock.yaml was
 // loaded as a rule but the pre_eval hook never fired (rules use a
 // different schema with `rules:` block, not `pre_eval:`).
-const appsecRulePath = "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
+//
+// A var so tests can point it at a temp file.
+var appsecRulePath = "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
 
 type csAppSecGeoblockGetResponse struct {
 	Mode      string   `json:"mode"`

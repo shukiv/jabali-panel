@@ -151,11 +151,11 @@ func AddExclusion(ctx context.Context, d Deps, in appseccfg.Exclusion) (Exclusio
 }
 
 // checkColumnLengths refuses what ValidateExclusion lets through but the
-// crs_rule_exclusions columns cannot hold (rule_id varchar(16), note
+// crs_rule_exclusions columns cannot hold (rule_id varchar(128), note
 // varchar(512)), so the operator gets a refusal instead of a failed insert.
 // Host and path lengths are already inside ValidateExclusion's limits.
 func checkColumnLengths(e appseccfg.Exclusion) error {
-	if len(e.RuleID) > 16 {
+	if len(e.RuleID) > appseccfg.MaxRuleIDLen {
 		return fmt.Errorf("rule-id %q is too long", e.RuleID)
 	}
 	if utf8.RuneCountInString(e.Note) > 512 {

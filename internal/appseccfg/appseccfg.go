@@ -83,6 +83,13 @@ type Opts struct {
 	// an unconditional exemption, not left to `not in []` edge semantics).
 	// Caller expands www.<domain>; sanitised like the other host lists.
 	BotIncludeHosts []string
+	// RuleExclusions are the operator exclusions that name an AppSec rule
+	// (crowdsecurity/vpatch-…): each renders as a pre_eval
+	// RemoveInBandRuleByName scoped to one host and one path prefix, and the
+	// list is recorded in the header (RuleExclusionsHeader) so the agent's
+	// re-renders keep it. Entries by CRS rule id are ignored here; they render
+	// into the operator before-plugin. See rule_exclusions.go.
+	RuleExclusions []Exclusion
 }
 
 // botScope normalises Opts.BotScope to "all" (default) or "selected".
@@ -411,7 +418,8 @@ SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php" "id:9599310,pha
 }
 
 // Render returns the full jabali-appsec.yaml body. Deterministic:
-// header(+inband) → on_match (ADR-0102) → pre_eval (geoblock).
+// header(+inband) → on_match (ADR-0102) → pre_eval (geoblock, then the
+// operator rule exclusions by name).
 func Render(o Opts) string {
 	mode := o.Mode
 	if mode == "" {
@@ -434,6 +442,7 @@ func Render(o Opts) string {
 	// preserve "selected" across re-renders (a reset to "all" would challenge
 	// every site on the box at once).
 	b.WriteString("# jabali-bot-detection-scope: " + botScope(o) + "\n")
+	b.WriteString(ruleExclusionsHeaderLine(o.RuleExclusions))
 	b.WriteString("name: " + JabaliAppsecConfigName + "\n")
 	b.WriteString("default_remediation: ban\n")
 
@@ -531,23 +540,27 @@ func Render(o Opts) string {
 		b.WriteString("    - SetRemediation(\"allow\")\n")
 	}
 
-	// Geoblock pre_eval (ADR-0060). off = inert (no block).
+	// pre_eval: the geoblock (ADR-0060) first, then the operator rule
+	// exclusions by name. Geoblock off = no geoblock entry.
+	var geo string
 	switch mode {
 	case "allow":
 		// allow-list: drop everything NOT in the set; the trailing ""
 		// keeps requests whose GeoIP lookup yields no country (local /
 		// private ranges) reachable.
-		b.WriteString(`pre_eval:
- - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + geoExpr(o.Countries, true) + `]
+		geo = ` - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode not in [` + geoExpr(o.Countries, true) + `]
    apply:
     - DropRequest("Forbidden Country (jabali allow-list)")
-`)
+`
 	case "deny":
-		b.WriteString(`pre_eval:
- - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + geoExpr(o.Countries, false) + `]
+		geo = ` - filter: IsInBand == true && GeoIPEnrich(req.RemoteAddr)?.Country.IsoCode in [` + geoExpr(o.Countries, false) + `]
    apply:
     - DropRequest("Forbidden Country (jabali deny-list)")
-`)
+`
+	}
+	rules := RenderRuleExclusions(o.RuleExclusions)
+	if geo != "" || rules != "" {
+		b.WriteString("pre_eval:\n" + geo + rules)
 	}
 	return b.String()
 }

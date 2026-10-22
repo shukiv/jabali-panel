@@ -149,26 +149,45 @@ func readGeoblockState() (string, []string) {
 	return mode, countries
 }
 
-// renderJabaliAppsec is the single call site for appseccfg.Render used by
-// both the geoblock and bot-detection handlers, so neither resets the
-// other's header marker. Webmail allowlist comes from the panel reconciler's
-// state file (missing → no webmail filter, the safe default).
+// appsecRulesDir is where the hub installs AppSec rules. A var for tests.
+var appsecRulesDir = appseccfg.AppsecRulesDir
+
+// renderJabaliAppsec is the call site for appseccfg.Render used by both the
+// geoblock and bot-detection handlers, so neither resets the other's header
+// marker. Webmail allowlist comes from the panel reconciler's state file
+// (missing → no webmail filter, the safe default). The operator rule
+// exclusions by name are kept from the live file's header.
 func renderJabaliAppsec(geoMode string, countries []string, botMode, botScope string) string {
+	return renderJabaliAppsecWith(geoMode, countries, botMode, botScope, appsecPanelHost(), readRuleExclusions())
+}
+
+// renderJabaliAppsecWith is renderJabaliAppsec with the panel host and the
+// rule exclusions given. The in-band rules come from the rules on disk, as
+// they do for `jabali appsec render-config`, so both writers load the same
+// rule sets.
+func renderJabaliAppsecWith(geoMode string, countries []string, botMode, botScope, panelHost string, rules []appseccfg.Exclusion) string {
 	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
 	return appseccfg.Render(appseccfg.Opts{
-		Mode:      geoMode,
-		Countries: countries,
-		Inband: []string{
-			"crowdsecurity/base-config",
-			"crowdsecurity/vpatch-*",
-			"crowdsecurity/generic-*",
-		},
+		Mode:           geoMode,
+		Countries:      countries,
+		Inband:         appseccfg.DetectInbandRules(appsecRulesDir),
 		AdminAllowlist: true,
-		PanelHost:      appsecPanelHost(),
+		PanelHost:      panelHost,
 		WebmailHosts:   webmailHosts,
 		BotDetection:   botMode,
 		BotScope:       botScope,
+		RuleExclusions: rules,
 	})
+}
+
+// readRuleExclusions returns the operator rule exclusions by name that the
+// live jabali-appsec config records in its header (nil without a file).
+func readRuleExclusions() []appseccfg.Exclusion {
+	body, err := os.ReadFile(appsecRulePath)
+	if err != nil {
+		return nil
+	}
+	return appseccfg.RuleExclusionsFromConfig(string(body))
 }
 
 // readBotScope reports the applied challenge scope ("all"|"selected"),

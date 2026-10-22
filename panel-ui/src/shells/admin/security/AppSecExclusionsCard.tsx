@@ -50,9 +50,10 @@ import {
 import {
   EMPTY_PREFILL,
   EXCLUSION_HOST_RE,
-  EXCLUSION_NOTE_FORBIDDEN_RE,
-  EXCLUSION_PATH_FORBIDDEN_RE,
+  EXCLUSION_RULE_MAX,
   EXCLUSION_RULE_RE,
+  exclusionNoteForbidden,
+  exclusionPathForbidden,
   prefillFromPattern,
   type ExclusionFormValues,
   type ExclusionPrefill,
@@ -457,6 +458,10 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
       });
       if (res.apply?.skipped) {
         feedback.message.warning(t("appsecexclusionscard.added_not_live", { reason: res.apply.skipped }));
+      } else if (res.apply?.unknown_rules?.length) {
+        feedback.message.warning(
+          t("appsecexclusionscard.added_unknown_rule", { rules: res.apply.unknown_rules.join(", ") }),
+        );
       } else {
         feedback.message.success(t("appsecexclusionscard.added"));
       }
@@ -532,7 +537,7 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
               validator: (_, v?: string) => {
                 if (!v) return Promise.resolve();
                 if (!v.trim().startsWith("/")) return Promise.reject(new Error(t("appsecexclusionscard.path_slash")));
-                if (EXCLUSION_PATH_FORBIDDEN_RE.test(v))
+                if (exclusionPathForbidden(v))
                   return Promise.reject(new Error(t("appsecexclusionscard.path_forbidden")));
                 return Promise.resolve();
               },
@@ -549,7 +554,7 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
             { required: true, whitespace: true, message: t("appsecexclusionscard.rule_required") },
             {
               validator: (_, v?: string) =>
-                !v || EXCLUSION_RULE_RE.test(v.trim())
+                !v || (v.trim().length <= EXCLUSION_RULE_MAX && EXCLUSION_RULE_RE.test(v.trim()))
                   ? Promise.resolve()
                   : Promise.reject(new Error(t("appsecexclusionscard.rule_invalid"))),
             },
@@ -568,7 +573,7 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
             { max: 512 },
             {
               validator: (_, v?: string) =>
-                !v || !EXCLUSION_NOTE_FORBIDDEN_RE.test(v)
+                !v || !exclusionNoteForbidden(v)
                   ? Promise.resolve()
                   : Promise.reject(new Error(t("appsecexclusionscard.note_forbidden"))),
             },

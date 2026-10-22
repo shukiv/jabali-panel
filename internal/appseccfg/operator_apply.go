@@ -74,4 +74,8 @@ type OperatorApplyResult struct {
 	Reloaded bool `json:"reloaded"`
 	// Skipped names why nothing was attempted (crowdsec is not installed).
 	Skipped string `json:"skipped,omitempty"`
+	// UnknownRules are the rule names among the exclusions that no installed
+	// AppSec rule has. Such an exclusion is rendered but does nothing until a
+	// rule of that name is installed.
+	UnknownRules []string `json:"unknown_rules,omitempty"`
 }

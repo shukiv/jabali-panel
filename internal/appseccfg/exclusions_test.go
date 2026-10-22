@@ -52,6 +52,12 @@ func TestValidateExclusion_RejectsSeclangBreakingInput(t *testing.T) {
 		{"backslash in uri", func(e *Exclusion) { e.URIPrefix = `/x\\` }},
 		{"quote in note", func(e *Exclusion) { e.Note = `oops" ` }},
 		{"newline in note", func(e *Exclusion) { e.Note = "a\nb" }},
+		{"line separator in uri", func(e *Exclusion) { e.URIPrefix = "/x\u2028SecAction" }},
+		{"next line in uri", func(e *Exclusion) { e.URIPrefix = "/x\u0085SecAction" }},
+		{"tab in uri", func(e *Exclusion) { e.URIPrefix = "/x\ty" }},
+		{"paragraph separator in note", func(e *Exclusion) { e.Note = "a\u2029b" }},
+		{"next line in note", func(e *Exclusion) { e.Note = "a\u0085b" }},
+		{"control in note", func(e *Exclusion) { e.Note = "a\x1bb" }},
 		{"bad host chars", func(e *Exclusion) { e.Host = "evil host!" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -305,6 +311,25 @@ func TestRenderExclusions_SkippedEntryCannotInjectDirectives(t *testing.T) {
 
 // GH #1649: the panel and the CLI store an exclusion in one form, so a
 // duplicate check compares stored rows as they are.
+// "0942100" and "+942100" are rule 942100. Stored as written, either would get
+// past the duplicate check, which compares the stored strings. A rule name and
+// an invalid id are left for ValidateExclusion.
+func TestNormalizeExclusion_RuleIDPlainDecimal(t *testing.T) {
+	for in, want := range map[string]string{
+		"0942100":                "942100",
+		"+942100":                "942100",
+		"00000000000000942100":   "942100",
+		" 942100 ":               "942100",
+		"0":                      "0",
+		"-1":                     "-1",
+		"crowdsecurity/vpatch-x": "crowdsecurity/vpatch-x",
+	} {
+		if got := NormalizeExclusion(Exclusion{RuleID: in}).RuleID; got != want {
+			t.Errorf("NormalizeExclusion(%q).RuleID = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestNormalizeExclusion_TrimsAndLowercasesHost(t *testing.T) {
 	got := NormalizeExclusion(Exclusion{Host: " Blog.Example.COM ", URIPrefix: " /Wp-Json/ ", RuleID: " 942100 ", Note: " n "})
 	want := Exclusion{Host: "blog.example.com", URIPrefix: "/Wp-Json/", RuleID: "942100", Note: "n"}
