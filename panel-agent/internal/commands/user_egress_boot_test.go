@@ -31,7 +31,7 @@ func TestRenderEgressBootNFT_HasNoCgroupPaths(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
 
-	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
+	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults(), nil)
 
 	// The slice prefix is what nft has to resolve. Its absence is the
 	// invariant; an empty `type cgroupsv2 : verdict` map declaration is fine
@@ -53,7 +53,7 @@ func TestRenderEgressBootNFT_EnforcesEveryNonOffUserByUID(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
 
-	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
+	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults(), nil)
 
 	for _, want := range []string{
 		"1001 : jump user_alice_enforced",
@@ -83,7 +83,7 @@ func TestRenderEgressBootNFT_KeepsSSRFFloor(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
 
-	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults())
+	out := RenderEgressBootNFT(bootTestUsers(), CanonicalDefaults(), nil)
 
 	for _, want := range []string{
 		"elements = { 1001, 1002, 1003 }",
@@ -115,7 +115,7 @@ func TestRenderEgressBootNFT_NoUsersIsStillValid(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
 
-	out := RenderEgressBootNFT(nil, CanonicalDefaults())
+	out := RenderEgressBootNFT(nil, CanonicalDefaults(), nil)
 
 	if strings.Contains(out, "jabali.slice/") {
 		t.Errorf("empty boot ruleset still references a cgroup path:\n%s", out)
@@ -142,7 +142,7 @@ func TestRenderEgressBootNFT_SkipsUsersWithoutUID(t *testing.T) {
 	out := RenderEgressBootNFT([]EgressUser{
 		{Username: "nouid", State: "enforced", UID: 0},
 		{Username: "good", State: "enforced", UID: 1005},
-	}, CanonicalDefaults())
+	}, CanonicalDefaults(), nil)
 
 	if strings.Contains(out, "jump user_nouid") {
 		t.Errorf("user with no uid cannot be dispatched at boot:\n%s", out)
@@ -162,7 +162,7 @@ func TestRenderEgressNFT_CgroupVariantUnchanged(t *testing.T) {
 	requireHostMutationAllowed(t)
 	t.Parallel()
 
-	out := RenderEgressNFT(bootTestUsers(), CanonicalDefaults(), func(string) bool { return true })
+	out := RenderEgressNFT(bootTestUsers(), CanonicalDefaults(), nil, func(string) bool { return true })
 
 	for _, want := range []string{
 		`"jabali.slice/jabali-user.slice/jabali-user-alice.slice" : jump user_alice_enforced`,

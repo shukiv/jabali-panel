@@ -33,6 +33,10 @@ func (f *fakeSeedPolicyRepo) ListAllForReconcile(context.Context) ([]repository.
 	return nil, nil
 }
 
+func (f *fakeSeedPolicyRepo) ListLoopbackAppPorts(context.Context) ([]repository.LoopbackAppPort, error) {
+	return nil, nil
+}
+
 func seedFixture(t *testing.T, mode string) (*Reconciler, *fakeSeedPolicyRepo) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "per-user-egress.mode")

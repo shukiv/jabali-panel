@@ -39,6 +39,14 @@ const cgroupRoot = "/sys/fs/cgroup"
 type userEgressApplyParams struct {
 	Users    []userEgressApplyUser    `json:"users"`
 	Defaults *userEgressApplyDefaults `json:"defaults,omitempty"`
+	// LoopbackAppPorts is every loopback TCP port allocated to an app, with
+	// the username of its owner ("" when no hosting account owns it).
+	LoopbackAppPorts []userEgressLoopbackAppPort `json:"loopback_app_ports,omitempty"`
+}
+
+type userEgressLoopbackAppPort struct {
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
 }
 
 type userEgressApplyUser struct {
@@ -167,7 +175,22 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 			"users", failOpen, "detail", "no cgroup slice AND no resolvable uid — NOT egress-controlled until the slice exists")
 	}
 
-	content := RenderEgressNFT(users, defs, defaultSliceExists)
+	// An owner that does not resolve to a uid keeps its port protected, with
+	// no account allowed to open it.
+	apps := make([]LoopbackAppPort, 0, len(p.LoopbackAppPorts))
+	for _, a := range p.LoopbackAppPorts {
+		app := LoopbackAppPort{Port: a.Port}
+		if a.Username != "" {
+			if ou, lerr := osuser.Lookup(a.Username); lerr == nil {
+				if n, aerr := strconv.Atoi(ou.Uid); aerr == nil {
+					app.UID = n
+				}
+			}
+		}
+		apps = append(apps, app)
+	}
+
+	content := RenderEgressNFT(users, defs, apps, defaultSliceExists)
 	sum := sha256.Sum256([]byte(content))
 	version := hex.EncodeToString(sum[:])[:16]
 
@@ -184,7 +207,7 @@ func userEgressApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 	//
 	// A failure here is logged, not fatal. The live ruleset is what protects
 	// the host today; the boot file only matters at the next reboot.
-	if bootContent := RenderEgressBootNFT(users, defs); bootContent != "" {
+	if bootContent := RenderEgressBootNFT(users, defs, apps); bootContent != "" {
 		if existingBoot, _ := os.ReadFile(nftEgressBootFilePath); string(existingBoot) != bootContent {
 			if err := os.MkdirAll(filepath.Dir(nftEgressBootFilePath), 0755); err != nil {
 				slog.WarnContext(ctx, "egress: could not create boot ruleset dir",

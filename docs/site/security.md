@@ -225,6 +225,17 @@ affected; inbound SSH, SFTP, `scp` and `rsync` to the server are not. This means
 (`egress_ssh_out`), and `ping` needs **ICMP** (`egress_icmp`), exactly as for
 PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
 
+**App ports on loopback belong to their account.** Python apps, Docker apps
+and reverse-proxy domains listen on a `127.0.0.1` port that nginx proxies to.
+Only the account that owns the app, and system users such as nginx and root,
+can open a connection to that port. A connection from any other account is
+dropped, whatever that account's egress state, from PHP, cron jobs and SSH
+shells alike. So nginx stays in front of every app: its WAF, password
+protection and IP rules apply to every request that reaches the app. Ports the
+panel did not allocate are not affected, so a service an account runs on a port
+of its own keeps working. The drops are counted in
+`nft list counter inet jabali_per_user loopback_app_drops`.
+
 ## Malware (M33, M33.2)
 
 - **Linux Malware Detect (LMD) 2.0** — native HEX, MD5 and SHA-256 scanner with the rfxn signature pack. It replaced ClamAV, which was removed in M33 (amendment 3).

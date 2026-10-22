@@ -72,6 +72,9 @@ func (f *fakePolicyRepo) StateCounts(context.Context) (map[string]uint, error)  
 func (f *fakePolicyRepo) ListMatureLearning(context.Context, time.Duration) ([]models.UserEgressPolicy, error) {
 	return f.mature, nil
 }
+func (f *fakePolicyRepo) ListLoopbackAppPorts(context.Context) ([]repository.LoopbackAppPort, error) {
+	return nil, nil
+}
 
 // --- tests -----------------------------------------------------------------
 
