@@ -31,6 +31,9 @@ import (
 const (
 	pythonAppUnitDir = "/etc/systemd/system"
 	pythonAppEnvDir  = "/etc/jabali/python-apps"
+	// envBin changes a command's working directory as the user it runs as
+	// (coreutils env -C), for runAsUserInDir.
+	envBin = "/usr/bin/env"
 )
 
 var pythonVersionRe = regexp.MustCompile(`^3\.(?:[0-9]|1[0-9])$`)
@@ -340,11 +343,15 @@ func runAsUser(ctx context.Context, username string, args ...string) (string, er
 // scaffolds whose commands resolve relative paths (e.g. `django-admin
 // startproject config .` writes manage.py into the cwd) — without it the child
 // inherits the agent's cwd and writes to the wrong place. dir="" keeps the
-// inherited cwd. dir must be a tenant-owned path the user can chdir into.
+// inherited cwd. The user's own process changes into dir (env -C), so the
+// path is resolved with the user's permissions, never the agent's.
 func runAsUserInDir(ctx context.Context, username, dir string, args ...string) (string, error) {
-	full := append([]string{"-u", username, "-H"}, args...)
+	full := []string{"-u", username, "-H"}
+	if dir != "" {
+		full = append(full, envBin, "-C", dir, "--")
+	}
+	full = append(full, args...)
 	cmd := execCommandContext(ctx, "sudo", full...)
-	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "PIP_DISABLE_PIP_VERSION_CHECK=1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
