@@ -111,6 +111,60 @@ A Python app can serve a per-app **media directory straight from nginx** (GH
 own nginx `alias` rule (1-hour cache, vs 30-day for static assets), so
 user-uploaded media is served without going through the WSGI/ASGI worker.
 
+## Node.js apps
+
+Node.js apps (ADR-0175) run on the Application Manager next to Python apps,
+without Docker. They are off until an administrator turns them on in
+**Server Settings → Apps** (`node_apps_enabled`, or
+`jabali settings set node_apps_enabled=true`). Turning them on installs
+nothing: they run on the server's Node.js 22 from NodeSource, which the
+system's updates keep patched. No other Node.js version is offered.
+
+- **App type.** `node` runs `node <entrypoint>`, a `.js`, `.mjs` or `.cjs`
+  file under the app directory, such as `server.js` or `dist/main.js`. `npm`
+  runs `npm run <script>`, a script in `package.json` (`start` by default),
+  for frameworks whose start script wraps the server.
+- **Port.** The panel gives the app a loopback port and sets `PORT` and
+  `HOST=127.0.0.1` in its environment; the app must listen on
+  `process.env.PORT`. The app's environment cannot set `PORT` or `HOST`.
+  `NODE_ENV` is `production` unless the app's environment sets it. An app
+  that runs but does not listen on its port shows **failed** with "it is
+  not listening on 127.0.0.1:<port>".
+- **Build.** For an app with a `package.json`, the panel installs the
+  dependencies when the app is created and whenever `package.json` or the
+  lockfile changes: `npm ci` with a `package-lock.json` (or
+  `npm-shrinkwrap.json`), `npm install` without one. With a `build` script it
+  also installs the dev dependencies and runs `npm run build`; without one it
+  installs production dependencies only. Install scripts run, since native
+  modules need them. npm's cache is `.npm` in the app directory, since an
+  account's home directory itself is not writable by the account. The build runs as the account's user in the account's
+  slice, under its egress firewall, like a Python app's build, and the app
+  shows **building** until it finishes. A failed build shows the last lines
+  of npm's output; it is retried after 15 minutes, or straight away when
+  `package.json` or the lockfile changes. A `node` app with no
+  `package.json` has nothing to install.
+- **npm registry.** npm downloads from `registry.npmjs.org` over HTTPS. The
+  default egress policy allows port 443, so this works as installed; an
+  account on a stricter custom egress policy needs `registry.npmjs.org`
+  allowlisted.
+- **Package limit.** Node.js apps count against the same app limit as
+  Python apps (Max Python apps). A package without Python apps has no
+  Node.js apps either.
+- **nginx and isolation.** As for a Python app: nginx proxies the mount to
+  the app's port (WebSocket upgrade on), the static and media mappings work
+  the same way, and the app runs as the account's user in its slice. Its
+  port can be opened only by the account and system users such as nginx,
+  and answers only from a process in the account's slice (see
+  [Security](./security.md)).
+- The framework catalog has Python apps only.
+
+```bash
+jabali python-app create --runtime node --domain example.com --name api \
+  --app-root apps/api --entrypoint server.js
+jabali python-app create --runtime node --app-type npm --domain example.com \
+  --name web --app-root apps/web           # runs npm run start
+```
+
 ## Database admin tooling
 
 MariaDB databases open in **phpMyAdmin**; PostgreSQL databases open in

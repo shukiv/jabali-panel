@@ -4737,7 +4737,7 @@ jabali python-app
 
 #### `jabali python-app create`
 
-Create a Python app (same validation + port/proxy allocation as the UI)
+Create a Python or Node.js app (same validation + port/proxy allocation as the UI)
 
 ```
 jabali python-app create [flags]
@@ -4746,15 +4746,17 @@ jabali python-app create [flags]
 **Flags:**
 
 - `--app-root` — app root under the owner's home (required)
-- `--app-type` — wsgi|asgi (default `wsgi`)
+- `--app-type` — wsgi|asgi; for --runtime node: node (default) or npm (default `wsgi`)
 - `--base-uri` — mount path on the domain (default `/`)
 - `--domain` — domain name to mount on (resolved to its id)
 - `--domain-id` — domain id to mount on (or use --domain)
-- `--entrypoint` — module:callable, e.g. myapp.wsgi:application (required unless --framework)
+- `--entrypoint` — module:callable, e.g. myapp.wsgi:application (required unless --framework); for --runtime node: a script like server.js, or with --app-type npm a package.json script (default start)
 - `--env` — KEY=VALUE (repeatable) (default `[]`)
 - `--framework` — marketplace slug (e.g. django, flask, fastapi); derives app-type/entrypoint and scaffolds the starter
 - `--name` — app name (required)
-- `--python-version` — Python version, e.g. 3.12 (required)
+- `--node-version` — Node.js major for --runtime node (only 22) (default `22`)
+- `--python-version` — Python version, e.g. 3.12 (required for --runtime python)
+- `--runtime` — python|node (ADR-0175) (default `python`)
 
 #### `jabali python-app delete`
 

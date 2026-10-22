@@ -25,19 +25,24 @@ func (r *Reconciler) WithPyFrameworks(cat *pyframeworks.Catalog) *Reconciler {
 	return r
 }
 
-// reconcilePythonApps converges every Python app's runtime: it dispatches
-// app.python.apply (venv + systemd unit) to the agent and writes back the
-// resulting status. nginx is handled separately by the domain reconciler via
-// the proxy_pass nginx rule the API attached to the domain. No-op without the
-// repo/agent, or when the feature flag is off.
+// reconcilePythonApps converges every Application Manager app's runtime: it
+// dispatches app.python.apply (venv + systemd unit), or app.node.apply for a
+// Node.js app (ADR-0175), to the agent and writes back the resulting status.
+// nginx is handled separately by the domain reconciler via the proxy_pass nginx
+// rule the API attached to the domain. No-op without the repo/agent; an app
+// whose runtime's setting is off is left in its last state.
 func (r *Reconciler) reconcilePythonApps(ctx context.Context) {
 	if r.pythonApps == nil || r.agent == nil || r.users == nil {
 		return
 	}
+	python, node := true, true
 	if r.serverSettings != nil {
-		if s, err := r.settingsGet(ctx); err == nil && s != nil && !s.PythonAppsEnabled {
-			return // feature opt-out: leave apps in their last state
+		if s, err := r.settingsGet(ctx); err == nil && s != nil {
+			python, node = s.PythonAppsEnabled, s.NodeAppsEnabled
 		}
+	}
+	if !python && !node {
+		return
 	}
 	apps, err := r.pythonApps.ListAll(ctx)
 	if err != nil {
@@ -45,6 +50,9 @@ func (r *Reconciler) reconcilePythonApps(ctx context.Context) {
 		return
 	}
 	for _, app := range apps {
+		if (app.Runtime == "node" && !node) || (app.Runtime != "node" && !python) {
+			continue
+		}
 		r.reconcileOnePythonApp(ctx, app)
 	}
 }
@@ -74,6 +82,7 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		env[e.Key] = e.Value
 	}
 
+	method := "app.python.apply"
 	params := map[string]any{
 		"app_id":         app.ID,
 		"username":       *user.Username,
@@ -86,7 +95,14 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		"port":           *app.LoopbackPort,
 		"env":            env,
 	}
-	if app.StartCommand != nil {
+	if app.Runtime == "node" {
+		// ADR-0175: a Node.js app keeps its Node.js major in python_version.
+		method = "app.node.apply"
+		delete(params, "python_version")
+		delete(params, "base_uri")
+		params["node_version"] = app.PythonVersion
+	}
+	if app.StartCommand != nil && app.Runtime != "node" {
 		params["start_command"] = *app.StartCommand
 	}
 	if app.MemoryLimit != nil {
@@ -106,7 +122,7 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		}
 	}
 
-	raw, err := r.agent.Call(ctx, "app.python.apply", params)
+	raw, err := r.agent.Call(ctx, method, params)
 	if err != nil {
 		r.failPythonApp(ctx, app.ID, err.Error())
 		return

@@ -500,6 +500,10 @@ type ServerSettings struct {
 	// PythonAppsEnabled gates the Python Application Manager (ADR-0131 / GH
 	// #203): hidden + endpoints 403 when off (default). Enabling installs the
 	PythonAppsEnabled bool `gorm:"column:python_apps_enabled;type:tinyint(1);not null;default:0" json:"python_apps_enabled"`
+	// NodeAppsEnabled gates Node.js apps on the Application Manager (ADR-0175):
+	// creating one, and the reconciler converging them. Default off. Node.js 22
+	// is already on every host, so enabling installs nothing.
+	NodeAppsEnabled bool `gorm:"column:node_apps_enabled;type:tinyint(1);not null;default:0" json:"node_apps_enabled"`
 	// StalwartWebadminEnabled (GH #243, ADR-0142) gates the opt-in nginx
 	// reverse-proxy exposing Stalwart's WebAdmin UI. Default false; Stalwart
 	// itself stays loopback-bound.

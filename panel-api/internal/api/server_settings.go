@@ -235,6 +235,8 @@ type updateServerSettingsRequest struct {
 	DockerTenantApps *string `json:"docker_tenant_apps,omitempty"`
 	// ADR-0131: Python Application Manager opt-in.
 	PythonAppsEnabled *bool `json:"python_apps_enabled,omitempty"`
+	// ADR-0175: Node.js apps opt-in.
+	NodeAppsEnabled *bool `json:"node_apps_enabled,omitempty"`
 	// GH #243 (ADR-0142): opt-in Stalwart WebAdmin exposure + IP allowlist.
 	StalwartWebadminEnabled    *bool   `json:"stalwart_webadmin_enabled,omitempty"`
 	StalwartWebadminAllowCIDRs *string `json:"stalwart_webadmin_allow_cidrs,omitempty"`
@@ -754,6 +756,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.PythonAppsEnabled != nil {
 		current.PythonAppsEnabled = *req.PythonAppsEnabled
+	}
+	if req.NodeAppsEnabled != nil {
+		current.NodeAppsEnabled = *req.NodeAppsEnabled
 	}
 	if req.StalwartWebadminEnabled != nil {
 		current.StalwartWebadminEnabled = *req.StalwartWebadminEnabled

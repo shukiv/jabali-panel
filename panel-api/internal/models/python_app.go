@@ -12,15 +12,18 @@ type PythonApp struct {
 	DomainID string `gorm:"column:domain_id;type:char(26);not null" json:"domain_id"`
 	Name     string `gorm:"type:varchar(255);not null" json:"name"`
 
-	// Runtime is "python" for now; the enum leaves room for node/ruby later.
+	// Runtime is "python" or "node" (ADR-0175: Node.js apps share this table).
 	Runtime string `gorm:"type:varchar(16);not null;default:'python'" json:"runtime"`
-	// PythonVersion is "3.11"/"3.12" — must be one the host has installed.
+	// PythonVersion is "3.11"/"3.12" — must be one the host has installed. A
+	// Node.js app keeps its Node.js major here ("22").
 	PythonVersion string `gorm:"column:python_version;type:varchar(16);not null" json:"python_version"`
 	// AppRoot is a path under the owner's home (scope-validated by the agent).
 	AppRoot string `gorm:"column:app_root;type:varchar(512);not null" json:"app_root"`
-	// AppType is "wsgi" (gunicorn) or "asgi" (uvicorn).
+	// AppType is "wsgi" (gunicorn) or "asgi" (uvicorn); for a Node.js app,
+	// "node" (node <script>) or "npm" (npm run <script>).
 	AppType string `gorm:"column:app_type;type:varchar(8);not null;default:'wsgi'" json:"app_type"`
-	// Entrypoint is the module:callable, e.g. "myapp.wsgi:application".
+	// Entrypoint is the module:callable, e.g. "myapp.wsgi:application"; for a
+	// Node.js app, the script file ("server.js") or the package.json script.
 	Entrypoint string `gorm:"type:varchar(255);not null" json:"entrypoint"`
 	// BaseURI is the mount point on the domain, "/" or "/app".
 	BaseURI string `gorm:"column:base_uri;type:varchar(255);not null;default:'/'" json:"base_uri"`
