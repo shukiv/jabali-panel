@@ -1,8 +1,11 @@
 package commands
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +52,54 @@ func TestFileSHA256(t *testing.T) {
 	// Missing file → error (caller stats first; this guards the contract).
 	if _, err := fileSHA256(filepath.Join(dir, "nope.txt")); err == nil {
 		t.Fatal("expected error hashing a missing file")
+	}
+}
+
+// runAsUserInDir leaves the change of directory to the user's own process
+// (env -C), so the path is resolved with the user's permissions: the agent's
+// own working directory never moves into a tenant path.
+func TestRunAsUserInDir_UserChangesDirectory(t *testing.T) {
+	var argv []string
+	var cmds []*exec.Cmd
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		argv = append([]string{name}, args...)
+		c := exec.CommandContext(ctx, "true")
+		cmds = append(cmds, c)
+		return c
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+
+	if _, err := runAsUserInDir(context.Background(), "alice", "/home/alice/app", "django-admin", "startproject", "config", "."); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(argv, " "), "sudo -u alice -H /usr/bin/env -C /home/alice/app -- django-admin startproject config ."; got != want {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+	if cmds[0].Dir != "" {
+		t.Fatalf("the agent changed into %q itself", cmds[0].Dir)
+	}
+
+	// No directory: the command runs as before, without env.
+	if _, err := runAsUser(context.Background(), "alice", "mkdir", "-p", "/home/alice/app"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(argv, " "), "sudo -u alice -H mkdir -p /home/alice/app"; got != want {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+}
+
+// The env -C form runAsUserInDir builds works with the host's coreutils.
+func TestEnvBinChangesDirectory(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(envBin, "-C", dir, "--", "pwd", "-P").CombinedOutput()
+	if err != nil {
+		t.Skipf("%s -C unavailable here: %v: %s", envBin, err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != dir {
+		t.Fatalf("pwd = %q, want %q", got, dir)
 	}
 }
