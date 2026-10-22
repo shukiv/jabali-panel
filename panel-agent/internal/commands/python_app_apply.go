@@ -141,7 +141,7 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		return nil, err
 	}
 
-	appRoot, err := resolveAppRoot(ctx, p.UserID, p.Username, p.AppRoot)
+	appRoot, _, err := resolveAppRoot(ctx, p.UserID, p.Username, p.AppRoot)
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // app.node.apply (ADR-0175) — converge one Node.js app: install its npm
@@ -123,7 +124,7 @@ func nodeAppApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "Node.js is not installed on this server (" + bin + " is missing)"}
 		}
 	}
-	appRoot, err := resolveAppRoot(ctx, p.UserID, p.Username, p.AppRoot)
+	appRoot, scope, err := resolveAppRoot(ctx, p.UserID, p.Username, p.AppRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +135,7 @@ func nodeAppApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// Each step converges and restarts the app only when something changed:
 	// the reconciler applies every app every ~60s (GH #357).
 	needsRestart := false
-	switch state, err := nodeAppBuildStep(p, appRoot, pythonAppEnvDir); {
+	switch state, err := nodeAppBuildStep(p, scope, appRoot, pythonAppEnvDir); {
 	case err != nil:
 		return nil, err
 	case state == pythonBuildRunning:
@@ -202,15 +203,16 @@ type nodeBuildPlan struct {
 	appRoot    string
 	sha        string // != "": install for package.json + lockfile with this content
 	lockfile   bool   // npm ci, rather than npm install
+	hasBuild   bool   // package.json has a build script: dev dependencies + npm run build
 	marker     string // sha of the last successful build
 	failMarker string // cached failure for the backoff
 }
 
-func nodeAppBuildStep(p nodeAppApplyParams, appRoot, stateDir string) (pythonBuildState, error) {
+func nodeAppBuildStep(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDir string) (pythonBuildState, error) {
 	var pl nodeBuildPlan
 	plan := func() (bool, error) {
 		var err error
-		pl, err = planNodeBuild(p, appRoot, stateDir)
+		pl, err = planNodeBuild(p, scope, appRoot, stateDir)
 		return err == nil && pl.sha != "", err
 	}
 	run := func(ctx context.Context) error { return runNodeBuild(ctx, p, pl) }
@@ -219,14 +221,20 @@ func nodeAppBuildStep(p nodeAppApplyParams, appRoot, stateDir string) (pythonBui
 
 // planNodeBuild decides whether npm has to run: when package.json or the
 // lockfile changed since the last successful build. An app with no
-// package.json (a plain node script) has nothing to install.
-func planNodeBuild(p nodeAppApplyParams, appRoot, stateDir string) (nodeBuildPlan, error) {
+// package.json (a plain node script) has nothing to install. The files are
+// read through the app root opened beneath the owner's home (scope).
+func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDir string) (nodeBuildPlan, error) {
 	pl := nodeBuildPlan{
 		appRoot:    appRoot,
 		marker:     filepath.Join(stateDir, p.AppID+".npmsha"),
 		failMarker: filepath.Join(stateDir, p.AppID+".npmfail"),
 	}
-	pkg, err := readTenantFile(filepath.Join(appRoot, "package.json"), maxNodeManifestBytes)
+	dir, err := scope.OpenDirInScope(appRoot)
+	if err != nil {
+		return pl, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("open app root: %v", err)}
+	}
+	defer dir.Close()
+	pkg, err := readTenantFile(dir, "package.json", maxNodeManifestBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		if p.AppType == "npm" {
 			return pl, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "package.json not found in the app root; the npm app type runs one of its scripts"}
@@ -239,7 +247,7 @@ func planNodeBuild(p nodeAppApplyParams, appRoot, stateDir string) (nodeBuildPla
 	h := sha256.New()
 	h.Write(pkg)
 	for _, name := range []string{"package-lock.json", "npm-shrinkwrap.json"} {
-		lock, err := readTenantFile(filepath.Join(appRoot, name), maxNodeManifestBytes)
+		lock, err := readTenantFile(dir, name, maxNodeManifestBytes)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -259,6 +267,9 @@ func planNodeBuild(p nodeAppApplyParams, appRoot, stateDir string) (nodeBuildPla
 	if f := readReqFail(pl.failMarker); f.SHA == sum && time.Since(time.Unix(f.At, 0)) < pipRetryBackoff {
 		return pl, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: f.Error}
 	}
+	if pl.hasBuild, err = packageHasScript(pkg, "build"); err != nil {
+		return pl, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	pl.sha = sum
 	return pl, nil
 }
@@ -275,22 +286,18 @@ func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) e
 		writeReqFail(pl.failMarker, pl.sha, msg, time.Now())
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: msg}
 	}
-	hasBuild, err := packageHasScript(filepath.Join(pl.appRoot, "package.json"), "build")
-	if err != nil {
-		return fail("read package.json", "", err)
-	}
 	install := []string{npmBin, "install"}
 	if pl.lockfile {
 		install = []string{npmBin, "ci"}
 	}
 	install = append(install, "--no-audit", "--no-fund", "--no-update-notifier")
-	if !hasBuild {
+	if !pl.hasBuild {
 		install = append(install, "--omit=dev")
 	}
 	if out, err := runAsUserInDir(ctx, p.Username, pl.appRoot, install...); err != nil {
 		return fail("npm "+install[1], out, err)
 	}
-	if hasBuild {
+	if pl.hasBuild {
 		if out, err := runAsUserInDir(ctx, p.Username, pl.appRoot, npmBin, "run", "build", "--no-update-notifier"); err != nil {
 			return fail("npm run build", out, err)
 		}
@@ -300,12 +307,9 @@ func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) e
 	return nil
 }
 
-// packageHasScript reports whether package.json defines scripts[name].
-func packageHasScript(path, name string) (bool, error) {
-	b, err := readTenantFile(path, maxNodeManifestBytes)
-	if err != nil {
-		return false, err
-	}
+// packageHasScript reports whether package.json (its content) defines
+// scripts[name].
+func packageHasScript(b []byte, name string) (bool, error) {
 	var pkg struct {
 		Scripts map[string]json.RawMessage `json:"scripts"`
 	}
@@ -316,36 +320,35 @@ func packageHasScript(path, name string) (bool, error) {
 	return ok, nil
 }
 
-// readTenantFile reads a file in a tenant's app root as root without following
-// a symlink in its last component or blocking on a FIFO, and only when it is a
-// regular file no larger than max. The app root itself was resolved inside the
-// owner's home by resolveAppRoot.
-func readTenantFile(path string, max int64) ([]byte, error) {
-	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+// readTenantFile reads the file name in a tenant's directory dir, opened
+// beneath the owner's home, without following a symlink or blocking on a
+// FIFO, and only when it is a regular file no larger than max.
+func readTenantFile(dir *os.File, name string, max int64) ([]byte, error) {
+	fd, err := unix.Openat(int(dir.Fd()), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, unix.ENOENT) {
 			return nil, os.ErrNotExist
 		}
 		if errors.Is(err, unix.ELOOP) {
-			return nil, fmt.Errorf("%s is a symbolic link", filepath.Base(path))
+			return nil, fmt.Errorf("%s is a symbolic link", name)
 		}
 		return nil, err
 	}
-	f := os.NewFile(uintptr(fd), path)
+	f := os.NewFile(uintptr(fd), name)
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", filepath.Base(path))
+		return nil, fmt.Errorf("%s is not a regular file", name)
 	}
 	b, err := io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, err
 	}
 	if int64(len(b)) > max {
-		return nil, fmt.Errorf("%s is larger than %d bytes", filepath.Base(path), max)
+		return nil, fmt.Errorf("%s is larger than %d bytes", name, max)
 	}
 	return b, nil
 }

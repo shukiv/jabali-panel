@@ -18,12 +18,13 @@ import (
 // identical across them.
 
 // resolveAppRoot scope-validates appRootIn under the owner's home and creates
-// it as the owner when it does not exist yet.
-func resolveAppRoot(ctx context.Context, userID, username, appRootIn string) (string, error) {
+// it as the owner when it does not exist yet. It returns the home scope too,
+// for reading the app's files beneath the home.
+func resolveAppRoot(ctx context.Context, userID, username, appRootIn string) (string, *filesafe.Scope, error) {
 	homeDir := "/home/" + username
 	scope, err := filesafe.NewScope(userID, username, []string{homeDir})
 	if err != nil {
-		return "", &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("scope: %v", err)}
+		return "", nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("scope: %v", err)}
 	}
 	// app_root may arrive home-relative ("domains/x/app") or absolute
 	// ("/home/<user>/domains/x/app"); filesafe.Resolve requires absolute.
@@ -32,19 +33,19 @@ func resolveAppRoot(ctx context.Context, userID, username, appRootIn string) (st
 	}
 	appRoot, err := scope.Resolve(appRootIn)
 	if err != nil {
-		return "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("app_root validation failed: %v", err)}
+		return "", nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("app_root validation failed: %v", err)}
 	}
 	if fi, err := os.Stat(appRoot); err != nil {
 		// Fresh plain app: the dir doesn't exist yet and there is no framework
 		// scaffold to create it. Make it AS THE TENANT so the venv + code land
 		// tenant-owned, inside the scope-validated path under the owner's home.
 		if out, mkerr := runAsUser(ctx, username, "mkdir", "-p", appRoot); mkerr != nil {
-			return "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("create app_root: %v: %s", mkerr, out)}
+			return "", nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("create app_root: %v: %s", mkerr, out)}
 		}
 	} else if !fi.IsDir() {
-		return "", &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "app_root exists but is not a directory"}
+		return "", nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "app_root exists but is not a directory"}
 	}
-	return appRoot, nil
+	return appRoot, scope, nil
 }
 
 // appUnitSpec is what renderAppUnit needs from any runtime's apply params.
