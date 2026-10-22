@@ -626,7 +626,9 @@
     "set_an_admin_email_to_use_ssl": "Set an admin email to use SSL",
     "this_domain_is_using_a_self_signed_certifica": "This domain is using a self-signed certificate while Let's Encrypt issuance retries. Browsers will show a security warning until the real cert is issued.",
     "upload_custom_certificate": "Upload custom certificate",
-    "using_self_signed_certificate": "Using self-signed certificate"
+    "using_self_signed_certificate": "Using self-signed certificate",
+    "waiting_for_proof_of_ownership": "Waiting for proof of ownership",
+    "ownership_pending_no_certificate": "Let's Encrypt is not asked for a certificate until this domain is verified. Until then it uses a self-signed placeholder, and the site answers only on its preview URL. The ownership box at the top of this page shows the DNS record that proves it, and Approve."
   },
   "domainskipautosantoggle": {
     "skip_auto_added_san_names": "Skip auto-added SAN names"
@@ -1999,10 +2001,14 @@
     "last_attempt": "Last attempt",
     "next_retry": "Next retry",
     "no_ssl_certificates_yet": "No SSL certificates yet",
+    "ownership_pending": "Ownership pending",
     "panel_cert_managed_in_panel_ssl": "Panel cert — managed in SSL Manager → Panel SSL",
     "renew_certificate": "Renew certificate",
     "retry_count": "Retry count",
     "revoke_certificate": "Revoke Certificate",
+    "self_signed_ownership_pending": "Waiting for proof of ownership: Let's Encrypt is not asked for a certificate until the domain is verified. Until then it uses a self-signed placeholder, and the site answers only on its preview URL.",
+    "self_signed_placeholder": "Self-signed placeholder until Let's Encrypt issues the certificate — browsers show a trust warning meanwhile.",
+    "self_signed_self_mode": "Self-signed certificate (Self SSL mode) — browsers show a trust warning; not issued by a CA.",
     "show_last_error": "Show last error",
     "status": "Status",
     "yes": "Yes"
@@ -2053,5 +2059,8 @@
     "standby_banner_title": "DR standby — read-only replica",
     "standby_banner_desc": "This server is a disaster-recovery standby of {{peer}}. It mirrors the primary and serves no live traffic; changes are disabled until it is promoted with `jabali dr promote`.",
     "standby_banner_desc_nopeer": "This server is a disaster-recovery standby. It mirrors the primary and serves no live traffic; changes are disabled until it is promoted with `jabali dr promote`."
+  },
+  "ssltab": {
+    "ownership_pending_note": "This domain is waiting for proof of ownership. It gets a Let's Encrypt certificate once it is verified: the box at the top of this page shows the DNS record to add."
   }
 }

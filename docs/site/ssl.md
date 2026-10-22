@@ -13,6 +13,8 @@ Toggle SSL on a domain (admin: Domains → Edit → SSL; user: Domains → Edit 
 
 Issuance latency: ≤60 s typical. Failures retry every 3 hours (reconciler interval).
 
+A domain waiting for proof of ownership gets no certificate from Let's Encrypt. It keeps a self-signed placeholder until it is verified, and Renew and Retry are refused for it. See [Domains → Ownership proof](admin/domains.md#ownership-proof) and [Troubleshooting](troubleshooting.md#self-signed-certificate-and-the-site-sends-no-response).
+
 ## Domains behind Cloudflare (DNS-01)
 
 When a domain's address is a CDN rather than this server (Cloudflare's orange cloud), the CDN answers the HTTP-01 check itself and the certificate cannot be issued that way. The panel then uses DNS-01: it writes the `_acme-challenge` TXT record where the zone is really hosted.

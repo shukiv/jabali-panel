@@ -6606,7 +6606,9 @@ paths:
       summary: Renew ssl
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK }
+        "409": { description: "domain_ownership_pending — the domain's name is not proven yet, so it gets no Let's Encrypt certificate until it is verified (GH #2200)" }
 
   /domains/{id}/ssl/retry:
     post:
@@ -6614,7 +6616,9 @@ paths:
       summary: Retry ssl
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: OK }
+        "409": { description: "domain_ownership_pending — the domain's name is not proven yet, so it gets no Let's Encrypt certificate until it is verified (GH #2200)" }
 
 
   # --- Ssl Certificates (auto) ---

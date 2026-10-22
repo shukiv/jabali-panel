@@ -82,6 +82,21 @@ Check the row at `/jabali-admin/ssl`:
 | `connection refused on :80` | Firewall blocks `:80` from outside, or nginx isn't listening on `:80` for that vhost (it must, even when SSL is on, for HTTP-01). |
 | Panel cert: `panel hostname not set` | Server Settings → Panel Hostname not yet configured. |
 
+### Self-signed certificate and the site sends no response
+
+The certificate stays `self_signed`, the browser shows `ERR_EMPTY_RESPONSE` (the site "didn't send any data"), and `jabali ssl retry` and `jabali ssl renew` refuse the domain. The domain is waiting for proof of ownership: a domain a user adds is not published until its owner proves the name. Until then the panel asks Let's Encrypt for nothing, and the site answers only on its preview URL.
+
+SSL Manager marks the row **Ownership pending**, and `jabali ssl list` prints `self_signed (ownership pending)`. To see the record that proves it and the last check result:
+
+```
+jabali domain ownership status <domain>
+```
+
+- **The last check is `ns_points_here`.** The domain's nameservers already point to this server, so a DNS record here cannot prove anything. An administrator approves it: `jabali domain ownership approve <domain>`, or **Web Domains → Ownership proof**.
+- **Otherwise**, add the `_jabali-challenge` TXT record it shows at the domain's current DNS provider, then run `jabali domain ownership verify <domain>` or wait for the next check.
+
+Once the domain is verified, the panel requests the certificate on its own. The panel's log says why a domain was self-signed: `journalctl -u jabali-panel | grep 'ssl: self-signed'`.
+
 ### Per-user PHP-FPM pool socket missing
 
 Symptom: `502 Bad Gateway` on a user's vhost.

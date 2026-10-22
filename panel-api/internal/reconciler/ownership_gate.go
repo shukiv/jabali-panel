@@ -105,9 +105,17 @@ func (r *Reconciler) unpublishPendingZone(ctx context.Context, zone *models.DNSZ
 }
 
 // ownershipPending reports whether a domain is not proven. Every gate in
-// this package asks through here, so a grep finds them all.
+// this package asks through here (the SSL step through
+// certificateAwaitsOwnership), so a grep finds them all.
 func ownershipPending(domain *models.Domain) bool {
 	return !domainops.OwnershipVerified(domain)
+}
+
+// certificateAwaitsOwnership is the SSL step's gate: a name not proven yet
+// gets a self-signed placeholder, never a CA certificate. The SSL doors ask
+// the same predicate, so they say why instead of offering a retry (GH #2200).
+func certificateAwaitsOwnership(domain *models.Domain) bool {
+	return domainops.CertificateAwaitsOwnership(domain)
 }
 
 // ownershipGate is the value a pending domain's vhost admits (see

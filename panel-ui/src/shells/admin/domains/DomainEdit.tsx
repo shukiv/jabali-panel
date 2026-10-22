@@ -31,6 +31,7 @@ import { DomainMailTLSSection } from "./DomainMailTLSSection";
 import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 import { DomainRateLimitSection } from "./DomainRateLimitSection";
+import { isOwnershipPending } from "../../../components/domains/ownership";
 
 export type DomainEditInput = {
   is_enabled?: boolean;
@@ -235,6 +236,7 @@ export const DomainEdit = () => {
           domainId={domain.id}
           domainName={domain.name}
           sslEnabled={!!domain.ssl_enabled}
+          ownershipPending={isOwnershipPending(domain)}
           onToggled={() =>
             qc.invalidateQueries({ queryKey: ["one", "domains", id] })
           }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -65,6 +66,29 @@ func sslPanelHostnameRefusal(dom *models.Domain) error {
 			"manage it with `jabali panel-cert status|issue` or in SSL Manager → Panel SSL", dom.Name)
 	}
 	return nil
+}
+
+// sslOwnershipPendingNote says why a domain whose name is not proven yet
+// (GH #1816, ADR-0170) has no Let's Encrypt certificate, and what resolves it.
+func sslOwnershipPendingNote(name string) string {
+	return fmt.Sprintf("%s is waiting for proof of ownership, so it gets no Let's Encrypt certificate yet: "+
+		"until the name is verified it serves a self-signed placeholder, and the site answers only on its preview URL.\n"+
+		"  See the DNS record that proves it:  jabali domain ownership status %s\n"+
+		"  Or approve it as an administrator:  jabali domain ownership approve %s\n"+
+		"  Once it is verified, the panel requests the certificate on its own", name, name, name)
+}
+
+// sslOwnershipPendingRefusal refuses `ssl renew` and `ssl retry` for a domain
+// the reconciler holds back from a CA (domainops.CertificateAwaitsOwnership,
+// the predicate its SSL step uses). A retry there changes nothing: the next
+// pass self-signs the domain again. GH #2200: the old answers ("retry only
+// applies to 'failed'…", "wait for the reconciler to finish issuing") sent the
+// operator looking for an ACME failure that never happened.
+func sslOwnershipPendingRefusal(dom *models.Domain) error {
+	if !domainops.CertificateAwaitsOwnership(dom) {
+		return nil
+	}
+	return errors.New(sslOwnershipPendingNote(dom.Name))
 }
 
 // sslEnableAlreadyIssued reports whether `ssl enable` is a no-op because the
@@ -168,15 +192,29 @@ func newSSLListCmd() *cobra.Command {
 			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "DOMAIN\tUSER\tSTATUS\tEXPIRES\tSTAGING\tRENEWED")
+			pending := 0
 			for _, c := range rows {
 				exp := "-"
 				if c.ExpiresAt != nil {
 					exp = c.ExpiresAt.Format("2006-01-02")
 				}
+				status := c.Status
+				// GH #2200: say why an unproven name is self-signed.
+				if domainops.CertificateRowAwaitsOwnership(c) {
+					status += " (ownership pending)"
+					pending++
+				}
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\n",
-					c.DomainName, c.UserUsername, c.Status, exp, boolYN(c.Staging), c.RenewalCount)
+					c.DomainName, c.UserUsername, status, exp, boolYN(c.Staging), c.RenewalCount)
 			}
-			return w.Flush()
+			if err := w.Flush(); err != nil {
+				return err
+			}
+			if pending > 0 {
+				fmt.Println("\n(ownership pending): the domain gets a Let's Encrypt certificate once its owner proves the name.\n" +
+					"See `jabali domain ownership pending`, or `jabali domain ownership status <domain>` for the DNS record.")
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&userLookup, "user", "", "filter by user (id|email|username)")
@@ -278,6 +316,28 @@ func newSSLEnableCmd() *cobra.Command {
 			}
 			dom.SSLMode = models.SSLModeLE
 			dom.SSLEnabled = true
+
+			// GH #2200: an unproven name gets no Let's Encrypt certificate until
+			// it is verified, so waiting for nginx to serve one could only time
+			// out with a message about DNS. Keep the mode and leave the cert row
+			// as it is (marking it pending would only make the next pass sign
+			// the placeholder again): once the domain is verified, the
+			// reconciler moves a self-signed row to Let's Encrypt on its own.
+			if domainops.CertificateAwaitsOwnership(dom) {
+				cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
+				if jsonOutput {
+					return printJSON(map[string]any{
+						"domain":    dom.Name,
+						"ssl_mode":  models.SSLModeLE,
+						"ownership": models.OwnershipPending,
+						"detail":    "waiting for proof of ownership; the certificate is requested once the domain is verified",
+						"hint":      fmt.Sprintf("jabali domain ownership status %s", dom.Name),
+					})
+				}
+				fmt.Printf("SSL enabled for %s.\n%s.\n", dom.Name, sslOwnershipPendingNote(dom.Name))
+				return nil
+			}
+
 			if cert == nil {
 				cert = &models.SSLCertificate{
 					ID:       ids.NewULID(),
@@ -451,6 +511,9 @@ func newSSLRenewCmd() *cobra.Command {
 			if err := sslPanelHostnameRefusal(dom); err != nil {
 				return err
 			}
+			if err := sslOwnershipPendingRefusal(dom); err != nil {
+				return err
+			}
 			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)
 			if cerr != nil && !errors.Is(cerr, repository.ErrNotFound) {
 				return fmt.Errorf("lookup cert: %w", cerr)
@@ -521,6 +584,9 @@ func newSSLRetryCmd() *cobra.Command {
 				return fmt.Errorf("lookup domain: %w", err)
 			}
 			if err := sslPanelHostnameRefusal(dom); err != nil {
+				return err
+			}
+			if err := sslOwnershipPendingRefusal(dom); err != nil {
 				return err
 			}
 			cert, cerr := sslRepoFromDB().FindByDomainID(ctx, dom.ID)

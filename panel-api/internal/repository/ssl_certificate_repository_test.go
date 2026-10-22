@@ -264,7 +264,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 
 	// Expect a SELECT joining ssl_certificates, domains, and users
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path, sc.issue_method,\n\t\t        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        sc.cert_path, sc.issue_method,\n\t\t        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled,\n\t\t        d.ownership_status FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs("revoked").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
@@ -276,6 +276,8 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 				"cert_path",
 				// GH #1993: the SAN-drift pass leaves a restored certificate alone.
 				"issue_method",
+				// GH #2200: the SSL Manager says an unproven name waits for proof.
+				"ownership_status",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -293,6 +295,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					nil, // cert_path
 					"restored",
+					models.OwnershipVerified,
 				).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5N0",
@@ -310,6 +313,7 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 					nil,
 					nil, // cert_path
 					"",
+					models.OwnershipPending,
 				),
 		)
 
@@ -319,7 +323,9 @@ func TestSSLCertificateRepository_ListAll(t *testing.T) {
 	assert.Equal(t, "example.com", certs[0].DomainName)
 	assert.Equal(t, "restored", certs[0].IssueMethod)
 	assert.Equal(t, "testuser", certs[0].UserUsername)
+	assert.Equal(t, models.OwnershipVerified, certs[0].OwnershipStatus)
 	assert.Equal(t, "example2.com", certs[1].DomainName)
+	assert.Equal(t, models.OwnershipPending, certs[1].OwnershipStatus)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -336,12 +342,13 @@ func TestSSLCertificateRepository_ListByUserID(t *testing.T) {
 
 	// Expect a SELECT with WHERE on user_id
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        d.ssl_mode FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? AND sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        d.ssl_mode, d.ownership_status FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? AND sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs(userID, "revoked").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"id", "domain_id", "domain_name", "user_id", "user_username",
 				"status", "issued_at", "expires_at", "renewal_count", "last_renewed_at", "last_error", "staging", "last_attempt_at",
+				"ssl_mode", "ownership_status",
 			}).
 				AddRow(
 					"01ARWX4FRYXZ73AK7EQQ69G5NV",
@@ -357,12 +364,15 @@ func TestSSLCertificateRepository_ListByUserID(t *testing.T) {
 					nil,
 					false,
 					nil,
+					models.SSLModeLE,
+					models.OwnershipPending,
 				),
 		)
 
 	certs, err := repo.ListByUserID(ctx, userID)
 	require.NoError(t, err)
 	assert.Len(t, certs, 1)
+	assert.Equal(t, models.OwnershipPending, certs[0].OwnershipStatus)
 	assert.Equal(t, userID, certs[0].UserID)
 	assert.Equal(t, "example.com", certs[0].DomainName)
 	assert.Equal(t, "testuser", certs[0].UserUsername)
@@ -382,7 +392,7 @@ func TestSSLCertificateRepository_ListByUserID_Empty(t *testing.T) {
 
 	// Expect an empty result set
 	mock.ExpectQuery(
-		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        d.ssl_mode FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? AND sc.status <> ? ORDER BY sc.created_at DESC")).
+		regexp.QuoteMeta("SELECT sc.id, sc.domain_id, d.name as domain_name,\n\t\t        d.user_id, u.username as user_username,\n\t\t        sc.status, sc.issued_at, sc.expires_at,\n\t\t        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,\n\t\t        d.ssl_mode, d.ownership_status FROM ssl_certificates sc JOIN domains d ON sc.domain_id = d.id JOIN users u ON d.user_id = u.id WHERE d.user_id = ? AND sc.status <> ? ORDER BY sc.created_at DESC")).
 		WithArgs(userID, "revoked").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "domain_id", "domain_name", "user_id", "user_username",

@@ -46,6 +46,12 @@ type SSLCertificateWithDomain struct {
 	SkipAutoSAN   bool   `json:"-"`
 	CreateWWW     bool   `json:"-"`
 	MTASTSEnabled bool   `json:"-"`
+	// OwnershipStatus is the domain's ownership proof state (GH #1816), on
+	// both list joins: an unproven name gets a self-signed placeholder, never
+	// a CA certificate, and the SSL Manager and `jabali ssl list` say so
+	// (GH #2200, domainops.CertificateRowAwaitsOwnership). Internal — the
+	// admin SSL JSON carries the derived ownership_pending instead.
+	OwnershipStatus string `json:"-"`
 }
 
 // SSLCertificateRepository covers the ssl_certificates table.
@@ -235,7 +241,8 @@ func (r *sslCertificateRepo) ListAll(ctx context.Context) ([]SSLCertificateWithD
 		        sc.status, sc.issued_at, sc.expires_at,
 		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,
 		        sc.cert_path, sc.issue_method,
-		        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled`).
+		        d.ssl_mode, d.email_enabled, d.skip_auto_san, d.create_www, d.mta_sts_enabled,
+		        d.ownership_status`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").
@@ -257,7 +264,7 @@ func (r *sslCertificateRepo) ListByUserID(ctx context.Context, userID string) ([
 		        d.user_id, u.username as user_username,
 		        sc.status, sc.issued_at, sc.expires_at,
 		        sc.renewal_count, sc.last_renewed_at, sc.last_error, sc.staging, sc.last_attempt_at,
-		        d.ssl_mode`).
+		        d.ssl_mode, d.ownership_status`).
 		Table("ssl_certificates sc").
 		Joins("JOIN domains d ON sc.domain_id = d.id").
 		Joins("JOIN users u ON d.user_id = u.id").

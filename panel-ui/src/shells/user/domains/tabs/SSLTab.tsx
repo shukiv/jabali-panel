@@ -16,6 +16,7 @@ import { Alert, Button, Descriptions, Skeleton, Space, Tag, Typography } from "a
 import { SafetyCertificateOutlined } from "@icons";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 import { apiClient } from "../../../../apiClient";
 import { getSSLTag } from "../../../../utils/sslState";
@@ -23,6 +24,7 @@ import { daysUntil, modeTag } from "../../../../components/ssl/sslHealth";
 import { SSLCertViewModal } from "../../../../components/ssl/SSLCertViewModal";
 import type { Domain } from "../../../../components/domains/types";
 import { Timestamp } from "../../../../components/Timestamp";
+import { isOwnershipPending } from "../../../../components/domains/ownership";
 
 // The owner-scoped GET /domains/:id/ssl payload (mirrors the admin section's
 // read — the API wraps the certificate in `.ssl`, and 404 means none issued).
@@ -35,6 +37,7 @@ type CertStatus = {
 };
 
 export const SSLTab = ({ domain }: { domain: Domain }) => {
+  const { t } = useTranslation();
   const [viewOpen, setViewOpen] = useState(false);
 
   const certQ = useQuery<CertStatus | null>({
@@ -65,7 +68,11 @@ export const SSLTab = ({ domain }: { domain: Domain }) => {
   // Explain the state without implying "no certificate" — a self_signed domain
   // IS served. View Certificate stays issued-only because the API's inspect
   // endpoint returns a 409 for any non-issued status.
-  const note = isIssued
+  // GH #2200: an unproven name (GH #1816) gets no Let's Encrypt certificate
+  // until it is verified, whatever the certificate row says meanwhile.
+  const note = isOwnershipPending(domain)
+    ? t("ssltab.ownership_pending_note")
+    : isIssued
     ? "The certificate renews automatically before it expires."
     : isRetrying
       ? "The server retries issuance automatically. Once the domain's DNS points at this server, the next retry gets the certificate; the server administrator can also retry it now."

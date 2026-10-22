@@ -14,6 +14,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
@@ -393,6 +394,9 @@ func (h *sslHandler) renewSSL(c *gin.Context) {
 	if refusePanelHostnameCert(c, domain) {
 		return
 	}
+	if refuseOwnershipPendingCert(c, domain) {
+		return
+	}
 
 	// Load certificate row
 	cert, err := h.cfg.SSLCerts.FindByDomainID(ctx, domainID)
@@ -441,6 +445,9 @@ func (h *sslHandler) retrySSL(c *gin.Context) {
 		return
 	}
 	if refusePanelHostnameCert(c, domain) {
+		return
+	}
+	if refuseOwnershipPendingCert(c, domain) {
 		return
 	}
 
@@ -663,6 +670,24 @@ func refusePanelHostnameCert(c *gin.Context, domain *models.Domain) bool {
 	return true
 }
 
+// refuseOwnershipPendingCert answers 409 on the renew and retry doors for a
+// domain whose name is not proven yet, and reports whether it did (GH #2200).
+// The reconciler asks no CA for such a domain (domainops.
+// CertificateAwaitsOwnership, the predicate its SSL step uses) and self-signs
+// it again on the next pass, so a renew or retry changes nothing. The CLI
+// doors refuse the same way (cmd/server/ssl_cmd.go sslOwnershipPendingRefusal).
+func refuseOwnershipPendingCert(c *gin.Context, domain *models.Domain) bool {
+	if !domainops.CertificateAwaitsOwnership(domain) {
+		return false
+	}
+	c.JSON(http.StatusConflict, gin.H{
+		"error": "domain_ownership_pending",
+		"detail": "This domain is waiting for proof of ownership. It gets a Let's Encrypt certificate once it is verified; " +
+			"until then it uses a self-signed placeholder. The domain's page shows the DNS record that proves it.",
+	})
+	return true
+}
+
 // sslListRow is a cert row plus the two fields GH #195 adds to the SSL
 // Manager: the service the cert secures and the full alias (SAN) list,
 // so aliases render under the primary record.
@@ -675,6 +700,11 @@ type sslListRow struct {
 	// struct's internal `json:"-"` field. Empty for panel-cert:*/mail-cert:*
 	// synthetic rows, which have no domain ssl_mode.
 	SSLMode string `json:"ssl_mode,omitempty"`
+	// OwnershipPending marks a website certificate whose domain has not proven
+	// ownership yet (GH #1816): the reconciler asks no CA for it and serves a
+	// self-signed placeholder, so the SSL Manager says that instead of "Self
+	// SSL mode" or a retry that isn't happening (GH #2200). Website rows only.
+	OwnershipPending bool `json:"ownership_pending,omitempty"`
 	// PendingSANs are configured SAN hostnames the ISSUED cert does not yet
 	// cover (GH #1221): resolvableSANs drops names with no public DNS at
 	// issuance so one unresolvable helper can't tank the whole cert, and the
@@ -704,6 +734,7 @@ func (h *sslHandler) enrichCertRows(ctx context.Context, certs []repository.SSLC
 		default:
 			row.Service = "HTTPS"
 			row.SSLMode = c.SSLMode
+			row.OwnershipPending = domainops.CertificateRowAwaitsOwnership(c)
 			desired := h.webCertSANs(ctx, c)
 			// GH #1357: show the SANs the cert ACTUALLY covers, not the desired
 			// policy. resolvableSANs drops unresolvable helpers (mail/autoconfig…)

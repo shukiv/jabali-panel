@@ -45,3 +45,35 @@ describe("SSLManagerTable admin-only actions", () => {
     expect(screen.getByRole("button", { name: /Retry now/ })).toBeInTheDocument();
   });
 });
+
+// GH #2200: a domain whose owner has not proven the name yet gets a
+// self-signed placeholder and no Let's Encrypt attempt. The row says so, and
+// offers no Retry, which the server refuses for it (409 domain_ownership_pending).
+describe("SSLManagerTable ownership-pending rows", () => {
+  it("marks the row and offers no Retry", async () => {
+    get.mockResolvedValue({
+      data: {
+        items: [
+          { id: "c3", domain_id: "d3", domain_name: "unproven.tld", status: "self_signed", ssl_mode: "le", ownership_pending: true },
+          {
+            id: "c4", domain_id: "d4", domain_name: "parked.tld", status: "pending_acme_retry", ssl_mode: "le",
+            ownership_pending: true, next_retry_at: new Date(Date.now() - 60_000).toISOString(),
+          },
+        ],
+      },
+    });
+    renderTable();
+    expect(await screen.findByText("unproven.tld")).toBeInTheDocument();
+    expect(screen.getAllByText("Ownership pending")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Retry now/ })).not.toBeInTheDocument();
+  });
+
+  it("a verified self-signed row has no ownership mark", async () => {
+    get.mockResolvedValue({
+      data: { items: [{ id: "c5", domain_id: "d5", domain_name: "selfmode.tld", status: "self_signed", ssl_mode: "self" }] },
+    });
+    renderTable();
+    expect(await screen.findByText("selfmode.tld")).toBeInTheDocument();
+    expect(screen.queryByText("Ownership pending")).not.toBeInTheDocument();
+  });
+});

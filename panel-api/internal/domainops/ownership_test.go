@@ -10,6 +10,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // ownershipPolicy is a fake OwnershipPolicyReader.
@@ -47,6 +48,49 @@ func TestOwnershipVerified(t *testing.T) {
 	}
 	if !OwnershipVerified(verifiedDomain("a.test", "u")) {
 		t.Fatal("verified must count as verified")
+	}
+}
+
+// GH #2200: the SSL doors and the reconciler's SSL step read one predicate.
+func TestCertificateAwaitsOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		mode     string
+		verified bool
+		want     bool
+	}{
+		{models.SSLModeLE, false, true},
+		{"", false, true}, // legacy empty mode is Let's Encrypt
+		{models.SSLModeSelf, false, true},
+		{models.SSLModeShared, false, true},
+		{models.SSLModeNone, false, false},   // no certificate at all
+		{models.SSLModeCustom, false, false}, // the owner's uploaded certificate
+		{models.SSLModeLE, true, false},
+		{models.SSLModeSelf, true, false},
+	} {
+		d := &models.Domain{Name: "a.test", SSLMode: tc.mode}
+		if tc.verified {
+			d = verifiedDomain("a.test", "u")
+			d.SSLMode = tc.mode
+		}
+		if got := CertificateAwaitsOwnership(d); got != tc.want {
+			t.Errorf("mode %q verified=%v: got %v, want %v", tc.mode, tc.verified, got, tc.want)
+		}
+	}
+	if CertificateAwaitsOwnership(nil) {
+		t.Error("a nil domain has no certificate to hold back")
+	}
+
+	row := repository.SSLCertificateWithDomain{SSLMode: models.SSLModeLE, OwnershipStatus: models.OwnershipPending}
+	if !CertificateRowAwaitsOwnership(row) {
+		t.Error("a pending le row must wait for ownership")
+	}
+	row.OwnershipStatus = models.OwnershipVerified
+	if CertificateRowAwaitsOwnership(row) {
+		t.Error("a verified le row must not wait for ownership")
+	}
+	row = repository.SSLCertificateWithDomain{SSLMode: models.SSLModeCustom, OwnershipStatus: models.OwnershipPending}
+	if CertificateRowAwaitsOwnership(row) {
+		t.Error("a custom row keeps its uploaded certificate")
 	}
 }
 
