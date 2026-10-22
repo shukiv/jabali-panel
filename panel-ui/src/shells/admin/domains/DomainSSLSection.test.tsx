@@ -66,3 +66,19 @@ it("proven domain: keeps the self-signed retry alert", async () => {
   expect(screen.queryByText("Waiting for proof of ownership")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Retry now/ })).toBeInTheDocument();
 });
+
+it("ownership pending: a failed row shows no ACME failure or Retry either — GH #2200", async () => {
+  mocked.get.mockImplementation((url: string) => {
+    if (url === "/admin/settings") return Promise.resolve({ data: { admin_email: "admin@example.com" } });
+    if (url.endsWith("/ssl")) {
+      return Promise.resolve({ data: { ssl: { status: "failed", last_error: "x", retry_count: 3, renewal_count: 0, staging: false } } });
+    }
+    return Promise.resolve({ data: { ssl_mode: "le" } });
+  });
+  render(
+    <DomainSSLSection domainId="dom1" domainName="example.com" sslEnabled ownershipPending onToggled={() => {}} />,
+  );
+  expect(await screen.findByText("Waiting for proof of ownership")).toBeInTheDocument();
+  expect(screen.queryByText("ACME issuance failed")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /^Retry$/ })).not.toBeInTheDocument();
+});
