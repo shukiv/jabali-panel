@@ -111,9 +111,13 @@ type nodeBuildFixture struct {
 }
 
 // fakeNpmRun stands in for `systemd-run --scope ... -- sudo ... npm ...`: it
-// logs its arguments, and fails when $NODEBUILD_FAIL is set.
+// logs its arguments, fails when $NODEBUILD_FAIL is set, and like npm install
+// writes a package-lock.json in the app root (env -C <dir>) when
+// $NODEBUILD_WRITE_LOCK is set.
 const fakeNpmRun = `
 echo "$*" >> "$NODEBUILD_LOG"
+for a; do [ "$prev" = "-C" ] && dir="$a"; prev="$a"; done
+case " $* " in *"/npm install "*) [ -n "$NODEBUILD_WRITE_LOCK" ] && echo '{"lockfileVersion":3}' > "$dir/package-lock.json" ;; esac
 if [ -n "$NODEBUILD_FAIL" ]; then echo "npm ERR! code ERESOLVE"; exit 1; fi
 `
 
@@ -200,7 +204,7 @@ func TestNodeAppBuildStep_LockfileInstallsOnce(t *testing.T) {
 		t.Fatalf("after build: %v, %v; want finished", st, err)
 	}
 	cmds := f.commands(t)
-	want := "/usr/bin/npm ci --no-audit --no-fund --no-update-notifier --omit=dev"
+	want := "/usr/bin/npm ci --cache=" + f.appRoot + "/.npm --no-audit --no-fund --no-update-notifier --omit=dev"
 	if len(cmds) != 1 || cmds[0] != want {
 		t.Fatalf("commands = %q, want [%q]", cmds, want)
 	}
@@ -223,8 +227,8 @@ func TestNodeAppBuildStep_BuildScript(t *testing.T) {
 	}
 	cmds := f.commands(t)
 	if len(cmds) != 2 ||
-		cmds[0] != "/usr/bin/npm install --no-audit --no-fund --no-update-notifier" ||
-		cmds[1] != "/usr/bin/npm run build --no-update-notifier" {
+		cmds[0] != "/usr/bin/npm install --cache="+f.appRoot+"/.npm --no-audit --no-fund --no-update-notifier" ||
+		cmds[1] != "/usr/bin/npm run build --cache="+f.appRoot+"/.npm --no-update-notifier" {
 		t.Fatalf("commands = %q", cmds)
 	}
 }
@@ -263,6 +267,25 @@ func TestNodeAppBuildStep_RebuildsOnLockfileChange(t *testing.T) {
 	}
 	if n := len(f.commands(t)); n != 2 {
 		t.Fatalf("npm ran %d times, want 2", n)
+	}
+}
+
+// npm install writes a package-lock.json when the app has none. That is the
+// build's own output, not a change: the next apply does not build again.
+func TestNodeAppBuildStep_LockfileWrittenByInstallIsNoChange(t *testing.T) {
+	f := newNodeBuildFixture(t, "01NODEBUILDNEWLOCK00000000", map[string]string{"package.json": `{"dependencies":{"ws":"^8"}}`})
+	t.Setenv("NODEBUILD_WRITE_LOCK", "1")
+	if _, err := f.build(t); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(f.appRoot, "package-lock.json")); err != nil {
+		t.Fatalf("the fake npm install wrote no lockfile: %v", err)
+	}
+	if st, err := f.step(); err != nil || st != pythonBuildNotNeeded {
+		t.Fatalf("after the build: %v, %v; want not needed", st, err)
+	}
+	if n := len(f.commands(t)); n != 1 {
+		t.Fatalf("npm ran %d times, want 1", n)
 	}
 }
 
