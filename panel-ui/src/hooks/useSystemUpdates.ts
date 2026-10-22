@@ -255,7 +255,12 @@ export function useUpdateAutoupdate() {
       const r = await apiClient.put<AutoupdateConfig>("/admin/updates/autoupdate", cfg);
       return r.data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["update-autoupdate"] }),
+    // GH #2221: the card applies each change at once, so show the stored row
+    // straight away; the refetch then confirms it.
+    onSuccess: (saved) => {
+      qc.setQueryData(["update-autoupdate"], saved);
+      return qc.invalidateQueries({ queryKey: ["update-autoupdate"] });
+    },
   });
 }
 

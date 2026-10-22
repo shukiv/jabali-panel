@@ -871,15 +871,23 @@ function AutomaticUpdatesCard() {
   const { data, isLoading } = useAutoupdateConfig();
   const state = useUpdateState();
   const save = useUpdateAutoupdate();
-  const [draft, setDraft] = useState<AutoupdateConfig | null>(null);
   const [ackOpen, setAckOpen] = useState(false);
   const [ackChecked, setAckChecked] = useState(false);
-  const cfg = draft ?? data ?? null;
-  const dirty = draft !== null && data !== undefined && JSON.stringify(draft) !== JSON.stringify(data);
+  const cfg = data ?? null;
 
+  // GH #2221: every change is stored the moment it is made. The card used to
+  // keep a draft until a Save button at its foot, so a switch turned off (even
+  // through the confirm below) was back on after a refresh. The controls are
+  // locked while a save runs, so the next change builds on the stored row.
   const patch = (p: Partial<AutoupdateConfig>) => {
     if (!cfg) return;
-    setDraft({ ...cfg, ...p });
+    save.mutate(
+      { ...cfg, ...p },
+      {
+        onSuccess: () => feedback.message.success("Automatic updates saved"),
+        onError: (e) => feedback.message.error(e.message || "save failed"),
+      },
+    );
   };
   // JAB-353: turning OS security updates OFF is an intentional, recorded
   // decision — never a silent flip. Enabling clears the opt-out; disabling opens
@@ -895,16 +903,6 @@ function AutomaticUpdatesCard() {
   const confirmDisable = () => {
     patch({ apt_enabled: false, apt_optout_acknowledged: true });
     setAckOpen(false);
-  };
-  const onSave = async () => {
-    if (!cfg) return;
-    try {
-      await save.mutateAsync(cfg);
-      setDraft(null);
-      feedback.message.success("Automatic updates saved");
-    } catch (e: unknown) {
-      feedback.message.error(e instanceof Error ? e.message : "save failed");
-    }
   };
 
   const lastApplied = state.data?.apt_last_applied_at;
@@ -972,13 +970,13 @@ function AutomaticUpdatesCard() {
                 format="HH:mm"
                 minuteStep={15}
                 allowClear={false}
-                disabled={!cfg.apt_enabled}
+                disabled={!cfg.apt_enabled || save.isPending}
                 value={dayjs(cfg.apt_time, "HH:mm")}
                 onChange={(d) => patch({ apt_time: d ? d.format("HH:mm") : cfg.apt_time })}
               />
             </Col>
             <Col>
-              <Switch checked={cfg.apt_enabled} onChange={onAptToggle} />
+              <Switch checked={cfg.apt_enabled} onChange={onAptToggle} loading={save.isPending} />
             </Col>
           </Row>
 
@@ -1022,7 +1020,11 @@ function AutomaticUpdatesCard() {
               </div>
             </Col>
             <Col>
-              <Switch checked={cfg.security_enabled} onChange={(v) => patch({ security_enabled: v })} />
+              <Switch
+                checked={cfg.security_enabled}
+                onChange={(v) => patch({ security_enabled: v })}
+                loading={save.isPending}
+              />
             </Col>
           </Row>
 
@@ -1045,19 +1047,19 @@ function AutomaticUpdatesCard() {
                 format="HH:mm"
                 minuteStep={15}
                 allowClear={false}
-                disabled={!cfg.jabali_enabled}
+                disabled={!cfg.jabali_enabled || save.isPending}
                 value={dayjs(cfg.jabali_time, "HH:mm")}
                 onChange={(d) => patch({ jabali_time: d ? d.format("HH:mm") : cfg.jabali_time })}
               />
             </Col>
             <Col>
-              <Switch checked={cfg.jabali_enabled} onChange={(v) => patch({ jabali_enabled: v })} />
+              <Switch
+                checked={cfg.jabali_enabled}
+                onChange={(v) => patch({ jabali_enabled: v })}
+                loading={save.isPending}
+              />
             </Col>
           </Row>
-
-          <Button type="primary" onClick={onSave} disabled={!dirty} loading={save.isPending}>
-            Save
-          </Button>
         </Space>
       )}
     </Card>
