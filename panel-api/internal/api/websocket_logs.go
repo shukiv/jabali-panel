@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -68,6 +69,9 @@ type LogStreamHandlerConfig struct {
 	LogAccessStreams repository.LogAccessStreamRepository
 	Domains          repository.DomainRepository
 	Log              *slog.Logger
+	// Agent and Users serve the "php" stream (logs_php.go).
+	Agent agent.AgentInterface
+	Users repository.UserRepository
 }
 
 // RegisterLogStreamRoutes sets up WebSocket log streaming endpoints
@@ -128,7 +132,11 @@ func (h *logStreamHandler) streamLogs(c *gin.Context) {
 	// to control frames (ping/pong, close) — without this the browser
 	// can hang on close handshake and the server doesn't notice peer
 	// disconnection.
+	// closed tells a polling stream (php) that the peer went away; the tail
+	// streams notice on their next write.
+	closed := make(chan struct{})
 	go func() {
+		defer close(closed)
 		for {
 			if _, _, err := conn.NextReader(); err != nil {
 				return
@@ -142,6 +150,8 @@ func (h *logStreamHandler) streamLogs(c *gin.Context) {
 		h.streamLogFile(conn, stream)
 	case "goaccess":
 		h.streamGoAccess(conn, stream)
+	case "php":
+		h.streamPHPErrorLog(conn, stream, closed)
 	default:
 		h.cfg.Log.Error("unsupported log type", "type", stream.LogType)
 		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, "unsupported log type"))

@@ -30,10 +30,15 @@ function actionsFor(
 const realRow: DomainLogRow = { id: "d1", name: "example.com", status: "active" };
 
 describe("buildDomainLogColumns — shape (AC6)", () => {
-  it("wires the three log types with their labels", () => {
+  it("wires the four log types with their labels", () => {
     const actions = actionsFor({ onOpenDomain: vi.fn() }, realRow);
+    expect(actions.map((a) => a.key)).toEqual(["access", "error", "goaccess", "php"]);
+    expect(actions.map((a) => a.label)).toEqual(["Access Log", "Error Log", "Real Time", "PHP Errors"]);
+  });
+
+  it("offers no PHP errors on the aggregate row: that log is per domain", () => {
+    const actions = actionsFor({ onOpenDomain: vi.fn(), onOpenAggregate: vi.fn() }, ALL_DOMAINS_ROW);
     expect(actions.map((a) => a.key)).toEqual(["access", "error", "goaccess"]);
-    expect(actions.map((a) => a.label)).toEqual(["Access Log", "Error Log", "Real Time"]);
   });
 });
 
@@ -56,6 +61,7 @@ describe("admin scope — can open aggregate (AC1)", () => {
       ["access", "d1"],
       ["error", "d1"],
       ["goaccess", "d1"],
+      ["php", "d1"],
     ]);
     expect(onOpenAggregate).not.toHaveBeenCalled();
   });
@@ -86,6 +92,7 @@ describe("tenant scope — can NEVER open aggregate (AC2)", () => {
       ["access", "d1"],
       ["error", "d1"],
       ["goaccess", "d1"],
+      ["php", "d1"],
     ]);
   });
 });

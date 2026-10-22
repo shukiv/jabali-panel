@@ -2,7 +2,7 @@
 // admin DomainLogsTab and the tenant UserLogsPage both render a TABLE of
 // domains whose rows open a stream; this is the one-domain counterpart, used by
 // the tenant Web Domain page's Logs tab where the domain is already fixed by the
-// route. It offers the three streams (Access / Error / Real Time) as direct
+// route. It offers the streams (Access / Error / Real Time / PHP Errors) as direct
 // buttons rather than a one-row table, and reuses the neutral stream lifecycle
 // (useDomainLogStreams) and modal so the create/close contract — and its AC2
 // guarantee that a per-domain request always carries the domain id — is shared,
@@ -13,6 +13,7 @@
 import type { ReactNode } from "react";
 import { Button, Space, Typography } from "antd";
 import {
+  BugOutlined,
   DashboardOutlined,
   FileTextOutlined,
   WarningOutlined,
@@ -21,13 +22,14 @@ import { LogStreamModal } from "../LogStreamModal";
 import { LOG_STREAM_LABELS, type LogType } from "./domainLogStreams";
 import { useDomainLogStreams } from "./useDomainLogStreams";
 
-// The three streams, in the order the domain tables present them. Each opens
+// The four streams, in the order the domain tables present them. Each opens
 // with the domain id bound, so the request is always per-domain (never the
 // admin aggregate).
 const STREAMS: { logType: LogType; icon: ReactNode }[] = [
   { logType: "access", icon: <FileTextOutlined /> },
   { logType: "error", icon: <WarningOutlined /> },
   { logType: "goaccess", icon: <DashboardOutlined /> },
+  { logType: "php", icon: <BugOutlined /> },
 ];
 
 export interface DomainLogsPanelProps {
@@ -41,7 +43,8 @@ export const DomainLogsPanel = ({ domainId }: DomainLogsPanelProps) => {
     <>
       <Typography.Paragraph type="secondary">
         Live tail of this domain's web logs. Access and Error stream the raw nginx
-        logs; Real Time opens the GoAccess dashboard.
+        logs; Real Time opens the GoAccess dashboard; PHP Errors streams the
+        warnings and errors of the domain's PHP scripts.
       </Typography.Paragraph>
       <Space wrap>
         {STREAMS.map(({ logType, icon }) => (

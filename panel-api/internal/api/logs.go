@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/logaccess"
@@ -26,13 +27,15 @@ type LogHandlerConfig struct {
 	LogAccessStreams repository.LogAccessStreamRepository
 	Domains          repository.DomainRepository
 	Users            repository.UserRepository
+	// Agent reads the "php" log type (logs_php.go); nil serves 503 for it.
+	Agent agent.AgentInterface
 }
 
 type logHandler struct{ cfg LogHandlerConfig }
 
 type createLogAccessRequest struct {
 	DomainID string `json:"domain_id,omitempty"`
-	LogType  string `json:"log_type" binding:"required,oneof=access error goaccess"`
+	LogType  string `json:"log_type" binding:"required,oneof=access error goaccess php"`
 }
 
 type logAccessResponse struct {
@@ -68,8 +71,8 @@ func (h *logHandler) tail(c *gin.Context) {
 	}
 
 	logType := c.Query("log_type")
-	if logType != "access" && logType != "error" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "log_type must be 'access' or 'error'"})
+	if logType != "access" && logType != "error" && logType != "php" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "log_type must be 'access', 'error' or 'php'"})
 		return
 	}
 	domainID := c.Query("domain_id")
@@ -107,6 +110,11 @@ func (h *logHandler) tail(c *gin.Context) {
 	}
 	if !claims.IsAdmin && domain.UserID != claims.UserID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "domain not found"})
+		return
+	}
+
+	if logType == "php" {
+		h.tailPHPErrorLog(c, domain, lines)
 		return
 	}
 
@@ -163,6 +171,12 @@ func (h *logHandler) listTypes(c *gin.Context) {
 			"description": "Real-time web log analyzer dashboard",
 			"realtime":    true,
 		},
+		{
+			"type":        "php",
+			"name":        "PHP Errors",
+			"description": "PHP warnings and errors from the domain's scripts",
+			"realtime":    true,
+		},
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -181,6 +195,11 @@ func (h *logHandler) createAccess(c *gin.Context) {
 	var req createLogAccessRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	// PHP error logs are per domain: there is no server-wide one to aggregate.
+	if req.LogType == "php" && req.DomainID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "domain_id required for the PHP error log"})
 		return
 	}
 
@@ -312,7 +331,7 @@ func (h *logHandler) deleteAccess(c *gin.Context) {
 // validateLogType ensures the log type is supported
 func validateLogType(logType string) error {
 	switch logType {
-	case "access", "error", "goaccess":
+	case "access", "error", "goaccess", "php":
 		return nil
 	default:
 		return fmt.Errorf("unsupported log type: %s", logType)

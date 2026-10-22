@@ -58,5 +58,13 @@ describe("DomainLogsPanel (GH #1543)", () => {
         domain_id: "d1",
       }),
     );
+
+    fireEvent.click(screen.getByRole("button", { name: /PHP Errors/ }));
+    await vi.waitFor(() =>
+      expect(mocked.post).toHaveBeenLastCalledWith("/logs/access", {
+        log_type: "php",
+        domain_id: "d1",
+      }),
+    );
   });
 });
