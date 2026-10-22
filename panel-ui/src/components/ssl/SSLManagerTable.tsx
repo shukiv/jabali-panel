@@ -47,6 +47,9 @@ interface SSLCertificate {
   // Domain ssl_mode (le/self/custom/none/shared) — absent on the synthetic
   // panel-cert:*/mail-cert:* rows (Certificate console Mode column).
   ssl_mode?: string;
+  // GH #2200: the domain's owner has not proven the name yet (GH #1816), so
+  // it gets a self-signed placeholder and Let's Encrypt is not asked.
+  ownership_pending?: boolean;
 }
 
 interface SSLManagerTableProps {
@@ -349,8 +352,15 @@ export const SSLManagerTable = ({
       key: "status",
       render: (status: string, record: SSLCertificate) => {
         let tooltip = "";
-        if (status === "self_signed") {
-          tooltip = "Self-signed certificate (Self SSL mode) — browsers show a trust warning; not issued by a CA.";
+        // GH #2200: say WHY a row is self-signed. Most are a domain waiting
+        // for proof of ownership or a Let's Encrypt domain's placeholder, not
+        // Self SSL mode.
+        if (record.ownership_pending) {
+          tooltip = t("sslmanagertable.self_signed_ownership_pending");
+        } else if (status === "self_signed") {
+          tooltip = record.ssl_mode === "self"
+            ? t("sslmanagertable.self_signed_self_mode")
+            : t("sslmanagertable.self_signed_placeholder");
         } else if (status === "pending_acme_retry") {
           tooltip = `ACME failed — retrying at ${formatDate(record.next_retry_at)}`;
         }
@@ -367,6 +377,11 @@ export const SSLManagerTable = ({
                 {status === "pending_acme_retry" ? "Pending" : status.charAt(0).toUpperCase() + status.slice(1).replace(/_/g, " ")}
               </Tag>
             </Tooltip>
+            {record.ownership_pending && (
+              <Tooltip title={tooltip}>
+                <Tag color="gold">{t("sslmanagertable.ownership_pending")}</Tag>
+              </Tooltip>
+            )}
             {hasError && (
               <Tooltip title={t("sslmanagertable.show_last_error")}>
                 <Button
@@ -505,7 +520,10 @@ export const SSLManagerTable = ({
             </Tooltip>
           );
         }
-        const isRetryable = adminActions && (record.status === "failed" ||
+        // GH #2200: no Retry while the domain waits for proof of ownership;
+        // Let's Encrypt is not asked until then, and the server refuses it.
+        const canRetry = adminActions && !record.ownership_pending;
+        const isRetryable = canRetry && (record.status === "failed" ||
           (record.status === "pending_acme_retry" && record.next_retry_at && new Date(record.next_retry_at) < new Date()));
         // One labeled, state-appropriate primary action per row; the rest
         // live in the ⋯ overflow (Certificate console). Renew stays primary
@@ -518,7 +536,7 @@ export const SSLManagerTable = ({
           ...(record.status === "issued"
             ? [{ key: "revoke", danger: true, icon: <DeleteOutlined />, label: t("sslmanagertable.revoke_certificate") }]
             : []),
-          ...(adminActions && record.status === "pending_acme_retry" && !isRetryable
+          ...(canRetry && record.status === "pending_acme_retry" && !isRetryable
             ? [{ key: "retry", icon: <RedoOutlined />, label: "Force retry now" }]
             : []),
           ...(record.last_error && record.status !== "issued"

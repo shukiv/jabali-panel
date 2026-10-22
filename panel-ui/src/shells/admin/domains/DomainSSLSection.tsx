@@ -59,6 +59,8 @@ type Props = {
   domainId: string;
   domainName: string;
   sslEnabled: boolean;
+  // GH #2200: the domain's owner has not proven the name yet (GH #1816).
+  ownershipPending?: boolean;
   onToggled: () => void;
 };
 
@@ -90,7 +92,7 @@ function hostMatchesSAN(san: string, host: string): boolean {
 const certCoversHost = (cert: SharedCert, host: string): boolean =>
   (cert.sans ?? []).some((s) => hostMatchesSAN(s, host));
 
-export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }: Props) => {
+export const DomainSSLSection = ({ domainId, domainName, sslEnabled, ownershipPending = false, onToggled }: Props) => {
   const { t } = useTranslation();
   const [cert, setCert] = useState<SSLCertificate | null>(null);
   const [certMissing, setCertMissing] = useState(false);
@@ -309,7 +311,17 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
         />
       )}
 
-      {status === "self_signed" || status === "pending_acme_retry" ? (
+      {/* GH #2200: an unproven name (GH #1816) is self-signed because Let's
+          Encrypt is not asked until it is verified. Say that, and offer no
+          Retry: the server refuses it (409 domain_ownership_pending). */}
+      {ownershipPending ? (
+        <Alert
+          type="info"
+          showIcon
+          title={t("domainsslsection.waiting_for_proof_of_ownership")}
+          description={t("domainsslsection.ownership_pending_no_certificate")}
+        />
+      ) : status === "self_signed" || status === "pending_acme_retry" ? (
         <Alert
           type="warning"
           showIcon
@@ -342,7 +354,7 @@ export const DomainSSLSection = ({ domainId, domainName, sslEnabled, onToggled }
         />
       ) : null}
 
-      {status === "failed" ? (
+      {status === "failed" && !ownershipPending ? (
         <Alert
           type="error"
           showIcon

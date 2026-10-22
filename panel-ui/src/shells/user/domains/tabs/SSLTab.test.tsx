@@ -85,3 +85,19 @@ describe("SSLTab (GH #1543)", () => {
     expect(screen.queryByRole("button", { name: /Renew|Retry/ })).not.toBeInTheDocument();
   });
 });
+
+// GH #2200: a tenant domain waiting for proof of ownership is self-signed
+// because Let's Encrypt is not asked until the name is verified.
+describe("SSLTab ownership pending (GH #2200)", () => {
+  it("says the certificate comes once the domain is verified", async () => {
+    get.mockResolvedValue({ data: { ssl: { status: "self_signed" } } });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <SSLTab domain={{ ...domain, ownership_status: "pending" } as Domain} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/waiting for proof of ownership/)).toBeInTheDocument();
+    expect(screen.queryByText(/certificate mode is set by the server administrator/)).not.toBeInTheDocument();
+  });
+});

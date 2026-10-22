@@ -3171,8 +3171,8 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 	// replaces an issued certificate once a domain goes back to pending. A
 	// 'none' domain keeps no certificate, and a 'custom' one keeps the
 	// certificate its owner uploaded (a CA already validated that name).
-	if ownershipPending(domain) && domain.SSLMode != models.SSLModeNone && domain.SSLMode != models.SSLModeCustom {
-		r.sslEnsureSelfSigned(ctx, domain, cert)
+	if certificateAwaitsOwnership(domain) {
+		r.sslEnsureSelfSigned(ctx, domain, cert, selfSignReasonOwnership)
 		return
 	}
 
@@ -3196,7 +3196,7 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		// not touch custom certs (no auto-renew) — it only leaves them in
 		// place for createDomainOnAgent to serve.
 	case models.SSLModeSelf:
-		r.sslEnsureSelfSigned(ctx, domain, cert)
+		r.sslEnsureSelfSigned(ctx, domain, cert, selfSignReasonSelfMode)
 	default: // SSLModeLE and legacy empty mode
 		switch {
 		// GH #896/#887: on the FIRST reconcile of a fresh domain there is no
@@ -3209,9 +3209,9 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		// immediately, and the next tick's self_signed branch upgrades to
 		// Let's Encrypt once the docroot exists.
 		case cert == nil:
-			r.sslEnsureSelfSigned(ctx, domain, nil)
+			r.sslEnsureSelfSigned(ctx, domain, nil, selfSignReasonBootstrap)
 		case cert.Status == models.SSLStatusPending && cert.RetryCount == 0 && cert.CertPath == nil:
-			r.sslEnsureSelfSigned(ctx, domain, cert)
+			r.sslEnsureSelfSigned(ctx, domain, cert, selfSignReasonBootstrap)
 		case cert.Status == models.SSLStatusPending && cert.RetryCount == 0:
 			r.tryACMEOrFallback(ctx, domain, cert)
 		case cert.Status == models.SSLStatusPendingACMERetry && cert.NextRetryAt != nil && cert.NextRetryAt.Before(time.Now().UTC()):
@@ -3249,11 +3249,22 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 	}
 }
 
-// sslEnsureSelfSigned converges a 'self' mode domain to a self-signed cert
-// (GH #246). It signs only when there is no usable cert yet — no cert row,
-// a non-self-signed row, or a self-signed cert within 30 days of expiry —
-// so the per-tick reconcile is a no-op once converged. Never attempts ACME.
-func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate) {
+// Why sslEnsureSelfSigned signs, for its one log line. It logs only when it
+// signs, so `journalctl -u jabali-panel` says once why a domain serves a
+// self-signed certificate (GH #2200), without a line every tick.
+const (
+	selfSignReasonSelfMode  = "self mode"
+	selfSignReasonBootstrap = "placeholder until Let's Encrypt issues"
+	selfSignReasonOwnership = "domain ownership not proven yet: no certificate from a CA until it is verified (jabali domain ownership status <domain>)"
+)
+
+// sslEnsureSelfSigned converges a domain to a self-signed cert: a 'self' mode
+// domain (GH #246), a fresh Let's Encrypt domain's bootstrap placeholder, and
+// an unproven name (GH #1816). It signs only when there is no usable cert yet
+// — no cert row, a non-self-signed row, or a self-signed cert within 30 days
+// of expiry — so the per-tick reconcile is a no-op once converged. Never
+// attempts ACME.
+func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Domain, cert *models.SSLCertificate, reason string) {
 	needsSign := cert == nil ||
 		cert.Status != models.SSLStatusSelfSigned ||
 		cert.CertPath == nil || cert.KeyPath == nil ||
@@ -3274,17 +3285,17 @@ func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Dom
 	defer cancel()
 	raw, err := r.agent.Call(callCtx, "ssl.self_sign", ssParams)
 	if err != nil {
-		r.log.Warn("ssl: self mode self_sign failed", "domain", domain.Name, "err", err)
+		r.log.Warn("ssl: self_sign failed", "domain", domain.Name, "reason", reason, "err", err)
 		return
 	}
 	var res sslSelfSignResult
 	if err := json.Unmarshal(raw, &res); err != nil {
-		r.log.Warn("ssl: self mode parse result failed", "domain", domain.Name, "err", err)
+		r.log.Warn("ssl: parse result failed", "domain", domain.Name, "reason", reason, "err", err)
 		return
 	}
 	expiresAt, err := time.Parse(time.RFC3339, res.ExpiresAt)
 	if err != nil {
-		r.log.Warn("ssl: self mode parse expires_at failed", "domain", domain.Name, "err", err)
+		r.log.Warn("ssl: parse expires_at failed", "domain", domain.Name, "reason", reason, "err", err)
 		return
 	}
 	if cert == nil {
@@ -3297,14 +3308,14 @@ func (r *Reconciler) sslEnsureSelfSigned(ctx context.Context, domain *models.Dom
 			ExpiresAt: &expiresAt,
 		}
 		if err := r.sslCerts.Create(ctx, newCert); err != nil {
-			r.log.Error("ssl: self mode create cert row failed", "domain", domain.Name, "err", err)
+			r.log.Error("ssl: create cert row failed", "domain", domain.Name, "reason", reason, "err", err)
 			return
 		}
 	} else if err := r.sslCerts.UpdateSelfSigned(ctx, cert.ID, res.CertPath, res.KeyPath, expiresAt); err != nil {
-		r.log.Error("ssl: self mode update cert row failed", "domain", domain.Name, "err", err)
+		r.log.Error("ssl: update cert row failed", "domain", domain.Name, "reason", reason, "err", err)
 		return
 	}
-	r.log.Info("ssl: self-signed (self mode)", "domain", domain.Name, "expires_at", expiresAt.Format(time.RFC3339))
+	r.log.Info("ssl: self-signed", "domain", domain.Name, "reason", reason, "expires_at", expiresAt.Format(time.RFC3339))
 }
 
 // tryACMEOrFallback attempts ACME issuance; on failure, calls ssl.self_sign

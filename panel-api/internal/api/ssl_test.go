@@ -454,7 +454,11 @@ func TestRetrySSL(t *testing.T) {
 		mockCerts.On("ResetForRetry", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 		// GH #2126: retry loads the domain first (it refuses the panel hostname).
 		mockDomains := new(MockDomainRepository)
-		mockDomains.On("FindByID", mock.Anything, "domain-1").Return(&models.Domain{ID: "domain-1", Name: "site.example.com", UserID: "u1"}, nil)
+		// GH #2200: a proven domain; an unproven one is refused before the
+		// status check (ssl_ownership_test.go).
+		dom := &models.Domain{ID: "domain-1", Name: "site.example.com", UserID: "u1"}
+		dom.OwnershipStatus = models.OwnershipVerified
+		mockDomains.On("FindByID", mock.Anything, "domain-1").Return(dom, nil)
 		cfg := SSLHandlerConfig{Domains: mockDomains, SSLCerts: mockCerts, Reconciler: sched}
 		return newSSLHandler(cfg), mockCerts, sched
 	}

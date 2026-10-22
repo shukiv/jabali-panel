@@ -32,6 +32,31 @@ func OwnershipVerified(d *models.Domain) bool {
 	return d != nil && d.OwnershipState.Verified()
 }
 
+// CertificateAwaitsOwnership reports whether a domain gets no certificate
+// from a CA because its name is not proven yet. The reconciler serves such a
+// domain a self-signed placeholder and never asks Let's Encrypt. Every ssl_mode
+// is held back except 'none' (it keeps no certificate) and 'custom' (it keeps
+// the certificate its owner uploaded, which a CA already validated).
+//
+// The reconciler's SSL step and the SSL doors (CLI and API renew, retry and
+// the SSL Manager) share this predicate, so a door never offers a retry that
+// the gate turns back into a self-signed placeholder (GH #2200).
+func CertificateAwaitsOwnership(d *models.Domain) bool {
+	return d != nil && !OwnershipVerified(d) &&
+		d.SSLMode != models.SSLModeNone && d.SSLMode != models.SSLModeCustom
+}
+
+// CertificateRowAwaitsOwnership is CertificateAwaitsOwnership for a row of
+// the website certificate lists, which carry the domain's ssl_mode and
+// ownership status on the join. Website rows only: the panel and mail rows
+// the SSL Manager adds carry no ownership status.
+func CertificateRowAwaitsOwnership(row repository.SSLCertificateWithDomain) bool {
+	return CertificateAwaitsOwnership(&models.Domain{
+		SSLMode:        row.SSLMode,
+		OwnershipState: models.OwnershipState{OwnershipStatus: row.OwnershipStatus},
+	})
+}
+
 // NewOwnershipToken returns a fresh challenge token: 32 random bytes,
 // hex-encoded (64 characters). A token is never reused across rows.
 func NewOwnershipToken() (string, error) {
