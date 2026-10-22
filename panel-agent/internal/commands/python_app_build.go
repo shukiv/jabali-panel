@@ -29,7 +29,7 @@ const (
 )
 
 // pythonBuildTimeout bounds one whole background build. Each pip step also has
-// its own 8-minute cap in runAsUserInDir.
+// its own 8-minute cap in runAsUserInSlice.
 const pythonBuildTimeout = 30 * time.Minute
 
 type pythonBuild struct {
@@ -234,7 +234,7 @@ func runPythonBuild(ctx context.Context, p pythonAppApplyParams, pl pythonBuildP
 		if err := ensurePythonVenvPackage(ctx, p.PythonVersion); err != nil {
 			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("python venv prerequisite: %v", err)}
 		}
-		if out, err := runAsUser(ctx, p.Username, "python"+p.PythonVersion, "-m", "venv", pl.venv); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", "python"+p.PythonVersion, "-m", "venv", pl.venv); err != nil {
 			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("create venv: %v: %s", err, out)}
 		}
 	}
@@ -244,7 +244,7 @@ func runPythonBuild(ctx context.Context, p pythonAppApplyParams, pl pythonBuildP
 		// as a bare traceback ("KeyError: '__version__'") with no clue which
 		// dependency broke (GH #357). Success output is discarded, so the
 		// only effect of dropping -q is a more useful failure message.
-		if out, err := runAsUser(ctx, p.Username, pl.pip, "install", "--disable-pip-version-check", "-r", pl.reqPath); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", pl.pip, "install", "--disable-pip-version-check", "-r", pl.reqPath); err != nil {
 			msg := fmt.Sprintf("pip install requirements: %v: %s", err, pipFailureContext(out))
 			writeReqFail(pl.reqFailMarker, pl.reqSHA, msg, time.Now())
 			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: msg}
@@ -255,7 +255,7 @@ func runPythonBuild(ctx context.Context, p pythonAppApplyParams, pl pythonBuildP
 	// App server: install only when its binary is missing from the venv.
 	// Checked here, after requirements.txt, which may already have installed it.
 	if !fileExists(filepath.Join(pl.venv, "bin", pl.server)) {
-		if out, err := runAsUser(ctx, p.Username, pl.pip, "install", "--disable-pip-version-check", pl.server); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", pl.pip, "install", "--disable-pip-version-check", pl.server); err != nil {
 			return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("pip install %s: %v: %s", pl.server, err, pipFailureContext(out))}
 		}
 	}

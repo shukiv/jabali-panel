@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -61,10 +62,17 @@ func newPyBuildFixture(t *testing.T, appID string) pyBuildFixture {
 	t.Setenv("PYBUILD_VENV", f.venv)
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "sudo" {
-			return exec.CommandContext(ctx, "sh", append([]string{"-c", fakeSudo, "sh"}, args...)...)
+		// systemd-run --scope ... -- sudo <args>: log the scope part to
+		// <log>.scope and run the sudo part.
+		if name == "systemd-run" {
+			for i, a := range args {
+				if a == "sudo" {
+					appendLine(t, f.log+".scope", strings.Join(args[:i+1], " "))
+					return exec.CommandContext(ctx, "sh", append([]string{"-c", fakeSudo, "sh"}, args[i+1:]...)...)
+				}
+			}
 		}
-		return exec.CommandContext(ctx, "true") // python3.11 -c "import ensurepip"
+		return exec.CommandContext(ctx, "true") // python3.11 -c "import ensurepip", systemctl stop
 	}
 	t.Cleanup(func() {
 		_ = os.WriteFile(f.rel, nil, 0o644) // never leave a build blocked
@@ -76,6 +84,17 @@ func newPyBuildFixture(t *testing.T, appID string) pyBuildFixture {
 
 func (f pyBuildFixture) step() (pythonBuildState, error) {
 	return pythonAppBuildStep(f.p, f.appRoot, f.venv, "gunicorn", f.stateDir)
+}
+
+// appendLine appends one line to a log file the test reads back.
+func appendLine(t *testing.T, path, line string) {
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer fh.Close()
+	fmt.Fprintln(fh, line)
 }
 
 // waitPythonBuild blocks until the app's background build has finished.
@@ -91,6 +110,32 @@ func waitPythonBuild(t *testing.T, appID string) {
 	case <-b.done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("background build did not finish")
+	}
+}
+
+// Every build command (venv, pip install -r, the app server) runs in the
+// owner's slice, in a scope of its own named after the app.
+func TestPythonAppBuild_RunsInOwnersSlice(t *testing.T) {
+	f := newPyBuildFixture(t, "01BUILDSLICE00000000000000")
+	_ = os.WriteFile(f.rel, nil, 0o644)
+	if state, err := f.step(); err != nil || state != pythonBuildRunning {
+		t.Fatalf("first call: state=%v err=%v, want running", state, err)
+	}
+	waitPythonBuild(t, f.p.AppID)
+	if state, err := f.step(); err != nil || state != pythonBuildFinished {
+		t.Fatalf("after the build: state=%v err=%v, want finished", state, err)
+	}
+	cmds, _ := os.ReadFile(f.log)
+	scopes, _ := os.ReadFile(f.log + ".scope")
+	want := regexp.MustCompile(`^--scope --quiet --collect --slice=jabali-user-tenant\.slice --unit=jabali-app-build-01BUILDSLICE00000000000000-[0-9]+\.scope --property=TimeoutStopSec=5 -- sudo$`)
+	lines := strings.Split(strings.TrimSpace(string(scopes)), "\n")
+	if n := len(strings.Split(strings.TrimSpace(string(cmds)), "\n")); n < 2 || len(lines) != n {
+		t.Fatalf("%d commands ran, %d of them through a scope:\n%s", n, len(lines), scopes)
+	}
+	for _, l := range lines {
+		if !want.MatchString(l) {
+			t.Fatalf("build command outside the owner's slice: %q", l)
+		}
 	}
 }
 

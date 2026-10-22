@@ -230,6 +230,31 @@ func TestPythonScaffold_SourceUnpacksAsTheTenant(t *testing.T) {
 	}
 }
 
+// The scaffold's venv and pip steps run in the owner's slice, like a build.
+func TestPythonScaffold_VenvStepsRunInTheSlice(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	archive, sum := sourceArchive(t, map[string]string{"manage.py": "print('sic')\n"})
+	srv := sourceServer(t, archive)
+	calls := asTenantExec(t)
+	raw, _ := json.Marshal(sourceScaffoldParams(t.TempDir(), srv.URL+"/a.tar.gz", sum))
+	if _, err := pythonAppScaffoldHandler(context.Background(), raw); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+	n := 0
+	for _, c := range *calls {
+		if !strings.Contains(c, "venv") {
+			continue
+		}
+		n++
+		if !strings.HasPrefix(c, "systemd-run --scope ") || !strings.Contains(c, " --slice=jabali-user-u.slice ") || !strings.Contains(c, " -- sudo -u u -H ") {
+			t.Errorf("venv step outside the owner's slice: %q", c)
+		}
+	}
+	if n < 2 {
+		t.Fatalf("want the venv and pip steps, got %d in %q", n, *calls)
+	}
+}
+
 func TestPythonScaffold_SourceInstallsItsSystemLibs(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	archive, sum := sourceArchive(t, map[string]string{"manage.py": "print('sic')\n"})
@@ -335,6 +360,9 @@ func (l *libExec) install(t *testing.T) {
 		case "apt-cache":
 			return exec.CommandContext(ctx, "printf", "%s", strings.Join(l.pkgnames, "\n")+"\n")
 		case "systemd-run":
+			if len(args) > 0 && args[0] == "--scope" {
+				return prev(ctx, name, args...) // a build command (runAsUserInSlice), not apt
+			}
 			l.installs = append(l.installs, args)
 			l.present = !l.staysMissing
 			return exec.CommandContext(ctx, "true")
