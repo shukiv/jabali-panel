@@ -233,7 +233,9 @@ dropped, whatever that account's egress state, from PHP, cron jobs and SSH
 shells alike. So nginx stays in front of every app: its WAF, password
 protection and IP rules apply to every request that reaches the app. Ports the
 panel did not allocate are not affected, so a service an account runs on a port
-of its own keeps working. The drops are counted in
+of its own keeps working. An administrator's own login (uid 1000 and up) is
+treated like any other account, so reach an app port from a shell as root
+(`sudo curl http://127.0.0.1:<port>/`). The drops are counted in
 `nft list counter inet jabali_per_user loopback_app_drops`.
 
 ## Malware (M33, M33.2)
