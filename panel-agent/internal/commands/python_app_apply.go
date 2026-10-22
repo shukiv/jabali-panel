@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
-	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // app.python.apply (ADR-0131 / GH #203) — converge one Python app's runtime:
@@ -94,6 +93,10 @@ type pythonAppApplyResult struct {
 	// Building means the venv/pip build is still running in the background
 	// (GH #357); the panel shows the app as building and asks again next tick.
 	Building bool `json:"building,omitempty"`
+	// Restarted is true when this call (re)started the unit. Not sent: the
+	// Node.js apply only checks the app's port on a call that did not just
+	// start it.
+	Restarted bool `json:"-"`
 }
 
 func pythonAppUnitName(appID string) string { return "jabali-app-" + appID + ".service" }
@@ -138,31 +141,9 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		return nil, err
 	}
 
-	// Scope-validate app_root under the owner's home.
-	homeDir := "/home/" + p.Username
-	scope, err := filesafe.NewScope(p.UserID, p.Username, []string{homeDir})
+	appRoot, err := resolveAppRoot(ctx, p.UserID, p.Username, p.AppRoot)
 	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("scope: %v", err)}
-	}
-	// app_root may arrive home-relative ("domains/x/app") or absolute
-	// ("/home/<user>/domains/x/app"); filesafe.Resolve requires absolute.
-	appRootIn := p.AppRoot
-	if !filepath.IsAbs(appRootIn) {
-		appRootIn = filepath.Join(homeDir, appRootIn)
-	}
-	appRoot, err := scope.Resolve(appRootIn)
-	if err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("app_root validation failed: %v", err)}
-	}
-	if fi, err := os.Stat(appRoot); err != nil {
-		// Fresh plain app: the dir doesn't exist yet and there is no framework
-		// scaffold to create it. Make it AS THE TENANT so the venv + code land
-		// tenant-owned, inside the scope-validated path under the owner's home.
-		if out, mkerr := runAsUser(ctx, p.Username, "mkdir", "-p", appRoot); mkerr != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("create app_root: %v: %s", mkerr, out)}
-		}
-	} else if !fi.IsDir() {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "app_root exists but is not a directory"}
+		return nil, err
 	}
 
 	venv := filepath.Join(appRoot, "venv")
@@ -207,64 +188,15 @@ func pythonAppApplyHandler(ctx context.Context, params json.RawMessage) (any, er
 		needsRestart = true
 	}
 
-	// 3) EnvironmentFile (root-owned 0640; values never logged). ALWAYS write it
-	// so the file the unit references exists — renderEnvFile is empty for a
-	// minimal ASGI app with no env vars, and systemd hard-fails the unit
-	// ("Failed to load environment files: No such file or directory") when the
-	// EnvironmentFile is missing. A content change OR a previously-absent file
-	// counts as a restart trigger (the latter recovers an app broken by that
-	// missing file); an unchanged, present env is a no-op restart-wise.
-	envPath := filepath.Join(pythonAppEnvDir, p.AppID+".env")
-	envContent := renderEnvFile(p)
-	if prev, rerr := os.ReadFile(envPath); os.IsNotExist(rerr) || string(prev) != envContent {
-		needsRestart = true
-	}
-	if err := os.WriteFile(envPath, []byte(envContent), 0o640); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write env file: %v", err)}
-	}
-
-	// 4) systemd unit — always write so it exists; a changed (or absent) unit
-	// also needs a daemon-reload before restart.
+	// 3-5) EnvironmentFile, unit, reload/enable/restart.
 	start := p.StartCommand
 	if strings.TrimSpace(start) == "" {
 		start = derivePythonStart(venv, p, server)
 	}
-	unitPath := filepath.Join(pythonAppUnitDir, pythonAppUnitName(p.AppID))
-	unitContent := renderPythonUnit(p, appRoot, envPath, start)
-	unitChanged := false
-	if prev, rerr := os.ReadFile(unitPath); os.IsNotExist(rerr) || string(prev) != unitContent {
-		unitChanged = true
-		needsRestart = true
-	}
-	if err := os.WriteFile(unitPath, []byte(unitContent), 0o644); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write unit: %v", err)}
-	}
-
-	// 5) reload (only on unit change) + enable (idempotent) + restart (only when
-	// something changed). When nothing changed we leave the running process
-	// alone — systemd's Restart=on-failure owns crash recovery, and the Restart
-	// button drives a separate app.python.control call.
-	unit := pythonAppUnitName(p.AppID)
-	if unitChanged {
-		_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
-	}
-	_ = execCommandContext(ctx, "systemctl", "enable", "--quiet", unit).Run()
-	if needsRestart {
-		if out, err := execCommandContext(ctx, "systemctl", "restart", unit).CombinedOutput(); err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("restart %s: %v: %s%s", unit, err, strings.TrimSpace(string(out)), tasksLimitSuffix(ctx, unit))}
-		}
-	}
-
-	active := execCommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run() == nil
-	res := pythonAppApplyResult{Active: active, Unit: unit}
-	if !active {
-		// Capture WHY it isn't active so the panel shows the real startup error
-		// instead of only "not active — check journalctl" (GH #357).
-		// --output=cat drops syslog metadata; last 15 lines keep it bounded.
-		if out, jerr := execCommandContext(ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager", "--output=cat").CombinedOutput(); jerr == nil {
-			res.Detail = lastLines(strings.TrimSpace(string(out)), 15)
-		}
-		res.Hint = tasksLimitHint(ctx, unit)
+	envPath := filepath.Join(pythonAppEnvDir, p.AppID+".env")
+	res, err := applyAppUnit(ctx, p.AppID, envPath, renderEnvFile(p), renderPythonUnit(p, appRoot, envPath, start), needsRestart)
+	if err != nil {
+		return nil, err
 	}
 	return res, nil
 }
@@ -316,34 +248,10 @@ func writeEnvLines(b *strings.Builder, env map[string]string, keep func(string) 
 }
 
 func renderPythonUnit(p pythonAppApplyParams, appRoot, envPath, start string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "[Unit]\nDescription=Jabali Python app %s\nAfter=network.target\n\n", p.AppID)
-	b.WriteString("[Service]\n")
-	fmt.Fprintf(&b, "User=%s\nGroup=%s\n", p.Username, p.Username)
-	// Place the app inside the owner's M18 user slice (ADR-0131, Gitea #490) so
-	// the package's cgroup CPU/memory/PID limits apply to it via the slice,
-	// independent of the optional per-app caps below. systemd nests it under
-	// jabali.slice/jabali-user.slice automatically via the slice unit.
-	fmt.Fprintf(&b, "Slice=jabali-user-%s.slice\n", p.Username)
-	fmt.Fprintf(&b, "WorkingDirectory=%s\n", appRoot)
-	fmt.Fprintf(&b, "EnvironmentFile=%s\n", envPath)
-	fmt.Fprintf(&b, "ExecStart=%s\n", start)
-	b.WriteString("Restart=on-failure\nRestartSec=3\nNoNewPrivileges=true\nPrivateTmp=true\n")
-	// No system D-Bus: tenant code has no use for systemd, logind or any other
-	// system service on it (tenant PHP is denied it by the jabali-fpm-app
-	// AppArmor profile). "-" keeps the unit starting where the bus is absent.
-	b.WriteString("InaccessiblePaths=-/run/dbus/system_bus_socket\n")
-	if p.MemoryLimit != "" {
-		fmt.Fprintf(&b, "MemoryMax=%s\n", p.MemoryLimit)
-	}
-	if p.CPULimit != "" {
-		fmt.Fprintf(&b, "CPUQuota=%s\n", p.CPULimit)
-	}
-	if p.PIDsLimit > 0 {
-		fmt.Fprintf(&b, "TasksMax=%d\n", p.PIDsLimit)
-	}
-	b.WriteString("\n[Install]\nWantedBy=multi-user.target\n")
-	return b.String()
+	return renderAppUnit(appUnitSpec{
+		Runtime: "Python", AppID: p.AppID, Username: p.Username, AppRoot: appRoot, EnvPath: envPath,
+		Start: start, MemoryLimit: p.MemoryLimit, CPULimit: p.CPULimit, PIDsLimit: p.PIDsLimit,
+	})
 }
 
 // runAsUser runs a command as the hosting user via sudo, capturing output.
