@@ -76,6 +76,7 @@ When a Python app is created, or its `requirements.txt` changes, the panel build
 - A failed `pip install` shows the packages pip was working on and the last lines of its output. The panel retries it after 15 minutes, or straight away when `requirements.txt` changes.
 - Each pip step stops after 8 minutes. A build that never finishes in that time shows **failed** with `timed out`.
 - Restarting the agent stops a build that is running; the next pass starts it again, and pip keeps what it already installed.
+- The build runs in the account's slice, under its package's CPU, memory and task limits, like the app itself (see [Resource limits](./resource-limits.md)). Each step (`python -m venv`, each `pip install`, and each step of a framework's first setup) runs in a scope of its own, `jabali-app-build-<app id>-<n>.scope`, which is stopped when the step ends: nothing a build starts keeps running after it.
 
 ## Python apps — sic
 
