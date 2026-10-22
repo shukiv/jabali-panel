@@ -36,12 +36,9 @@ func runAsUserInSlice(ctx context.Context, appID, username, dir string, args ...
 	}
 	full = append(full, args...)
 	cmd := execCommandContext(ctx, "systemd-run", full...)
-	cmd.Cancel = func() error {
-		stopUnit(scope)
-		return cmd.Process.Kill()
-	}
-	// A process the command left behind keeps its output open: wait for it at
-	// most 10s, then stopping the scope below ends it.
+	// A process the command left behind, or the build's own once a cancel or
+	// timeout killed sudo, keeps its output open: wait for it at most 10s,
+	// then stopping the scope below ends it.
 	cmd.WaitDelay = 10 * time.Second
 	var out bytes.Buffer
 	cmd.Stdout = &out
