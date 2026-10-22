@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: "1.26.8"
+      ref:
+        description: Commit to test. Empty means the commit that started the run; release-hotfix.yml passes the hotfix commit.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -41,6 +46,8 @@ jobs:
           --health-retries=20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ inputs.go-version }}

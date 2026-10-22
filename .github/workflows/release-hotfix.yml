@@ -1,0 +1,226 @@
+# Hotfix release builds for the stable channel.
+#
+# release.yml builds a release for every commit on main. A stable-channel
+# server follows the movable `stable` tag instead, and a hotfix — the stable
+# commit plus a fix cherry-picked from main — is on no main commit, so it had
+# no release: every stable server then built it from source, which takes
+# minutes each. This workflow builds the release for a hotfix commit, so
+# moving `stable` to it delivers prebuilt binaries the same way a monthly
+# promotion does. docs/runbooks/hotfix-release.md has the whole procedure.
+#
+# Run it by hand, from main, naming the hotfix:
+#
+#   gh workflow run release-hotfix.yml --ref main -f ref=hotfix/<name>
+#
+# From main, not on push: a push runs the workflow files of the pushed
+# commit, and a hotfix commit has stable's files, which may predate this
+# workflow or carry an older copy of it. Dispatched from main, the check and
+# the publish steps are always main's; only the build uses the hotfix tree.
+#
+# The release it publishes:
+#   - keeps the contract `jabali update` reads (tag release-<short_sha>,
+#     assets jabali-release-<short_sha>.tar.gz[.sha256], MANIFEST inside), so
+#     a server finds it by commit (byCommitDownloadURLs);
+#   - is marked a pre-release and never "Latest", and gets no fixed-name
+#     jabali-release.tar.gz assets. Fresh installs and servers following main
+#     resolve the Latest release, so they never pick up a hotfix build.
+# Nothing installs it until `stable` is moved to its commit
+# (`jabali release promote <commit>`), which stays a deliberate, separate step.
+#
+# Keep the build and publish steps in step with release.yml.
+
+name: Release (hotfix)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "The hotfix to build: a hotfix/<name> branch, or a full 40-character commit SHA"
+        required: true
+        type: string
+
+# A newer run for the same hotfix supersedes an in-flight one.
+concurrency:
+  group: release-hotfix-${{ inputs.ref }}
+  cancel-in-progress: true
+
+# Signing is not done here either (JAB-190 / ADR-0162): run
+# `tools/sign-release.sh <tag>` on the machine holding the key.
+permissions:
+  contents: read
+
+jobs:
+  # Stable servers must get the stable build plus fixes main already has, and
+  # nothing else (tools/check-hotfix-branch.sh says what that rules out). The
+  # commit checked here is the one built: later jobs use this SHA, not the
+  # branch, which could move in between.
+  provenance:
+    name: hotfix is stable plus fixes from main
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.check.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check the hotfix
+        id: check
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            head="$REF"
+          elif [[ "$REF" =~ ^hotfix/[A-Za-z0-9._/-]+$ ]]; then
+            git fetch --force origin "+refs/heads/${REF}:refs/remotes/origin/${REF}"
+            head="refs/remotes/origin/${REF}"
+          else
+            echo "::error::ref must be a hotfix/<name> branch or a full 40-character commit SHA, not: ${REF}"
+            exit 1
+          fi
+          git fetch --force origin +refs/tags/stable:refs/tags/stable
+          # HEAD is main: this workflow only runs dispatched from main.
+          tools/check-hotfix-branch.sh refs/tags/stable "$head" HEAD
+          echo "sha=$(git rev-parse --verify "${head}^{commit}")" >> "$GITHUB_OUTPUT"
+
+  migrations:
+    needs: provenance
+    uses: ./.github/workflows/migrations-gate.yml
+    with:
+      go-version: "1.26.8"
+      ref: ${{ needs.provenance.outputs.sha }}
+
+  release:
+    name: Build + publish hotfix release tarball
+    needs: [provenance, migrations]
+    runs-on: self-hosted
+    permissions:
+      contents: write
+    env:
+      GO_VERSION: "1.26.8"
+      NODE_VERSION: "20"
+    steps:
+      # The build runs the hotfix tree's tools/build-release.sh, which matches
+      # the code it builds. The publish steps below are this file's: main's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.provenance.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: panel-ui/package-lock.json
+
+      - name: Build release tarball
+        id: build
+        env:
+          WANT_SHA: ${{ needs.provenance.outputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$WANT_SHA" ]] || { echo "::error::checked out $(git rev-parse HEAD), not the checked hotfix ${WANT_SHA}"; exit 1; }
+          tools/build-release.sh
+          echo "short_sha=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=release-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          ls -lh dist/
+
+      - name: Publish pre-release + assets
+        id: publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.build.outputs.tag }}
+          SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+          FULL_SHA: ${{ steps.build.outputs.full_sha }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          API="https://api.github.com"
+          UPLOADS="https://uploads.github.com"
+          hdr=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          TARBALL="dist/jabali-release-${SHORT_SHA}.tar.gz"
+          CHECKSUM="${TARBALL}.sha256"
+
+          payload="$(python3 - "$TAG" "$FULL_SHA" "$SHORT_SHA" "$REF" <<'PY'
+          import json, sys
+          tag, full, short, ref = sys.argv[1:5]
+          print(json.dumps({
+              "tag_name": tag, "target_commitish": full, "name": "Hotfix " + short,
+              "body": "Hotfix build for the stable channel: commit %s (%s). "
+                      "Not the newest development build. Stable servers install it "
+                      "once the stable tag points at this commit." % (full, ref),
+              "draft": False, "prerelease": True, "make_latest": "false"}))
+          PY
+          )"
+          # 201 on success, 422 if a release already exists for the tag: a
+          # rerun, or a commit that is also on main.
+          create_resp="$(curl -sS -w '\nHTTP_STATUS:%{http_code}' "${hdr[@]}" \
+            -X POST "${API}/repos/${REPO}/releases" -d "$payload")"
+          status="$(echo "$create_resp" | sed -n 's/^HTTP_STATUS://p')"
+          body="$(echo "$create_resp" | sed '/^HTTP_STATUS:/d')"
+          if [[ "$status" == "201" ]]; then
+            release_id="$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          elif [[ "$status" == "422" ]]; then
+            body="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/releases/tags/${TAG}")"
+            release_id="$(echo "$body" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+          else
+            echo "release create failed (status=${status}): ${body}"; exit 1
+          fi
+          echo "release_id=${release_id}"
+          echo "created=$([[ "$status" == 201 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+          # An asset already published stays as it is: replacing it would
+          # break a signature made for it (tools/sign-release.sh).
+          have="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/releases/${release_id}/assets" \
+            | python3 -c 'import json,sys; print("\n".join(a["name"] for a in json.load(sys.stdin)))')"
+          upload_asset() {
+            local f="$1" name ctype
+            name="$(basename "$f")"
+            if grep -qx "$name" <<<"$have"; then
+              echo "${name} is already published; leaving it"
+              return 0
+            fi
+            case "$name" in *.sha256) ctype="text/plain";; *) ctype="application/gzip";; esac
+            curl -sS --fail -X POST "${hdr[@]}" -H "Content-Type: ${ctype}" \
+              "${UPLOADS}/repos/${REPO}/releases/${release_id}/assets?name=${name}" \
+              --data-binary @"$f" >/dev/null
+            echo "uploaded ${name}"
+          }
+          # Only the commit-named assets. No fixed-name jabali-release.tar.gz:
+          # that name is how fresh installs find the newest main build.
+          upload_asset "$TARBALL"
+          upload_asset "$CHECKSUM"
+
+      # The release is good iff both assets are fetchable for this commit's
+      # tag and, when this run created it, the Latest release (what fresh
+      # installs and servers on main download) is still not this one.
+      - name: Confirm assets published, Latest untouched
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.build.outputs.tag }}
+          SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+          CREATED: ${{ steps.publish.outputs.created }}
+        run: |
+          set -euo pipefail
+          hdr=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json")
+          names="$(curl -sS "${hdr[@]}" "https://api.github.com/repos/${REPO}/releases/tags/${TAG}" \
+            | python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(a["name"] for a in d.get("assets",[])))')"
+          echo "assets for ${TAG}:"; echo "${names}"
+          for name in "jabali-release-${SHORT_SHA}.tar.gz" "jabali-release-${SHORT_SHA}.tar.gz.sha256"; do
+            echo "${names}" | grep -qx "${name}" || { echo "MISSING asset: ${name}"; exit 1; }
+          done
+          if [[ "$CREATED" == true ]]; then
+            latest="$(curl -sS "${hdr[@]}" "https://api.github.com/repos/${REPO}/releases/latest" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name",""))')"
+            echo "Latest release: ${latest}"
+            [[ "$latest" != "$TAG" ]] || { echo "::error::${TAG} became the Latest release"; exit 1; }
+          fi
+          echo "==> ${TAG} published; stable servers get it once stable points at ${SHORT_SHA}"

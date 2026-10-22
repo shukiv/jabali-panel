@@ -41,7 +41,12 @@ jobs:
   # as the "Latest" release, and every fresh install + auto-update would brick
   # on it — exactly what migration 301 did (GH #1766 / #1773). Shared verbatim
   # with the ci.yml PR gate via the reusable workflow.
+  #
+  # Only main: a run dispatched on another branch would publish that branch as
+  # the Latest release, with the fixed-name assets fresh installs download. A
+  # hotfix branch gets its release from release-hotfix.yml instead.
   migrations:
+    if: github.ref == 'refs/heads/main'
     uses: ./.github/workflows/migrations-gate.yml
     with:
       go-version: "1.26.8"
@@ -49,6 +54,7 @@ jobs:
   release:
     name: Build + publish release tarball
     needs: migrations
+    if: github.ref == 'refs/heads/main'
     runs-on: self-hosted
     env:
       GO_VERSION: "1.26.8"
