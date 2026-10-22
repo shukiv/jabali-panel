@@ -120,6 +120,12 @@ without Docker. They are off until an administrator turns them on in
 nothing: they run on the server's Node.js 22 from NodeSource, which the
 system's updates keep patched. No other Node.js version is offered.
 
+In the panel, a user creates one on the Python Apps page with **Create app**.
+The page is named for the runtimes that are on: **Python Apps**, **Node.js
+Apps**, or **Python & Node.js Apps**. With both on, the dialog has a
+**Runtime** choice, Python by default. A Node.js app's **Environment** editor
+refuses `PORT` and `HOST`.
+
 - **App type.** `node` runs `node <entrypoint>`, a `.js`, `.mjs` or `.cjs`
   file under the app directory, such as `server.js` or `dist/main.js`. `npm`
   runs `npm run <script>`, a script in `package.json` (`start` by default),

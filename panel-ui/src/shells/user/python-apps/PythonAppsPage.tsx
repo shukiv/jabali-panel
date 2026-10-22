@@ -1,6 +1,8 @@
 // Python Application Manager (ADR-0131 / GH #203) — user-shell page to
 // register and control native Python web apps. Hidden behind the
-// python_apps_enabled server setting; the API 403s when off.
+// python_apps_enabled server setting; the API 403s when off. Node.js apps
+// (ADR-0175, node_apps_enabled) share the page: the create dialog offers the
+// runtimes that are on.
 import { useTranslation } from "react-i18next";
 import {
   App,
@@ -8,6 +10,7 @@ import {
   Form,
   Input,
   Modal,
+  Radio,
   Select,
   Space,
   Table,
@@ -24,9 +27,16 @@ import { useQuery } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
 import { CatalogCard, CatalogGrid, CategoryFilter } from "../../../components/catalog";
-import type { CreatePythonAppInput, Framework, PythonApp } from "./usePythonApps";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { appManagerNavLabel } from "../../../nav";
+import type { AppRuntime, CreateAppForm, Framework, PythonApp } from "./usePythonApps";
 import {
+  NODE_APP_VERSION,
+  appRuntimes,
+  createAppBody,
   fetchPythonAppLogs,
+  nodeEntrypointRe,
+  npmScriptRe,
   useControlPythonApp,
   useCreatePythonApp,
   useDeletePythonApp,
@@ -47,9 +57,23 @@ const STATUS_COLOR: Record<string, string> = {
   failed: "red",
 };
 
+const PYTHON_APP_TYPES = [
+  { value: "wsgi", label: "WSGI (gunicorn)" },
+  { value: "asgi", label: "ASGI (uvicorn)" },
+];
+
+const NODE_APP_TYPES = [
+  { value: "node", label: "node <script>" },
+  { value: "npm", label: "npm run <script>" },
+];
+
 export function PythonAppsPage() {
   const { t } = useTranslation();
   const { message } = App.useApp();
+  const caps = useServerCapabilities();
+  const pythonOn = !!caps.data?.python_apps_enabled;
+  const nodeOn = !!caps.data?.node_apps_enabled;
+  const runtimes = appRuntimes(pythonOn, nodeOn);
   const apps = usePythonApps();
   const create = useCreatePythonApp();
   const pyVersions = usePythonVersions();
@@ -96,7 +120,10 @@ export function PythonAppsPage() {
   // When set, the create modal is a framework install: app_type + entrypoint
   // are derived from the catalog entry, so those fields are hidden (JAB-164).
   const [installFw, setInstallFw] = useState<Framework | null>(null);
-  const [form] = Form.useForm<CreatePythonAppInput>();
+  // The create dialog's runtime; the choice shows only when both are on.
+  const [runtime, setRuntime] = useState<AppRuntime>("python");
+  const [form] = Form.useForm<CreateAppForm>();
+  const appType = Form.useWatch("app_type", form);
   // A framework install only offers the runtimes its pinned deps support.
   const createVersionOptions = useMemo(
     () => versionsForFramework(versionOptions, installFw?.python_min),
@@ -104,13 +131,31 @@ export function PythonAppsPage() {
   );
   const openCreate = (fw?: Framework) => {
     form.resetFields();
+    // The framework catalog is Python's.
+    setRuntime(fw || pythonOn ? "python" : "node");
     setInstallFw(fw ?? null);
     setCreateOpen(true);
   };
+  // Keep the app type one the runtime has. The dialog's form outlives it, so
+  // this runs on open and on a runtime switch rather than via initialValues.
+  useEffect(() => {
+    if (!createOpen) return;
+    const current = form.getFieldValue("app_type");
+    const fits =
+      runtime === "node"
+        ? current === "node" || current === "npm"
+        : current === "wsgi" || current === "asgi";
+    if (!fits) {
+      form.setFields([
+        { name: "app_type", value: runtime === "node" ? "node" : "wsgi" },
+        { name: "entrypoint", value: undefined, errors: [] },
+      ]);
+    }
+  }, [createOpen, runtime, form]);
   // When the create dialog opens, default the Python version to the newest
   // interpreter actually installed on this host.
   useEffect(() => {
-    if (!createOpen) return;
+    if (!createOpen || runtime !== "python") return;
     const host = pyVersions.data?.default;
     const def =
       host && createVersionOptions.includes(host)
@@ -119,7 +164,7 @@ export function PythonAppsPage() {
     if (def && !form.getFieldValue("python_version")) {
       form.setFieldValue("python_version", def);
     }
-  }, [createOpen, pyVersions.data, createVersionOptions, form]);
+  }, [createOpen, runtime, pyVersions.data, createVersionOptions, form]);
   const [logsApp, setLogsApp] = useState<PythonApp | null>(null);
   const [logsText, setLogsText] = useState("");
   const [envApp, setEnvApp] = useState<PythonApp | null>(null);
@@ -162,13 +207,9 @@ export function PythonAppsPage() {
   const submit = async () => {
     const values = await form.validateFields();
     try {
-      await create.mutateAsync({
-        ...values,
-        base_uri: values.base_uri || "/",
-        // Framework install: send the slug; the server derives app_type +
-        // entrypoint and scaffolds the starter.
-        ...(installFw ? { framework: installFw.slug } : {}),
-      });
+      // Framework install: send the slug; the server derives app_type +
+      // entrypoint and scaffolds the starter.
+      await create.mutateAsync(createAppBody(runtime, values, installFw?.slug));
       message.success(
         installFw ? `Installing ${installFw.name}…` : "App created — building…",
       );
@@ -204,7 +245,7 @@ export function PythonAppsPage() {
         style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Python Apps
+          {t(appManagerNavLabel(pythonOn, nodeOn))}
         </Typography.Title>
         <Button type="primary" onClick={() => openCreate()}>
           Create app
@@ -240,7 +281,7 @@ export function PythonAppsPage() {
           title={t("pythonappspage.runtime")}
           render={(_, r) => (
             <span>
-              Python {r.python_version}{" "}
+              {r.runtime === "node" ? "Node.js" : "Python"} {r.python_version}{" "}
               <Tag>{r.app_type.toUpperCase()}</Tag>
             </span>
           )}
@@ -284,7 +325,8 @@ export function PythonAppsPage() {
               </Table>
             ),
           },
-          {
+          // The framework catalog has Python apps only.
+          ...(pythonOn ? [{
             key: "catalog",
             label: "Catalog",
             children: (
@@ -335,12 +377,18 @@ export function PythonAppsPage() {
                 </CatalogGrid>
               </>
             ),
-          },
+          }] : []),
         ]}
       />
 
       <Modal
-        title={installFw ? `Install ${installFw.name}` : "Create Python app"}
+        title={
+          installFw
+            ? `Install ${installFw.name}`
+            : runtime === "node"
+              ? "Create Node.js app"
+              : "Create Python app"
+        }
         open={createOpen}
         onCancel={() => setCreateOpen(false)}
         onOk={() => void submit()}
@@ -348,6 +396,20 @@ export function PythonAppsPage() {
         confirmLoading={create.isPending}
       >
         <Form form={form} layout="vertical" initialValues={{ app_type: "wsgi", base_uri: "/" }}>
+          {runtimes.length > 1 && !installFw && (
+            <Form.Item label="Runtime">
+              <Radio.Group
+                optionType="button"
+                buttonStyle="solid"
+                value={runtime}
+                onChange={(e) => setRuntime(e.target.value as AppRuntime)}
+                options={[
+                  { value: "python", label: "Python" },
+                  { value: "node", label: "Node.js" },
+                ]}
+              />
+            </Form.Item>
+          )}
           <Form.Item name="name" label={t("pythonappspage.name")} rules={[{ required: true }]}>
             <Input placeholder={t("pythonappspage.my_api")} />
           </Form.Item>
@@ -362,26 +424,34 @@ export function PythonAppsPage() {
             <Input placeholder="/" />
           </Form.Item>
           <Space style={{ width: "100%" }} size="middle">
-            <Form.Item name="python_version" label={t("pythonappspage.python")} rules={[{ required: true }]}>
-              <Select
-                style={{ width: 120 }}
-                loading={pyVersions.isLoading}
-                options={createVersionOptions.map((v) => ({ value: v, label: v }))}
-                notFoundContent={
-                  installFw?.python_min
-                    ? `${installFw.name} needs Python ${installFw.python_min} or newer, which is not installed on this server`
-                    : "No Python runtime installed on this server"
-                }
-              />
-            </Form.Item>
+            {runtime === "node" ? (
+              <Form.Item label="Node.js" tooltip="Node.js apps run on the server's Node.js 22">
+                <Select
+                  style={{ width: 120 }}
+                  value={NODE_APP_VERSION}
+                  disabled
+                  options={[{ value: NODE_APP_VERSION, label: NODE_APP_VERSION }]}
+                />
+              </Form.Item>
+            ) : (
+              <Form.Item name="python_version" label={t("pythonappspage.python")} rules={[{ required: true }]}>
+                <Select
+                  style={{ width: 120 }}
+                  loading={pyVersions.isLoading}
+                  options={createVersionOptions.map((v) => ({ value: v, label: v }))}
+                  notFoundContent={
+                    installFw?.python_min
+                      ? `${installFw.name} needs Python ${installFw.python_min} or newer, which is not installed on this server`
+                      : "No Python runtime installed on this server"
+                  }
+                />
+              </Form.Item>
+            )}
             {!installFw && (
               <Form.Item name="app_type" label={t("pythonappspage.type")} rules={[{ required: true }]}>
                 <Select
-                  style={{ width: 160 }}
-                  options={[
-                    { value: "wsgi", label: "WSGI (gunicorn)" },
-                    { value: "asgi", label: "ASGI (uvicorn)" },
-                  ]}
+                  style={{ width: runtime === "node" ? 180 : 160 }}
+                  options={runtime === "node" ? NODE_APP_TYPES : PYTHON_APP_TYPES}
                 />
               </Form.Item>
             )}
@@ -396,8 +466,32 @@ export function PythonAppsPage() {
                 : ""}
               .
             </Typography.Paragraph>
+          ) : runtime === "node" && appType === "npm" ? (
+            <Form.Item
+              key="npm-script"
+              name="entrypoint"
+              label="npm script"
+              tooltip="A script in package.json, run as npm run <script>. Empty runs start."
+              rules={[{ pattern: npmScriptRe, message: "Expected a package.json script name, like start" }]}
+            >
+              <Input placeholder="start" />
+            </Form.Item>
+          ) : runtime === "node" ? (
+            <Form.Item
+              key="node-entrypoint"
+              name="entrypoint"
+              label={t("pythonappspage.entrypoint")}
+              tooltip="A .js, .mjs or .cjs file under the app directory, e.g. server.js or dist/main.js"
+              rules={[
+                { required: true },
+                { pattern: nodeEntrypointRe, message: "Expected a .js, .mjs or .cjs file under the app directory" },
+              ]}
+            >
+              <Input placeholder="server.js" />
+            </Form.Item>
           ) : (
             <Form.Item
+              key="python-entrypoint"
               name="entrypoint"
               label={t("pythonappspage.entrypoint")}
               tooltip="module:callable, e.g. myapp.wsgi:application or main:app"
@@ -409,6 +503,13 @@ export function PythonAppsPage() {
           <Form.Item name="app_root" label={t("pythonappspage.app_directory")} tooltip={t("pythonappspage.path_under_your_home_e_g_domains_example_com")} rules={[{ required: true }]}>
             <Input placeholder="domains/example.com/app" />
           </Form.Item>
+          {runtime === "node" && (
+            <Typography.Paragraph type="secondary">
+              The app must listen on <Typography.Text code>process.env.PORT</Typography.Text>; the
+              panel sets PORT and HOST. With a package.json, the panel installs the dependencies
+              (npm ci when there is a lockfile) and runs npm run build when there is a build script.
+            </Typography.Paragraph>
+          )}
           {!installFw && (
             <>
               <Space style={{ width: "100%" }} size="middle">

@@ -1,16 +1,25 @@
-// Hooks for the Python Application Manager (ADR-0131 / GH #203).
+// Hooks for the Python Application Manager (ADR-0131 / GH #203). Node.js apps
+// (ADR-0175) share it: same table, routes and lifecycle, runtime "node".
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+
+export type AppRuntime = "python" | "node";
+
+// AppType is wsgi/asgi for a Python app; node (node <script>) or npm (npm run
+// <script>) for a Node.js app.
+export type AppType = "wsgi" | "asgi" | "node" | "npm";
 
 export type PythonApp = {
   id: string;
   user_id: string;
   domain_id: string;
   name: string;
+  runtime: AppRuntime;
+  // A Node.js app keeps its Node.js major here ("22").
   python_version: string;
   app_root: string;
-  app_type: "wsgi" | "asgi";
+  app_type: AppType;
   entrypoint: string;
   base_uri: string;
   // GH #878: nginx serves base_uri+static_url directly from
@@ -29,11 +38,16 @@ export type PythonApp = {
 export type CreatePythonAppInput = {
   domain_id: string;
   name: string;
-  python_version: string;
+  // runtime defaults to python on the server.
+  runtime?: AppRuntime;
+  python_version?: string;
+  // node_version is "22", the only Node.js version (the server's default).
+  node_version?: string;
   app_root: string;
   // app_type + entrypoint are derived from the catalog when `framework` is set,
-  // so they are optional on a framework install (JAB-164).
-  app_type?: "wsgi" | "asgi";
+  // so they are optional on a framework install (JAB-164). An npm app's
+  // entrypoint (its package.json script) defaults to start.
+  app_type?: AppType;
   entrypoint?: string;
   base_uri: string;
   env?: Record<string, string>;
@@ -67,6 +81,78 @@ export function versionsForFramework(versions: string[], pythonMin?: string): st
   if (!pythonMin) return versions;
   const minor = (v: string) => Number(v.split(".")[1]);
   return versions.filter((v) => minor(v) >= minor(pythonMin));
+}
+
+// The Node.js version Node.js apps run on (ADR-0175: the server's, only).
+export const NODE_APP_VERSION = "22";
+
+// The API's entrypoint rules for a Node.js app (panel-api python_apps.go):
+// a .js/.mjs/.cjs file under the app directory with no "." or ".." segment,
+// or a package.json script name.
+export const nodeEntrypointRe =
+  /^[A-Za-z0-9_-][A-Za-z0-9._-]*(\/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\.(js|mjs|cjs)$/;
+export const npmScriptRe = /^[A-Za-z0-9][A-Za-z0-9:_.-]{0,63}$/;
+
+// appRuntimes lists the runtimes this server has turned on, Python first. The
+// create dialog shows a runtime choice only when there are two.
+export function appRuntimes(python: boolean, node: boolean): AppRuntime[] {
+  const out: AppRuntime[] = [];
+  if (python) out.push("python");
+  if (node) out.push("node");
+  return out;
+}
+
+// The create dialog's fields. The request body is built per runtime from the
+// fields that runtime has, so a Node.js app never carries a Python field.
+export type CreateAppForm = {
+  domain_id: string;
+  name: string;
+  base_uri?: string;
+  app_root: string;
+  python_version?: string;
+  app_type?: AppType;
+  entrypoint?: string;
+  static_url?: string;
+  static_root?: string;
+  media_url?: string;
+  media_root?: string;
+};
+
+export function createAppBody(
+  runtime: AppRuntime,
+  v: CreateAppForm,
+  framework?: string,
+): CreatePythonAppInput {
+  const body: CreatePythonAppInput = {
+    domain_id: v.domain_id,
+    name: v.name,
+    runtime,
+    app_root: v.app_root,
+    base_uri: v.base_uri || "/",
+  };
+  if (runtime === "python" && framework) {
+    // Framework install: the server derives app_type + entrypoint and
+    // scaffolds the starter.
+    return { ...body, python_version: v.python_version, framework };
+  }
+  const assets = {
+    static_url: v.static_url,
+    static_root: v.static_root,
+    media_url: v.media_url,
+    media_root: v.media_root,
+  };
+  if (runtime === "python") {
+    return { ...body, ...assets, python_version: v.python_version, app_type: v.app_type, entrypoint: v.entrypoint };
+  }
+  const appType = v.app_type === "npm" ? "npm" : "node";
+  const entrypoint = v.entrypoint?.trim();
+  return {
+    ...body,
+    ...assets,
+    node_version: NODE_APP_VERSION,
+    app_type: appType,
+    ...(entrypoint ? { entrypoint } : {}),
+  };
 }
 
 export function useFrameworks() {
