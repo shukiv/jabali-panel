@@ -48,6 +48,7 @@ const CATALOG_KINDS = [
   "bandwidth.quota.crit",
   "digest.daily",
   "update.completed",
+  "security.advisory",
   "aide.tamper.detected",
   "nginx.config.invalid",
   "malware.realtime.critical",

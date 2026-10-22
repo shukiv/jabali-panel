@@ -294,6 +294,13 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 		DefaultOn:   false,
 	},
 	{
+		Kind:        "security.advisory",
+		Label:       "Security advisory",
+		Description: "A Jabali security advisory applies to this server: what was done about it and what still needs an admin. Action may be required.",
+		Severity:    "critical",
+		DefaultOn:   true,
+	},
+	{
 		Kind:        "aide.tamper.detected",
 		Label:       "File integrity tamper",
 		Description: "AIDE detected an unexpected change to a monitored system file. Security-relevant — investigate.",

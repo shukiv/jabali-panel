@@ -79,6 +79,8 @@ func TestNotificationEventKinds_EmittedKindsAreRegistered(t *testing.T) {
 		"automation.user.disabled", "automation.user.enabled",
 		"automation.domain.created", "automation.domain.suspended",
 		"automation.domain.unsuspended",
+		// security advisory feed (jabali security feed-check)
+		"security.advisory",
 	}
 	for _, kind := range emitted {
 		if LookupNotificationEventKind(kind) == nil {

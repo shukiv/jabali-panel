@@ -13,6 +13,7 @@ than ten minutes to remember how, it's runbook-worthy.
 | [php-fpm-pools.md](php-fpm-pools.md) | Adding/removing PHP versions, diagnosing 502/504 errors on PHP domains, verifying pool bindings. |
 | [per-user-slices.md](per-user-slices.md) | Per-user systemd slice hierarchy — what's captured (FPM, shells, user timers) vs. not (traditional crontabs), cron→systemd-user-timer migration, troubleshooting the FPM master + cutover rollback. |
 | [dns-secondary-nameserver.md](dns-secondary-nameserver.md) | Bringing up a secondary nameserver (ns2) — registrar needs two NS records with different IPs. |
+| [security-advisory.md](security-advisory.md) | Every server must act on a security fix within the hour: publish an advisory in the feed servers check hourly. |
 | [hotfix-release.md](hotfix-release.md) | A fix must reach stable servers before the monthly promotion: hotfix branch, prebuilt release, promote, merge back. |
 | [m49-audit-log.md](m49-audit-log.md) | Audit-log integrity verify / a chain break, unsealed-backlog recovery, retention pruning, incident querying (M49 / ADR-0106). |
 

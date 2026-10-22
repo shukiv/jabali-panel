@@ -125,6 +125,7 @@ export const EVENT_KIND_CATEGORY: Record<string, EventCategoryId> = {
   "security.decision.fired": "security",
   "snuffleupagus.incident.detected": "security",
   "aide.tamper.detected": "security",
+  "security.advisory": "security",
   "malware.realtime.critical": "security",
   "malware.quarantine.added": "security",
   "egress.drop.burst": "security",

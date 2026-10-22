@@ -119,6 +119,7 @@ func newRootCmd() *cobra.Command {
 		newMigrateCmd(),
 		newUpdateCmd(),
 		newReleaseCmd(),
+		newSecurityCmd(),
 		newLimitsCmd(),
 		newMailboxCmd(),
 		newSharedResourceCmd(),
