@@ -200,6 +200,7 @@ func renderNodeUnit(p nodeAppApplyParams, appRoot, envPath string) string {
 
 // nodeBuildPlan is what one npm build has to do, decided before it starts.
 type nodeBuildPlan struct {
+	scope      *filesafe.Scope
 	appRoot    string
 	sha        string // != "": install for package.json + lockfile with this content
 	lockfile   bool   // npm ci, rather than npm install
@@ -225,6 +226,7 @@ func nodeAppBuildStep(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stat
 // read through the app root opened beneath the owner's home (scope).
 func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDir string) (nodeBuildPlan, error) {
 	pl := nodeBuildPlan{
+		scope:      scope,
 		appRoot:    appRoot,
 		marker:     filepath.Join(stateDir, p.AppID+".npmsha"),
 		failMarker: filepath.Join(stateDir, p.AppID+".npmfail"),
@@ -234,7 +236,7 @@ func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDi
 		return pl, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("open app root: %v", err)}
 	}
 	defer dir.Close()
-	pkg, err := readTenantFile(dir, "package.json", maxNodeManifestBytes)
+	pkg, sum, lockfile, err := nodeManifests(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		if p.AppType == "npm" {
 			return pl, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "package.json not found in the app root; the npm app type runs one of its scripts"}
@@ -242,23 +244,9 @@ func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDi
 		return pl, nil
 	}
 	if err != nil {
-		return pl, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read package.json: %v", err)}
+		return pl, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
-	h := sha256.New()
-	h.Write(pkg)
-	for _, name := range []string{"package-lock.json", "npm-shrinkwrap.json"} {
-		lock, err := readTenantFile(dir, name, maxNodeManifestBytes)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return pl, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read %s: %v", name, err)}
-		}
-		h.Write([]byte("\x00" + name + "\x00"))
-		h.Write(lock)
-		pl.lockfile = true
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
+	pl.lockfile = lockfile
 	if prev, _ := os.ReadFile(pl.marker); strings.TrimSpace(string(prev)) == sum {
 		return pl, nil
 	}
@@ -274,13 +262,42 @@ func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDi
 	return pl, nil
 }
 
+// nodeManifests reads package.json and the lockfile, if any, in the app root
+// dir and hashes them. os.ErrNotExist: no package.json.
+func nodeManifests(dir *os.File) (pkg []byte, sum string, lockfile bool, err error) {
+	pkg, err = readTenantFile(dir, "package.json", maxNodeManifestBytes)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, "", false, err
+	}
+	if err != nil {
+		return nil, "", false, fmt.Errorf("read package.json: %w", err)
+	}
+	h := sha256.New()
+	h.Write(pkg)
+	for _, name := range []string{"package-lock.json", "npm-shrinkwrap.json"} {
+		lock, err := readTenantFile(dir, name, maxNodeManifestBytes)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, "", false, fmt.Errorf("read %s: %w", name, err)
+		}
+		h.Write([]byte("\x00" + name + "\x00"))
+		h.Write(lock)
+		lockfile = true
+	}
+	return pkg, hex.EncodeToString(h.Sum(nil)), lockfile, nil
+}
+
 // runNodeBuild installs the dependencies as the owning user in the app root,
 // in the owner's slice: npm ci with a lockfile, npm install without. Install
 // scripts run (native modules need them), as the tenant, in the slice and
 // under the egress firewall. An app with a build script gets its dev
 // dependencies and npm run build; one without gets production dependencies
-// only. npm's notices are off on the command line: sudo's env_reset drops
-// npm_config_* variables.
+// only. npm's cache is .npm in the app root: an account's home directory is
+// root-owned (chroot SFTP), so npm cannot create ~/.npm. The cache and npm's
+// notices are set on the command line: sudo's env_reset drops npm_config_*
+// variables.
 func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) error {
 	fail := func(step, out string, err error) error {
 		msg := fmt.Sprintf("%s: %v: %s", step, err, lastLines(strings.TrimSpace(out), 20))
@@ -291,7 +308,8 @@ func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) e
 	if pl.lockfile {
 		install = []string{npmBin, "ci"}
 	}
-	install = append(install, "--no-audit", "--no-fund", "--no-update-notifier")
+	cache := "--cache=" + filepath.Join(pl.appRoot, ".npm")
+	install = append(install, cache, "--no-audit", "--no-fund", "--no-update-notifier")
 	if !pl.hasBuild {
 		install = append(install, "--omit=dev")
 	}
@@ -299,11 +317,20 @@ func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) e
 		return fail("npm "+install[1], out, err)
 	}
 	if pl.hasBuild {
-		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, pl.appRoot, npmBin, "run", "build", "--no-update-notifier"); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, pl.appRoot, npmBin, "run", "build", cache, "--no-update-notifier"); err != nil {
 			return fail("npm run build", out, err)
 		}
 	}
-	_ = os.WriteFile(pl.marker, []byte(pl.sha), 0o640)
+	// npm install writes a package-lock.json when the app has none: record
+	// the manifests as the build left them, or the next apply builds again.
+	sha := pl.sha
+	if dir, err := pl.scope.OpenDirInScope(pl.appRoot); err == nil {
+		if _, sum, _, err := nodeManifests(dir); err == nil {
+			sha = sum
+		}
+		_ = dir.Close()
+	}
+	_ = os.WriteFile(pl.marker, []byte(sha), 0o640)
 	_ = os.Remove(pl.failMarker)
 	return nil
 }
