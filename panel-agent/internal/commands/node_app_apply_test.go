@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 func validNodeParams() nodeAppApplyParams {
@@ -103,13 +105,14 @@ func TestRenderNodeUnit_SameSliceAsPython(t *testing.T) {
 
 type nodeBuildFixture struct {
 	p                      nodeAppApplyParams
+	scope                  *filesafe.Scope
 	appRoot, stateDir, log string
 }
 
-// fakeNpmSudo stands in for `sudo -u <user> -H /usr/bin/npm ...`: it logs the
-// directory it runs in and its arguments, and fails when $NODEBUILD_FAIL is set.
+// fakeNpmSudo stands in for `sudo -u <user> -H /usr/bin/env -C <dir> -- npm ...`:
+// it logs its arguments, and fails when $NODEBUILD_FAIL is set.
 const fakeNpmSudo = `
-echo "$(pwd -P) $*" >> "$NODEBUILD_LOG"
+echo "$*" >> "$NODEBUILD_LOG"
 if [ -n "$NODEBUILD_FAIL" ]; then echo "npm ERR! code ERESOLVE"; exit 1; fi
 `
 
@@ -118,6 +121,7 @@ func newNodeBuildFixture(t *testing.T, appID string, files map[string]string) no
 	dir := t.TempDir()
 	f := nodeBuildFixture{
 		p:        validNodeParams(),
+		scope:    filesafe.NewScopeForTest("u1", "alice", dir),
 		appRoot:  filepath.Join(dir, "app"),
 		stateDir: filepath.Join(dir, "state"),
 		log:      filepath.Join(dir, "commands.log"),
@@ -149,28 +153,25 @@ func newNodeBuildFixture(t *testing.T, appID string, files map[string]string) no
 }
 
 func (f nodeBuildFixture) step() (pythonBuildState, error) {
-	return nodeAppBuildStep(f.p, f.appRoot, f.stateDir)
+	return nodeAppBuildStep(f.p, f.scope, f.appRoot, f.stateDir)
 }
 
-// commands returns the logged npm runs, each as "<args>" once the directory
-// it ran in has been checked to be the app root.
+// commands returns the logged npm runs, each once it has been checked to run
+// as the app's owner, who changes into the app root itself.
 func (f nodeBuildFixture) commands(t *testing.T) []string {
 	t.Helper()
-	root, err := filepath.EvalSymlinks(f.appRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	prefix := "-u alice -H /usr/bin/env -C " + f.appRoot + " -- "
 	b, _ := os.ReadFile(f.log)
 	var out []string
 	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		if l == "" {
 			continue
 		}
-		args, ok := strings.CutPrefix(l, root+" ")
+		cmd, ok := strings.CutPrefix(l, prefix)
 		if !ok {
-			t.Fatalf("npm ran outside the app root %s: %q", root, l)
+			t.Fatalf("npm did not run as the owner in the app root: %q", l)
 		}
-		out = append(out, args)
+		out = append(out, cmd)
 	}
 	return out
 }
@@ -196,7 +197,7 @@ func TestNodeAppBuildStep_LockfileInstallsOnce(t *testing.T) {
 		t.Fatalf("after build: %v, %v; want finished", st, err)
 	}
 	cmds := f.commands(t)
-	want := "-u alice -H /usr/bin/npm ci --no-audit --no-fund --no-update-notifier --omit=dev"
+	want := "/usr/bin/npm ci --no-audit --no-fund --no-update-notifier --omit=dev"
 	if len(cmds) != 1 || cmds[0] != want {
 		t.Fatalf("commands = %q, want [%q]", cmds, want)
 	}
@@ -219,8 +220,8 @@ func TestNodeAppBuildStep_BuildScript(t *testing.T) {
 	}
 	cmds := f.commands(t)
 	if len(cmds) != 2 ||
-		cmds[0] != "-u alice -H /usr/bin/npm install --no-audit --no-fund --no-update-notifier" ||
-		cmds[1] != "-u alice -H /usr/bin/npm run build --no-update-notifier" {
+		cmds[0] != "/usr/bin/npm install --no-audit --no-fund --no-update-notifier" ||
+		cmds[1] != "/usr/bin/npm run build --no-update-notifier" {
 		t.Fatalf("commands = %q", cmds)
 	}
 }
@@ -232,6 +233,26 @@ func TestNodeAppBuildStep_RebuildsOnChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.appRoot, "package.json"), []byte(`{"dependencies":{"ws":"^8"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.build(t); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.commands(t)); n != 2 {
+		t.Fatalf("npm ran %d times, want 2", n)
+	}
+}
+
+// A lockfile change alone builds again: it pins what npm ci installs.
+func TestNodeAppBuildStep_RebuildsOnLockfileChange(t *testing.T) {
+	f := newNodeBuildFixture(t, "01NODEBUILDLOCK00000000000", map[string]string{
+		"package.json":      `{"dependencies":{"ws":"^8"}}`,
+		"package-lock.json": `{"lockfileVersion":3,"packages":{"node_modules/ws":{"version":"8.17.0"}}}`,
+	})
+	if _, err := f.build(t); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.appRoot, "package-lock.json"), []byte(`{"lockfileVersion":3,"packages":{"node_modules/ws":{"version":"8.18.0"}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.build(t); err != nil {
@@ -259,34 +280,74 @@ func TestNodeAppBuildStep_FailureBacksOff(t *testing.T) {
 }
 
 func TestPlanNodeBuild(t *testing.T) {
-	dir := t.TempDir()
+	home := t.TempDir()
+	scope := filesafe.NewScopeForTest("u1", "alice", home)
+	app := filepath.Join(home, "app")
+	if err := os.Mkdir(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	p := validNodeParams()
 	// A plain node script without package.json has nothing to install.
-	if pl, err := planNodeBuild(p, dir, dir); err != nil || pl.sha != "" {
+	if pl, err := planNodeBuild(p, scope, app, home); err != nil || pl.sha != "" {
 		t.Fatalf("no package.json: %+v, %v", pl, err)
 	}
 	// The npm app type needs a package.json.
 	p.AppType, p.Entrypoint = "npm", "start"
-	if _, err := planNodeBuild(p, dir, dir); err == nil || !strings.Contains(err.Error(), "package.json not found") {
+	if _, err := planNodeBuild(p, scope, app, home); err == nil || !strings.Contains(err.Error(), "package.json not found") {
 		t.Fatalf("npm without package.json: %v", err)
 	}
-	// A package.json that is a symlink is refused, not followed as root.
-	if err := os.Symlink("/etc/hostname", filepath.Join(dir, "package.json")); err != nil {
+	// A package.json that is not valid JSON is reported before npm runs.
+	if err := os.WriteFile(filepath.Join(app, "package.json"), []byte(`{"scripts":`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planNodeBuild(p, dir, dir); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+	if _, err := planNodeBuild(p, scope, app, home); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("invalid package.json: %v", err)
+	}
+	// A package.json that is a symlink is refused, not followed as root.
+	if err := os.Remove(filepath.Join(app, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(app, "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := planNodeBuild(p, scope, app, home); err == nil || !strings.Contains(err.Error(), "symbolic link") {
 		t.Fatalf("symlinked package.json: %v", err)
 	}
 }
 
-func TestReadTenantFile_RefusesFIFOAndOversize(t *testing.T) {
-	dir := t.TempDir()
-	fifo := filepath.Join(dir, "package.json")
-	if err := syscall.Mkfifo(fifo, 0o644); err != nil {
+// The app root is opened beneath the owner's home: a path that leads out of
+// it through a symlink is refused, and nothing outside the home is read.
+func TestPlanNodeBuild_AppRootStaysInHome(t *testing.T) {
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "package.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	home := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(home, "apps")); err != nil {
+		t.Fatal(err)
+	}
+	scope := filesafe.NewScopeForTest("u1", "alice", home)
+	pl, err := planNodeBuild(validNodeParams(), scope, filepath.Join(home, "apps"), home)
+	if err == nil || pl.sha != "" {
+		t.Fatalf("app root through a symlink out of the home: %+v, %v", pl, err)
+	}
+}
+
+func TestReadTenantFile_RefusesFIFOAndOversize(t *testing.T) {
+	path := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(path, "package.json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(path, "package-lock.json"), make([]byte, 2048), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
 	done := make(chan error, 1)
-	go func() { _, err := readTenantFile(fifo, 1024); done <- err }()
+	go func() { _, err := readTenantFile(dir, "package.json", 1024); done <- err }()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "not a regular file") {
@@ -295,33 +356,22 @@ func TestReadTenantFile_RefusesFIFOAndOversize(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("reading a FIFO blocked")
 	}
-	big := filepath.Join(dir, "package-lock.json")
-	if err := os.WriteFile(big, make([]byte, 2048), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readTenantFile(big, 1024); err == nil || !strings.Contains(err.Error(), "larger than") {
+	if _, err := readTenantFile(dir, "package-lock.json", 1024); err == nil || !strings.Contains(err.Error(), "larger than") {
 		t.Fatalf("oversize err = %v", err)
 	}
 }
 
 func TestPackageHasScript(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "package.json")
 	for content, want := range map[string]bool{
 		`{"scripts":{"build":"tsc"}}`:    true,
 		`{"scripts":{"start":"node a"}}`: false,
 		`{}`:                             false,
 	} {
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if got, err := packageHasScript(path, "build"); err != nil || got != want {
+		if got, err := packageHasScript([]byte(content), "build"); err != nil || got != want {
 			t.Errorf("%s: got %v, %v; want %v", content, got, err, want)
 		}
 	}
-	if err := os.WriteFile(path, []byte(`{"scripts":`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := packageHasScript(path, "build"); err == nil {
+	if _, err := packageHasScript([]byte(`{"scripts":`), "build"); err == nil {
 		t.Fatal("invalid JSON must be an error")
 	}
 }
