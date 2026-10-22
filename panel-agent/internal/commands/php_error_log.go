@@ -85,8 +85,8 @@ func phpErrorLogrotatePath(username string) string {
 // nocreate and no copytruncate: PHP opens the file for each message, so after
 // the rename the next message creates a fresh file, owned by the tenant.
 func buildPHPErrorLogrotate(username string) string {
-	return fmt.Sprintf(`# Managed by jabali (php.pool.apply): PHP error logs of %[1]s.
-# Rewritten on every pool apply and removed with the account.
+	return fmt.Sprintf(`# Managed by jabali (php.pool.apply, domain.create): PHP error logs of %[1]s.
+# Rewritten when it differs and removed with the account.
 /home/%[1]s/logs/*php-error.log {
     su %[1]s %[1]s
     daily
@@ -100,20 +100,23 @@ func buildPHPErrorLogrotate(username string) string {
 `, username)
 }
 
-// writePHPErrorLogrotate writes the tenant's stanza when it differs, then
-// removes the stanzas of users that no longer exist. Written in place, like
-// the docker-app snippets: logrotate parses every file in the dir, and a temp
-// file left beside it would be parsed too.
+// writePHPErrorLogrotate writes the tenant's stanza when it differs, and only
+// then removes the stanzas of users that no longer exist: pool apply and every
+// PHP vhost write call this, and a sweep with one passwd lookup per stanza on
+// each call would cost N^2 lookups when all N accounts re-render. Written in
+// place, like the docker-app snippets: logrotate parses every file in the dir,
+// and a temp file left beside it would be parsed too.
 func writePHPErrorLogrotate(username string) error {
 	if !phpPoolUsernameRegex.MatchString(username) {
 		return fmt.Errorf("invalid username %q", username)
 	}
 	path := phpErrorLogrotatePath(username)
 	want := []byte(buildPHPErrorLogrotate(username))
-	if !filesMatch(path, want) {
-		if err := os.WriteFile(path, want, 0o644); err != nil {
-			return fmt.Errorf("write logrotate stanza: %w", err)
-		}
+	if filesMatch(path, want) {
+		return nil
+	}
+	if err := os.WriteFile(path, want, 0o644); err != nil {
+		return fmt.Errorf("write logrotate stanza: %w", err)
 	}
 	reapStalePHPErrorLogrotate()
 	return nil

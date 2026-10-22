@@ -251,6 +251,19 @@ func TestWritePHPErrorLogrotate(t *testing.T) {
 		if err != nil || string(b) != buildPHPErrorLogrotate(name) {
 			t.Errorf("stanza for %s not written: %v %q", name, err, b)
 		}
+
+		// An unchanged stanza writes nothing and sweeps nothing: every vhost
+		// write calls this, and the sweep costs a passwd lookup per stanza.
+		later := filepath.Join(dir, phpErrorLogrotatePrefix+"nosuchuser5m2x")
+		if err := os.WriteFile(later, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writePHPErrorLogrotate(name); err != nil {
+			t.Fatalf("second writePHPErrorLogrotate: %v", err)
+		}
+		if _, err := os.Stat(later); err != nil {
+			t.Errorf("an unchanged stanza still ran the sweep: %v", err)
+		}
 	}
 
 	removePHPErrorLogrotate(name)
