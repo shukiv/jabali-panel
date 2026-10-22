@@ -28,7 +28,7 @@ TasksMax=<max_tasks>
 
 Only non-zero limits are written; a limit of 0 means unlimited and leaves its line out. With every limit at 0 the drop-in is removed. The reconciler re-applies the drop-in on every tick.
 
-The slice holds **everything** the account runs: PHP-FPM masters and workers, Python apps, cron jobs, the account's systemd user manager, and SSH sessions.
+The slice holds **everything** the account runs: PHP-FPM masters and workers, Python apps and their builds, cron jobs, the account's systemd user manager, and SSH sessions.
 
 ### Max tasks
 
@@ -36,6 +36,7 @@ The slice holds **everything** the account runs: PHP-FPM masters and workers, Py
 
 - each PHP-FPM pool: 1 master plus up to `pm.max_children` workers (on-demand pools start a worker per request);
 - each Python app: at least 4 (a gunicorn or uvicorn master plus 3 workers), more if the app starts threads;
+- a Python app's build while it runs: pip and the processes it starts;
 - the account's systemd user manager, when it is running: 2;
 - cron jobs and SSH sessions while they run.
 
