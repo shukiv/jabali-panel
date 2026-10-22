@@ -73,6 +73,19 @@ func TestRenderNodeEnvFile(t *testing.T) {
 	}
 }
 
+// The same variables give the same env file on every apply: a changed env
+// file restarts the app.
+func TestRenderNodeEnvFile_SameBytesEveryApply(t *testing.T) {
+	p := validNodeParams()
+	p.Env = map[string]string{"Z": "1", "API_KEY": "x", "NODE_ENV": "staging", "DB_URL": "mysql://x", "PORT": "1", "M": "2"}
+	want := "NODE_ENV=production\nAPI_KEY=x\nDB_URL=mysql://x\nM=2\nNODE_ENV=staging\nZ=1\nPORT=20001\nHOST=127.0.0.1\n"
+	for i := 0; i < 50; i++ {
+		if got := renderNodeEnvFile(p); got != want {
+			t.Fatalf("render %d:\n%s\nwant:\n%s", i, got, want)
+		}
+	}
+}
+
 func TestRenderNodeUnit_ExecStart(t *testing.T) {
 	p := validNodeParams()
 	unit := renderNodeUnit(p, "/home/alice/apps/api", "/etc/jabali/python-apps/x.env")

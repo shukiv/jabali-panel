@@ -176,13 +176,7 @@ var nodeAppListening = func(port int) bool {
 func renderNodeEnvFile(p nodeAppApplyParams) string {
 	var b strings.Builder
 	b.WriteString("NODE_ENV=production\n")
-	for k, v := range p.Env {
-		if !validEnvKey(k) || k == "PORT" || k == "HOST" {
-			continue
-		}
-		// systemd EnvironmentFile: KEY=value, no interpolation, one line.
-		fmt.Fprintf(&b, "%s=%s\n", k, strings.ReplaceAll(v, "\n", " "))
-	}
+	writeEnvLines(&b, p.Env, func(k string) bool { return validEnvKey(k) && k != "PORT" && k != "HOST" })
 	fmt.Fprintf(&b, "PORT=%d\nHOST=127.0.0.1\n", p.Port)
 	return b.String()
 }
