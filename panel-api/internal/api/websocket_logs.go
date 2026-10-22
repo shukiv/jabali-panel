@@ -72,6 +72,9 @@ type LogStreamHandlerConfig struct {
 	// Agent and Users serve the "php" stream (logs_php.go).
 	Agent agent.AgentInterface
 	Users repository.UserRepository
+	// PHPErrorLogPollInterval is how often the "php" stream asks the agent
+	// for new lines; zero means phpErrorLogPollInterval.
+	PHPErrorLogPollInterval time.Duration
 }
 
 // RegisterLogStreamRoutes sets up WebSocket log streaming endpoints

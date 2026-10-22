@@ -149,10 +149,6 @@ func TestCreateAccess_PHPNeedsDomain(t *testing.T) {
 // The live view sends the tail, then only what the next read returns, and
 // carries the offset and inode of each read into the next.
 func TestStreamPHPErrorLog_Follows(t *testing.T) {
-	prev := phpErrorLogPollInterval
-	phpErrorLogPollInterval = 20 * time.Millisecond
-	t.Cleanup(func() { phpErrorLogPollInterval = prev })
-
 	domainID := "01DOMAIN000000000000000000"
 	dom := &models.Domain{ID: domainID, UserID: "01OWNER0000000000000000000", Name: "example.com"}
 	ag := &phpLogAgent{replies: []phpErrorLogRead{
@@ -170,6 +166,8 @@ func TestStreamPHPErrorLog_Follows(t *testing.T) {
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Agent:   ag,
 		Users:   phpLogUsers{username: strp("alice")},
+
+		PHPErrorLogPollInterval: 20 * time.Millisecond,
 	})
 	srv := httptest.NewServer(r)
 	defer srv.Close()

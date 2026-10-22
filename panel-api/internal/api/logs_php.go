@@ -66,8 +66,8 @@ func (h *logHandler) tailPHPErrorLog(c *gin.Context, domain *models.Domain, line
 }
 
 // phpErrorLogPollInterval is how often the live PHP error log view asks the
-// agent for new lines; a var so tests can shorten it.
-var phpErrorLogPollInterval = 2 * time.Second
+// agent for new lines, unless LogStreamHandlerConfig sets its own.
+const phpErrorLogPollInterval = 2 * time.Second
 
 // streamPHPErrorLog is the live view of a domain's PHP error log: the last
 // lines, then whatever is appended, read through the agent every
@@ -77,6 +77,10 @@ func (h *logStreamHandler) streamPHPErrorLog(conn *websocket.Conn, stream *model
 	if stream.DomainID == nil || h.cfg.Agent == nil || h.cfg.Users == nil {
 		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseUnsupportedData, "the PHP error log is per domain"))
 		return
+	}
+	interval := h.cfg.PHPErrorLogPollInterval
+	if interval <= 0 {
+		interval = phpErrorLogPollInterval
 	}
 	domain, err := h.cfg.Domains.FindByID(context.Background(), *stream.DomainID)
 	if err != nil {
@@ -127,7 +131,7 @@ func (h *logStreamHandler) streamPHPErrorLog(conn *websocket.Conn, stream *model
 		select {
 		case <-closed:
 			return
-		case <-time.After(phpErrorLogPollInterval):
+		case <-time.After(interval):
 		}
 	}
 }
