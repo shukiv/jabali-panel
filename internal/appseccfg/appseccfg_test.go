@@ -357,7 +357,7 @@ func TestCRSPluginBefore_WordPressBuilderExclusions(t *testing.T) {
 	mustNotContain(t, out, `id:9599210`, "JAB-227: no-op-only rule removed, must not be resurrected")
 	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-sqli", "JAB-227: dead construct must not return")
 	// admin-ajax phase-1 rule must NOT carry the broad tag drop (only narrow ById).
-	mustContain(t, out, `^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"`, "admin-ajax phase-1 keeps only narrow ById drops")
+	mustContain(t, out, `^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,chain"`+"\n    "+TraversalGuard+`,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"`, "admin-ajax phase-1 keeps only narrow ById drops")
 	// Surgical, not blanket: no path-allow, no remediation override.
 	mustNotContain(t, out, `SetRemediation`, "before-plugin must not blanket-allow")
 }

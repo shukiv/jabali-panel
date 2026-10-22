@@ -40,6 +40,20 @@ const maxOperatorExclusions = 900
 // entry that would not render.
 const MaxOperatorExclusions = maxOperatorExclusions
 
+// TraversalGuard is the chain link every path-scoped exclusion ends with, up
+// to its actions: the caller appends `,chain"` or `,ctl:…"`. The bouncer sends
+// the request URI as the client wrote it, and nginx decodes it and resolves
+// ".." segments before it picks a location. So "/excluded/../other" and
+// "/excluded/%2e%2e/other" both begin with "/excluded/" here, yet nginx serves
+// "/other": without the guard, the exclusion would follow them there. The URI
+// is decoded twice, once for nginx and once for a proxied app that decodes it
+// again, and the exclusion is refused if a ".." segment is left. A segment
+// ends at "/", "?", ";" (Java servlet path parameters), "#" (nginx ends the
+// path at a raw "#" in the request line) or the end. A ".."
+// inside a name ("report..final.pdf") is not a segment and still matches, so a
+// WebDAV exclusion keeps working for such files.
+const TraversalGuard = `SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni`
+
 // Exclusion is one operator-managed rule exclusion.
 type Exclusion struct {
 	Host      string `json:"host"`
@@ -195,6 +209,8 @@ func RenderExclusions(list []Exclusion) string {
 	b.WriteString("# ONE URI prefix, because ctl:ruleRemoveById drops the rule for the whole\n")
 	b.WriteString("# matched request. Chained so the host is checked first: a URI prefix alone\n")
 	b.WriteString("# would apply the exclusion to every tenant that happens to use that path.\n")
+	b.WriteString("# The last link refuses a URI with a \"..\" segment, which nginx would serve\n")
+	b.WriteString("# outside the prefix (see TraversalGuard).\n")
 
 	id := OperatorExclusionIDBase
 	rendered := 0
@@ -218,8 +234,8 @@ func RenderExclusions(list []Exclusion) string {
 			fmt.Fprintf(&b, "# %s\n", strings.TrimSpace(e.Note))
 		}
 		fmt.Fprintf(&b, "SecRule REQUEST_HEADERS:Host \"@streq %s\" \"id:%d,phase:1,pass,nolog,chain\"\n", host, id)
-		fmt.Fprintf(&b, "    SecRule REQUEST_URI \"@beginsWith %s\" \"t:none,ctl:ruleRemoveById=%s\"\n",
-			uri, strings.TrimSpace(e.RuleID))
+		fmt.Fprintf(&b, "    SecRule REQUEST_URI \"@beginsWith %s\" \"t:none,chain\"\n", uri)
+		fmt.Fprintf(&b, "    %s,ctl:ruleRemoveById=%s\"\n", TraversalGuard, strings.TrimSpace(e.RuleID))
 		id++
 		rendered++
 	}
