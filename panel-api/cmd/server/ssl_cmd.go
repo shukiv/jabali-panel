@@ -316,6 +316,28 @@ func newSSLEnableCmd() *cobra.Command {
 			}
 			dom.SSLMode = models.SSLModeLE
 			dom.SSLEnabled = true
+
+			// GH #2200: an unproven name gets no Let's Encrypt certificate until
+			// it is verified, so waiting for nginx to serve one could only time
+			// out with a message about DNS. Keep the mode and leave the cert row
+			// as it is (marking it pending would only make the next pass sign
+			// the placeholder again): once the domain is verified, the
+			// reconciler moves a self-signed row to Let's Encrypt on its own.
+			if domainops.CertificateAwaitsOwnership(dom) {
+				cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
+				if jsonOutput {
+					return printJSON(map[string]any{
+						"domain":    dom.Name,
+						"ssl_mode":  models.SSLModeLE,
+						"ownership": models.OwnershipPending,
+						"detail":    "waiting for proof of ownership; the certificate is requested once the domain is verified",
+						"hint":      fmt.Sprintf("jabali domain ownership status %s", dom.Name),
+					})
+				}
+				fmt.Printf("SSL enabled for %s.\n%s.\n", dom.Name, sslOwnershipPendingNote(dom.Name))
+				return nil
+			}
+
 			if cert == nil {
 				cert = &models.SSLCertificate{
 					ID:       ids.NewULID(),
@@ -331,23 +353,6 @@ func newSSLEnableCmd() *cobra.Command {
 				}
 			}
 			cliAuditOK(ctx, "ssl.enable", "domain", dom.ID, &dom.UserID)
-
-			// GH #2200: an unproven name gets no Let's Encrypt certificate until
-			// it is verified, so waiting for nginx to serve one could only time
-			// out with a message about DNS. The mode is set; say what is left.
-			if domainops.CertificateAwaitsOwnership(dom) {
-				if jsonOutput {
-					return printJSON(map[string]any{
-						"domain":    dom.Name,
-						"status":    models.SSLStatusPending,
-						"ownership": models.OwnershipPending,
-						"detail":    "waiting for proof of ownership; the certificate is requested once the domain is verified",
-						"hint":      fmt.Sprintf("jabali domain ownership status %s", dom.Name),
-					})
-				}
-				fmt.Printf("SSL enabled for %s.\n%s.\n", dom.Name, sslOwnershipPendingNote(dom.Name))
-				return nil
-			}
 
 			if noWait {
 				if jsonOutput {

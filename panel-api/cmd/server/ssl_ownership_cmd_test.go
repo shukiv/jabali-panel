@@ -95,3 +95,48 @@ func TestSSLDoors_RefuseOwnershipPendingFirst(t *testing.T) {
 		}
 	}
 }
+
+// `ssl enable` keeps the mode for a pending domain but leaves its certificate
+// row alone: marking it pending would only make the next pass sign the
+// placeholder again. So the ownership check comes before the row writes.
+func TestSSLEnable_OwnershipPendingBeforeCertRowWrites(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "ssl_cmd.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fn *ast.FuncDecl
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == "newSSLEnableCmd" {
+			fn = fd
+		}
+	}
+	if fn == nil {
+		t.Fatal("newSSLEnableCmd not found")
+	}
+	var check, rowWrite token.Pos
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if s, ok := c.Fun.(*ast.SelectorExpr); ok {
+			switch s.Sel.Name {
+			case "CertificateAwaitsOwnership":
+				if check == 0 {
+					check = c.Pos()
+				}
+			case "Create", "UpdateStatus":
+				if rowWrite == 0 {
+					rowWrite = c.Pos()
+				}
+			}
+		}
+		return true
+	})
+	if check == 0 {
+		t.Fatal("newSSLEnableCmd does not check CertificateAwaitsOwnership")
+	}
+	if rowWrite == 0 || check > rowWrite {
+		t.Error("newSSLEnableCmd must check ownership before it writes the certificate row")
+	}
+}

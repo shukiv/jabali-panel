@@ -6,6 +6,8 @@
 
 Columns: domain, owner, status (`issued` / `pending` / `failed`), issued at, expires at, last attempt result, retry-after.
 
+A row tagged **Ownership pending** belongs to a domain waiting for proof of ownership. It keeps a self-signed placeholder, and Let's Encrypt is not asked until the domain is verified, so the row offers no Retry (`jabali ssl retry|renew` and the API refuse it with 409 `domain_ownership_pending`). Verify or approve the domain under **Web Domains → Ownership proof**; the certificate follows on its own.
+
 ## Per-row actions
 
 - **Retry** — schedules an immediate issuance or renewal via the agent. Useful after fixing a DNS misconfiguration.
