@@ -396,6 +396,7 @@ var settableKeys = map[string]settingDef{
 	"docker_marketplace_enabled":    boolKey("enable/disable the Docker marketplace (installs/stops Docker)", func(s *models.ServerSettings, b bool) { s.DockerMarketplaceEnabled = b }),
 	"docker_apps_for_users_enabled": boolKey("enable/disable tenant Docker apps (runs host tenant setup)", func(s *models.ServerSettings, b bool) { s.DockerAppsForUsersEnabled = b }),
 	"python_apps_enabled":           boolKey("enable/disable Python apps (installs the runtime on enable)", func(s *models.ServerSettings, b bool) { s.PythonAppsEnabled = b }),
+	"node_apps_enabled":             boolKey("enable/disable Node.js apps (DB flag; Node.js 22 is already installed)", func(s *models.ServerSettings, b bool) { s.NodeAppsEnabled = b }),
 	"tenant_domain_options_enabled": boolKey("expose per-domain options to tenants (DB flag)", func(s *models.ServerSettings, b bool) { s.TenantDomainOptionsEnabled = b }),
 	// Ask Jabali support chat (#2146): the panel CSP allows the chat's origin
 	// while either switch is on (agent nginx.panel_csp.apply).
