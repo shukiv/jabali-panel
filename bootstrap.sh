@@ -118,9 +118,10 @@ log "checksum verified"
 # genuine. Anyone who can publish a release can publish a matching .sha256. A
 # fresh `curl | bash` install is trust-on-first-use by nature: verifying a
 # signature here would mean first fetching a verifier, which needs trust of its
-# own. `jabali update` DOES verify a minisign signature against a key embedded
-# in the panel binary, so every update after this install is cryptographically
-# checked even though this first fetch is not.
+# own. Updates are different: a panel binary built with the release key
+# (releaseSigningPublicKey) makes `jabali update` check the release's minisign
+# signature, for the commit it checks out as well as the tarball it installs,
+# before running either. Builds without the key accept the checksum alone.
 
 # Extract the whole bin/ — not just the installer. GH #731: the tarball already
 # contains compiled jabali-panel / jabali-agent / jabali-ssh-shell /

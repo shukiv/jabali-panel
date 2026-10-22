@@ -367,6 +367,66 @@ curl_ipv4_retry() {
   curl -4 "$@"
 }
 
+# _require_gpg_key_fingerprint <key file> <expected fingerprint> <label> dies
+# unless the downloaded apt signing key file holds exactly one key and that key
+# is a public key with the expected fingerprint. Without a pin, whoever can
+# answer the key URL (a compromised vendor site, CDN or mirror) chooses which
+# packages this host trusts as root.
+#
+# Matching the fingerprint somewhere in gpg's output is not enough: a file
+# with the real key AND an extra key appended would pass, and apt trusts every
+# key in a signed-by file. So every top-level key record is listed, public or
+# secret (pub, sec, crt, crs), and there must be exactly one. Subkeys are fine;
+# apt only accepts the ones the primary signed.
+#
+# When a vendor rotates its key this fails closed on fresh installs until the
+# new fingerprint ships here. Hosts that already have the keyring are not
+# re-checked: they never download it again.
+_require_gpg_key_fingerprint() {
+  local file="$1" want="$2" label="$3" gh out primaries
+  gh="$(mktemp -d)"
+  if ! out="$(GNUPGHOME="$gh" gpg --no-default-keyring --no-tty --batch --with-colons --show-keys "$file" 2>&1)"; then
+    rm -rf "$gh"
+    _err "gpg --show-keys failed on the ${label} signing key; output was:"
+    printf '%s\n' "$out" >&2
+    _die "cannot parse the ${label} signing key"
+  fi
+  rm -rf "$gh"
+  primaries="$(awk -F: '$1 ~ /^(pub|sec|crt|crs)$/ {p=$1; next} $1=="fpr" && p != "" {print p ":" $10} {p=""}' <<<"$out")"
+  if [[ "$primaries" != "pub:$want" ]]; then
+    _err "the ${label} signing key is not the one this installer pins."
+    _err "  expected: pub:${want}"
+    _err "  got:      ${primaries//$'\n'/ }"
+    _die "${label} signing key fingerprint mismatch — refusing to trust it"
+  fi
+  _ok "${label} signing key fingerprint verified"
+}
+
+# _install_pinned_gpg_key <downloaded key> <fingerprint> <label> <dest> <armor|binary>
+# checks the pin, then writes <dest> from gpg's export of that one public key,
+# not from the downloaded bytes. Whatever else the download carried, only the
+# pinned key reaches the file apt reads signed-by from. apt reads a .asc
+# keyring as armored and a .gpg one as binary, hence <armor|binary>. <dest> is
+# replaced in one rename, so a failure never leaves a partial keyring.
+_install_pinned_gpg_key() {
+  local src="$1" want="$2" label="$3" dest="$4" fmt="$5" gh tmp
+  local armor=()
+  [[ "$fmt" == armor ]] && armor=(--armor)
+  _require_gpg_key_fingerprint "$src" "$want" "$label"
+  gh="$(mktemp -d)"
+  tmp="$(mktemp "$(dirname "$dest")/.$(basename "$dest").XXXXXX")"
+  if ! GNUPGHOME="$gh" gpg --no-tty --batch --quiet --import "$src" >/dev/null 2>&1 \
+     || ! GNUPGHOME="$gh" gpg --no-tty --batch "${armor[@]}" --export "$want" >"$tmp" 2>/dev/null \
+     || [[ ! -s "$tmp" ]]; then
+    rm -rf "$gh"
+    rm -f "$tmp"
+    _die "could not write the ${label} signing key to ${dest}"
+  fi
+  rm -rf "$gh"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$dest"
+}
+
 # is_module_enabled — M353 (GH #353) modular install. Returns 0 (enabled) when
 # the given optional-module key should be installed. JABALI_MODULES is a comma
 # list emitted by the TUI (installer/) or set for a headless install.
@@ -2857,24 +2917,14 @@ _install_sury_source() {
     # launchpad. No Fastly in front, no 418 risk. The launchpad
     # signing key has its own fingerprint distinct from Sury's.
     _log "fetching Ubuntu PPA signing key for ondrej/php"
-    curl -fsSL --connect-timeout 15 --max-time 60 \
-      "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${LP_GPG_FINGERPRINT}" \
-      | gpg --no-default-keyring --no-tty --batch --dearmor --yes \
-        -o /usr/share/keyrings/sury-php.gpg \
-      || _die "failed to fetch ondrej/php signing key from keyserver.ubuntu.com"
-
-    local lp_gpg_out
-    if ! lp_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
-      _err "gpg --show-keys failed; output was:"
-      printf '%s\n' "$lp_gpg_out" >&2
-      _die "cannot parse PPA key at /usr/share/keyrings/sury-php.gpg"
-    fi
-    if ! grep -q "$LP_GPG_FINGERPRINT" <<< "$lp_gpg_out"; then
-      _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
-      printf '%s\n' "$lp_gpg_out" >&2
-      _die "ondrej/php PPA key fingerprint mismatch. Expected: $LP_GPG_FINGERPRINT"
-    fi
-    _ok "ondrej/php PPA signing key validated"
+    local lp_key
+    lp_key="$(mktemp)"
+    curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
+      "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${LP_GPG_FINGERPRINT}" -o "$lp_key" \
+      || { rm -f "$lp_key"; _die "failed to fetch ondrej/php signing key from keyserver.ubuntu.com"; }
+    _install_pinned_gpg_key "$lp_key" "$LP_GPG_FINGERPRINT" "ondrej/php PPA" \
+      /usr/share/keyrings/sury-php.gpg binary
+    rm -f "$lp_key"
 
     cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu ${codename} main
@@ -2887,28 +2937,19 @@ EOF
   # affects fewer Debian-on-VPS installs in practice; if it bites,
   # the operator is currently the one to debug.
   _log "downloading Sury GPG key (curl: connect 15s, total 60s)"
+  local sury_key
+  sury_key="$(mktemp)"
   curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
-    https://packages.sury.org/php/apt.gpg -o /usr/share/keyrings/sury-php.gpg \
-    || _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"
+    https://packages.sury.org/php/apt.gpg -o "$sury_key" \
+    || { rm -f "$sury_key"; _die "curl failed to fetch Sury GPG key from packages.sury.org — check egress / DNS from this host"; }
 
   _log "verifying Sury GPG key fingerprint"
-  # Capture gpg output + exit code independently so we can surface both
-  # to the operator if anything goes wrong. The `if ! cmd` form disables
-  # set -e just for the capture. GNUPGHOME=mktemp skips any ~/.gnupg /
-  # gpg-agent startup, which hangs silently on first-gpg invocation
-  # inside minimal LXC containers.
-  local sury_gpg_out
-  if ! sury_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --show-keys /usr/share/keyrings/sury-php.gpg 2>&1)"; then
-    _err "gpg --show-keys failed; output was:"
-    printf '%s\n' "$sury_gpg_out" >&2
-    _die "cannot parse Sury GPG key at /usr/share/keyrings/sury-php.gpg"
-  fi
-  if ! grep -q "$SURY_GPG_FINGERPRINT" <<< "$sury_gpg_out"; then
-    _err "gpg parsed the key but the fingerprint doesn't match. gpg output:"
-    printf '%s\n' "$sury_gpg_out" >&2
-    _die "Sury GPG key fingerprint mismatch. Expected: $SURY_GPG_FINGERPRINT"
-  fi
-  _ok "Sury GPG key validated"
+  # GNUPGHOME is a fresh temp dir inside the helpers: it skips any ~/.gnupg /
+  # gpg-agent startup, which hangs silently on first-gpg invocation inside
+  # minimal LXC containers.
+  _install_pinned_gpg_key "$sury_key" "$SURY_GPG_FINGERPRINT" "Sury PHP" \
+    /usr/share/keyrings/sury-php.gpg binary
+  rm -f "$sury_key"
 
   cat > /etc/apt/sources.list.d/sury-php.list <<EOF
 deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ ${codename} main
@@ -3414,14 +3455,10 @@ _install_nodesource_source() {
   curl_ipv4_retry -fsSL --connect-timeout 15 --max-time 60 \
     https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key -o "$ns_armored" \
     || _die "curl failed to fetch NodeSource GPG key from deb.nodesource.com — check egress / DNS from this host"
-  local ns_gpg_out
-  if ! ns_gpg_out="$(GNUPGHOME="$(mktemp -d)" gpg --no-default-keyring --no-tty --batch --dearmor --yes -o /etc/apt/keyrings/nodesource.gpg "$ns_armored" 2>&1)"; then
-    _err "gpg --dearmor failed on NodeSource key; output was:"
-    printf '%s\n' "$ns_gpg_out" >&2
-    _die "cannot dearmor NodeSource key"
-  fi
+  # NSolid <nsolid-gpg@nodesource.com>, the key deb.nodesource.com signs with.
+  _install_pinned_gpg_key "$ns_armored" "6F71F525282841EEDAF851B42F59B5F99B1BE0B4" "NodeSource" \
+    /etc/apt/keyrings/nodesource.gpg binary
   rm -f "$ns_armored"
-  chmod 0644 /etc/apt/keyrings/nodesource.gpg
   echo 'deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main' \
     >/etc/apt/sources.list.d/nodesource.list
   _ok "NodeSource repo configured"
@@ -4076,8 +4113,16 @@ install_docker_engine() {
 
     install -d -m 0755 /etc/apt/keyrings
     if [[ ! -f /etc/apt/keyrings/docker.asc ]]; then
-      curl_ipv4_retry -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o /etc/apt/keyrings/docker.asc
-      chmod a+r /etc/apt/keyrings/docker.asc
+      # Download to a temp file; only the pinned key is written to the
+      # keyring apt reads. The Debian and Ubuntu trees serve the same
+      # Docker Release (CE deb) key.
+      local docker_key
+      docker_key="$(mktemp)"
+      curl_ipv4_retry -fsSL "https://download.docker.com/linux/${docker_distro}/gpg" -o "$docker_key" \
+        || { rm -f "$docker_key"; _die "curl failed to fetch the Docker GPG key from download.docker.com"; }
+      _install_pinned_gpg_key "$docker_key" "9DC858229FC7DD38854AE2D88D81803C0EBFCD88" "Docker" \
+        /etc/apt/keyrings/docker.asc armor
+      rm -f "$docker_key"
     fi
     local docker_list="/etc/apt/sources.list.d/docker.list"
     local desired
@@ -10117,9 +10162,10 @@ add_crowdsec_apt_source() {
       rm -f "$tmp_key"
       _die "failed to fetch CrowdSec signing key from $key_url"
     fi
-    gpg --batch --yes --dearmor -o "$keyring" "$tmp_key"
+    # packagecloud's per-repository key for crowdsec/crowdsec.
+    _install_pinned_gpg_key "$tmp_key" "6A89E3C2303A901A889971D3376ED5326E93CD0C" "CrowdSec" \
+      "$keyring" binary
     rm -f "$tmp_key"
-    chmod 0644 "$keyring"
   fi
 
   if [[ ! -f "$sources_file" ]] || ! grep -qF "$source_line" "$sources_file"; then

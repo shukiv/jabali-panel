@@ -25,7 +25,7 @@ import (
 // The matching private key is held offline and never enters CI. Nothing in this
 // repository can produce a signature; see docs/adr/0162-release-signing.md for
 // the key ceremony and the release procedure.
-const releaseSigningPublicKey = ""
+const releaseSigningPublicKey = "RWSeUJpwE7BlmCChlgdb8d7NGnCjBYFomH9BwPOCCEKWH2FVWv9s+JCr"
 
 // releaseSignatureRequired reports whether this build enforces signatures.
 func releaseSignatureRequired() bool {

@@ -154,6 +154,27 @@ func TestSecurityFeedFileInRepoParses(t *testing.T) {
 	}
 }
 
+// A build with the release key acts only on a feed signed with it. A feed
+// edited without a fresh signature would make every server ignore every
+// advisory, so the PR fails instead (docs/runbooks/security-advisory.md).
+func TestSecurityFeedFileInRepoIsSigned(t *testing.T) {
+	t.Parallel()
+	if releaseSigningPublicKey == "" {
+		t.Skip("release signing is not in force")
+	}
+	body, err := os.ReadFile("../../../security/advisories.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := os.ReadFile("../../../security/advisories.json.minisig")
+	if err != nil {
+		t.Fatalf("security/advisories.json has no signature: %v. Sign it: minisign -S -s ~/.minisign/jabali-release.key -m security/advisories.json -t \"jabali security feed\"", err)
+	}
+	if signed, err := verifySecurityFeed(releaseSigningPublicKey, body, sig, nil); err != nil || !signed {
+		t.Fatalf("security/advisories.json.minisig does not verify against the release key (%v). Sign the feed again after its last edit.", err)
+	}
+}
+
 func TestProcessAdvisory_Apt(t *testing.T) {
 	t.Parallel()
 	adv := securityAdvisory{ID: "JSA-2026-002", Published: "2026-10-22", Severity: "critical", Title: "PHP", Apt: true}

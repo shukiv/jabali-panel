@@ -93,10 +93,55 @@ moment this lands.
    verify.
 
 **There is a window between publish and signature upload.** A box updating in
-that window fetches a tarball whose `.minisig` does not exist yet and refuses to
-install — it stays on its current build and retries later, which is the safe
-failure. Keep the window short; publishing as a draft and releasing after
-signing removes it entirely and is the better long-term shape.
+that window finds no `.minisig` for the release yet and does not update. It
+stays on its current build without downloading the tarball, and retries on the
+next run, which is the safe failure.
+
+**Promoting `stable`: sign first, then move the tag.** A stable box moves to the
+promoted commit only once that commit's release is signed. Moving the tag first
+is safe, since the fleet waits. But every box then logs "no signed release" on
+each run until the signature lands.
+
+**The development channel follows signed releases only.** Every push to main
+publishes a release, but a box moves only to a commit whose release is signed.
+On a key-carrying build, a development-channel box therefore stays put until
+the newest main release is signed.
+
+## Amendment (2026-10-20): the checkout is verified too
+
+As first built, the signature covered only the tarball. But `jabali update`
+resets the git checkout to the channel's commit and then runs `install.sh`
+functions, unit files and templates from it as root, before any binary is
+installed. Whoever could push to the repository could change `install.sh`, and
+every box would run it on its next update, signature or not.
+
+**On a key-carrying build, the commit is now verified before it becomes the
+working tree** (`verifyResetTarget`, `panel-api/cmd/server/update_release_staged.go`):
+
+1. After `git fetch`, the update resolves the commit it would reset to.
+2. It fetches that commit's release **by commit**, checks the sha256 and the
+   signature, and extracts it. The release's `MANIFEST` must name exactly that
+   commit (`full_sha`). The signature covers the MANIFEST, and the commit ID
+   covers every tracked file, so one signature vouches for the whole checkout.
+3. Only then does it run `git reset --hard`. The release step installs that same
+   verified tarball; it is not downloaded a second time.
+4. If the commit has no published release, or the release has no `.minisig`
+   yet, the checkout is not moved and the box stays on its current build.
+   The same happens on every channel when the commit does not build on the
+   one the box runs (it is not a descendant of HEAD). A signature says a build
+   is genuine, not that it is current, so an old signed release must not move
+   a box back onto code whose holes have since been fixed. That covers an
+   ancestor of HEAD and a commit on a line that split off before it.
+5. A signature that fails, a key mismatch, a checksum mismatch, or a signed
+   release whose MANIFEST names another commit stops the update. The last case
+   is an old signed release served under a new name, or a publishing mistake.
+
+The "latest" download shortcut is not used on a key-carrying build. It names
+whatever main published last. On a stable box that is a different build,
+usually unsigned, so its missing `.minisig` would have failed every stable
+update before the MANIFEST check could redirect to the by-commit release.
+
+`--from-source` still verifies the commit first, then builds it.
 
 ## Key ceremony
 

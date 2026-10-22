@@ -86,7 +86,11 @@ type releaseResponse struct {
 // mismatch, file install failure, migration error) — those should NOT
 // transparently fall back because they indicate corruption or a
 // systemic problem.
-func installFromRelease(ctx context.Context, repoDir string, log func(string, ...any)) (installed bool, sha string, err error) {
+//
+// pre is the release the git step already verified for the commit the
+// checkout was reset to (verifyResetTarget), or nil. It is used instead of
+// downloading the tarball a second time.
+func installFromRelease(ctx context.Context, repoDir string, pre *stagedRelease, log func(string, ...any)) (installed bool, sha string, err error) {
 	base := os.Getenv("JABALI_RELEASE_API_BASE")
 	if base == "" {
 		base = defaultReleaseAPIBase
@@ -94,6 +98,37 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 	webBase := os.Getenv("JABALI_RELEASE_WEB_BASE")
 	if webBase == "" {
 		webBase = defaultReleaseWebBase
+	}
+
+	// A build that carries the release key installs only a release resolved
+	// BY COMMIT (ADR-0162). The "latest" shortcut below names whatever main
+	// published last. On a stable host that is a different build, usually not
+	// signed, and its missing .minisig would fail the update before the
+	// MANIFEST check could send it on to the by-commit path.
+	if releaseSignatureRequired() {
+		head, err := localHeadSHA(ctx, repoDir)
+		if err != nil {
+			return false, "", fmt.Errorf("release: %w", err)
+		}
+		staged := pre
+		if staged == nil || staged.sha != head {
+			staged, err = stageSignedRelease(ctx, webBase, releaseSigningPublicKey, head, releaseStageParent, urlExists, log)
+			if err != nil {
+				return false, "", err
+			}
+			if staged == nil {
+				// No signed release for HEAD. The git step resets the
+				// checkout only to a verified build, so HEAD is the build
+				// this host was already on and building it from source
+				// trusts nothing new.
+				return false, "", nil
+			}
+			defer staged.cleanup()
+		}
+		if err := installStagedRelease(ctx, staged.extractDir, log); err != nil {
+			return false, "", err
+		}
+		return true, head, nil
 	}
 
 	// 1. Discover the commit we are updating to.
@@ -249,6 +284,16 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 		}
 	}
 
+	if err := installStagedRelease(ctx, extractDir, log); err != nil {
+		return false, "", err
+	}
+	return true, fullSHA, nil
+}
+
+// installStagedRelease installs the binaries, the bundled WordPress plugins
+// and the docker-app catalog from an extracted release that has already been
+// verified.
+func installStagedRelease(ctx context.Context, extractDir string, log func(string, ...any)) error {
 	// 6. Install binaries via the same path the source-build flow
 	//    uses (atomic rename, mode 0755, owner root). Caller is
 	//    responsible for restarting services + running migrations
@@ -256,11 +301,11 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 	for _, binName := range []string{"jabali-panel", "jabali-agent", "jabali-ssh-shell", "jabali-mailhook"} {
 		src := filepath.Join(extractDir, "bin", binName)
 		if _, err := os.Stat(src); err != nil {
-			return false, "", fmt.Errorf("release: tarball missing bin/%s", binName)
+			return fmt.Errorf("release: tarball missing bin/%s", binName)
 		}
 		dst := "/usr/local/bin/" + binName
 		if err := installBinaryAtomic(src, dst); err != nil {
-			return false, "", fmt.Errorf("release: install %s: %w", binName, err)
+			return fmt.Errorf("release: install %s: %w", binName, err)
 		}
 		log("release: installed %s", dst)
 	}
@@ -275,7 +320,7 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 	}() {
 		_ = os.MkdirAll("/usr/local/libexec/jabali", 0o755)
 		if err := installBinaryAtomic(src, "/usr/local/libexec/jabali/jabali-sendmail"); err != nil {
-			return false, "", fmt.Errorf("release: install jabali-sendmail: %w", err)
+			return fmt.Errorf("release: install jabali-sendmail: %w", err)
 		}
 		log("release: installed /usr/local/libexec/jabali/jabali-sendmail")
 	} else {
@@ -292,7 +337,7 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 		_ = os.MkdirAll("/usr/local/share/jabali/wp-plugins", 0o755)
 		cmd := exec.CommandContext(ctx, "rsync", "-a", "--delete", "--exclude=.git", src+"/", dst+"/")
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return false, "", fmt.Errorf("release: install wp-plugins: %v: %s", err, out)
+			return fmt.Errorf("release: install wp-plugins: %v: %s", err, out)
 		}
 		_ = exec.CommandContext(ctx, "chown", "-R", "root:root", dst).Run()
 		log("release: installed %s", dst)
@@ -314,7 +359,7 @@ func installFromRelease(ctx context.Context, repoDir string, log func(string, ..
 		}
 	}
 
-	return true, fullSHA, nil
+	return nil
 }
 
 // dirExists reports whether path is an existing directory.
