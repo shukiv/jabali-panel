@@ -28,7 +28,7 @@ TasksMax=<max_tasks>
 
 Only non-zero limits are written; a limit of 0 means unlimited and leaves its line out. With every limit at 0 the drop-in is removed. The reconciler re-applies the drop-in on every tick.
 
-The slice holds **everything** the account runs: PHP-FPM masters and workers, Python apps and their builds, cron jobs, the account's systemd user manager, and SSH sessions.
+The slice holds **everything** the account runs: PHP-FPM masters and workers, Python and Node.js apps and their builds, cron jobs, the account's systemd user manager, and SSH sessions.
 
 ### Max tasks
 
@@ -36,11 +36,12 @@ The slice holds **everything** the account runs: PHP-FPM masters and workers, Py
 
 - each PHP-FPM pool: 1 master plus up to `pm.max_children` workers (on-demand pools start a worker per request);
 - each Python app: at least 4 (a gunicorn or uvicorn master plus 3 workers), more if the app starts threads;
-- a Python app's build while it runs: pip and the processes it starts;
+- each Node.js app: about 7 (node starts worker threads), or about 19 for the `npm` app type, which keeps npm running next to the app;
+- a Python or Node.js app's build while it runs: pip or npm and the processes it starts;
 - the account's systemd user manager, when it is running: 2;
 - cron jobs and SSH sessions while they run.
 
-Lowering the limit does not stop processes that are already running; it only stops new ones from starting. When the slice is full, systemd logs `Failed to spawn executor: Resource temporarily unavailable`, PHP-FPM pools and Python apps fail to start, and running on-demand pools time out because they cannot start a worker. The pool's or app's error then says the account has reached its Max tasks limit and shows the count. To check by hand:
+Lowering the limit does not stop processes that are already running; it only stops new ones from starting. When the slice is full, systemd logs `Failed to spawn executor: Resource temporarily unavailable`, PHP-FPM pools, Python apps and Node.js apps fail to start, and running on-demand pools time out because they cannot start a worker. The pool's or app's error then says the account has reached its Max tasks limit and shows the count. To check by hand:
 
 ```
 systemctl show jabali-user-<username>.slice -p TasksCurrent -p TasksMax
