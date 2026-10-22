@@ -256,9 +256,10 @@ export function useUpdateAutoupdate() {
       return r.data;
     },
     // GH #2221: the card applies each change at once, so show the stored row
-    // straight away; the refetch then confirms it.
+    // straight away; the refetch then confirms it. The PUT answers null when it
+    // cannot read the row back, so only a row replaces the cache.
     onSuccess: (saved) => {
-      qc.setQueryData(["update-autoupdate"], saved);
+      if (saved) qc.setQueryData(["update-autoupdate"], saved);
       return qc.invalidateQueries({ queryKey: ["update-autoupdate"] });
     },
   });
