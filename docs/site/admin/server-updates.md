@@ -108,6 +108,13 @@ sooner, two ways:
   build plus the fix, with a prebuilt release like any other. Stable boxes take it
   at their next update.
 
+Neither waits for the next daily run when the fix is urgent. Every server
+checks Jabali's security advisories once an hour (**Security advisory check**
+on Admin → Cron Jobs). For a new advisory it installs the pending security
+updates or starts the panel update right away, where those updates are turned
+on. It also sends the admins a **Security advisory** notification that says
+what was done and what still needs them.
+
 Before it moves the checkout, `jabali update` also checks the newest migration in
 the channel's target. If the target would not know the schema the database is
 already at, the update stops with "refusing to update" and changes nothing. This

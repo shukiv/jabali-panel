@@ -1,0 +1,23 @@
+[Unit]
+Description=Jabali security advisory feed check
+Documentation=https://github.com/shukiv/jabali-panel/blob/main/docs/runbooks/security-advisory.md
+# `jabali security feed-check` reads the Updates page settings from MariaDB
+# and fetches the feed. After jabali-autoupdate.service: a check due while an
+# update swaps binaries waits for it. It orders only; the check itself may
+# start an update (--no-block), and nothing here waits on that.
+After=network-online.target mariadb.service jabali-autoupdate.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root: it runs git as the service user (sudo), reads the panel settings, and
+# starts transient units (systemd-run) for the actions an advisory asks for.
+# The actions run in their own units, so this check stays short.
+ExecStart=/usr/local/bin/jabali security feed-check
+TimeoutStartSec=10min
+StandardOutput=journal
+StandardError=journal
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=read-only
+Restart=no

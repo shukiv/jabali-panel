@@ -3181,6 +3181,38 @@ JABALI_HOOK_EOF
   _ok "security updates: vendor repos allowed in unattended-upgrades; services reload after an upgrade"
 }
 
+# ensure_security_feed_timer — install jabali-security-feed.timer, which runs
+# `jabali security feed-check` hourly. A Jabali security advisory then makes
+# this server act within the hour instead of at its next daily run: install
+# the pending security updates, start the panel update, and tell the admins
+# what was done and what still needs them (panel-api/cmd/server/
+# security_feed.go, docs/runbooks/security-advisory.md). The units are
+# rewritten only when they changed. Never fails the caller.
+ensure_security_feed_timer() {
+  local src_dir="${REPO_DIR:-/opt/jabali-panel}/install/systemd"
+  local unit_dir=/etc/systemd/system
+  local u changed=0
+  for u in jabali-security-feed.service jabali-security-feed.timer; do
+    if [[ ! -f "$src_dir/$u" ]]; then
+      _warn "$u missing from $src_dir — security advisory feed not installed"
+      return 0
+    fi
+  done
+  for u in jabali-security-feed.service jabali-security-feed.timer; do
+    if ! cmp -s "$src_dir/$u" "$unit_dir/$u"; then
+      install -m 0644 -o root -g root "$src_dir/$u" "$unit_dir/$u" && changed=1
+    fi
+  done
+  if ((changed)); then
+    systemctl daemon-reload >/dev/null 2>&1 || true
+  fi
+  if systemctl enable --now jabali-security-feed.timer >/dev/null 2>&1; then
+    _ok "security advisories: checked hourly (jabali-security-feed.timer)"
+  else
+    _warn "jabali-security-feed.timer enable failed — check 'journalctl -u jabali-security-feed.timer'"
+  fi
+}
+
 
 # ---------- systemd slices: jabali root + user container ----------------------
 
@@ -16691,6 +16723,7 @@ provision_new_software() {
   # PHP and the other vendor packages current (CVE-2026-109618 /
   # CVE-2026-109619 were fixed in the October 21 PHP releases).
   ensure_security_updates 1
+  ensure_security_feed_timer
   # Also on UPDATE, not just fresh install: `jabali update` runs this trimmed
   # path, not main(), so wiring the call only into main() left every EXISTING
   # host — the ones that have been downloading to predictable /tmp paths for
@@ -17483,6 +17516,7 @@ main() {
   install_php_opcache_tuning   # #597: opcache defaults for multi-tenant WP
   install_php_cli_sendmail_path  # JAB-230: CLI mail() through the shim
   ensure_security_updates  # vendor security updates via unattended-upgrades + service refresh
+  ensure_security_feed_timer  # hourly security advisory check
   # M48 Phase 8 (opt-in): install_docker_engine no longer runs on
   # fresh install. Operator flips server_settings.docker_marketplace_enabled
   # in Server Settings; panel-api dispatches docker.install which
@@ -17816,6 +17850,8 @@ EOF
     jabali-aide-check.service \
     jabali-crowdsec-hub-refresh.timer \
     jabali-crowdsec-hub-refresh.service \
+    jabali-security-feed.timer \
+    jabali-security-feed.service \
     jabali-notify@.service; do
     systemctl stop    "$svc" 2>/dev/null || true
     systemctl disable "$svc" 2>/dev/null || true
@@ -17868,6 +17904,8 @@ EOF
   rm -f  /etc/systemd/system/jabali-per-user-egress-flip.timer
   rm -f  /etc/systemd/system/jabali-aide-check.service
   rm -f  /etc/systemd/system/jabali-aide-check.timer
+  rm -f  /etc/systemd/system/jabali-security-feed.service
+  rm -f  /etc/systemd/system/jabali-security-feed.timer
   rm -f  /etc/systemd/system/jabali-notify@.service
   rm -f  /etc/systemd/system/jabali-firehol-blocklists.service
   rm -f  /etc/systemd/system/jabali-firehol-blocklists.timer
@@ -18059,6 +18097,7 @@ RESOLV
   _log "removing state + install directories"
   rm -rf /var/lib/jabali        \
          /var/lib/jabali-panel  \
+         /var/lib/jabali-security-feed \
          /var/lib/jabali-webmail \
          /var/lib/stalwart       \
          /run/jabali             \

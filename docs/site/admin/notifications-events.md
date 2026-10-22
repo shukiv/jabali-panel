@@ -61,6 +61,7 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `bandwidth.quota.crit` | critical | yes | Bandwidth quota — 100%. User crossed their package's monthly BandwidthQuotaMB. With Bandwidth Quota Auto-Suspend on (Server Settings, off by default) their websites are also suspended until usage is back under 80%; mail keeps working. |
 | `digest.daily` | info | no | Daily digest. One summary email a day: alerts by severity, backup outcomes, certificates expiring soon, and fleet counts for the last 24 hours. |
 | `update.completed` | info | no | Panel update applied. The panel finished updating to a new release. Informational; noisy on the development channel. |
+| `security.advisory` | critical | yes | Security advisory. A Jabali security advisory applies to this server: what was done about it and what still needs an admin. Action may be required. |
 | `aide.tamper.detected` | error | yes | File integrity tamper. AIDE detected an unexpected change to a monitored system file. Security-relevant — investigate. |
 | `nginx.config.invalid` | error | yes | nginx config invalid. A rendered nginx configuration failed validation and was not applied. Action required. |
 | `malware.realtime.critical` | critical | yes | Malware — critical detection. The real-time scanner flagged a high-confidence malicious file. Security-relevant — investigate. |

@@ -5002,6 +5002,22 @@ jabali secrets rotate redis-panel-token [flags]
 
 - `--dry-run` — print the plan and touch nothing
 
+### `jabali security`
+
+Security advisories for this server
+
+```
+jabali security
+```
+
+#### `jabali security feed-check`
+
+Act on new security advisories now (jabali-security-feed.timer runs this hourly)
+
+```
+jabali security feed-check
+```
+
 ### `jabali serve`
 
 Start the Jabali Panel HTTP(S) server
