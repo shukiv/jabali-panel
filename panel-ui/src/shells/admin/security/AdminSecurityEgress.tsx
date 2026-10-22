@@ -80,8 +80,10 @@ export const AdminSecurityEgress = () => {
             Kernel-level packet filter via nftables + cgroup v2 socket match. ENFORCED
             users have outbound traffic dropped if it doesn't hit the default allowlist
             (loopback / DNS / HTTP-S / SMTP submission) or a per-user override.
-            LEARNING users have drops logged + counted but allowed (7-day soak before
-            auto-flip). OFF disables the filter entirely (break-glass).
+            LEARNING users are not blocked: each new connection outside the allowlist is
+            logged and counted, and listed as allowed, so you can allow what their apps
+            need before enforcing (7-day soak before auto-flip). OFF disables the filter
+            entirely (break-glass).
           </Typography.Paragraph>
         }
       />
@@ -165,17 +167,21 @@ const UserStateCell = ({ userID }: { userID: string }) => {
   return renderStateTag(q.data.state);
 };
 
-interface EgressDropEvent {
+export interface EgressDropEvent {
   dest: string;
   port: number;
   proto: string;
+  // GH #2224: the policy state that logged the flow. "learning" flows were
+  // allowed; enforced mode would block them. Absent from an older agent.
+  mode?: "enforced" | "learning";
   count: number;
   last_seen: string;
 }
 
 // DropEventsDrawer (GH #713) — drill-down into WHAT a user was blocked from,
-// parsed from the nft drop log (the count/sparkline alone can't show this).
-const DropEventsDrawer = ({
+// or would be while learning, parsed from the nft log (the count/sparkline
+// alone can't show this).
+export const DropEventsDrawer = ({
   userID,
   open,
   onClose,
@@ -228,7 +234,7 @@ const DropEventsDrawer = ({
   );
   const protos = Array.from(new Set((q.data?.events ?? []).map((e) => (e.proto || "?").toUpperCase())));
   return (
-    <Drawer title="Blocked egress — recent drops" width={620} open={open} onClose={onClose}>
+    <Drawer title="Egress outside the allowlist — recent" width={700} open={open} onClose={onClose}>
       <Alert
         type="info"
         showIcon
@@ -254,17 +260,24 @@ const DropEventsDrawer = ({
         />
       </Space>
       <Table<EgressDropEvent>
-        rowKey={(r) => `${r.dest}:${r.port}:${r.proto}`}
+        rowKey={(r) => `${r.dest}:${r.port}:${r.proto}:${r.mode ?? "enforced"}`}
         loading={q.isLoading}
         dataSource={events}
         size="small"
         pagination={false}
         scroll={{ x: "max-content" }}
-        locale={{ emptyText: "No drops logged (rate-limited 5/min; may have rotated)" }}
+        locale={{ emptyText: "Nothing logged (rate-limited 5/min; may have rotated)" }}
         columns={[
           { title: "Destination", dataIndex: "dest" },
           { title: "Port", dataIndex: "port", width: 80, render: (v: number) => v || "—" },
           { title: "Proto", dataIndex: "proto", width: 80, render: (v: string) => <Tag>{v || "?"}</Tag> },
+          {
+            title: "Result",
+            dataIndex: "mode",
+            width: 150,
+            render: (v: EgressDropEvent["mode"]) =>
+              v === "learning" ? <Tag color="gold">Allowed (learning)</Tag> : <Tag color="red">Blocked</Tag>,
+          },
           { title: "Count", dataIndex: "count", width: 80 },
           { title: "Last seen", dataIndex: "last_seen", width: 180, render: (v: string) => v || "—" },
           {
@@ -290,7 +303,8 @@ const UserDropsCell = ({ userID }: { userID: string }) => {
   const count = q.data?.drop_count_24h ?? 0;
   return (
     <>
-      <Button type="link" size="small" style={{ padding: 0 }} disabled={count === 0} onClick={() => setOpen(true)}>
+      {/* Open even at 0: the log holds flows from earlier ticks. */}
+      <Button type="link" size="small" style={{ padding: 0 }} onClick={() => setOpen(true)}>
         {count}
       </Button>
       <DropEventsDrawer userID={userID} open={open} onClose={() => setOpen(false)} />

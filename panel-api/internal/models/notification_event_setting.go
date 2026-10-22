@@ -330,8 +330,8 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	},
 	{
 		Kind:        "egress.drop.burst",
-		Label:       "Outbound traffic blocked (burst)",
-		Description: "A burst of outbound connections was dropped by the egress firewall. Possible compromise or misconfiguration.",
+		Label:       "Outbound traffic outside the allowlist (burst)",
+		Description: "A burst of a user's outbound traffic outside their egress allowlist: dropped when the user's policy is enforced, allowed and logged while it is learning. Possible compromise or misconfiguration.",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},

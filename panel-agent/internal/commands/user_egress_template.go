@@ -530,9 +530,13 @@ func writeUserChain(b *strings.Builder, u EgressUser, d EgressDefaults) {
 		fmt.Fprintf(b, "    limit rate 5/minute log prefix \"jabali-egress-drop-%s \" group 0\n", u.Username)
 		fmt.Fprintf(b, "    counter name user_%s_drops drop\n", u.Username)
 	case "learning":
-		// Rate-limit the dmesg log so a runaway loop doesn't drown the
-		// kernel ring buffer. Counter still bumps every drop so the
-		// M14 burst source sees the true rate.
+		// Learning lets every packet through. A connection it already let
+		// through is accepted before the log and the counter (GH #2224), so
+		// both see each new connection enforcement would block once — what
+		// the M14 burst source and the drops list report — not every packet
+		// of a long-lived connection. Rate-limit the dmesg log so a runaway
+		// loop doesn't drown the kernel ring buffer.
+		b.WriteString("    ct state != new accept\n")
 		fmt.Fprintf(b, "    limit rate 5/minute log prefix \"jabali-egress-learn-%s \" group 0\n", u.Username)
 		fmt.Fprintf(b, "    counter name user_%s_drops accept\n", u.Username)
 	}

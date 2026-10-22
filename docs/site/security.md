@@ -206,8 +206,9 @@ Admin overrides per-user under Users → Edit → Egress.
 
 **Every hosting user is enrolled.** The reconciler gives each user without a
 policy a row on every tick. On a host installed before the egress firewall
-existed, the row starts in **learning**: blocked connections are logged
-(`journalctl -k | grep jabali-egress-learn-<user>`) but allowed. After 7 days
+existed, the row starts in **learning**: each new connection the allowlist
+would block is allowed and logged (`journalctl -k | grep jabali-egress-learn-<user>`),
+and Security → Egress lists it as **Allowed (learning)**. After 7 days
 the nightly timer switches it to **enforced**. On newer hosts it starts
 enforced. Watch **Users → Edit → Egress** during those 7 days, and add the
 extras a tenant's app needs. To hold every learning user in learning, run

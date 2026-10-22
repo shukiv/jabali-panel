@@ -66,7 +66,7 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `nginx.config.invalid` | error | yes | nginx config invalid. A rendered nginx configuration failed validation and was not applied. Action required. |
 | `malware.realtime.critical` | critical | yes | Malware — critical detection. The real-time scanner flagged a high-confidence malicious file. Security-relevant — investigate. |
 | `malware.quarantine.added` | warning | yes | Malware quarantined. A file was quarantined by the malware scanner. Security-relevant. |
-| `egress.drop.burst` | warning | yes | Outbound traffic blocked (burst). A burst of outbound connections was dropped by the egress firewall. Possible compromise or misconfiguration. |
+| `egress.drop.burst` | warning | yes | Outbound traffic outside the allowlist (burst). A burst of a user's outbound traffic outside their egress allowlist: dropped when the user's policy is enforced, allowed and logged while it is learning. Possible compromise or misconfiguration. |
 | `exec.audit.burst` | warning | yes | Suspicious process burst. The exec-audit source saw a burst of flagged process executions. Security-relevant. |
 | `domain.ghost_detected.mismatch` | warning | yes | Ghosted domain — IP mismatch. The domain resolves to a different IP than this server. Expected behind a proxy/CDN such as Cloudflare — disable if you front domains that way. |
 | `domain.ghost_detected.nxdomain` | warning | yes | Ghosted domain — does not resolve. The domain does not resolve in public DNS. It may be newly added or its DNS is not yet live. |
