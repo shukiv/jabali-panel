@@ -93,6 +93,13 @@ php_value[max_execution_time] = 300
 php_value[max_input_time] = 300
 php_value[max_input_vars] = 10000
 php_value[max_file_uploads] = 100
+; PHP warnings go to a file, never FastCGI stderr: nginx reads stderr into the
+; response-header buffer, and a page with many warnings returns 502 "upstream
+; sent too big header". Each vhost pins its own <domain>.php-error.log in
+; PHP_VALUE; this is the fallback. php_value, so .user.ini and ini_set (e.g.
+; WP_DEBUG_LOG) can still pick another file. php.pool.apply makes ~/logs and
+; rotates the files as the tenant (panel-agent php_error_log.go).
+php_value[error_log] = /home/{{.User}}/logs/php-error.log
 {{- range .AdminValues }}
 php_admin_value[{{.Name}}] = {{.Value}}
 {{- end }}
