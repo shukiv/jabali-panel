@@ -4,6 +4,7 @@ import { Modal, Typography, Button, Space, Spin, theme } from "antd";
 import { PauseOutlined, PlayCircleOutlined, ClearOutlined } from "@ant-design/icons";
 import { buildGoAccessHttpUrl } from "../utils/logStream";
 import { useLogStream } from "./logs/useLogStream";
+import type { LogType } from "./logs/domainLogStreams";
 
 const { Text } = Typography;
 
@@ -12,7 +13,7 @@ interface LogStreamModalProps {
   onClose: () => void;
   streamUrl: string | null;
   title: string;
-  logType: "access" | "error" | "goaccess";
+  logType: LogType;
 }
 
 // The stream lifecycle (WebSocket connect/close, pause/resume buffering, the

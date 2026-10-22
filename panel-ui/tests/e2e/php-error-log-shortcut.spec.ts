@@ -42,8 +42,9 @@ test("tenant PHP settings: View error log opens this domain's error log on the p
   await page.goto(settingsPath);
 
   await page.getByRole("button", { name: "View error log" }).click();
-  await expect.poll(() => streamRequest).toEqual({ log_type: "error", domain_id: DOMAIN_ID });
-  await expect(page.getByRole("dialog").getByText("Error Log Stream")).toBeVisible();
+  // PHP warnings go to the domain's PHP error log, not the nginx error log.
+  await expect.poll(() => streamRequest).toEqual({ log_type: "php", domain_id: DOMAIN_ID });
+  await expect(page.getByRole("dialog").getByText("PHP Error Log Stream")).toBeVisible();
   // Still on the PHP Settings tab: no detour through Logs & Statistics.
   expect(new URL(page.url()).pathname).toBe(settingsPath);
 });

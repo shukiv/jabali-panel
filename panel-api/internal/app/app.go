@@ -1596,12 +1596,15 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					LogAccessStreams: deps.LogAccessStreams,
 					Domains:          deps.Domains,
 					Users:            deps.Users,
+					Agent:            deps.Agent,
 				})
 				// WebSocket log streaming routes
 				api.RegisterLogStreamRoutes(v1, api.LogStreamHandlerConfig{
 					LogAccessStreams: deps.LogAccessStreams,
 					Domains:          deps.Domains,
 					Log:              deps.Log,
+					Agent:            deps.Agent,
+					Users:            deps.Users,
 				})
 			}
 		}

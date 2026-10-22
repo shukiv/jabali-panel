@@ -11,6 +11,7 @@
 // unused.
 import { Space, Typography, type TableProps } from "antd";
 import {
+  BugOutlined,
   FileTextOutlined,
   WarningOutlined,
   DashboardOutlined,
@@ -87,6 +88,17 @@ export function buildDomainLogColumns(
               icon: <DashboardOutlined />,
               onClick: () => open("goaccess", record),
             },
+            // PHP error logs are per domain: the aggregate row has none.
+            ...(isAggregateRow(record)
+              ? []
+              : [
+                  {
+                    key: "php",
+                    label: LOG_STREAM_LABELS.php,
+                    icon: <BugOutlined />,
+                    onClick: () => open("php", record),
+                  },
+                ]),
           ]}
         />
       ),

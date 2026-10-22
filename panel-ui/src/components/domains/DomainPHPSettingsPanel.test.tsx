@@ -301,15 +301,15 @@ describe("DomainPHPSettingsPanel Reset OPcache (GH #1701)", () => {
 });
 
 describe("DomainPHPSettingsPanel error log shortcut (GH #1701)", () => {
-  it("opens this domain's error log right on the page", async () => {
+  it("opens this domain's PHP error log right on the page", async () => {
     mocked.post.mockResolvedValue({ data: { stream_key: "k1", websocket_url: "/ws/logs/k1" } });
     renderPanel();
     expect(screen.queryByTestId("log-stream-modal")).toBeNull();
     fireEvent.click(await screen.findByText("View error log"));
     await vi.waitFor(() =>
-      expect(mocked.post).toHaveBeenCalledWith("/logs/access", { log_type: "error", domain_id: "d1" }),
+      expect(mocked.post).toHaveBeenCalledWith("/logs/access", { log_type: "php", domain_id: "d1" }),
     );
-    expect(await screen.findByTestId("log-stream-modal")).toHaveTextContent("Error Log Stream");
+    expect(await screen.findByTestId("log-stream-modal")).toHaveTextContent("PHP Error Log Stream");
   });
 });
 

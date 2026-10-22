@@ -50,6 +50,7 @@ describe("copy (AC6)", () => {
       access: "Access Log Stream",
       error: "Error Log Stream",
       goaccess: "GoAccess Real-Time Dashboard",
+      php: "PHP Error Log Stream",
     });
   });
   it("pins the action labels", () => {
@@ -57,6 +58,7 @@ describe("copy (AC6)", () => {
       access: "Access Log",
       error: "Error Log",
       goaccess: "Real Time",
+      php: "PHP Errors",
     });
   });
 });

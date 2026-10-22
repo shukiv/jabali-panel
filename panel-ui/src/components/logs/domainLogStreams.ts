@@ -5,7 +5,9 @@
 // place with unit tests, instead of being copy-pasted module-locals in two
 // shells that drifted independently.
 
-export type LogType = "access" | "error" | "goaccess";
+// "php" is the domain's PHP error log (~/logs/<domain>.php-error.log), read
+// through the agent. It exists per domain only, never as an aggregate.
+export type LogType = "access" | "error" | "goaccess" | "php";
 
 // A row in the domain table. `aggregate` marks the synthetic "All Domains"
 // row that only the admin surface prepends — see ALL_DOMAINS_ROW. Tenant rows
@@ -24,6 +26,7 @@ export const LOG_STREAM_TITLES: Record<LogType, string> = {
   access: "Access Log Stream",
   error: "Error Log Stream",
   goaccess: "GoAccess Real-Time Dashboard",
+  php: "PHP Error Log Stream",
 };
 
 // Row-action labels, keyed by log type.
@@ -31,6 +34,7 @@ export const LOG_STREAM_LABELS: Record<LogType, string> = {
   access: "Access Log",
   error: "Error Log",
   goaccess: "Real Time",
+  php: "PHP Errors",
 };
 
 // The synthetic aggregate row. Admin prepends it to stream logs across every

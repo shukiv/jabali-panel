@@ -11,8 +11,9 @@ type LogAccessStream struct {
 	DomainID  *string `gorm:"type:char(26);index:ix_log_access_streams_domain_id" json:"domain_id,omitempty"`
 
 	// LogType specifies which type of log this stream provides access to.
-	// Values: "access" (nginx access log), "error" (nginx error log), "goaccess" (GoAccess real-time HTML report)
-	LogType string `gorm:"type:enum('access','error','goaccess');not null" json:"log_type"`
+	// Values: "access" (nginx access log), "error" (nginx error log), "goaccess" (GoAccess real-time HTML report),
+	// "php" (the domain's PHP error log, read through the agent)
+	LogType string `gorm:"type:enum('access','error','goaccess','php');not null" json:"log_type"`
 
 	// StreamKey is a cryptographically random token used to authenticate
 	// WebSocket connections and prevent unauthorized access to logs.
