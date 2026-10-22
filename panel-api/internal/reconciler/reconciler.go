@@ -4368,6 +4368,10 @@ var knownSystemSites = map[string]bool{
 	// agent's domain validation), so listing it only invites a doomed
 	// manual cleanup attempt.
 	"jabali-preview-fallback": true,
+	// The Stalwart WebAdmin proxy (mail.webadmin.apply), present while the
+	// admin has WebAdmin on. Same as above: a system site, no domain row,
+	// and no dot for the teardown to accept.
+	"jabali-stalwart-admin": true,
 }
 
 // sweepAgentSites is step 3 of ReconcileAll: each agent site with no domain

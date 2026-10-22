@@ -43,19 +43,17 @@ delete call tears down the nginx vhost, removes DKIM keys, and clears
 the Stalwart mail Domain row when applicable. It is irreversible.`,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The flags parsed; an error from here on is about the sites, and
+			// the usage text would only bury it (or, with --json, trail the
+			// JSON the Repair Center reads).
+			cmd.SilenceUsage = true
 			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 			defer cancel()
 
 			// 1. Live agent state.
-			raw, err := sharedAgent.Call(ctx, "domain.list", map[string]any{})
+			sites, err := listAgentSites(ctx, sharedAgent.Call)
 			if err != nil {
-				return fmt.Errorf("agent domain.list: %w", err)
-			}
-			var resp struct {
-				Sites []string `json:"sites"`
-			}
-			if err := json.Unmarshal(raw, &resp); err != nil {
-				return fmt.Errorf("parse agent response: %w", err)
+				return err
 			}
 
 			// 2. DB state — every domain name (enabled or disabled).
@@ -69,15 +67,27 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 			}
 
 			// 3. Diff via the pure-logic helper (testable in isolation).
-			orphans := computeOrphans(resp.Sites, knownDomain)
+			orphans := computeOrphans(sites, knownDomain)
+
+			// 4. Apply, before any output, so the --json result the Repair
+			// Center reads says what was deleted (GH #2237).
+			deleted, failed := []string{}, []orphanPruneFailure{}
+			if apply && len(orphans) > 0 {
+				deleted, failed = pruneOrphanSites(cmd.Context(), sharedAgent.Call, orphans)
+			}
 
 			if jsonOutput {
-				return printJSON(map[string]any{
+				if err := printJSON(map[string]any{
 					"orphans":     orphans,
-					"agent_sites": resp.Sites,
+					"agent_sites": sites,
 					"db_domains":  len(domains),
 					"applied":     apply,
-				})
+					"deleted":     deleted,
+					"failed":      failed,
+				}); err != nil {
+					return err
+				}
+				return orphanPruneErr(failed)
 			}
 
 			if len(orphans) == 0 {
@@ -86,12 +96,19 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 			}
 
 			fmt.Printf("Found %d orphan site(s) on agent (no DB row):\n", len(orphans))
+			failedWhy := make(map[string]string, len(failed))
+			for _, f := range failed {
+				failedWhy[f.Site] = f.Error
+			}
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "SITE\tACTION")
 			for _, site := range orphans {
 				action := "(dry-run — would delete)"
 				if apply {
-					action = "deleting…"
+					action = "deleted"
+					if why, ok := failedWhy[site]; ok {
+						action = "FAILED — " + why
+					}
 				}
 				fmt.Fprintf(w, "%s\t%s\n", site, action)
 			}
@@ -102,32 +119,83 @@ the Stalwart mail Domain row when applicable. It is irreversible.`,
 				fmt.Println("Re-run with --apply to actually delete these.")
 				return nil
 			}
-
-			// 4. Apply: agent.domain.delete each orphan. Strip -mail since
-			// the agent's domain.delete handler operates on the canonical
-			// domain name and tears down both vhosts.
-			fmt.Println()
-			fail := 0
-			for _, site := range orphans {
-				name := orphanDomainName(site)
-				delCtx, delCancel := context.WithTimeout(ctx, 30*time.Second)
-				_, err := sharedAgent.Call(delCtx, "domain.delete", map[string]string{"domain": name})
-				delCancel()
-				if err != nil {
-					fmt.Printf("  %s: FAILED — %v\n", site, err)
-					fail++
-					continue
-				}
-				fmt.Printf("  %s: deleted\n", site)
-			}
-			if fail > 0 {
-				return fmt.Errorf("%d orphan deletion(s) failed", fail)
-			}
-			return nil
+			return orphanPruneErr(failed)
 		},
 	}
 	cmd.Flags().BoolVar(&apply, "apply", false, "Actually delete orphans (default: dry-run)")
 	return cmd
+}
+
+// orphanPruneFailure is an orphan site that is still there after the prune,
+// with the reason.
+type orphanPruneFailure struct {
+	Site  string `json:"site"`
+	Error string `json:"error"`
+}
+
+// listAgentSites returns the agent's nginx sites-enabled names (domain.list).
+func listAgentSites(ctx context.Context, call agentCaller) ([]string, error) {
+	raw, err := call(ctx, "domain.list", map[string]any{})
+	if err != nil {
+		return nil, fmt.Errorf("agent domain.list: %w", err)
+	}
+	var resp struct {
+		Sites []string `json:"sites"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("parse agent response: %w", err)
+	}
+	return resp.Sites, nil
+}
+
+// pruneOrphanSites deletes each orphan with the agent's domain.delete, then
+// lists sites-enabled again: a site counts as deleted only once it is gone
+// from that list, so a delete that removed nothing is reported, not counted.
+// A domain's derived vhosts (`<domain>-mail`, …) go with one domain.delete of
+// the domain, which tears them all down.
+func pruneOrphanSites(ctx context.Context, call agentCaller, orphans []string) (deleted []string, failed []orphanPruneFailure) {
+	deleteErr := map[string]error{} // domain name → its domain.delete error
+	for _, site := range orphans {
+		name := orphanDomainName(site)
+		if _, done := deleteErr[name]; done {
+			continue
+		}
+		delCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := call(delCtx, "domain.delete", map[string]string{"domain": name})
+		cancel()
+		deleteErr[name] = err
+	}
+
+	listCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	remaining, listErr := listAgentSites(listCtx, call)
+	stillThere := make(map[string]bool, len(remaining))
+	for _, site := range remaining {
+		stillThere[site] = true
+	}
+
+	deleted, failed = []string{}, []orphanPruneFailure{}
+	for _, site := range orphans {
+		switch err := deleteErr[orphanDomainName(site)]; {
+		case err != nil:
+			failed = append(failed, orphanPruneFailure{Site: site, Error: err.Error()})
+		case listErr != nil:
+			failed = append(failed, orphanPruneFailure{Site: site, Error: "deleted, but could not check that it is gone: " + listErr.Error()})
+		case stillThere[site]:
+			failed = append(failed, orphanPruneFailure{Site: site, Error: "still in /etc/nginx/sites-enabled after the delete"})
+		default:
+			deleted = append(deleted, site)
+		}
+	}
+	return deleted, failed
+}
+
+// orphanPruneErr makes the command exit non-zero when a site was not deleted.
+func orphanPruneErr(failed []orphanPruneFailure) error {
+	if len(failed) > 0 {
+		return fmt.Errorf("%d orphan deletion(s) failed", len(failed))
+	}
+	return nil
 }
 
 // computeOrphans returns nginx site names that have no matching domain
@@ -163,6 +231,9 @@ func computeOrphans(agentSites []string, knownDomain map[string]bool) []string {
 		// The *.preview.<hostname> catch-all vhost; the reconciler's
 		// knownSystemSites lists it too.
 		"jabali-preview-fallback": true,
+		// The Stalwart WebAdmin proxy (mail.webadmin.apply), on while the
+		// admin has it on; the reconciler's knownSystemSites lists it too.
+		"jabali-stalwart-admin": true,
 	}
 	out := make([]string, 0, len(agentSites))
 	for _, site := range agentSites {

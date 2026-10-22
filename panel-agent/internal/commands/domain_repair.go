@@ -83,18 +83,24 @@ func domainRepairOrphansHandler(ctx context.Context, params json.RawMessage) (an
 	}
 	args = append(args, "--json")
 	cmd := execCommandContext(ctx, repairBinary, args...)
-	out, err := cmd.CombinedOutput()
+	// Stdout only: the CLI prints its JSON there and its error line
+	// ("Error: 1 orphan deletion(s) failed") to stderr, which would make the
+	// combined output unparseable (GH #2237).
+	out, err := cmd.Output()
+	var stderr []byte
 	if err != nil {
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("run domain prune-orphans: %v: %s", err, string(out))}
 		}
-		// Non-zero exit with parseable JSON still carries the result; fall
-		// through and try to decode. If decode fails, surface the raw output.
+		stderr = ee.Stderr
+		// Non-zero exit with parseable JSON still carries the result (its
+		// "failed" list says which sites are left); fall through and try to
+		// decode. If decode fails, surface the raw output.
 	}
 	var result map[string]any
 	if jErr := json.Unmarshal(out, &result); jErr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("parse prune-orphans json: %v: %s", jErr, string(out))}
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("parse prune-orphans json: %v: %s%s", jErr, string(out), string(stderr))}
 	}
 	return result, nil
 }

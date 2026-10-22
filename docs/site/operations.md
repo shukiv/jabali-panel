@@ -109,6 +109,8 @@ jabali repair --all --yes      # destructive (wipes nginx tmp, regen pool socket
 
 After a successful cPanel / DA / Hestia restore: `jabali domain prune-orphans` lists sites in nginx `sites-enabled` that have no panel row; `jabali domain prune-orphans --apply` deletes them.
 
+`--apply` lists `sites-enabled` again after the deletes. Each site shows as `deleted`, or as `FAILED` with the reason when it is still there, and the command exits non-zero if any site is left. With `--json`, the result has `deleted` and `failed` (site and reason) lists. **Updates → Domain repair → Delete orphans** runs the same command and lists any site left, with its reason.
+
 ## Diag bundle
 
 `/jabali-admin/support` → encrypted bundle, `mailto:` send. See [support.md](./support.md).
