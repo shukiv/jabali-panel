@@ -225,8 +225,8 @@ affected; inbound SSH, SFTP, `scp` and `rsync` to the server are not. This means
 (`egress_ssh_out`), and `ping` needs **ICMP** (`egress_icmp`), exactly as for
 PHP. Only uids from 1000 up are matched, so system daemons are never filtered.
 
-**App ports on loopback belong to their account.** Python apps, Docker apps
-and reverse-proxy domains listen on a `127.0.0.1` port that nginx proxies to.
+**App ports on loopback belong to their account.** Python and Node.js apps,
+Docker apps and reverse-proxy domains listen on a `127.0.0.1` port that nginx proxies to.
 Only the account that owns the app, and system users such as nginx and root,
 can open a connection to that port. A connection from any other account is
 dropped, whatever that account's egress state, from PHP, cron jobs and SSH
@@ -238,7 +238,7 @@ treated like any other account, so reach an app port from a shell as root
 (`sudo curl http://127.0.0.1:<port>/`). The drops are counted in
 `nft list counter inet jabali_per_user loopback_app_drops`.
 
-A Python app's port also answers only from the app. A new connection to it is
+A Python or Node.js app's port also answers only from the app. A new connection to it is
 accepted only when the process listening on the port runs in the owner's slice,
 where the panel runs the app; any other listener gets nothing, and the drops
 are counted in `loopback_app_squat_drops`. A slice created again (a new cgroup)
