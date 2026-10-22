@@ -1,7 +1,7 @@
 # ADR-0175: Node.js apps on the Application Manager (runtime `node`)
 
 **Date**: 2026-10-20
-**Status**: Proposed — open questions below need a decision before code
+**Status**: Accepted (2026-10-22)
 **Deciders**: shuki + Claude
 **Related**: ADR-0131 (Python Application Manager), ADR-0084 (per-user
 egress firewall), M18 (per-user cgroup slices), the Docker-app subsystem.
@@ -30,7 +30,7 @@ Three facts shape the decision:
   read their own variables (SvelteKit adapter-node: `PORT`/`HOST` or
   `SOCKET_PATH`).
 
-## Decision (proposed)
+## Decision
 
 Add `runtime = node` to the Application Manager, reusing what Python apps
 built:
@@ -44,18 +44,36 @@ built:
   - `node-script`: `node <entrypoint>`
   - `npm-start`: `npm run start` (for frameworks whose start script wraps the
     server).
+- **Node version**: the host's Node 22 LTS from NodeSource, kept patched with
+  the system's security updates. No per-app or per-user versions in the first
+  slice; another major is a later, admin-installed addition.
 - **Listening**: the panel allocates a loopback port as for Python apps and
   passes `PORT=<port>` and `HOST=127.0.0.1`. An app that ignores both does
   not come up. The health check reports "not listening on PORT", the same
-  way a Python app that fails to import is reported.
+  way a Python app that fails to import is reported. A loopback TCP port,
+  not a unix socket: several frameworks take only a port number (Next.js's
+  `next start -p`). Because Node apps share the `python_apps` registry and run
+  in the owner's slice, the egress ruleset's loopback app-port rules cover
+  them: only the owning account and system users such as nginx can open the
+  port (#2225), and only a process in the owner's slice can answer on it
+  (#2226).
 - **Dependencies**: `npm ci` when `package-lock.json` exists, otherwise
   `npm install`, with `--omit=dev` unless the app has a build step. It runs as
   the tenant in the app root, with the npm cache under the tenant's home.
+  Install scripts run (native modules such as `bcrypt`, `sharp` and `sqlite3`
+  need them): they run as the tenant, inside the slice and the egress
+  firewall, the same trust the app itself has.
+- **Registry access**: the egress firewall's default allowlist includes
+  `:443` to anywhere, so `registry.npmjs.org` is reachable. A tenant on a
+  stricter custom egress policy needs it allowlisted; the Node apps docs say
+  so. It is not added to the built-in allowlist.
   An optional build command (default `npm run build` when `package.json` has
   one) runs after install and before start.
 - **nginx**: the existing per-domain `proxy_pass` rule to
   `127.0.0.1:<port>`, with WebSocket upgrade on (Node apps use it more often
   than Python ones).
+- **UI**: one Applications page with a runtime selector (Python, Node.js),
+  not a second page next to Python Apps.
 - **Opt-in**: `server_settings.node_apps_enabled`, default off, next to the
   Python toggle on Server Settings → Apps. Turning it on installs nothing by
   default, since Node 22 is already present.
@@ -63,29 +81,15 @@ built:
   (Express, Fastify, NestJS, Next.js, Nuxt, SvelteKit, Astro) with starter
   templates and per-framework start commands.
 
-## Open questions (need a decision)
+## Decided questions (2026-10-22)
 
-1. **Node versions.** Only the host's Node 22? Or also 20 / 24 as
-   per-version installs from nodejs.org tarballs, checked against
-   `SHASUMS256.txt` signed by the Node release keys and unpacked under
-   `/opt/jabali/node/<major>`? More versions mean more runtimes to keep
-   patched.
-2. **npm install scripts.** Run them (needed by native modules such as
-   `bcrypt`, `sharp`, `sqlite3`) or pass `--ignore-scripts`? They run as the
-   tenant, inside the slice and the egress firewall, which is the same trust
-   the app itself has. Recommendation: run them.
-3. **Registry egress.** The tenant's egress firewall allows `:443` to
-   anywhere, so `registry.npmjs.org` is reachable. A tenant on a stricter
-   custom policy needs it allowlisted. Document it, or add it to the
-   built-in allowlist?
-4. **Loopback isolation (2026-10-22).** The egress ruleset lets only the
-   account that owns an allocated app port, and system users such as nginx,
-   open it (branch `harden-loopback-app-ports`). That covers Node apps once
-   their port is allocated like a Python app's. Still open: whether Node apps
-   should listen on a unix socket in a directory only the account and nginx
-   can reach, instead of a loopback port.
-5. **UI**: one Applications page with a runtime selector, or a separate
-   Node.js Apps page next to Python Apps?
+1. **Node versions**: Node 22 only, the host's.
+2. **npm install scripts**: run.
+3. **Registry egress**: documented, not added to the built-in allowlist.
+4. **Loopback isolation**: verified. Covered by the egress ruleset's app-port
+   rules (#2225, #2226), as for Python apps. Unix sockets are not used, for
+   Node or Python apps.
+5. **UI**: one Applications page with a runtime selector.
 
 ## Alternatives considered
 
