@@ -9,6 +9,9 @@
 // 2026-06-22 #2): a silent fall-through to the dashboard made "feature
 // disabled" indistinguishable from "route broken". The toast tells the
 // operator the deep-link is intentionally unavailable.
+//
+// `cap` may list several capabilities: the page renders when any one is on
+// (the Application Manager serves Python and Node.js apps, ADR-0175).
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
@@ -19,7 +22,7 @@ import { Navigate } from "react-router";
 import { useServerCapabilities, type ServerCapabilities } from "../hooks/useServerCapabilities";
 
 interface CapabilityRouteProps {
-  cap: keyof ServerCapabilities;
+  cap: keyof ServerCapabilities | (keyof ServerCapabilities)[];
   fallback: string;
   children: ReactNode;
 }
@@ -40,7 +43,8 @@ export function CapabilityRoute({ cap, fallback, children }: CapabilityRouteProp
       </div>
     );
   }
-  if (!data?.[cap]) {
+  const caps = Array.isArray(cap) ? cap : [cap];
+  if (!caps.some((c) => data?.[c])) {
     return <DisabledRedirect fallback={fallback} />;
   }
   return <>{children}</>;

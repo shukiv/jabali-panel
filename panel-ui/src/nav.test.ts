@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   adminNav,
+  appManagerNavLabel,
   navGroupForKey,
   selectedNavKey,
   userNav,
   userNavGroups,
 } from "./nav";
+
+// ADR-0175: one Application Manager entry, named for the runtimes that are on.
+describe("appManagerNavLabel", () => {
+  it("names the runtimes that are on", () => {
+    expect(appManagerNavLabel(true, false)).toBe("nav.user.python-apps");
+    expect(appManagerNavLabel(false, true)).toBe("nav.user.node-apps");
+    expect(appManagerNavLabel(true, true)).toBe("nav.user.python-node-apps");
+  });
+});
 
 describe("adminNav", () => {
   it("puts Support last", () => {
