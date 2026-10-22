@@ -23,9 +23,9 @@ on by default, also on servers installed before the setting existed):
     main build, next to a hotfix that main has not merged back yet). There
     the advisory's `converger` can apply the fix's server-side part: one
     install.sh function from a newer main commit.
-  - That is the only action that runs code the server is not on, so it runs
-    only from a feed signed with the release key (ADR-0162). Until release
-    signing is in force, the server's alert gives the command to run by hand.
+  - That is the only action that runs code the server is not on. Like every
+    action, it runs only from a feed signed with the release key (ADR-0162).
+    A build older than the key gives the command to run by hand instead.
 - **Always**: alert the admins (notification "Security advisory", on by
   default), saying what was done and what still needs them.
 
@@ -95,16 +95,16 @@ Decide what the advisory asks for.
    feed does not parse. A server rejects a feed it cannot parse completely,
    so a bad entry would silently stop every advisory, not only the new one.
 
-3. **Sign the feed** if release signing is in force, on the machine that holds
-   the key. Commit the `.minisig` in the same PR, after the last edit to the
-   feed:
+3. **Sign the feed** on the machine that holds the release key. Commit the
+   `.minisig` in the same PR, after the last edit to the feed:
 
    ```
    minisign -S -s ~/.minisign/jabali-release.key -m security/advisories.json -t "jabali security feed"
    ```
 
-   Once a build embeds the key, it ignores a feed that has no valid signature,
-   even an empty one.
+   Servers ignore a feed without a valid signature, even an empty one, and
+   then act on no advisory at all. `TestSecurityFeedFileInRepoIsSigned` fails
+   the PR when the signature does not match the feed.
 
 4. **Merge it.** Servers act within about 75 minutes: the hourly timer, its
    15-minute spread, and a few minutes of GitHub's raw-file cache.
