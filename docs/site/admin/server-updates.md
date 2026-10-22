@@ -27,6 +27,10 @@ The transient-unit pattern was live-verified on 192.168.100.150.
 
 ## Automatic updates
 
+Each switch and time on the **Automatic Updates** card is saved as soon as you change it. There is no Save button.
+
+**OS security updates** applies Debian/Ubuntu security patches through `unattended-upgrades`. It is on by default. To turn it off, confirm the risk in the dialog that opens; the setting is saved when you click **Disable security updates**. While it is off, the card shows a red warning.
+
 **Jabali panel self-update** on this page turns automatic updates on. It is off by default. When it is on, `jabali-autoupdate.timer` runs `jabali update -f` daily at the time you pick (default 04:30).
 
 **Security advisories** is on by default, including on servers installed before the setting existed. When Jabali publishes a security advisory, the server applies its fix within the hour, even with panel self-update off. It installs the patched packages, or it runs `jabali update`. On the stable channel, that update moves the server to the current stable release. On the development channel, it moves the server to main. Turned off, the server only sends the admins the advisory alert with the commands to run.
