@@ -153,6 +153,8 @@ func cliDeleteDeps() userops.DeleteDeps {
 
 // ---------- domain ----------
 
+// listDomainsDirect returns every domain row. No page limit: `domain
+// prune-orphans` treats a site with no row here as an orphan to delete.
 func listDomainsDirect(ctx context.Context) ([]models.Domain, error) {
 	if err := initConfig(); err != nil {
 		return nil, err
@@ -160,7 +162,7 @@ func listDomainsDirect(ctx context.Context) ([]models.Domain, error) {
 	if err := initDB(); err != nil {
 		return nil, err
 	}
-	domains, _, err := domainRepoFromDB().List(ctx, repository.ListOptions{Limit: 1000})
+	domains, _, err := domainRepoFromDB().List(ctx, repository.ListOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("list domains: %w", err)
 	}

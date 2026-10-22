@@ -33,11 +33,19 @@ interface FixPermsResult {
   exit_code: number;
 }
 
+interface OrphanFailure {
+  site: string;
+  error: string;
+}
+
 interface OrphansResult {
   orphans: string[] | null;
   agent_sites?: string[];
   db_domains?: number;
   applied?: boolean;
+  // Set by the delete: what went, and what is still there and why (GH #2237).
+  deleted?: string[] | null;
+  failed?: OrphanFailure[] | null;
 }
 
 export function DomainRepairCard() {
@@ -45,6 +53,7 @@ export function DomainRepairCard() {
   const { message } = App.useApp();
   const [username, setUsername] = useState<string | undefined>();
   const [fixResult, setFixResult] = useState<FixPermsResult | null>(null);
+  const [pruneFailed, setPruneFailed] = useState<OrphanFailure[]>([]);
 
   // User picker options — only accounts that have a linux username (fix-perms
   // targets docroots under /home/<username>).
@@ -93,8 +102,20 @@ export function DomainRepairCard() {
       );
       return data;
     },
-    onSuccess: () => {
-      message.success("Orphan sites deleted");
+    onMutate: () => setPruneFailed([]),
+    onSuccess: (data) => {
+      const deleted = data.deleted ?? [];
+      const failed = data.failed ?? [];
+      setPruneFailed(failed);
+      if (failed.length === 0) {
+        message.success(
+          `Deleted ${deleted.length} orphan site${deleted.length === 1 ? "" : "s"}`,
+        );
+      } else {
+        message.error(
+          `${failed.length} orphan site${failed.length === 1 ? " was" : "s were"} not deleted`,
+        );
+      }
       orphans.refetch();
     },
     onError: (e: unknown) =>
@@ -183,7 +204,10 @@ export function DomainRepairCard() {
             <Button
               icon={<ReloadOutlined />}
               loading={orphans.isFetching}
-              onClick={() => orphans.refetch()}
+              onClick={() => {
+                setPruneFailed([]);
+                orphans.refetch();
+              }}
             >
               Scan for orphans
             </Button>
@@ -203,6 +227,28 @@ export function DomainRepairCard() {
             </Popconfirm>
           </Space>
 
+          {pruneFailed.length > 0 && (
+            <Alert
+              style={{ marginTop: 8 }}
+              type="error"
+              showIcon
+              message={`${pruneFailed.length} orphan site${pruneFailed.length === 1 ? " was" : "s were"} not deleted`}
+              description={
+                <List
+                  size="small"
+                  dataSource={pruneFailed}
+                  renderItem={(f) => (
+                    <List.Item>
+                      <Space direction="vertical" size={0}>
+                        <Text code>{f.site}</Text>
+                        <Text type="secondary">{f.error}</Text>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              }
+            />
+          )}
           {orphans.isFetched && orphanList.length === 0 && (
             <Alert
               style={{ marginTop: 8 }}
