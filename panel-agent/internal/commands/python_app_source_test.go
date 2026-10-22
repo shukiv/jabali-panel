@@ -335,6 +335,9 @@ func (l *libExec) install(t *testing.T) {
 		case "apt-cache":
 			return exec.CommandContext(ctx, "printf", "%s", strings.Join(l.pkgnames, "\n")+"\n")
 		case "systemd-run":
+			if len(args) > 0 && args[0] == "--scope" {
+				return prev(ctx, name, args...) // a build command (runAsUserInSlice), not apt
+			}
 			l.installs = append(l.installs, args)
 			l.present = !l.staysMissing
 			return exec.CommandContext(ctx, "true")

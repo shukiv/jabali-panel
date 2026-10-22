@@ -73,6 +73,7 @@ func pythonAppRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "invalid app_id"}
 	}
 	cancelPythonBuild(p.AppID)
+	stopAppBuildScopes(p.AppID)
 	unit := pythonAppUnitName(p.AppID)
 	_ = execCommandContext(ctx, "systemctl", "stop", unit).Run()
 	_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", unit).Run()

@@ -152,7 +152,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		if verr := ensurePythonVenvPackage(ctx, p.PythonVersion); verr != nil {
 			return nil, scaffoldErr("venv prerequisite: %v", verr)
 		}
-		if out, err := runAsUser(ctx, p.Username, pyBin, "-m", "venv", venv); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", pyBin, "-m", "venv", venv); err != nil {
 			return nil, scaffoldErr("create venv: %v: %s", err, out)
 		}
 	}
@@ -170,7 +170,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 	//    after scaffolding (step 3b) so app.python.apply still has it.
 	pipArgs := append([]string{pip, "install", "-q"}, p.Requirements...)
 	pipArgs = append(pipArgs, p.Server)
-	if out, err := runAsUser(ctx, p.Username, pipArgs...); err != nil {
+	if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", pipArgs...); err != nil {
 		return nil, scaffoldErr("pip install: %v: %s", err, lastLines(out, 12))
 	}
 
@@ -185,7 +185,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		args := append([]string{bin}, p.ScaffoldArgv[1:]...)
 		// Run IN app_root: scaffolders use relative targets (e.g. `startproject
 		// config .`), so cwd must be the app tree or files land in the agent's cwd.
-		if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, p.AppRoot, args...); err != nil {
 			return nil, scaffoldErr("scaffold: %v: %s", err, lastLines(out, 8))
 		}
 	case "template":
@@ -226,10 +226,10 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 		settings := filepath.Join(p.AppRoot, p.Project, "settings.py")
 		vpy := filepath.Join(venv, "bin", "python")
-		if out, err := runAsUser(ctx, p.Username, vpy, "-c", djangoSettingsPatch, settings, p.StaticRoot); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", vpy, "-c", djangoSettingsPatch, settings, p.StaticRoot); err != nil {
 			return nil, scaffoldErr("harden settings: %v: %s", err, out)
 		}
-		key, err := runAsUser(ctx, p.Username, vpy, "-c", "from django.core.management.utils import get_random_secret_key as g;print(g())")
+		key, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", vpy, "-c", "from django.core.management.utils import get_random_secret_key as g;print(g())")
 		if err != nil {
 			return nil, scaffoldErr("generate secret key: %v: %s", err, key)
 		}
@@ -246,7 +246,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 			if key == "" {
 				continue
 			}
-			v, err := runAsUser(ctx, p.Username, vpy, "-c", "import secrets;print(secrets.token_urlsafe(50))")
+			v, err := runAsUserInSlice(ctx, p.AppID, p.Username, "", vpy, "-c", "import secrets;print(secrets.token_urlsafe(50))")
 			if err != nil {
 				return nil, scaffoldErr("generate %s: %v: %s", key, err, v)
 			}
@@ -257,7 +257,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 			return nil, scaffoldErr("write patch: %v", err)
 		}
 		args := append(envPrefix(mergeScaffoldEnv(p.Env, result.GeneratedEnv)), vpy, patchPath)
-		if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, p.AppRoot, args...); err != nil {
 			return nil, scaffoldErr("patch: %v: %s", err, lastLines(out, 10))
 		}
 		_, _ = runAsUser(ctx, p.Username, "rm", "-f", patchPath)
@@ -284,7 +284,7 @@ func pythonAppScaffoldHandler(ctx context.Context, params json.RawMessage) (any,
 				continue // ignore unknown tokens; the catalog validates the set
 			}
 			args := append(append([]string(nil), envArgs...), vpy, manage, sub, "--noinput")
-			if out, err := runAsUserInDir(ctx, p.Username, p.AppRoot, args...); err != nil {
+			if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, p.AppRoot, args...); err != nil {
 				return nil, scaffoldErr("%s: %v: %s", step, err, lastLines(out, 8))
 			}
 		}
