@@ -95,6 +95,19 @@ than the `stable` release. Switching it to stable never moves it backwards:
 keeps that build. The box picks up the next stable release once one is promoted
 past it.
 
+### Fixes between stable releases
+
+`stable` is promoted about once a month. An urgent fix can reach stable boxes
+sooner, two ways:
+
+- **Vendor packages** (PHP, nginx, OpenSSL, CrowdSec, Node, the Docker CLI and
+  containerd) update by themselves every day through unattended-upgrades. The
+  services that use an upgraded library are then reloaded or restarted. The
+  Docker daemon (`docker-ce`) is the one exception: upgrade it yourself.
+- **Jabali's own code** ships as a hotfix release: `stable` moves to the stable
+  build plus the fix, with a prebuilt release like any other. Stable boxes take it
+  at their next update.
+
 Before it moves the checkout, `jabali update` also checks the newest migration in
 the channel's target. If the target would not know the schema the database is
 already at, the update stops with "refusing to update" and changes nothing. This

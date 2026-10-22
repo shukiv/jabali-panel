@@ -64,6 +64,19 @@ fi
 # Scan the releases list (newest first) rather than /releases/latest: the very
 # newest tag may be published seconds before its build finishes, so it can be
 # asset-less. Walk candidates until one has both a tarball and a .sha256 sidecar.
+
+# release_tarball_urls — read a GitHub releases list (JSON) on stdin and print
+# its release tarball URLs, newest release first, skipping pre-releases. A
+# hotfix build for the stable channel is a pre-release (release-hotfix.yml): it
+# can be newer than the newest main build, but it is not what a fresh install
+# gets. The API lists each release's "prerelease" before its assets.
+release_tarball_urls() {
+  grep -oE '"prerelease": *(true|false)|"browser_download_url": *"[^"]+"' \
+    | awk '/^"prerelease"/ { pre = ($0 ~ /true/); next }
+           !pre { sub(/^"browser_download_url": *"/, ""); sub(/"$/, ""); print }' \
+    | grep -E 'jabali-release-[0-9a-f]+\.tar\.gz$' || true
+}
+
 if [[ -z "$tar_url" ]]; then
   auth=()
   tok="${JABALI_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -76,10 +89,7 @@ if [[ -z "$tar_url" ]]; then
     fi
     die "could not reach the release API (HTTP ${code:-?})"
   fi
-  tar_urls="$(printf '%s' "$rel" \
-    | grep -oE '"browser_download_url": *"[^"]+"' \
-    | sed 's/.*"\(https[^"]*\)"/\1/' \
-    | grep -E 'jabali-release-[0-9a-f]+\.tar\.gz$' || true)"
+  tar_urls="$(printf '%s' "$rel" | release_tarball_urls)"
   [[ -n "$tar_urls" ]] || die "no published release tarball found (the release build may not have attached assets yet)"
   while IFS= read -r u; do
     [[ -n "$u" ]] || continue

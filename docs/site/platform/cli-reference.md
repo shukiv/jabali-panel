@@ -4857,8 +4857,12 @@ jabali release
 Promote a reviewed build to the stable channel (move the `stable` tag)
 
 ```
-jabali release promote [<commit-ish>]
+jabali release promote [<commit-ish>] [flags]
 ```
+
+**Flags:**
+
+- `--allow-source-build` — promote even when no release tarball is published for the commit (stable hosts then build it from source)
 
 ### `jabali repair`
 
