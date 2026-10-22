@@ -103,3 +103,19 @@ func TestEnvBinChangesDirectory(t *testing.T) {
 		t.Fatalf("pwd = %q, want %q", got, dir)
 	}
 }
+
+// A changed env file restarts the app (GH #357), so the same variables must
+// render to the same bytes on every apply, in key order, whatever order the
+// map hands them out in.
+func TestRenderEnvFile_SameBytesEveryApply(t *testing.T) {
+	p := pythonAppApplyParams{AppType: "wsgi", BaseURI: "/app", Env: map[string]string{
+		"SECRET_KEY": "s", "DJANGO_ALLOWED_HOSTS": "example.com", "DEBUG": "0",
+		"DATABASE_URL": "mysql://x", "EMAIL_HOST": "localhost", "B_FLAG": "1", "bad key": "dropped",
+	}}
+	want := "SCRIPT_NAME=/app\nB_FLAG=1\nDATABASE_URL=mysql://x\nDEBUG=0\nDJANGO_ALLOWED_HOSTS=example.com\nEMAIL_HOST=localhost\nSECRET_KEY=s\n"
+	for i := 0; i < 50; i++ {
+		if got := renderEnvFile(p); got != want {
+			t.Fatalf("render %d:\n%s\nwant:\n%s", i, got, want)
+		}
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -293,14 +294,25 @@ func renderEnvFile(p pythonAppApplyParams) string {
 			fmt.Fprintf(&b, "SCRIPT_NAME=%s\n", prefix)
 		}
 	}
-	for k, v := range p.Env {
-		if !validEnvKey(k) {
-			continue
-		}
-		// systemd EnvironmentFile: KEY=value, no interpolation, one line.
-		fmt.Fprintf(&b, "%s=%s\n", k, strings.ReplaceAll(v, "\n", " "))
-	}
+	writeEnvLines(&b, p.Env, func(k string) bool { return validEnvKey(k) })
 	return b.String()
+}
+
+// writeEnvLines writes the variables keep accepts as systemd EnvironmentFile
+// lines (KEY=value, no interpolation, one line each), in key order: a changed
+// env file restarts the app, so the same variables must give the same bytes
+// on every apply, whatever order the map hands them out in.
+func writeEnvLines(b *strings.Builder, env map[string]string, keep func(string) bool) {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		if keep(k) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(b, "%s=%s\n", k, strings.ReplaceAll(env[k], "\n", " "))
+	}
 }
 
 func renderPythonUnit(p pythonAppApplyParams, appRoot, envPath, start string) string {
