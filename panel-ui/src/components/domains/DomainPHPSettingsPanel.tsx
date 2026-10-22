@@ -956,8 +956,9 @@ export function DomainPHPSettingsPanel({ domainId, onDirtyChange }: DomainPHPSet
                   Reset OPcache is back here at the reporter's request, next to
                   the per-version one on the OPcache & JIT tab; it resets the
                   pool serving this domain. View error log opens this domain's
-                  error-log stream right here (GH #1701), the same stream as the
-                  Error Log button on the domain's Logs tab. */}
+                  PHP error log stream right here (GH #1701), the same stream as
+                  the PHP Errors button on the domain's Logs tab. PHP warnings
+                  go to that file, not to the nginx error log. */}
               <Space wrap style={{ marginBottom: 8 }}>
                 {phpSettings.opcache_reset_allowed && phpSettings.php_version && (
                   <Popconfirm
@@ -974,7 +975,7 @@ export function DomainPHPSettingsPanel({ domainId, onDirtyChange }: DomainPHPSet
                 <Button
                   type="link"
                   style={{ paddingInline: 0 }}
-                  onClick={() => void logStreams.openStream("error", domainId)}
+                  onClick={() => void logStreams.openStream("php", domainId)}
                 >
                   View error log
                 </Button>
