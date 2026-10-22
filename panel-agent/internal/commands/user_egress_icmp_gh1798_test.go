@@ -13,7 +13,7 @@ func TestRenderEgressNFT_AllowPingEmitsEchoRequest(t *testing.T) {
 	users := []EgressUser{
 		{Username: "pinguser", State: "enforced", UID: 5001, AllowPing: true},
 	}
-	out := RenderEgressNFT(users, CanonicalDefaults(), always)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, always)
 
 	if !strings.Contains(out, "icmp type echo-request accept") {
 		t.Errorf("AllowPing must emit IPv4 echo-request accept\n%s", out)
@@ -32,7 +32,7 @@ func TestRenderEgressNFT_NoAllowPingNoICMP(t *testing.T) {
 	users := []EgressUser{
 		{Username: "noping", State: "enforced", UID: 5002, AllowPing: false},
 	}
-	out := RenderEgressNFT(users, CanonicalDefaults(), always)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, always)
 
 	if strings.Contains(out, "echo-request") {
 		t.Errorf("AllowPing=false must emit no ICMP rule\n%s", out)

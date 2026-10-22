@@ -145,9 +145,20 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 		}
 		users = append(users, payload)
 	}
+	// The loopback app ports ride every apply. A failed read skips this tick
+	// and leaves the host's ruleset as it is: an apply without them would lift
+	// the protection until the next tick.
+	appPorts, err := r.userEgressPolicies.ListLoopbackAppPorts(ctx)
+	if err != nil {
+		r.log.Warn("user-egress reconcile: list loopback app ports failed, apply skipped this tick", "error", err)
+		return
+	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	payload := map[string]any{"users": users}
+	payload := map[string]any{
+		"users":              users,
+		"loopback_app_ports": buildLoopbackAppPortsPayload(appPorts),
+	}
 	if defaults != nil {
 		payload["defaults"] = defaults
 	}
@@ -157,6 +168,23 @@ func (r *Reconciler) applyUserEgress(ctx context.Context, policies []repository.
 			"user_count", len(users))
 		return
 	}
+}
+
+// buildLoopbackAppPortsPayload renders the loopback_app_ports list of the
+// user.egress.apply payload: every loopback TCP port allocated to an app, with
+// the username of its owner, or no username when no hosting account owns it.
+// The agent lets only the owner's uid and system users open a connection to
+// these ports.
+func buildLoopbackAppPortsPayload(ports []repository.LoopbackAppPort) []map[string]any {
+	out := make([]map[string]any, 0, len(ports))
+	for _, p := range ports {
+		row := map[string]any{"port": p.Port}
+		if p.Username != "" {
+			row["username"] = p.Username
+		}
+		out = append(out, row)
+	}
+	return out
 }
 
 // buildEgressUserPayload renders one user's slot of the user.egress.apply

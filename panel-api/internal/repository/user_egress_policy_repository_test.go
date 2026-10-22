@@ -156,3 +156,30 @@ func TestUserEgressRequest_CancelPending_NotFoundWhenAlreadyDecided(t *testing.T
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// ListLoopbackAppPorts unions the three places an app's loopback port lives:
+// python_apps, a Docker app's loopback published ports and reverse-proxy
+// port_allocations. A port without an owner (admin Docker app) keeps an empty
+// username, so it is still protected, from every account.
+func TestUserEgressPolicy_ListLoopbackAppPorts(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewUserEgressPolicyRepository(db)
+
+	rows := sqlmock.NewRows([]string{"port", "username"}).
+		AddRow(20001, "alice").
+		AddRow(10003, nil).
+		AddRow(30002, "bob")
+	mock.ExpectQuery("(?s)FROM python_apps.*UNION ALL.*FROM docker_app_published_ports.*bind_interface = 'loopback'.*UNION ALL.*FROM port_allocations.*owner_kind = \\?").
+		WithArgs(models.PortOwnerReverseProxy).
+		WillReturnRows(rows)
+
+	out, err := repo.ListLoopbackAppPorts(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []LoopbackAppPort{
+		{Port: 20001, Username: "alice"},
+		{Port: 10003},
+		{Port: 30002, Username: "bob"},
+	}, out)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

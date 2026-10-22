@@ -48,6 +48,16 @@ type UserEgressPolicyRepository interface {
 	SetDropCount(ctx context.Context, userID string, count uint64, at time.Time) error
 	StateCounts(ctx context.Context) (map[string]uint, error)
 	ListMatureLearning(ctx context.Context, age time.Duration) ([]models.UserEgressPolicy, error)
+	ListLoopbackAppPorts(ctx context.Context) ([]LoopbackAppPort, error)
+}
+
+// LoopbackAppPort is one loopback TCP port allocated to an app (a Python app,
+// a Docker app's published port or a reverse-proxy target) with the Linux
+// username of the account that owns it. Username is "" when no hosting account
+// owns the port, as for an admin Docker app.
+type LoopbackAppPort struct {
+	Port     int
+	Username string
 }
 
 type userEgressPolicyRepo struct{ db *gorm.DB }
@@ -231,6 +241,48 @@ func (r *userEgressPolicyRepo) ListAllForReconcile(ctx context.Context) ([]Polic
 			EgressSSHOutCIDRs: r.EgressSSHOutCIDRs,
 			EgressICMP:        r.EgressICMP,
 		})
+	}
+	return out, nil
+}
+
+// ListLoopbackAppPorts returns every loopback TCP port allocated to an app,
+// with its owner. The egress ruleset lets only the owner's uid (and system
+// users such as nginx) open a connection to the port, so one account cannot
+// reach another account's app on 127.0.0.1 past nginx. Soft-deleted owners are
+// not filtered out: a port still allocated stays protected.
+func (r *userEgressPolicyRepo) ListLoopbackAppPorts(ctx context.Context) ([]LoopbackAppPort, error) {
+	var rows []struct {
+		Port     int
+		Username *string
+	}
+	err := r.db.WithContext(ctx).Raw(`
+SELECT pa.loopback_port AS port, u.username AS username
+  FROM python_apps pa
+  LEFT JOIN users u ON u.id = pa.user_id
+ WHERE pa.loopback_port IS NOT NULL
+UNION ALL
+SELECT pp.host_port AS port, u.username AS username
+  FROM docker_app_published_ports pp
+  JOIN docker_apps da ON da.id = pp.app_id
+  LEFT JOIN users u ON u.id = da.user_id
+ WHERE pp.bind_interface = 'loopback' AND pp.protocol = 'tcp'
+UNION ALL
+SELECT a.port AS port, u.username AS username
+  FROM port_allocations a
+  LEFT JOIN domains d ON d.id = a.owner_id
+  LEFT JOIN users u ON u.id = d.user_id
+ WHERE a.owner_kind = ? AND a.bind_interface = '127.0.0.1' AND a.protocol = 'tcp'`,
+		models.PortOwnerReverseProxy).Scan(&rows).Error
+	if err != nil {
+		return nil, translate(err)
+	}
+	out := make([]LoopbackAppPort, 0, len(rows))
+	for _, row := range rows {
+		p := LoopbackAppPort{Port: row.Port}
+		if row.Username != nil {
+			p.Username = *row.Username
+		}
+		out = append(out, p)
 	}
 	return out, nil
 }

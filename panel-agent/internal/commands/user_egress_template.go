@@ -90,8 +90,8 @@ func CanonicalDefaults() EgressDefaults {
 // skipped with a comment marker; nft would otherwise reject the file
 // at parse time because the kernel verifies cgroupv2 paths exist on
 // the host before accepting the element.
-func RenderEgressNFT(users []EgressUser, defaults EgressDefaults, existsFn func(slicePath string) bool) string {
-	return renderEgress(users, defaults, existsFn, false)
+func RenderEgressNFT(users []EgressUser, defaults EgressDefaults, apps []LoopbackAppPort, existsFn func(slicePath string) bool) string {
+	return renderEgress(users, defaults, apps, existsFn, false)
 }
 
 // RenderEgressBootNFT produces a variant containing no cgroupv2 path
@@ -119,11 +119,56 @@ func RenderEgressNFT(users []EgressUser, defaults EgressDefaults, existsFn func(
 // parent slice, so it covers every user in the payload rather than literally
 // every tenant process. That is narrower than the steady-state floor and
 // strictly wider than what the boot unit achieved before, which was nothing.
-func RenderEgressBootNFT(users []EgressUser, defaults EgressDefaults) string {
-	return renderEgress(users, defaults, func(string) bool { return false }, true)
+func RenderEgressBootNFT(users []EgressUser, defaults EgressDefaults, apps []LoopbackAppPort) string {
+	return renderEgress(users, defaults, apps, func(string) bool { return false }, true)
 }
 
-func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(slicePath string) bool, bootSafe bool) string {
+// LoopbackAppPort is one loopback TCP port allocated to an app (a Python app,
+// a Docker app's published port or a reverse-proxy target). UID is the owning
+// account's uid, or 0 when no hosting account owns the port (an admin Docker
+// app).
+type LoopbackAppPort struct {
+	Port int
+	UID  int
+}
+
+// loopbackAppSets returns the elements of the loopback_app_ports and
+// loopback_app_owners sets: the distinct ports, sorted, and the distinct
+// "uid . port" pairs of tenant owners, sorted. A duplicate element would make
+// nft reject the whole file.
+func loopbackAppSets(apps []LoopbackAppPort) (ports []int, owners []string) {
+	seenPort := map[int]bool{}
+	type pair struct{ uid, port int }
+	seenPair := map[pair]bool{}
+	var pairs []pair
+	for _, a := range apps {
+		if a.Port < 1 || a.Port > 65535 {
+			continue
+		}
+		if !seenPort[a.Port] {
+			seenPort[a.Port] = true
+			ports = append(ports, a.Port)
+		}
+		pr := pair{a.UID, a.Port}
+		if tenantUID(a.UID) && !seenPair[pr] {
+			seenPair[pr] = true
+			pairs = append(pairs, pr)
+		}
+	}
+	sort.Ints(ports)
+	sort.Slice(pairs, func(i, j int) bool {
+		if pairs[i].uid != pairs[j].uid {
+			return pairs[i].uid < pairs[j].uid
+		}
+		return pairs[i].port < pairs[j].port
+	})
+	for _, pr := range pairs {
+		owners = append(owners, fmt.Sprintf("%d . %d", pr.uid, pr.port))
+	}
+	return ports, owners
+}
+
+func renderEgress(users []EgressUser, defaults EgressDefaults, apps []LoopbackAppPort, existsFn func(slicePath string) bool, bootSafe bool) string {
 	if existsFn == nil {
 		existsFn = defaultSliceExists
 	}
@@ -293,6 +338,27 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 		b.WriteString("  }\n")
 	}
 
+	// Loopback app ports: only the owning account (and system users such as
+	// nginx, the panel and root) may open a connection to an app's port on
+	// 127.0.0.1 / ::1. Another account reaching it directly would bypass
+	// nginx: the WAF, password protection and IP rules. The ports are the
+	// allocated ones, not the whole pools, so a service an account runs on
+	// its own unallocated port is left alone.
+	appPorts, appOwners := loopbackAppSets(apps)
+	if len(appPorts) > 0 {
+		b.WriteString("\n  counter loopback_app_drops {}\n")
+		b.WriteString("\n  set loopback_app_ports {\n")
+		b.WriteString("    type inet_service\n")
+		fmt.Fprintf(&b, "    elements = { %s }\n", joinInts(appPorts, ", "))
+		b.WriteString("  }\n")
+		b.WriteString("\n  set loopback_app_owners {\n")
+		b.WriteString("    typeof meta skuid . tcp dport\n")
+		if len(appOwners) > 0 {
+			fmt.Fprintf(&b, "    elements = { %s }\n", strings.Join(appOwners, ", "))
+		}
+		b.WriteString("  }\n")
+	}
+
 	b.WriteString("\n  chain output {\n")
 	b.WriteString("    type filter hook output priority 0; policy accept;\n")
 	// GH #401 SSRF floor: no tenant process may reach link-local /
@@ -309,6 +375,15 @@ func renderEgress(users []EgressUser, defaults EgressDefaults, existsFn func(sli
 	if len(floorUIDs) > 0 {
 		b.WriteString("    meta skuid @tenant_uids ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop\n")
 		b.WriteString("    meta skuid @tenant_uids ip6 daddr fe80::/10 counter name ssrf_floor_drops drop\n")
+	}
+	// Before the per-user dispatch, whose chains end in a verdict, and by uid,
+	// so it covers every account whatever its egress state, SSH shells and
+	// cron jobs included. Only the opening SYN is matched: an app's replies go
+	// to the client's ephemeral port, and the ephemeral range (32768-60999)
+	// overlaps the app pools.
+	if len(appPorts) > 0 {
+		fmt.Fprintf(&b, "    meta skuid >= %d ip daddr 127.0.0.0/8 tcp dport @loopback_app_ports tcp flags & (syn | ack) == syn meta skuid . tcp dport != @loopback_app_owners counter name loopback_app_drops drop\n", minTenantUID)
+		fmt.Fprintf(&b, "    meta skuid >= %d ip6 daddr ::1 tcp dport @loopback_app_ports tcp flags & (syn | ack) == syn meta skuid . tcp dport != @loopback_app_owners counter name loopback_app_drops drop\n", minTenantUID)
 	}
 	// A process in a tenant slice is matched here; every user chain ends in
 	// a verdict, so it never reaches the uid dispatch below.

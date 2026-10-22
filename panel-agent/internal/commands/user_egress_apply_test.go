@@ -14,7 +14,7 @@ func noneExist(string) bool { return false }
 
 func TestRenderEgressNFT_EmitsHeaderAndDefaults(t *testing.T) {
 	requireHostMutationAllowed(t)
-	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(nil, CanonicalDefaults(), nil, allExist)
 
 	require.Contains(t, out, "table inet jabali_per_user {")
 	require.Contains(t, out, "set default_loopback4")
@@ -37,7 +37,7 @@ func TestRenderEgressNFT_OffStateSkipped(t *testing.T) {
 		{Username: "alice", State: "off"},
 		{Username: "bob", State: "enforced"},
 	}
-	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, allExist)
 
 	require.Contains(t, out, "alice: state=off — skipped")
 	require.NotContains(t, out, "user_alice_drops")
@@ -53,7 +53,7 @@ func TestRenderEgressNFT_OffStateSkipped(t *testing.T) {
 func TestRenderEgressNFT_LearningEmitsLogAndAccept(t *testing.T) {
 	requireHostMutationAllowed(t)
 	users := []EgressUser{{Username: "carol", State: "learning"}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, allExist)
 
 	require.Contains(t, out, "chain user_carol_learning")
 	require.Contains(t, out, "limit rate 5/minute log prefix \"jabali-egress-learn-carol \"")
@@ -64,7 +64,7 @@ func TestRenderEgressNFT_LearningEmitsLogAndAccept(t *testing.T) {
 func TestRenderEgressNFT_VmapKeyMatchesM18Topology(t *testing.T) {
 	requireHostMutationAllowed(t)
 	users := []EgressUser{{Username: "dave", State: "enforced"}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, allExist)
 
 	require.Contains(t, out,
 		`"jabali.slice/jabali-user.slice/jabali-user-dave.slice" : jump user_dave_enforced`,
@@ -75,7 +75,7 @@ func TestRenderEgressNFT_MissingSliceNoUIDSkipped(t *testing.T) {
 	requireHostMutationAllowed(t)
 	// No uid + missing slice — cannot enforce; skipped + surfaced as fail-open.
 	users := []EgressUser{{Username: "eve", State: "enforced"}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), noneExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, noneExist)
 
 	require.Contains(t, out, "eve: slice")
 	require.Contains(t, out, "missing + no uid — skipped")
@@ -86,7 +86,7 @@ func TestRenderEgressNFT_MissingSliceUIDFallback(t *testing.T) {
 	requireHostMutationAllowed(t)
 	// GH #708: missing slice BUT uid known -> enforced by uid, not fail-open.
 	users := []EgressUser{{Username: "eve", State: "enforced", UID: 1001}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), noneExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, noneExist)
 
 	require.Contains(t, out, "counter user_eve_drops")        // chain emitted
 	require.Contains(t, out, "1001 : jump user_eve_enforced") // uid dispatch
@@ -105,7 +105,7 @@ func TestRenderEgressNFT_AllowedExtraEmittedInChain(t *testing.T) {
 			{CIDR: "2001:db8::/32"},
 		},
 	}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, allExist)
 
 	require.Contains(t, out, "ip daddr 203.0.113.0/24 tcp dport 443 accept comment \"monitoring\"")
 	require.Contains(t, out, "ip6 daddr 2001:db8::/32 accept")
@@ -121,8 +121,8 @@ func TestRenderEgressNFT_DeterministicOrdering(t *testing.T) {
 		{Username: "alice", State: "enforced"},
 		{Username: "zara", State: "enforced"},
 	}
-	require.Equal(t, RenderEgressNFT(a, CanonicalDefaults(), allExist),
-		RenderEgressNFT(b, CanonicalDefaults(), allExist),
+	require.Equal(t, RenderEgressNFT(a, CanonicalDefaults(), nil, allExist),
+		RenderEgressNFT(b, CanonicalDefaults(), nil, allExist),
 		"renderer must sort users so output is reproducible")
 }
 
@@ -189,7 +189,7 @@ func TestPortStrings(t *testing.T) {
 // tenant slice (level 2), before the per-user vmap, regardless of enrollment.
 func TestRenderEgressNFT_SSRFFloor(t *testing.T) {
 	requireHostMutationAllowed(t)
-	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(nil, CanonicalDefaults(), nil, allExist)
 	for _, want := range []string{
 		"counter ssrf_floor_drops {}",
 		`socket cgroupv2 level 2 "jabali.slice/jabali-user.slice" ip daddr 169.254.0.0/16 counter name ssrf_floor_drops drop`,
@@ -209,7 +209,7 @@ func TestRenderEgressNFT_SSRFFloor(t *testing.T) {
 	// When the tenant parent slice is absent, the floor (and its counter)
 	// must NOT be emitted — nft would reject a cgroupv2 path that doesn't
 	// exist, and an undeclared counter reference is a load error.
-	noneOut := RenderEgressNFT(nil, CanonicalDefaults(), noneExist)
+	noneOut := RenderEgressNFT(nil, CanonicalDefaults(), nil, noneExist)
 	if contains(noneOut, "ssrf_floor_drops") || contains(noneOut, "169.254.0.0/16") {
 		t.Errorf("floor must be omitted when parent slice missing:\n%s", noneOut)
 	}
@@ -221,7 +221,7 @@ func indexOf(s, sub string) int { return strings.Index(s, sub) }
 // so reconcile-tick reloads don't accumulate duplicate chain rules.
 func TestRenderEgressNFT_AtomicReplaceHeader(t *testing.T) {
 	requireHostMutationAllowed(t)
-	out := RenderEgressNFT(nil, CanonicalDefaults(), allExist)
+	out := RenderEgressNFT(nil, CanonicalDefaults(), nil, allExist)
 	add := indexOf(out, "add table inet jabali_per_user")
 	del := indexOf(out, "delete table inet jabali_per_user")
 	def := indexOf(out, "table inet jabali_per_user {")

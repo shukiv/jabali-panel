@@ -23,7 +23,7 @@ func sshShellUsers() []EgressUser {
 // A user whose slice exists is dispatched by uid too, after the cgroup
 // dispatch.
 func TestRenderEgressNFT_SliceUserIsAlsoDispatchedByUID(t *testing.T) {
-	out := RenderEgressNFT(sshShellUsers(), CanonicalDefaults(), func(string) bool { return true })
+	out := RenderEgressNFT(sshShellUsers(), CanonicalDefaults(), nil, func(string) bool { return true })
 
 	if !strings.Contains(out, "1001 : jump user_alice_enforced") {
 		t.Fatalf("alice has a slice but no uid dispatch, so her SSH shell is unfiltered:\n%s", out)
@@ -38,7 +38,7 @@ func TestRenderEgressNFT_SliceUserIsAlsoDispatchedByUID(t *testing.T) {
 // The SSRF floor covers tenant processes outside the slice too, state=off
 // included: the floor holds regardless of egress enrollment (GH #401).
 func TestRenderEgressNFT_SSRFFloorCoversProcessesOutsideTheSlice(t *testing.T) {
-	out := RenderEgressNFT(sshShellUsers(), CanonicalDefaults(), func(string) bool { return true })
+	out := RenderEgressNFT(sshShellUsers(), CanonicalDefaults(), nil, func(string) bool { return true })
 
 	for _, want := range []string{
 		`socket cgroupv2 level 2 "jabali.slice/jabali-user.slice" ip daddr 169.254.0.0/16`,
@@ -68,7 +68,7 @@ func TestRenderEgressNFT_DuplicateUIDIsRenderedOnce(t *testing.T) {
 		{Username: "alice", State: "enforced", UID: 1001},
 		{Username: "alias", State: "learning", UID: 1001},
 	}
-	out := RenderEgressNFT(users, CanonicalDefaults(), func(string) bool { return true })
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, func(string) bool { return true })
 
 	if n := strings.Count(out, "1001 : jump"); n != 1 {
 		t.Errorf("uid 1001 has %d entries in uid_to_chain, want 1:\n%s", n, out)
@@ -87,7 +87,7 @@ func TestRenderEgressNFT_DuplicateUIDIsRenderedOnce(t *testing.T) {
 // daemon's traffic through a tenant chain.
 func TestRenderEgressNFT_SystemUIDIsNeverMatched(t *testing.T) {
 	users := []EgressUser{{Username: "odd", State: "enforced", UID: 33}}
-	out := RenderEgressNFT(users, CanonicalDefaults(), func(string) bool { return true })
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, func(string) bool { return true })
 
 	if strings.Contains(out, "meta skuid") || strings.Contains(out, "33 : jump") {
 		t.Errorf("uid 33 (www-data) must never be matched:\n%s", out)
@@ -111,7 +111,7 @@ func TestEgressCoverage_MatchesTheRenderer(t *testing.T) {
 	hasSlice := func(p string) bool { return p == SlicePathFor("alice") }
 
 	emitted, skipped, failOpen := egressCoverage(users, hasSlice)
-	out := RenderEgressNFT(users, CanonicalDefaults(), hasSlice)
+	out := RenderEgressNFT(users, CanonicalDefaults(), nil, hasSlice)
 
 	// alias sorts first and keeps uid 1001, so alice (who has a slice) and
 	// dave (uid 1004) are emitted with it. odd has neither a slice nor a
