@@ -76,11 +76,18 @@ type UpdateAutoupdateConfig struct {
 	// security auto-updates off (the API requires it when disabling), so a
 	// deliberate opt-out is distinguishable from the old silent insecure
 	// default. Re-enabling clears it.
-	AptOptoutAcknowledged bool      `gorm:"type:boolean;not null;default:false"      json:"apt_optout_acknowledged"`
-	AptTime               string    `gorm:"type:varchar(5);not null;default:'03:30'" json:"apt_time"`
-	JabaliEnabled         bool      `gorm:"type:boolean;not null;default:false"      json:"jabali_enabled"`
-	JabaliTime            string    `gorm:"type:varchar(5);not null;default:'04:30'" json:"jabali_time"`
-	UpdatedAt             time.Time `gorm:"autoUpdateTime"                            json:"updated_at"`
+	AptOptoutAcknowledged bool   `gorm:"type:boolean;not null;default:false"      json:"apt_optout_acknowledged"`
+	AptTime               string `gorm:"type:varchar(5);not null;default:'03:30'" json:"apt_time"`
+	JabaliEnabled         bool   `gorm:"type:boolean;not null;default:false"      json:"jabali_enabled"`
+	JabaliTime            string `gorm:"type:varchar(5);not null;default:'04:30'" json:"jabali_time"`
+
+	// SecurityEnabled lets a Jabali security advisory apply its fix as soon as
+	// the hourly check sees it: install the vendor update, run the panel
+	// update. Independent of JabaliEnabled, which stays opt-in. Default FALSE
+	// in the column for the AptEnabled reason above; EnsureDefault seeds TRUE
+	// and migration 000332 turned it on for existing servers.
+	SecurityEnabled bool      `gorm:"type:boolean;not null;default:false" json:"security_enabled"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime"                       json:"updated_at"`
 }
 
 // TableName pins GORM to the migration's spelling.

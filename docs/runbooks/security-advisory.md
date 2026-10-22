@@ -6,15 +6,17 @@ main, once an hour (`jabali-security-feed.timer`, running
 server's daily runs:
 
 - vendor packages are installed at the time set on the Updates page;
-- a panel update runs once a night, and only where self-update is on.
+- a panel update runs once a night, and only where panel self-update is on.
 
-For a new advisory, each server does what the advisory asks, at most once:
+For a new advisory, each server does what the advisory asks, at most once,
+unless its admin turned **Security advisories** off on the Updates page (it is
+on by default, also on servers installed before the setting existed):
 
 - **`"apt": true`**: refresh the package lists and run unattended-upgrades now,
   if OS security auto-updates are on (the default).
 - **`"jabali"`**: if the server's build already contains one of the `fixed_in`
-  commits, nothing. Otherwise it starts the panel update now, if self-update is
-  on (it is off by default).
+  commits, nothing. Otherwise it starts the panel update now, even where panel
+  self-update is off.
   - Some servers on the stable channel cannot get the fix that way, because
     `jabali update` keeps them where they are: one that runs a build *ahead*
     of stable, and one whose database is newer than the stable release (a

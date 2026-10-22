@@ -65,15 +65,15 @@ type hostCalls struct{ apt, update, converger int }
 
 func testHost(git gitOutFunc, calls *hostCalls) securityFeedHost {
 	return securityFeedHost{
-		Now:            func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) },
-		AptEnabled:     true,
-		JabaliEnabled:  true,
-		OnStable:       true,
-		Signed:         true,
-		Git:            git,
-		StartApt:       func() error { calls.apt++; return nil },
-		StartUpdate:    func() error { calls.update++; return nil },
-		StartConverger: func(securityAdvisory) error { calls.converger++; return nil },
+		Now:             func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) },
+		AptEnabled:      true,
+		SecurityEnabled: true,
+		OnStable:        true,
+		Signed:          true,
+		Git:             git,
+		StartApt:        func() error { calls.apt++; return nil },
+		StartUpdate:     func() error { calls.update++; return nil },
+		StartConverger:  func(securityAdvisory) error { calls.converger++; return nil },
 	}
 }
 
@@ -177,6 +177,13 @@ func TestProcessAdvisory_Apt(t *testing.T) {
 	}
 
 	h.AptEnabled = true
+	h.SecurityEnabled = false
+	lines = processAdvisory(h, adv, &advisoryState{})
+	if calls.apt != 0 || !strings.Contains(joined(lines), "do not apply automatically") || !strings.Contains(joined(lines), "unattended-upgrade -v") {
+		t.Errorf("advisories off: calls=%d lines=%q", calls.apt, lines)
+	}
+
+	h.SecurityEnabled = true
 	h.StartApt = func() error { return errors.New("unit exists") }
 	lines = processAdvisory(h, adv, &advisoryState{})
 	if !strings.Contains(joined(lines), "unit exists") || !strings.Contains(joined(lines), "unattended-upgrade -v") {
@@ -213,10 +220,10 @@ func TestProcessAdvisory_AtStableUpdatesNotConverger(t *testing.T) {
 	}
 
 	calls = hostCalls{}
-	h.JabaliEnabled = false
+	h.SecurityEnabled = false
 	lines = processAdvisory(h, adv, &advisoryState{})
-	if calls.update != 0 || !strings.Contains(joined(lines), "Update now: jabali update") {
-		t.Errorf("self-update off: calls=%+v lines=%q", calls, lines)
+	if calls.update != 0 || !strings.Contains(joined(lines), "do not apply automatically") || !strings.Contains(joined(lines), "Update now: jabali update") {
+		t.Errorf("advisories off: calls=%+v lines=%q", calls, lines)
 	}
 }
 
@@ -261,12 +268,12 @@ func TestProcessAdvisory_AheadOfStable(t *testing.T) {
 			t.Errorf("calls=%+v lines=%q", calls, lines)
 		}
 	})
-	t.Run("self-update off gives the command instead", func(t *testing.T) {
+	t.Run("advisories off gives the command instead", func(t *testing.T) {
 		var calls hostCalls
 		h := testHost(git, &calls)
-		h.JabaliEnabled = false
+		h.SecurityEnabled = false
 		lines := processAdvisory(h, jabaliAdvisory(c["m2"], c["m2"]), &advisoryState{})
-		if calls.converger != 0 || !strings.Contains(joined(lines), "self-update is off") {
+		if calls.converger != 0 || !strings.Contains(joined(lines), "do not apply automatically") || !strings.Contains(joined(lines), "archive "+c["m2"]) {
 			t.Errorf("calls=%+v lines=%q", calls, lines)
 		}
 	})

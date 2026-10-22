@@ -359,6 +359,10 @@ type autoupdatePutBody struct {
 	AptTime               string `json:"apt_time"`
 	JabaliEnabled         bool   `json:"jabali_enabled"`
 	JabaliTime            string `json:"jabali_time"`
+	// SecurityEnabled: apply security advisories as soon as they appear. A
+	// pointer so a client that predates the field keeps the stored value
+	// instead of switching it off.
+	SecurityEnabled *bool `json:"security_enabled"`
 }
 
 // timeHHMM validates a 24h HH:MM string. Rejecting non-conforming input at the
@@ -394,12 +398,24 @@ func (h *adminUpdatesHandler) autoupdatePut(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ack_required", "details": "disabling OS security auto-updates requires explicit acknowledgement (apt_optout_acknowledged)"})
 		return
 	}
+	securityEnabled := true
+	if body.SecurityEnabled != nil {
+		securityEnabled = *body.SecurityEnabled
+	} else {
+		current, err := h.cfg.Autoupdate.EnsureDefault(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "autoupdate_read"})
+			return
+		}
+		securityEnabled = current.SecurityEnabled
+	}
 	cfg := &models.UpdateAutoupdateConfig{
 		AptEnabled:            body.AptEnabled,
 		AptOptoutAcknowledged: !body.AptEnabled && body.AptOptoutAcknowledged,
 		AptTime:               body.AptTime,
 		JabaliEnabled:         body.JabaliEnabled,
 		JabaliTime:            body.JabaliTime,
+		SecurityEnabled:       securityEnabled,
 	}
 	if err := h.cfg.Autoupdate.Upsert(c.Request.Context(), cfg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "autoupdate_save"})

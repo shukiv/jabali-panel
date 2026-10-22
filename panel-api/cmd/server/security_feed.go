@@ -17,8 +17,8 @@ package main
 //   - "apt": refreshes the package lists and runs unattended-upgrades now,
 //     when OS security auto-updates are on (Updates page; on by default);
 //   - "jabali": does nothing when HEAD already contains one of fixed_in.
-//     Otherwise it starts the panel self-update now, when self-update is on
-//     (off by default). A server on the stable channel that runs a build
+//     Otherwise it starts the panel update now, even where panel self-update
+//     is off (it is opt-in): a security fix installs itself. A server on the stable channel that runs a build
 //     AHEAD of stable cannot get the fix that way: `jabali update` never
 //     moves it back. There the advisory's converger, an install.sh function
 //     from a newer main commit, can apply the fix's server-side part. That is
@@ -26,6 +26,10 @@ package main
 //     from a feed signed with the release key (ADR-0162);
 //   - alerts the admins (notification kind security.advisory) with what it
 //     did and, for anything it could not do, the command to run.
+//
+// "apt" and "jabali" act only where security advisories apply automatically
+// (Updates page, security_enabled; on by default). Where an admin turned that
+// off, the alert gives the commands instead.
 //
 // Each action runs at most once per advisory; the state file says which.
 // While this build embeds no release key the feed's signature is not checked
@@ -219,14 +223,17 @@ type securityFeedState struct {
 	Advisories map[string]*advisoryState `json:"advisories"`
 }
 
+// securityOffNote opens the alert line for an action the admin turned off.
+const securityOffNote = "Security advisories do not apply automatically on this server (Updates page)."
+
 // securityFeedHost is the server as an advisory sees it.
 type securityFeedHost struct {
-	Now           func() time.Time
-	AptEnabled    bool // OS security auto-updates (Updates page)
-	JabaliEnabled bool // panel self-update (Updates page)
-	OnStable      bool // release channel is stable
-	Signed        bool // the feed's signature was verified with the embedded key
-	LiveSchema    uint // the database's schema version; 0 when it could not be read
+	Now             func() time.Time
+	AptEnabled      bool // OS security auto-updates (Updates page)
+	SecurityEnabled bool // apply security advisories automatically (Updates page)
+	OnStable        bool // release channel is stable
+	Signed          bool // the feed's signature was verified with the embedded key
+	LiveSchema      uint // the database's schema version; 0 when it could not be read
 	// Git runs git in the panel checkout, as the service user.
 	Git            gitOutFunc
 	StartApt       func() error
@@ -250,6 +257,8 @@ func processAdvisory(h securityFeedHost, adv securityAdvisory, st *advisoryState
 	if adv.Apt && !st.AptDone {
 		st.AptDone = true
 		switch {
+		case !h.SecurityEnabled:
+			lines = append(lines, securityOffNote+" Install the updates now: apt-get update && unattended-upgrade -v")
 		case !h.AptEnabled:
 			lines = append(lines, "OS security auto-updates are off on this server. Install the updates now: apt-get update && unattended-upgrade -v")
 		default:
@@ -293,8 +302,8 @@ func jabaliAdvisoryAction(h securityFeedHost, adv securityAdvisory, st *advisory
 			return nil
 		}
 		st.UpdateDone = true
-		if !h.JabaliEnabled {
-			return []string{"Panel self-update is off on this server. Update now: jabali update"}
+		if !h.SecurityEnabled {
+			return []string{securityOffNote + " Update now: jabali update"}
 		}
 		if err := h.StartUpdate(); err != nil {
 			return []string{fmt.Sprintf("Could not start the panel update (%v). Update now: jabali update", err)}
@@ -314,8 +323,8 @@ func jabaliAdvisoryAction(h securityFeedHost, adv securityAdvisory, st *advisory
 	switch {
 	case !h.Signed:
 		return []string{held + " This build applies a fix from a newer commit only when the feed is signed. Apply the fix's server-side part now: " + manual}
-	case !h.JabaliEnabled:
-		return []string{held + " Panel self-update is off. Apply the fix's server-side part now: " + manual}
+	case !h.SecurityEnabled:
+		return []string{held + " " + securityOffNote + " Apply the fix's server-side part now: " + manual}
 	}
 	if err := checkConvergerCommit(h.Git, j.ConvergerCommit); err != nil {
 		return []string{fmt.Sprintf("%s Not applying the fix automatically: %v. Apply it now: %s", held, err, manual)}

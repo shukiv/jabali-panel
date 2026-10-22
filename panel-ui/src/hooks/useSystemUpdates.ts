@@ -209,6 +209,9 @@ export interface AutoupdateConfig {
   apt_time: string;
   jabali_enabled: boolean;
   jabali_time: string;
+  // Apply Jabali security advisories as soon as the hourly check sees them,
+  // independent of jabali_enabled. On by default.
+  security_enabled: boolean;
 }
 
 // useUpdateState reads the persisted last-check snapshot for instant page

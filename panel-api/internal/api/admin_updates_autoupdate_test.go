@@ -20,7 +20,7 @@ import (
 type stubAutoupdateRepo struct{ cfg models.UpdateAutoupdateConfig }
 
 func newStubAutoupdate() *stubAutoupdateRepo {
-	return &stubAutoupdateRepo{cfg: models.UpdateAutoupdateConfig{ID: 1, AptEnabled: true, AptTime: "03:30", JabaliTime: "04:30"}}
+	return &stubAutoupdateRepo{cfg: models.UpdateAutoupdateConfig{ID: 1, AptEnabled: true, AptTime: "03:30", JabaliTime: "04:30", SecurityEnabled: true}}
 }
 func (s *stubAutoupdateRepo) Get(context.Context) (*models.UpdateAutoupdateConfig, error) {
 	c := s.cfg
@@ -89,4 +89,29 @@ func TestAutoupdate_Enable_ClearsAck(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.True(t, repo.cfg.AptEnabled)
 	assert.False(t, repo.cfg.AptOptoutAcknowledged, "re-enabling must clear the opt-out flag")
+}
+
+// Applying security advisories is switched off only by a client that says
+// so: one that predates the field keeps the stored value.
+func TestAutoupdate_SecurityEnabled(t *testing.T) {
+	const rest = `"apt_enabled":true,"apt_time":"03:30","jabali_enabled":false,"jabali_time":"04:30"`
+
+	repo := newStubAutoupdate()
+	r := newAutoupdateRouter(repo)
+	rec := putAutoupdate(r, `{`+rest+`}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, repo.cfg.SecurityEnabled, "a body without security_enabled must not switch it off")
+
+	rec = putAutoupdate(r, `{`+rest+`,"security_enabled":false}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.False(t, repo.cfg.SecurityEnabled, "an explicit false must persist")
+
+	rec = putAutoupdate(r, `{`+rest+`}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.False(t, repo.cfg.SecurityEnabled, "a body without security_enabled must not switch it back on")
+	assert.Contains(t, rec.Body.String(), `"security_enabled":false`)
+
+	rec = putAutoupdate(r, `{`+rest+`,"security_enabled":true}`)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.True(t, repo.cfg.SecurityEnabled)
 }

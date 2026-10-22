@@ -35,9 +35,11 @@ func newSecurityFeedCheckCmd() *cobra.Command {
 		Short: "Act on new security advisories now (jabali-security-feed.timer runs this hourly)",
 		Long: `Reads the Jabali security advisory feed and, for each advisory this server has
 not handled yet, takes the actions it asks for: install pending security
-updates now (when OS security auto-updates are on), start the panel update now
-(when self-update is on), and alert the admins with what was done and the
-command for anything that was not. Each action runs at most once per advisory.
+updates now (when OS security auto-updates are on) and start the panel update
+now, even where panel self-update is off. Both happen only where security
+advisories apply automatically (the Updates page; on by default). It alerts
+the admins with what was done and the command for anything that was not.
+Each action runs at most once per advisory.
 See docs/runbooks/security-advisory.md.`,
 		Args:    cobra.NoArgs,
 		PreRunE: requireDB,
@@ -133,9 +135,10 @@ func liveSecurityFeedHost(ctx context.Context, repoDir, serviceUser, statePath s
 		Now:    time.Now,
 		Signed: signed,
 		Git:    git,
-		// The Updates page defaults (JAB-353): OS security updates on,
-		// self-update off.
-		AptEnabled: true,
+		// The Updates page defaults: OS security updates on (JAB-353) and
+		// security advisories applied automatically (000332).
+		AptEnabled:      true,
+		SecurityEnabled: true,
 		StartApt: func() error {
 			// Not apt-daily-upgrade.service: its daily stamp makes a second
 			// start on the same day a no-op, and it does not refresh the
@@ -146,7 +149,16 @@ func liveSecurityFeedHost(ctx context.Context, repoDir, serviceUser, statePath s
 				"apt-get update -qq -o DPkg::Lock::Timeout=300; unattended-upgrade -v; /usr/local/bin/jabali update apt-refresh")
 		},
 		StartUpdate: func() error {
-			return runQuiet(ctx, "systemctl", "start", "--no-block", "jabali-autoupdate.service")
+			// The agent writes jabali-autoupdate.service whatever the
+			// self-update setting (only its timer follows it). Starting the
+			// same unit keeps an advisory's update and the nightly one from
+			// running at once. Where the agent has not written it yet, run
+			// the same command as a transient unit of that name.
+			if _, err := os.Stat("/etc/systemd/system/jabali-autoupdate.service"); err == nil {
+				return runQuiet(ctx, "systemctl", "start", "--no-block", "jabali-autoupdate.service")
+			}
+			return runQuiet(ctx, "systemd-run", "--unit=jabali-autoupdate", "--collect", "--no-block",
+				"--property=TimeoutStartSec=2h", "/usr/local/bin/jabali", "update", "-f")
 		},
 		StartConverger: func(adv securityAdvisory) error {
 			return startSecurityConverger(ctx, repoDir, serviceUser, filepath.Dir(statePath), adv)
@@ -155,10 +167,11 @@ func liveSecurityFeedHost(ctx context.Context, repoDir, serviceUser, statePath s
 	cfg, err := repository.NewUpdateAutoupdateConfigRepository(sharedDB).Get(ctx)
 	switch {
 	case err == nil:
-		h.AptEnabled, h.JabaliEnabled = cfg.AptEnabled, cfg.JabaliEnabled
+		h.AptEnabled, h.SecurityEnabled = cfg.AptEnabled, cfg.SecurityEnabled
 	case errors.Is(err, repository.ErrNotFound):
 	default:
-		logf("security feed: read the auto-update settings failed (%v); acting as if self-update is off", err)
+		h.SecurityEnabled = false
+		logf("security feed: read the auto-update settings failed (%v); only alerting", err)
 	}
 	if ch, err := releaseChannel(); err == nil {
 		h.OnStable = ch == "stable"
