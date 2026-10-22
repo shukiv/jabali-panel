@@ -120,9 +120,14 @@ func TestReadPHPErrorLog_TailOfLargeFileDropsPartialLine(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(logs, "big.example.php-error.log"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readPHPErrorLog(name, "big.example", uid, -1, 0, 2000)
+	// More lines than the read window holds, so the window's first line is
+	// in the result unless it is dropped.
+	got, err := readPHPErrorLog(name, "big.example", uid, -1, 0, 100000)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(got.Lines) < phpErrorLogReadMax/len(line)-1 {
+		t.Fatalf("want the whole read window, got %d lines", len(got.Lines))
 	}
 	for _, l := range got.Lines {
 		if len(l) != 99 {
