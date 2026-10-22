@@ -3,7 +3,9 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/user"
@@ -436,20 +438,39 @@ func ensureVersionedFPMDropin(ctx context.Context, slug, username string) error 
 	return nil
 }
 
+// userLogsHomeRoot is where tenant homes live; a var so tests can point it at
+// a temp dir.
+var userLogsHomeRoot = "/home"
+
 // ensureUserLogsDir makes /home/<user>/logs (0750, tenant-owned) if missing and
 // returns it (GH #1332 item 12). The per-user FPM master runs AS the tenant, so
 // its slow log must live somewhere the tenant can write; this also sets up the
 // per-domain log shortcut. Chown is best-effort — the dir already being
 // tenant-owned (the common case) is fine.
+//
+// The agent runs as root and some tenants own their home, so nothing here
+// follows a link: an existing logs entry must be a real directory (Lstat),
+// only the last component is created (Mkdir, never a missing home) and the
+// owner is set with Lchown.
 func ensureUserLogsDir(username string) (string, error) {
-	dir := filepath.Join("/home", username, "logs")
-	if err := os.MkdirAll(dir, 0o750); err != nil {
+	if !phpPoolUsernameRegex.MatchString(username) {
+		return "", fmt.Errorf("invalid username %q", username)
+	}
+	dir := filepath.Join(userLogsHomeRoot, username, "logs")
+	if err := os.Mkdir(dir, 0o750); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", dir)
 	}
 	if u, err := user.Lookup(username); err == nil {
 		uid, _ := strconv.Atoi(u.Uid)
 		gid, _ := strconv.Atoi(u.Gid)
-		_ = os.Chown(dir, uid, gid)
+		_ = os.Lchown(dir, uid, gid)
 	}
 	return dir, nil
 }
@@ -693,6 +714,17 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
+	// The tenant-owned logs dir holds the PHP error logs of every pool (see
+	// php_error_log.go): without it PHP falls back to FastCGI stderr. Made on
+	// every apply, with the tenant's logrotate stanza; a failure here only
+	// matters to the slow log below.
+	logsDir, logsErr := ensureUserLogsDir(p.Username)
+	if logsErr != nil {
+		slog.Warn("php pool: tenant logs dir", "user", p.Username, "err", logsErr)
+	} else if err := writePHPErrorLogrotate(p.Username); err != nil {
+		slog.Warn("php pool: PHP error log rotation", "user", p.Username, "err", err)
+	}
+
 	// GH #1332 item 12: derive the slow-log path from the slug (never over the
 	// wire) and ensure the tenant-owned logs dir exists so the tenant-run FPM
 	// master can write it. Clamp defensively — the panel validates 0..600.
@@ -706,11 +738,10 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		if isVersioned {
 			name = "php-slow-" + slug + ".log"
 		}
-		logsDir, lerr := ensureUserLogsDir(p.Username)
-		if lerr != nil {
+		if logsErr != nil {
 			return nil, &agentwire.AgentError{
 				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("ensure logs dir: %v", lerr),
+				Message: fmt.Sprintf("ensure logs dir: %v", logsErr),
 			}
 		}
 		slowlogPath = filepath.Join(logsDir, name)
@@ -881,12 +912,9 @@ func applyPoolXdebug(version, slug, username string, enabled bool) (bool, error)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("create xdebug scan dir: %w", err)
 	}
-	logsDir := filepath.Join("/home", username, "logs")
-	_ = os.MkdirAll(logsDir, 0o750)
-	if u, e := user.Lookup(username); e == nil {
-		uid, _ := strconv.Atoi(u.Uid)
-		gid, _ := strconv.Atoi(u.Gid)
-		_ = os.Chown(logsDir, uid, gid)
+	logsDir, err := ensureUserLogsDir(username)
+	if err != nil {
+		return false, fmt.Errorf("xdebug output dir: %w", err)
 	}
 	content := "; Managed by jabali (GH #1332 item 9). Safe modes only — no remote step-debug.\n" +
 		"zend_extension=xdebug.so\n" +

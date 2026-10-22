@@ -51,6 +51,12 @@ func TestMain(m *testing.M) {
 	// The bandwidth scan remembers which rotated log it counted; keep that
 	// state out of /var/lib/jabali.
 	bandwidthScanStatePath = filepath.Join(dir, "bandwidth-scan-state.json")
+	// A PHP vhost write and a pool apply make the tenant's ~/logs and its
+	// logrotate stanza; keep both out of /home and /etc/logrotate.d. The dirs
+	// are not created, so those writes fail and are only logged, unless a test
+	// points the vars at dirs of its own.
+	userLogsHomeRoot = filepath.Join(dir, "home")
+	phpErrorLogrotateDir = filepath.Join(dir, "logrotate.d")
 
 	code := m.Run()
 	_ = os.RemoveAll(dir)

@@ -1295,6 +1295,18 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		}
 	}
 
+	// The PHP error log pinned below lives in ~/logs, which must exist before
+	// the first request or PHP falls back to FastCGI stderr (php_error_log.go).
+	// The rotation stanza is written here too, not only on pool apply: an
+	// active pool is not re-applied until something changes it.
+	if hasPHP {
+		if _, err := ensureUserLogsDir(username); err != nil {
+			log.Printf("domain.create: %s: tenant logs dir: %v", domain, err)
+		} else if err := writePHPErrorLogrotate(username); err != nil {
+			log.Printf("domain.create: %s: PHP error log rotation: %v", domain, err)
+		}
+	}
+
 	// Generate vhost configuration
 	tmpl, err := template.New("vhost").Parse(vhostTemplate)
 	if err != nil {
@@ -1335,7 +1347,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PHPMaxInputVars:            phpMaxInputVars,
 		PHPMaxExecutionTime:        phpMaxExecTime,
 		PHPMaxInputTime:            phpMaxInputTime,
-		PHPValueParam:              withPHPFlagPins(buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone), phpFlags),
+		PHPValueParam:              withPHPErrorLog(withPHPFlagPins(buildPHPValueParam(hasPHP, phpMemLimit, phpUploadMax, phpPostMax, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime, phpDisplayErrors, phpErrorReporting, phpTimezone), phpFlags), phpErrorLogPath(username, domain)),
 		PHPAdminValueParam:         buildPHPAdminValueParam(hasPHP, phpFlags.Admin),
 		EnvParams:                  buildEnvParams(hasPHP, envVars),
 		ListenIPv4:                 listenIPv4,

@@ -93,6 +93,12 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 	// (GH #1701).
 	removePoolPHPDefense(slug)
 
+	// The account's PHP error log rotation goes with its default pool: once
+	// the user is gone, logrotate would reject the stanza's su line.
+	if !isVersioned {
+		removePHPErrorLogrotate(slug)
+	}
+
 	// A versioned slug owns its own drop-in dir; the default pool's is owned by
 	// user.slice.ensure and must be left intact.
 	if isVersioned {

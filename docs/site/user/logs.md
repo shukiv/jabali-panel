@@ -6,7 +6,7 @@
 
 - **nginx access log** — one line per request: timestamp, IP, method, path, status, response size, user-agent, referer.
 - **nginx error log** — server-side errors (PHP-FPM connection failures, denied request bodies, SSL handshake errors).
-- **PHP-FPM error log** — uncaught PHP errors, fatal errors, warnings from your scripts.
+- **PHP error log**: warnings, notices and fatal errors from your scripts. Each domain writes to `~/logs/<domain>.php-error.log` in your home directory. Errors that belong to no domain go to `~/logs/php-error.log`. Open these files in the File Manager. They are rotated daily; the last 7 days are kept, and the older ones are compressed. To use another file, set `error_log` in the site's `.user.ini`.
 
 ## Filtering
 
