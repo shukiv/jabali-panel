@@ -42,6 +42,8 @@ import { apiClient } from "../../../apiClient";
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { adminLinks, ownerCrumbs, ownerLabel } from "../../../components/admin/entityLinks";
 import { startImpersonation } from "../../../impersonation";
+import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { appManagerNavLabel } from "../../../nav";
 import { UserLimitsCard } from "./UserLimitsCard";
 import { AdminSSHForwardingCard } from "./AdminSSHForwardingCard";
 
@@ -102,6 +104,10 @@ const USER_PANEL_CARDS: { key: string; label: string; icon: React.ReactNode; pat
 
 export function AdminUserOverview() {
   const { t } = useTranslation();
+  // The Application Manager card is named for the runtimes that are on
+  // (ADR-0175), like the tenant's sidebar entry.
+  const { data: caps } = useServerCapabilities();
+  const appsLabel = t(appManagerNavLabel(!!caps?.python_apps_enabled, !!caps?.node_apps_enabled));
   const { id = "" } = useParams();
   const [impersonating, setImpersonating] = useState(false);
 
@@ -260,7 +266,7 @@ export function AdminUserOverview() {
                   <Statistic
                     title={
                       <span>
-                        {c.icon} {c.label}
+                        {c.icon} {c.key === "python-apps" ? appsLabel : c.label}
                       </span>
                     }
                     value="Open"
