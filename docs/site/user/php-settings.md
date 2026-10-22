@@ -15,7 +15,7 @@
 | `display_errors` | Show PHP errors to the browser. Off by default, shown as `Off (Default)`, even when the PHP pool turns it on: a domain that sets no value always runs with it off. Only enable it temporarily in development. |
 | `error_reporting` | Which PHP errors are reported (None, Production, or All). |
 | `date.timezone` | Default time zone for date / time functions. |
-| `log_errors` | Record PHP errors in the error log. Visitors never see logged errors. |
+| `log_errors` | Record PHP errors in the domain's error log, `~/logs/<domain>.php-error.log` (see [Logs](./logs.md)). Visitors never see logged errors. |
 | `file_uploads` | Let the domain's PHP accept uploaded files. Turning it off breaks uploads in WordPress and most applications. |
 | `short_open_tag` | Treat `<?` as a PHP opening tag. Only for old code that needs it: files that start with `<?xml` stop working. |
 

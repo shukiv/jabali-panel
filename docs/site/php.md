@@ -170,6 +170,17 @@ app benefits, plus a one-click **OPcache reset**.
 Each pool can emit a **per-pool FPM slow log** for requests over a threshold, so a
 slow endpoint is traceable per account without touching the global config.
 
+## PHP error log
+
+PHP warnings, notices and errors are written to files in the account's `~/logs`:
+
+- `~/logs/<domain>.php-error.log`, one per domain (the vhost sets `error_log` in its `PHP_VALUE`);
+- `~/logs/php-error.log`, the pool's fallback for anything not tied to a domain.
+
+They are never sent to nginx. Under PHP-FPM, Debian's `php.ini` sends logged errors to FastCGI stderr, which nginx reads into the buffer that holds the response headers. A page with many warnings then failed with `502` and `upstream sent too big header while reading response header from upstream` in the domain's nginx error log, even when the same site works on another server.
+
+Both settings are `php_value`, so a tenant can still choose another file with `error_log` in `.user.ini` or with `ini_set` (WordPress `WP_DEBUG_LOG` does this). The agent creates `~/logs` (tenant-owned, `0750`) on every pool apply and PHP vhost write. It also writes `/etc/logrotate.d/jabali-phperr-<user>`, which rotates these files daily, keeps 7 and compresses the older ones. logrotate runs it as the tenant (`su <user> <user>`), never as root, because the tenant owns the directory. The file is removed with the account.
+
 ## Snuffleupagus
 
 PHP runtime hardening for every PHP version. It is off by default; an administrator turns on simulation or enforce mode under Security → PHP Defense. See [security.md](./security.md#snuffleupagus).
