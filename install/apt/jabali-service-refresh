@@ -1,0 +1,55 @@
+#!/bin/bash
+# jabali-service-refresh — after a package upgrade, reload or restart each
+# internet-facing service Jabali runs that still runs a binary or library the
+# upgrade replaced.
+#
+# An upgrade replaces files on disk, but a running process keeps the old ones
+# until it restarts. A package restarts its own service, not the services that
+# use its libraries: after an OpenSSL upgrade, nginx and PHP keep the old
+# libssl, holes included. And Jabali runs PHP as one FPM master per hosting
+# user (jabali-fpm@<user>.service) with the distro's php<v>-fpm.service masked
+# (ADR-0025), so a PHP upgrade restarts no PHP at all.
+#
+# A process is stale when its executable, or a file it has mapped under /usr,
+# /lib or /bin, was deleted: that is what dpkg does to a file it replaces.
+#   - jabali-fpm@*: reloaded. The unit's ExecReload sends SIGUSR2: php-fpm
+#     lets running requests finish and re-executes itself from disk.
+#   - nginx, jabali-webmail (node), pdns, pdns-recursor: restarted. A reload
+#     keeps the old master process, and with it the old libraries.
+#
+# Installed to /usr/local/sbin by ensure_security_updates (install.sh), which
+# also runs it after every apt/dpkg run through a DPkg::Post-Invoke hook.
+# Cheap when nothing changed. Always exits 0, so it never fails apt.
+set -u
+command -v systemctl >/dev/null 2>&1 || exit 0
+proc=${JABALI_PROC:-/proc} # tests point this at a fake /proc
+
+stale() {
+  local pid=$1 exe
+  exe=$(readlink "$proc/$pid/exe" 2>/dev/null) || return 1
+  [[ "$exe" == *" (deleted)" ]] && return 0
+  grep -qE ' /(usr|lib|lib64|bin|sbin)/[^ ]* \(deleted\)$' "$proc/$pid/maps" 2>/dev/null
+}
+
+refresh() { # <unit> reload|restart
+  local unit=$1 action=$2 pid
+  pid=$(systemctl show -p MainPID --value "$unit" 2>/dev/null) || return 0
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 0
+  stale "$pid" || return 0
+  if [[ "$action" == reload ]] && systemctl reload "$unit" 2>/dev/null; then
+    logger -t jabali-service-refresh "reloaded $unit: it ran a replaced binary or library" 2>/dev/null || true
+  elif systemctl restart "$unit" 2>/dev/null; then
+    logger -t jabali-service-refresh "restarted $unit: it ran a replaced binary or library" 2>/dev/null || true
+  else
+    logger -t jabali-service-refresh "could not reload or restart $unit; it still runs a replaced binary or library" 2>/dev/null || true
+  fi
+}
+
+while read -r unit _; do
+  case "$unit" in
+    jabali-fpm@*.service) refresh "$unit" reload ;;
+    nginx.service | jabali-webmail.service | pdns.service | pdns-recursor.service) refresh "$unit" restart ;;
+  esac
+done < <(systemctl list-units --no-legend --plain --state=running \
+  'jabali-fpm@*.service' nginx.service jabali-webmail.service pdns.service pdns-recursor.service 2>/dev/null)
+exit 0
