@@ -78,12 +78,13 @@ built:
    anywhere, so `registry.npmjs.org` is reachable. A tenant on a stricter
    custom policy needs it allowlisted. Document it, or add it to the
    built-in allowlist?
-4. **Loopback isolation (to verify before Accepted).** Can one tenant's
-   process connect to another tenant's app port on `127.0.0.1`? That holds
-   for Python apps today if it holds at all; a Node runtime does not change
-   it, but the verification belongs here. If it is reachable, the fix (an
-   nftables rule letting only nginx's uid reach the app port range) covers
-   both runtimes.
+4. **Loopback isolation (verified 2026-10-22).** One tenant's process could
+   connect to another tenant's app port on `127.0.0.1`. The egress ruleset
+   now lets only the owning account, and system users such as nginx, open an
+   allocated app port (branch `harden-loopback-app-ports`), which covers
+   Node apps once their port is allocated like a Python app's. Still open:
+   whether Node apps should listen on a unix socket in a directory only the
+   account and nginx can reach, instead of a loopback port.
 5. **UI**: one Applications page with a runtime selector, or a separate
    Node.js Apps page next to Python Apps?
 
