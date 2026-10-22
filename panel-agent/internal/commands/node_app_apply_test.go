@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -399,5 +400,25 @@ func TestPackageHasScript(t *testing.T) {
 	}
 	if _, err := packageHasScript([]byte(`{"scripts":`), "build"); err == nil {
 		t.Fatal("invalid JSON must be an error")
+	}
+}
+
+// The payload panel-api's reconciler sends (reconcile_python_apps.go,
+// runtime node) decodes into every field app.node.apply needs.
+func TestNodeAppApplyParams_DecodePanelPayload(t *testing.T) {
+	raw := []byte(`{"app_id":"01NODE","username":"tenant","user_id":"01USER","app_root":"/home/tenant/api",
+		"node_version":"22","app_type":"npm","entrypoint":"start","port":20001,"env":{"API_KEY":"x"},
+		"memory_limit":"512M","cpu_limit":"50%","pids_limit":64}`)
+	var p nodeAppApplyParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateNodeAppParams(p); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if p.AppID != "01NODE" || p.Username != "tenant" || p.UserID != "01USER" || p.AppRoot != "/home/tenant/api" ||
+		p.NodeVersion != "22" || p.AppType != "npm" || p.Entrypoint != "start" || p.Port != 20001 ||
+		p.Env["API_KEY"] != "x" || p.MemoryLimit != "512M" || p.CPULimit != "50%" || p.PIDsLimit != 64 {
+		t.Fatalf("decoded = %+v", p)
 	}
 }
