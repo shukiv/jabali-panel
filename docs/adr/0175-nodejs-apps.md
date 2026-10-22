@@ -38,12 +38,13 @@ built:
 - **Registry**: the same `python_apps` / `python_app_env` tables with
   `runtime = 'node'`. No rename now (a rename touches every Python query;
   revisit if a third runtime lands).
-- **Process**: the same `jabali-app@<id>.service` shape: `User=<owner>`, the
+- **Process**: the same `jabali-app-<id>.service` shape: `User=<owner>`, the
   owner's slice (CPU, memory, pids limits) and egress firewall. `ExecStart`
-  is one of two app types:
-  - `node-script`: `node <entrypoint>`
-  - `npm-start`: `npm run start` (for frameworks whose start script wraps the
-    server).
+  is one of two app types (`app_type` is `VARCHAR(8)`):
+  - `node`: `node <entrypoint>`, a `.js`, `.mjs` or `.cjs` script under the
+    app root.
+  - `npm`: `npm run <script>`, a `package.json` script, `start` by default
+    (for frameworks whose start script wraps the server).
 - **Node version**: the host's Node 22 LTS from NodeSource, kept patched with
   the system's security updates. No per-app or per-user versions in the first
   slice; another major is a later, admin-installed addition.
@@ -62,7 +63,8 @@ built:
   the tenant in the app root, with the npm cache under the tenant's home.
   Install scripts run (native modules such as `bcrypt`, `sharp` and `sqlite3`
   need them): they run as the tenant, inside the slice and the egress
-  firewall, the same trust the app itself has.
+  firewall, the same trust the app itself has. Each step runs in a transient
+  scope in the owner's slice, as a Python app's build does (#2229).
 - **Registry access**: the egress firewall's default allowlist includes
   `:443` to anywhere, so `registry.npmjs.org` is reachable. A tenant on a
   stricter custom egress policy needs it allowlisted; the Node apps docs say

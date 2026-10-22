@@ -324,11 +324,21 @@ components:
         domain_id: { type: string, format: ulid, nullable: true }
     PythonApp:
       type: object
+      description: "An Application Manager app: a Python app, or a Node.js app with runtime node (ADR-0175)."
       properties:
         id: { type: string, format: ulid }
+        user_id: { type: string, format: ulid }
+        domain_id: { type: string, format: ulid }
         name: { type: string }
-        runtime_version: { type: string, example: "3.12" }
-        status: { type: string, enum: [installing, running, stopped, failed] }
+        runtime: { type: string, enum: [python, node] }
+        python_version: { type: string, example: "3.12", description: "The runtime version: Python 3.x, or the Node.js major (22) for runtime node." }
+        app_root: { type: string, example: /home/alice/apps/api }
+        app_type: { type: string, enum: [wsgi, asgi, node, npm], description: "wsgi/asgi for Python; node (a script) or npm (a package.json script) for Node.js." }
+        entrypoint: { type: string, example: "myapp.wsgi:application", description: "Python: module:callable. Node.js: a script under app_root (node), or a package.json script name (npm)." }
+        base_uri: { type: string, example: / }
+        loopback_port: { type: integer, example: 20001 }
+        status: { type: string, enum: [pending, building, running, stopped, failed] }
+        last_error: { type: string }
     User:
       type: object
       properties:
@@ -1872,19 +1882,44 @@ paths:
   /python-apps:
     get:
       tags: [Python Apps]
-      summary: List my Python apps
+      summary: List my Python and Node.js apps
       security: [ { KratosSession: [] } ]
       responses:
         "200":
           description: The apps
-          content: { application/json: { schema: { type: array, items: { $ref: "#/components/schemas/PythonApp" } } } }
+          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: "#/components/schemas/PythonApp" } } } } } }
     post:
       tags: [Python Apps]
-      summary: Create a Python app
-      description: "Provisions a WSGI/ASGI app under the chosen runtime. **Auth:** browser session."
+      summary: Create a Python or Node.js app
+      description: "Provisions a Python (WSGI/ASGI) app, or a Node.js app with `runtime: node` (ADR-0175). A runtime needs its server setting (`python_apps_enabled` / `node_apps_enabled`); Python and Node.js apps share the hosting package's app quota. A Node.js app listens on the PORT and HOST the panel sets, so `env` may not set them. **Auth:** browser session."
       security: [ { KratosSession: [] } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { name: { type: string }, runtime_version: { type: string } } } } } }
-      responses: { "201": { description: Created }, "422": { description: Validation error, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain_id, name, app_root]
+              properties:
+                domain_id: { type: string, format: ulid }
+                name: { type: string }
+                runtime: { type: string, enum: [python, node], default: python }
+                python_version: { type: string, example: "3.12", description: "Required for runtime python." }
+                node_version: { type: string, enum: ["22"], default: "22", description: "Runtime node only." }
+                app_root: { type: string, example: apps/api, description: "A directory under the owner's home." }
+                app_type: { type: string, enum: [wsgi, asgi, node, npm], description: "Default wsgi for Python, node for Node.js." }
+                entrypoint: { type: string, example: server.js, description: "Python: module:callable (required unless framework). Node.js: a .js/.mjs/.cjs script under app_root (node), or a package.json script name, default start (npm)." }
+                base_uri: { type: string, default: / }
+                env: { type: object, additionalProperties: { type: string } }
+                framework: { type: string, description: "Python framework catalog slug." }
+                static_url: { type: string, example: /static }
+                static_root: { type: string, example: public }
+                media_url: { type: string, example: /media }
+                media_root: { type: string, example: media }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { type: object, properties: { app: { $ref: "#/components/schemas/PythonApp" } } } } } }
+        "400": { description: "Validation error (`invalid_runtime`, `invalid_node_version`, `invalid_app_type`, `invalid_entrypoint`, `reserved_env`, ...)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: "`python_apps_disabled` / `node_apps_disabled`, or the package does not include apps or its app quota is reached", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
   /python-apps/versions:
     get:
@@ -1925,10 +1960,12 @@ paths:
   /python-apps/{id}/env:
     put:
       tags: [Python Apps]
-      summary: Set a Python app's env
+      summary: Set a Python or Node.js app's env
+      description: "Replaces the app's environment variables. A Node.js app may not set PORT or HOST (`reserved_env`)."
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      responses: { "200": { description: Saved } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { env: { type: object, additionalProperties: { type: string } } } } } } }
+      responses: { "200": { description: Saved }, "400": { description: "`reserved_env` or an invalid body" } }
 
   /python-apps/{id}/static:
     put:

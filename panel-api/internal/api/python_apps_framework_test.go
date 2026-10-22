@@ -26,7 +26,7 @@ func loadTestCatalog(t *testing.T) *pyframeworks.Catalog {
 // TestFrameworksEndpoint returns the catalog as a clean snake_case DTO with no
 // template bytes.
 func TestFrameworksEndpoint(t *testing.T) {
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Catalog: loadTestCatalog(t)}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Catalog: loadTestCatalog(t)}}
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
@@ -60,7 +60,7 @@ func TestFrameworksEndpoint(t *testing.T) {
 
 // TestCreate_UnknownFramework 400s before any provisioning.
 func TestCreate_UnknownFramework(t *testing.T) {
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Catalog: loadTestCatalog(t)}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Catalog: loadTestCatalog(t)}}
 	c, w := createCtx(t, map[string]any{
 		"domain_id": "dom1", "name": "app", "python_version": "3.12",
 		"app_root": "domains/x/app", "base_uri": "/", "framework": "nope",
@@ -84,7 +84,7 @@ func TestCreate_UnknownFramework(t *testing.T) {
 func TestCreate_FrameworkDerivesEntrypoint(t *testing.T) {
 	ag := agent.NewMockClient()
 	ag.On("app.python.versions", map[string]any{"versions": []string{"3.12"}, "default": "3.12"})
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Agent: ag, Catalog: loadTestCatalog(t)}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Agent: ag, Catalog: loadTestCatalog(t)}}
 	c, w := createCtx(t, map[string]any{
 		"domain_id": "dom1", "name": "app", "python_version": "3.12",
 		"app_root": "domains/x/app", "base_uri": "/", "framework": "flask",
@@ -110,7 +110,7 @@ func TestCreate_FrameworkDerivesEntrypoint(t *testing.T) {
 func TestCreate_FrameworkBelowPythonMin(t *testing.T) {
 	ag := agent.NewMockClient()
 	ag.On("app.python.versions", map[string]any{"versions": []string{"3.11", "3.12"}, "default": "3.12"})
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Agent: ag, Catalog: loadTestCatalog(t)}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Agent: ag, Catalog: loadTestCatalog(t)}}
 	c, w := createCtx(t, map[string]any{
 		"domain_id": "dom1", "name": "news", "python_version": "3.11",
 		"app_root": "domains/x/news", "base_uri": "/", "framework": "sic",
@@ -139,7 +139,7 @@ func TestCreate_FrameworkBelowPythonMin(t *testing.T) {
 func TestCreate_FrameworkAtPythonMin(t *testing.T) {
 	ag := agent.NewMockClient()
 	ag.On("app.python.versions", map[string]any{"versions": []string{"3.11", "3.12"}, "default": "3.12"})
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Agent: ag, Catalog: loadTestCatalog(t)}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Agent: ag, Catalog: loadTestCatalog(t)}}
 	c, w := createCtx(t, map[string]any{
 		"domain_id": "dom1", "name": "news", "python_version": "3.12",
 		"app_root": "domains/x/news", "base_uri": "/", "framework": "sic",
