@@ -274,12 +274,13 @@ func planNodeBuild(p nodeAppApplyParams, scope *filesafe.Scope, appRoot, stateDi
 	return pl, nil
 }
 
-// runNodeBuild installs the dependencies as the owning user in the app root:
-// npm ci with a lockfile, npm install without. Install scripts run (native
-// modules need them), as the tenant, under the egress firewall. An app with a
-// build script gets its dev dependencies and npm run build; one without gets
-// production dependencies only. npm's notices are off on the command line:
-// sudo's env_reset drops npm_config_* variables.
+// runNodeBuild installs the dependencies as the owning user in the app root,
+// in the owner's slice: npm ci with a lockfile, npm install without. Install
+// scripts run (native modules need them), as the tenant, in the slice and
+// under the egress firewall. An app with a build script gets its dev
+// dependencies and npm run build; one without gets production dependencies
+// only. npm's notices are off on the command line: sudo's env_reset drops
+// npm_config_* variables.
 func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) error {
 	fail := func(step, out string, err error) error {
 		msg := fmt.Sprintf("%s: %v: %s", step, err, lastLines(strings.TrimSpace(out), 20))
@@ -294,11 +295,11 @@ func runNodeBuild(ctx context.Context, p nodeAppApplyParams, pl nodeBuildPlan) e
 	if !pl.hasBuild {
 		install = append(install, "--omit=dev")
 	}
-	if out, err := runAsUserInDir(ctx, p.Username, pl.appRoot, install...); err != nil {
+	if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, pl.appRoot, install...); err != nil {
 		return fail("npm "+install[1], out, err)
 	}
 	if pl.hasBuild {
-		if out, err := runAsUserInDir(ctx, p.Username, pl.appRoot, npmBin, "run", "build", "--no-update-notifier"); err != nil {
+		if out, err := runAsUserInSlice(ctx, p.AppID, p.Username, pl.appRoot, npmBin, "run", "build", "--no-update-notifier"); err != nil {
 			return fail("npm run build", out, err)
 		}
 	}

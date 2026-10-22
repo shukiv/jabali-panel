@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -109,9 +110,9 @@ type nodeBuildFixture struct {
 	appRoot, stateDir, log string
 }
 
-// fakeNpmSudo stands in for `sudo -u <user> -H /usr/bin/env -C <dir> -- npm ...`:
-// it logs its arguments, and fails when $NODEBUILD_FAIL is set.
-const fakeNpmSudo = `
+// fakeNpmRun stands in for `systemd-run --scope ... -- sudo ... npm ...`: it
+// logs its arguments, and fails when $NODEBUILD_FAIL is set.
+const fakeNpmRun = `
 echo "$*" >> "$NODEBUILD_LOG"
 if [ -n "$NODEBUILD_FAIL" ]; then echo "npm ERR! code ERESOLVE"; exit 1; fi
 `
@@ -140,10 +141,10 @@ func newNodeBuildFixture(t *testing.T, appID string, files map[string]string) no
 	t.Setenv("NODEBUILD_LOG", f.log)
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "sudo" {
-			return exec.CommandContext(ctx, "sh", append([]string{"-c", fakeNpmSudo, "sh"}, args...)...)
+		if name == "systemd-run" {
+			return exec.CommandContext(ctx, "sh", append([]string{"-c", fakeNpmRun, "sh"}, args...)...)
 		}
-		return exec.CommandContext(ctx, "true")
+		return exec.CommandContext(ctx, "true") // systemctl stop <build scope>
 	}
 	t.Cleanup(func() {
 		waitPythonBuild(t, appID)
@@ -157,21 +158,23 @@ func (f nodeBuildFixture) step() (pythonBuildState, error) {
 }
 
 // commands returns the logged npm runs, each once it has been checked to run
-// as the app's owner, who changes into the app root itself.
+// in the owner's slice, as the owner, who changes into the app root itself.
 func (f nodeBuildFixture) commands(t *testing.T) []string {
 	t.Helper()
-	prefix := "-u alice -H /usr/bin/env -C " + f.appRoot + " -- "
+	prefix := regexp.MustCompile(`^--scope --quiet --collect --slice=jabali-user-alice\.slice --unit=jabali-app-build-` +
+		f.p.AppID + `-[0-9]+\.scope --property=TimeoutStopSec=5 -- sudo -u alice -H /usr/bin/env -C ` +
+		regexp.QuoteMeta(f.appRoot) + ` -- `)
 	b, _ := os.ReadFile(f.log)
 	var out []string
 	for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		if l == "" {
 			continue
 		}
-		cmd, ok := strings.CutPrefix(l, prefix)
-		if !ok {
-			t.Fatalf("npm did not run as the owner in the app root: %q", l)
+		loc := prefix.FindStringIndex(l)
+		if loc == nil {
+			t.Fatalf("npm did not run as the owner, in the owner's slice and the app root: %q", l)
 		}
-		out = append(out, cmd)
+		out = append(out, l[loc[1]:])
 	}
 	return out
 }
