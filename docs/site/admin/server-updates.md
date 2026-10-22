@@ -29,6 +29,8 @@ The transient-unit pattern was live-verified on 192.168.100.150.
 
 **Jabali panel self-update** on this page turns automatic updates on. It is off by default. When it is on, `jabali-autoupdate.timer` runs `jabali update -f` daily at the time you pick (default 04:30).
 
+**Security advisories** is on by default, including on servers installed before the setting existed. When Jabali publishes a security advisory, the server applies its fix within the hour, even with panel self-update off. It installs the patched packages, or it runs `jabali update`. On the stable channel, that update moves the server to the current stable release. On the development channel, it moves the server to main. Turned off, the server only sends the admins the advisory alert with the commands to run.
+
 ## Why a fixed bug came back
 
 The most confusing failure this system produces is a bug that was fixed, merged,
@@ -111,9 +113,10 @@ sooner, two ways:
 Neither waits for the next daily run when the fix is urgent. Every server
 checks Jabali's security advisories once an hour (**Security advisory check**
 on Admin → Cron Jobs). For a new advisory it installs the pending security
-updates or starts the panel update right away, where those updates are turned
-on. It also sends the admins a **Security advisory** notification that says
-what was done and what still needs them.
+updates or starts the panel update right away, unless an admin turned
+**Security advisories** off on the Updates page. It also sends the admins a
+**Security advisory** notification that says what was done and what still
+needs them.
 
 Before it moves the checkout, `jabali update` also checks the newest migration in
 the channel's target. If the target would not know the schema the database is

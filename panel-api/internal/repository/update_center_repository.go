@@ -179,10 +179,10 @@ func (r *updateAutoupdateConfigRepo) EnsureDefault(ctx context.Context) (*models
 	// JAB-353: fresh installs seed apt_enabled=TRUE (OS security auto-upgrades on
 	// by default). AptEnabled:true is a non-zero attr, so it lands in the INSERT
 	// on first create; existing rows are untouched (FirstOrCreate) and were
-	// force-enabled by migration 000272.
+	// force-enabled by migration 000272. SecurityEnabled likewise (000332).
 	if err := r.db.WithContext(ctx).
 		Where(models.UpdateAutoupdateConfig{ID: 1}).
-		Attrs(models.UpdateAutoupdateConfig{ID: 1, AptEnabled: true, AptTime: "03:30", JabaliTime: "04:30"}).
+		Attrs(models.UpdateAutoupdateConfig{ID: 1, AptEnabled: true, AptTime: "03:30", JabaliTime: "04:30", SecurityEnabled: true}).
 		FirstOrCreate(row).Error; err != nil {
 		return nil, err
 	}
@@ -204,6 +204,6 @@ func (r *updateAutoupdateConfigRepo) Upsert(ctx context.Context, c *models.Updat
 	c.ID = 1
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"apt_enabled", "apt_optout_acknowledged", "apt_time", "jabali_enabled", "jabali_time"}),
+		DoUpdates: clause.AssignmentColumns([]string{"apt_enabled", "apt_optout_acknowledged", "apt_time", "jabali_enabled", "jabali_time", "security_enabled"}),
 	}).Create(c).Error
 }

@@ -1003,6 +1003,29 @@ function AutomaticUpdatesCard() {
             </Space>
           </Modal>
 
+          {!cfg.security_enabled && (
+            <Alert
+              type="warning"
+              showIcon
+              message="Security advisories do not apply automatically"
+              description="When Jabali publishes a security fix, this server only alerts you. You install the fix with the commands in the alert."
+            />
+          )}
+          <Row align="middle" gutter={[12, 12]}>
+            <Col flex="auto">
+              <Text strong>Security advisories</Text>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  When Jabali publishes a security advisory, apply its fix within the hour: install the patched
+                  packages and update the panel, even with panel self-update off.
+                </Text>
+              </div>
+            </Col>
+            <Col>
+              <Switch checked={cfg.security_enabled} onChange={(v) => patch({ security_enabled: v })} />
+            </Col>
+          </Row>
+
           <Row align="middle" gutter={[12, 12]}>
             <Col flex="auto">
               <Text strong>
