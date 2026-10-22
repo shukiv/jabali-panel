@@ -120,6 +120,11 @@ or the bot-detection challenge.
   CrowdSec **Alerts** tab, or in `cscli alerts list`, is the name. `crowdsecurity/crs` and
   `crowdsecurity/base-config` cannot be excluded: that would turn the WAF off
   for the path.
+  - An exclusion by rule id is matched against the request URI as the client
+    sent it, query string included. A URI with a `..` path segment, plain or
+    percent-encoded (`%2e%2e`), never matches, because nginx may serve it
+    outside the prefix. A `..` inside a name, as in `report..final.pdf`, still
+    matches. The built-in WordPress and DokuWiki exclusions have the same guard.
   - An exclusion by name is matched against the decoded path, without the
     query string. A path that contains `..`, or a request URI that starts with
     `//`, never matches.

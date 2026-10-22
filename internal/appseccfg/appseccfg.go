@@ -293,6 +293,14 @@ SecAction "id:9599000,phase:1,nolog,pass,setvar:tx.wordpress-rule-exclusions-plu
 # default list (REQUEST-901-INITIALIZATION.conf 901162) + text/plain:
 SecAction "id:9599001,phase:1,nolog,pass,setvar:'tx.allowed_request_content_type=|application/x-www-form-urlencoded| |multipart/form-data| |multipart/related| |text/xml| |application/xml| |application/soap+xml| |application/json| |application/cloudevents+json| |application/cloudevents-batch+json| |text/plain|'"
 #
+# Every path-scoped exclusion below has a traversal guard in its chain: the
+# REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" link. REQUEST_URI is the URI as the
+# client wrote it, and nginx resolves ".." segments before it picks a location,
+# so a URI can match an exclusion's prefix here and still be served outside
+# it. The guard decodes the URI twice (for nginx,
+# and for a proxied app that decodes again) and refuses the exclusion while a
+# ".." segment is left. A ".." inside a name ("a..b") is not a segment.
+#
 # 933120 vs WordPress admin search: editing a custom post type issues
 # /wp-admin/edit.php?...&_wp_http_referer=<double-URL-encoded URL>. The
 # nested URL-inside-a-URL trips CRS 933120 (PHP injection) → php_injection
@@ -303,6 +311,7 @@ SecAction "id:9599001,phase:1,nolog,pass,setvar:'tx.allowed_request_content_type
 # under /wp-admin/. Body inspection, every other rule, and 933120 on
 # every other arg/path all stay active.
 SecRule REQUEST_URI "@beginsWith /wp-admin/" "id:9599100,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,chain"
     SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=933120"
 #
 # 911100 / 942550 / 932370 vs WordPress page builders (GH #404). Saving an
@@ -332,9 +341,12 @@ SecRule REQUEST_URI "@beginsWith /wp-admin/" "id:9599100,phase:1,pass,nolog,chai
 #    match ^elementor. Every other admin-ajax handler (incl. nopriv) keeps full
 #    SQLi-args inspection. Still surgical, ADR-0147-consistent: only attack-sqli,
 #    only ARGS; BODY/headers/cookies + every non-SQLi family stay active.
-SecRule REQUEST_URI "@rx ^/wp-json/elementor/"       "id:9599200,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
-SecRule REQUEST_URI "@rx ^/wp-admin/post\.php"       "id:9599202,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
-SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
+SecRule REQUEST_URI "@rx ^/wp-json/elementor/"       "id:9599200,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
+SecRule REQUEST_URI "@rx ^/wp-admin/post\.php"       "id:9599202,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
+SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,ctl:ruleRemoveById=911100,ctl:ruleRemoveById=942550,ctl:ruleRemoveById=932370"
 #
 # Code Snippets plugin (JAB-193). POST /wp-json/code-snippets/v1/snippets/<id>
 # saves a PHP snippet, so the JSON body legitimately IS PHP source — <?php,
@@ -382,6 +394,7 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,no
 #     every other family, stays fully active on this path — a real injection in
 #     these args is still caught by the rest of the 942 group.
 SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,chain"
     SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=942100"
 # 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
 # WooCommerce 8.5+ order attribution submits a field literally named
@@ -413,7 +426,8 @@ SecRule REQUEST_URI "@contains wc-ajax=" "id:9599300,phase:1,pass,nolog,ctl:rule
 # The optional leading segment matches both a root install (/lib/tpl/...) and the
 # default /wiki/ subdir install (/wiki/lib/tpl/...); [^/?]+ is one path segment,
 # never crossing into a deeper path or the query string.
-SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php" "id:9599310,phase:1,pass,nolog,ctl:ruleRemoveById=932120"
+SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php" "id:9599310,phase:1,pass,nolog,chain"
+    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,ctl:ruleRemoveById=932120"
 `
 }
 
