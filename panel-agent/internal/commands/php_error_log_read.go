@@ -117,8 +117,10 @@ func openErr(what string, err error) error {
 	switch {
 	case errors.Is(err, unix.ENOENT):
 		return os.ErrNotExist
-	case errors.Is(err, unix.ELOOP), errors.Is(err, unix.ENOTDIR):
-		return fmt.Errorf("%s is a link or not a directory", what)
+	case errors.Is(err, unix.ELOOP):
+		return fmt.Errorf("the %s is a symbolic link", what)
+	case errors.Is(err, unix.ENOTDIR):
+		return fmt.Errorf("the %s is not a directory", what)
 	default:
 		return fmt.Errorf("open %s: %w", what, err)
 	}

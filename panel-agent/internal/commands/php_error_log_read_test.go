@@ -80,19 +80,27 @@ func TestReadPHPErrorLog_TailAndFollow(t *testing.T) {
 		t.Fatalf("a partial line must wait: %+v", again)
 	}
 
-	// Rotation: a new file (new inode) starts over from its own tail.
+	// Rotation: a new file (new inode) starts over from its own tail, even
+	// when it already grew past the old offset (only the inode tells).
 	if err := os.Rename(path, path+".1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte("fresh 1\nfresh 2\n"), 0o644); err != nil {
+	var fresh strings.Builder
+	for i := 1; i <= 100; i++ {
+		fmt.Fprintf(&fresh, "fresh %d\n", i)
+	}
+	if int64(fresh.Len()) <= again.Offset {
+		t.Fatalf("fixture: the new file must outgrow the old offset %d", again.Offset)
+	}
+	if err := os.WriteFile(path, []byte(fresh.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rot, err := readPHPErrorLog(name, "example.com", uid, again.Offset, again.Ino, 50)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(rot.Lines, "|") != "fresh 1|fresh 2" || rot.Ino == again.Ino {
-		t.Fatalf("after rotation: want the new file's lines, got %+v", rot)
+	if len(rot.Lines) != 50 || rot.Lines[0] != "fresh 51" || rot.Lines[49] != "fresh 100" || rot.Ino == again.Ino {
+		t.Fatalf("after rotation: want the new file's last 50 lines, got %d lines %q", len(rot.Lines), rot.Lines)
 	}
 
 	// Truncated in place (offset past the end): start over too.
