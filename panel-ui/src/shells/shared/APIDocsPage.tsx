@@ -169,6 +169,7 @@ export function APIDocsBrowser(): JSX.Element {
   const [query, setQuery] = useState("");
   const [railQuery, setRailQuery] = useState("");
   const detailRef = useRef<HTMLElement>(null);
+  const railListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -227,6 +228,22 @@ export function APIDocsBrowser(): JSX.Element {
       if (el.getBoundingClientRect().top < visibleTop - 1) el.scrollIntoView?.({ block: "start" });
     });
   };
+
+  // The selected section shows in the rail when the page opens on it (a
+  // #tag- link) or a search result opens it: ~90 sections run past the bottom
+  // of the screen, so the rail scrolls itself to it. The page does not move.
+  useEffect(() => {
+    const list = railListRef.current;
+    const item = list?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!list || !item) return;
+    const parent = scrollParent(list);
+    const listBox = list.getBoundingClientRect();
+    const bottom = Math.min(listBox.bottom, parent ? parent.getBoundingClientRect().bottom : window.innerHeight);
+    const itemBox = item.getBoundingClientRect();
+    // 8px clear of the edge, so it does not read as cut off.
+    if (itemBox.top < listBox.top) list.scrollTop -= listBox.top - itemBox.top;
+    else if (itemBox.bottom > bottom) list.scrollTop += itemBox.bottom - bottom + 8;
+  }, [active?.slug, searching, showSider]);
 
   // tagDescriptions: lookup the spec's tag definitions so the section
   // header carries the operator-facing prose, not just the bare name.
@@ -303,7 +320,10 @@ export function APIDocsBrowser(): JSX.Element {
         onChange={(e) => setRailQuery(e.target.value)}
         style={{ marginBottom: 6 }}
       />
-      <div style={{ overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+      <div
+        ref={railListRef}
+        style={{ overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}
+      >
         {railSections.map((s) => {
           const selected = !searching && s.slug === active?.slug;
           return (

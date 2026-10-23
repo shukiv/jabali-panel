@@ -136,4 +136,11 @@ for (const [shell, who, base] of [
     await expect(nav).toBeInViewport();
     await expect(nav.getByRole("button", { name: /^Section 1\s*60$/ })).toBeInViewport();
   });
+
+  test(`${shell}: a link to a section far down the list shows it selected in the list (GH #2244)`, async ({ page }) => {
+    await open(page, who, `${base}/api-tokens#tag-section-25`, "/section-25/item-0");
+    const item = page.getByRole("navigation", { name: "API sections" }).getByRole("button", { name: /^Section 25\s*6$/ });
+    await expect(item).toHaveAttribute("aria-current", "true");
+    await expect(item).toBeInViewport({ ratio: 1 });
+  });
 }
