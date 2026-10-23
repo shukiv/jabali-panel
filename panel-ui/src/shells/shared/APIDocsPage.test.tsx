@@ -16,7 +16,11 @@ const get = apiClient.get as unknown as ReturnType<typeof vi.fn>;
 
 // Declared out of order (DNS first); an untagged endpoint lands in "Other".
 const SPEC = {
-  info: { title: "Jabali API", version: "1.0" },
+  info: {
+    title: "Jabali API",
+    version: "1.0",
+    description: "Three authentication paths.\n\nEvery endpoint enforces ownership.",
+  },
   tags: [
     { name: "DNS", description: "Zones and records." },
     { name: "Backups", description: "Backup jobs." },
@@ -59,6 +63,7 @@ const railItems = () =>
     .filter(Boolean);
 
 beforeEach(() => {
+  window.localStorage.clear();
   get.mockReset();
   get.mockResolvedValue({ data: SPEC });
   setWidth(1280);
@@ -146,5 +151,50 @@ describe("APIDocsPage sections (GH #2244)", () => {
 
     expect(screen.queryByRole("navigation", { name: "API sections" })).not.toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "API section" })).toBeInTheDocument();
+  });
+});
+
+// The reporter's follow-up: the page should read like Notifications > Events —
+// the page's heading, then one card holding the figures, the search, the rail
+// and the section, with the long introduction out of the way.
+describe("APIDocsPage layout (GH #2244)", () => {
+  it("puts the rail, the figures, the search and the section in one card under the page's heading", async () => {
+    const { container } = render(<APIDocsPage />);
+    await screen.findByText("/backups");
+
+    expect(screen.getByRole("heading", { level: 3, name: /API Docs/ })).toBeInTheDocument();
+    const cards = container.querySelectorAll(".ant-card");
+    expect(cards).toHaveLength(1);
+    const card = cards[0] as HTMLElement;
+    expect(card).toContainElement(rail());
+    expect(card).toContainElement(screen.getByRole("textbox", { name: "Search all endpoints" }));
+    expect(card).toContainElement(screen.getByText("/backups"));
+    expect(within(card).getByText("endpoints").parentElement).toHaveTextContent("4endpoints");
+    expect(within(card).getByText("sections").parentElement).toHaveTextContent("3sections");
+    expect(within(card).getByRole("heading", { name: "Backups" })).toBeInTheDocument();
+    expect(within(card).getByText("1 endpoint")).toBeInTheDocument();
+  });
+
+  it("the introduction folds to its title, keeps the downloads in view, and stays as it was left", async () => {
+    const first = render(<APIDocsPage />);
+    await screen.findByText("/backups");
+
+    expect(screen.getByText(/Jabali API/)).toBeInTheDocument();
+    expect(screen.queryByText("Three authentication paths.")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Raw OpenAPI YAML/ })).toBeInTheDocument();
+
+    // The introduction's fold toggle, its only button.
+    const toggle = () => within(screen.getByRole("alert")).getByRole("button");
+    expect(toggle()).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(toggle());
+    expect(screen.getByText("Three authentication paths.")).toBeInTheDocument();
+
+    first.unmount();
+    render(<APIDocsPage />);
+    await screen.findByText("/backups");
+    expect(screen.getByText("Three authentication paths.")).toBeInTheDocument();
+
+    fireEvent.click(toggle());
+    expect(screen.queryByText("Three authentication paths.")).not.toBeInTheDocument();
   });
 });

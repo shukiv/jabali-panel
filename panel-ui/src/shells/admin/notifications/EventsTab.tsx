@@ -28,6 +28,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ReloadOutlined, SearchOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
+import { SummaryStat } from "../../../components/SummaryStat";
 import { groupEventsByCategory } from "./eventCategories";
 import { SSHLoginIgnoreEditor } from "./SSHLoginIgnoreEditor";
 
@@ -487,10 +488,9 @@ export const EventsTab = () => {
           marginBottom: 16,
         }}
       >
-        <SummaryStat token={token} value={totalCount} label={t("eventstab.summary_events")} />
-        <SummaryStat token={token} value={enabledCount} label={t("eventstab.summary_enabled")} />
+        <SummaryStat value={totalCount} label={t("eventstab.summary_events")} />
+        <SummaryStat value={enabledCount} label={t("eventstab.summary_enabled")} />
         <SummaryStat
-          token={token}
           value={overriddenCount}
           label={t("eventstab.summary_overridden")}
           accent={overriddenCount > 0 ? token.colorWarning : undefined}
@@ -535,41 +535,3 @@ export const EventsTab = () => {
     </div>
   );
 };
-
-// SummaryStat — one figure + label chip in the top strip.
-function SummaryStat({
-  token,
-  value,
-  label,
-  accent,
-}: {
-  token: ReturnType<typeof theme.useToken>["token"];
-  value: number;
-  label: string;
-  accent?: string;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "baseline",
-        gap: 7,
-        padding: "7px 13px",
-        border: `1px solid ${token.colorBorderSecondary}`,
-        borderRadius: 10,
-        background: token.colorFillQuaternary,
-      }}
-    >
-      <b
-        style={{
-          fontSize: 16,
-          fontVariantNumeric: "tabular-nums",
-          color: accent ?? token.colorText,
-        }}
-      >
-        {value}
-      </b>
-      <span style={{ color: token.colorTextSecondary, fontSize: 12.5 }}>{label}</span>
-    </div>
-  );
-}

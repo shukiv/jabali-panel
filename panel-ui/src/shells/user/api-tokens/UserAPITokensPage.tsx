@@ -12,7 +12,7 @@
 
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Radio, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Radio, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { ColumnsType } from "antd/es/table";
 
@@ -57,13 +57,14 @@ for (const a of AREAS) {
   }
 }
 import {
+  ApiOutlined,
   DeleteOutlined,
   KeyOutlined,
   PlusOutlined,
-} from "@ant-design/icons";
+} from "@icons";
 import { apiClient } from "../../../apiClient";
 import { CopyableInput } from "../../../components/CopyableInput";
-import { APIDocsPage } from "../../shared/APIDocsPage";
+import { APIDocsBrowser } from "../../shared/APIDocsPage";
 import { DDNSSetupGuide } from "./DDNSSetupGuide";
 import { MCPSetupGuide } from "./MCPSetupGuide";
 import { Timestamp } from "../../../components/Timestamp";
@@ -104,8 +105,24 @@ function statusTag(t: UserAPIToken): JSX.Element {
   return <Tag color="green">Active</Tag>;
 }
 
+// GH #2244: the page is laid out like Notifications — its heading, then one
+// card whose tabs hold the tokens, the two setup guides and the API docs.
+const TAB_KEYS = ["tokens", "ddns", "mcp", "docs"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
+
+const TAB_LABELS: Record<TabKey, string> = {
+  tokens: "Tokens",
+  ddns: "Dynamic DNS",
+  mcp: "MCP",
+  docs: "Automation API",
+};
+
+// A link to an API docs section (#tag-<slug>) opens the docs tab.
+const initialTab = (): TabKey => (window.location.hash.startsWith("#tag-") ? "docs" : "tokens");
+
 export function UserAPITokensPage(): JSX.Element {
   const { t } = useTranslation();
+  const [tab, setTab] = useState<TabKey>(initialTab);
   const [rows, setRows] = useState<UserAPIToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -281,10 +298,27 @@ export function UserAPITokensPage(): JSX.Element {
     [],
   );
 
-  const tokensCard = (
-    <Card
-      title={t("userapitokenspage.personal_api_tokens")}
-      extra={
+  const tokensTab = (
+    <>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 16,
+          flexWrap: "wrap",
+          marginBottom: 16,
+        }}
+      >
+        <Typography.Paragraph type="secondary" style={{ margin: 0, flex: 1, minWidth: 260 }}>
+          Tokens authenticate API requests as you, scoped to resources
+          you own. Use them to script the documented{" "}
+          <Typography.Text strong>Automation API</Typography.Text> — DNS
+          records, WordPress deploys, a DDNS updater on your router, and the
+          other endpoints listed under Automation API (a stable, documented
+          subset, not every endpoint the web UI uses). Send the token as{" "}
+          <Typography.Text code>Authorization: Bearer jat_…</Typography.Text>
+          .
+        </Typography.Paragraph>
         <Button
           type="primary"
           icon={<PlusOutlined />}
@@ -292,18 +326,7 @@ export function UserAPITokensPage(): JSX.Element {
         >
           New token
         </Button>
-      }
-    >
-      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-        Tokens authenticate API requests as you, scoped to resources
-        you own. Use them to script the documented{" "}
-        <Typography.Text strong>Automation API</Typography.Text> — DNS
-        records, WordPress deploys, a DDNS updater on your router, and the
-        other endpoints listed under Automation API (a stable, documented
-        subset, not every endpoint the web UI uses). Send the token as{" "}
-        <Typography.Text code>Authorization: Bearer jat_…</Typography.Text>
-        .
-      </Typography.Paragraph>
+      </div>
 
       <Table<UserAPIToken>
         rowKey="id"
@@ -313,20 +336,40 @@ export function UserAPITokensPage(): JSX.Element {
         pagination={false}
         scroll={{ x: "max-content" }}
       />
-    </Card>
+    </>
   );
 
+  const renderTab = () => {
+    switch (tab) {
+      case "tokens":
+        return tokensTab;
+      case "ddns":
+        return <DDNSSetupGuide />;
+      case "mcp":
+        return <MCPSetupGuide />;
+      case "docs":
+        return <APIDocsBrowser />;
+    }
+  };
+
   return (
-    <>
-      <Tabs
-        defaultActiveKey="tokens"
-        items={[
-          { key: "tokens", label: "Tokens", children: tokensCard },
-          { key: "ddns", label: "Dynamic DNS", children: <DDNSSetupGuide /> },
-          { key: "mcp", label: "MCP", children: <MCPSetupGuide /> },
-          { key: "docs", label: "Automation API", children: <APIDocsPage /> },
-        ]}
-      />
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <ApiOutlined /> {t("userapitokenspage.personal_api_tokens")}
+      </Typography.Title>
+
+      <Card
+        tabList={TAB_KEYS.map((k) => ({
+          key: k,
+          // nowrap so "Automation API" stays on one line at phone width, as on
+          // the Notifications page.
+          tab: <span style={{ whiteSpace: "nowrap" }}>{TAB_LABELS[k]}</span>,
+        }))}
+        activeTabKey={tab}
+        onTabChange={(k) => setTab(k as TabKey)}
+      >
+        {renderTab()}
+      </Card>
 
       <Modal
         title={t("userapitokenspage.create_api_token")}
@@ -457,6 +500,6 @@ export function UserAPITokensPage(): JSX.Element {
         />
         <CopyableInput value={secret?.secret ?? ""} style={{ fontFamily: "monospace" }} />
       </Modal>
-    </>
+    </div>
   );
 }
