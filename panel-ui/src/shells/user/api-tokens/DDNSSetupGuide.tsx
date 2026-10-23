@@ -6,7 +6,7 @@
 // existing GET /nic/update shim (api/ddns.go).
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
-import { Alert, Button, Card, Input, Space, Table, Tag, Typography } from "antd";
+import { Alert, Button, Input, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { KeyOutlined, ThunderboltOutlined } from "@icons";
 
@@ -93,8 +93,13 @@ export function DDNSSetupGuide(): JSX.Element {
       : "error"
     : undefined;
 
+  // A tab of the Personal API Tokens card, so a titled section, not a card of
+  // its own (GH #2244).
   return (
-    <Card title={t("ddnssetupguide.dynamic_dns_ddns_setup")} size="small" style={{ marginTop: 24 }}>
+    <section>
+      <Typography.Title level={5} style={{ marginTop: 0 }}>
+        {t("ddnssetupguide.dynamic_dns_ddns_setup")}
+      </Typography.Title>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Alert
           type="info"
@@ -173,6 +178,6 @@ export function DDNSSetupGuide(): JSX.Element {
           />
         </div>
       </Space>
-    </Card>
+    </section>
   );
 }

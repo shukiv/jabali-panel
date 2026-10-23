@@ -12,7 +12,6 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Input,
   Segmented,
   Space,
@@ -326,12 +325,13 @@ export function MCPSetupGuide(): JSX.Element {
     }
   })();
 
+  // A tab of the Personal API Tokens card, so a titled section, not a card of
+  // its own (GH #2244).
   return (
-    <Card
-      title="Use this panel from an AI assistant (MCP)"
-      size="small"
-      style={{ marginTop: 24 }}
-    >
+    <section>
+      <Typography.Title level={5} style={{ marginTop: 0 }}>
+        Use this panel from an AI assistant (MCP)
+      </Typography.Title>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Steps
           size="small"
@@ -368,6 +368,6 @@ export function MCPSetupGuide(): JSX.Element {
           )}
         </Space>
       </Space>
-    </Card>
+    </section>
   );
 }

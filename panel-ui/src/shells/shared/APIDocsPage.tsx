@@ -14,14 +14,18 @@
 // on narrow ones), with a search across every endpoint — the layout of
 // Notifications > Events. The list used to be an antd Anchor, which scrolls
 // the window: in the admin shell the content column scrolls instead, so
-// picking a section did nothing there.
+// picking a section did nothing there. Like Events, it all sits in one card
+// under the page's heading: the figures and the search in a strip, the rail
+// and the section below, and the long introduction folded to its title.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, Card, Collapse, Empty, Input, Layout, Select, Space, Spin, Tag, Tooltip, Typography, Grid, theme } from "antd";
+import { Alert, Button, Card, Collapse, Empty, Input, Select, Space, Spin, Tag, Tooltip, Typography, Grid, theme } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
-import { LinkOutlined, DownloadOutlined, LockOutlined, SearchOutlined } from "@icons";
+import { ApiOutlined, LinkOutlined, DownloadOutlined, LockOutlined, SearchOutlined } from "@icons";
 import { apiClient } from "../../apiClient";
+import { CollapsibleAlert } from "../../components/CollapsibleAlert";
 import { MiniMarkdown } from "../../components/MiniMarkdown";
+import { SummaryStat } from "../../components/SummaryStat";
 
 // Minimal OpenAPI 3 shape — we only consume what we render.
 interface OpenAPISpec {
@@ -136,7 +140,26 @@ function matchesSearch(e: Endpoint, tag: string, words: string[]): boolean {
   return words.every((w) => hay.includes(w));
 }
 
+// APIDocsPage — the /api-docs page of either shell: its heading, then the docs
+// in one card. The Personal API Tokens page shows the same docs in its
+// "Automation API" tab.
 export function APIDocsPage(): JSX.Element {
+  return (
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <ApiOutlined /> API Docs
+      </Typography.Title>
+      <Card>
+        <APIDocsBrowser />
+      </Card>
+    </div>
+  );
+}
+
+// APIDocsBrowser — the docs themselves, for the body of a card: the API's
+// introduction (folded to its title), a strip with the figures on the left and
+// the search on the right, then the rail of sections beside the selected one.
+export function APIDocsBrowser(): JSX.Element {
   const [spec, setSpec] = useState<OpenAPISpec | null>(null);
   const [loading, setLoading] = useState(true);
   const screens = Grid.useBreakpoint();
@@ -146,6 +169,7 @@ export function APIDocsPage(): JSX.Element {
   const [query, setQuery] = useState("");
   const [railQuery, setRailQuery] = useState("");
   const detailRef = useRef<HTMLElement>(null);
+  const railListRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -205,6 +229,22 @@ export function APIDocsPage(): JSX.Element {
     });
   };
 
+  // The selected section shows in the rail when the page opens on it (a
+  // #tag- link) or a search result opens it: ~90 sections run past the bottom
+  // of the screen, so the rail scrolls itself to it. The page does not move.
+  useEffect(() => {
+    const list = railListRef.current;
+    const item = list?.querySelector<HTMLElement>('[aria-current="true"]');
+    if (!list || !item) return;
+    const parent = scrollParent(list);
+    const listBox = list.getBoundingClientRect();
+    const bottom = Math.min(listBox.bottom, parent ? parent.getBoundingClientRect().bottom : window.innerHeight);
+    const itemBox = item.getBoundingClientRect();
+    // 8px clear of the edge, so it does not read as cut off.
+    if (itemBox.top < listBox.top) list.scrollTop -= listBox.top - itemBox.top;
+    else if (itemBox.bottom > bottom) list.scrollTop += itemBox.bottom - bottom + 8;
+  }, [active?.slug, searching, showSider]);
+
   // tagDescriptions: lookup the spec's tag definitions so the section
   // header carries the operator-facing prose, not just the bare name.
   const tagDesc = useMemo(() => {
@@ -217,9 +257,9 @@ export function APIDocsPage(): JSX.Element {
 
   if (loading) {
     return (
-      <Layout style={{ padding: 24, minHeight: "60vh" }}>
+      <div style={{ padding: 48, textAlign: "center" }}>
         <Spin />
-      </Layout>
+      </div>
     );
   }
   if (!spec) {
@@ -232,6 +272,9 @@ export function APIDocsPage(): JSX.Element {
     );
   }
 
+  // The rail, the strip and the detail header follow EventsTab's styling so
+  // the two pages read as one design.
+  const cardBorder = `1px solid ${token.colorBorderSecondary}`;
   const countStyle = {
     color: token.colorTextSecondary,
     fontSize: 12,
@@ -250,10 +293,23 @@ export function APIDocsPage(): JSX.Element {
         maxHeight: "calc(100vh - 96px)",
         display: "flex",
         flexDirection: "column",
-        borderRight: `1px solid ${token.colorBorderSecondary}`,
+        gap: 2,
+        borderRight: cardBorder,
         paddingRight: 12,
       }}
     >
+      <Typography.Text
+        type="secondary"
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: ".08em",
+          textTransform: "uppercase",
+          padding: "6px 10px 4px",
+        }}
+      >
+        Sections
+      </Typography.Text>
       <Input
         size="small"
         allowClear
@@ -262,9 +318,12 @@ export function APIDocsPage(): JSX.Element {
         aria-label="Filter sections"
         value={railQuery}
         onChange={(e) => setRailQuery(e.target.value)}
-        style={{ marginBottom: 8 }}
+        style={{ marginBottom: 6 }}
       />
-      <div style={{ overflowY: "auto", minHeight: 0 }}>
+      <div
+        ref={railListRef}
+        style={{ overflowY: "auto", minHeight: 0, display: "flex", flexDirection: "column", gap: 2 }}
+      >
         {railSections.map((s) => {
           const selected = !searching && s.slug === active?.slug;
           return (
@@ -276,20 +335,32 @@ export function APIDocsPage(): JSX.Element {
               style={{
                 display: "flex",
                 alignItems: "center",
-                gap: 8,
+                gap: 10,
                 width: "100%",
                 cursor: "pointer",
                 textAlign: "left",
-                border: "none",
-                borderRadius: 6,
-                padding: "6px 10px",
+                border: "1px solid transparent",
+                borderRadius: 8,
+                padding: "9px 11px",
                 background: selected ? token.colorPrimaryBg : "transparent",
-                boxShadow: selected ? `inset 3px 0 0 0 ${token.colorPrimary}` : undefined,
+                boxShadow: selected ? `inset 3px 0 0 0 ${token.colorError}` : undefined,
                 color: token.colorText,
               }}
             >
-              <span style={{ flex: 1, fontSize: 13.5, fontWeight: selected ? 600 : 400 }}>{s.tag}</span>
-              <span style={countStyle}>{s.ops.length}</span>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: selected ? 600 : 500 }}>{s.tag}</span>
+              <span
+                style={{
+                  fontSize: 11.5,
+                  fontVariantNumeric: "tabular-nums",
+                  color: token.colorTextSecondary,
+                  background: token.colorBgContainer,
+                  border: cardBorder,
+                  borderRadius: 999,
+                  padding: "1px 8px",
+                }}
+              >
+                {s.ops.length}
+              </span>
             </button>
           );
         })}
@@ -302,21 +373,44 @@ export function APIDocsPage(): JSX.Element {
     </nav>
   );
 
-  const sectionTitle = (s: Section, n: number) => (
-    <Typography.Title level={4} style={{ margin: 0 }}>
-      {s.tag} <span style={countStyle}>{n}</span>
-    </Typography.Title>
+  const detailHeader = (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        paddingBottom: 12,
+        borderBottom: `1px solid ${token.colorSplit}`,
+      }}
+    >
+      <Typography.Title level={5} style={{ margin: 0 }}>
+        {searching ? `Results for “${query.trim()}”` : active?.tag}
+      </Typography.Title>
+      <Typography.Text type="secondary" style={{ fontSize: 13 }}>
+        {searching
+          ? `${matchCount} of ${totalEndpoints} endpoints match`
+          : active
+            ? `${active.ops.length} ${active.ops.length === 1 ? "endpoint" : "endpoints"}`
+            : ""}
+      </Typography.Text>
+    </div>
   );
 
   return (
-    <Layout style={{ background: "transparent" }}>
-      <Layout.Content style={{ padding: "0 16px 32px", minWidth: 0 }}>
-        <Card style={{ marginBottom: 16 }}>
-          <Typography.Title level={3} style={{ marginTop: 0 }}>
-            {spec.info.title}{" "}
-            <Tag color="blue">{spec.info.version}</Tag>
-          </Typography.Title>
-          {spec.info.description && <MiniMarkdown text={spec.info.description} />}
+    <div>
+      <CollapsibleAlert
+        storageKey="apidocs.intro"
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        title={
+          <>
+            {spec.info.title} <Tag color="blue">{spec.info.version}</Tag>
+          </>
+        }
+        description={spec.info.description ? <MiniMarkdown text={spec.info.description} /> : undefined}
+        action={
           <Space size="middle" wrap>
             <Typography.Link href="/api/v1/_meta/openapi.yaml" target="_blank">
               <DownloadOutlined /> Raw OpenAPI YAML
@@ -325,82 +419,106 @@ export function APIDocsPage(): JSX.Element {
               <DownloadOutlined /> Raw OpenAPI JSON
             </Typography.Link>
           </Space>
-        </Card>
+        }
+      />
 
-        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-          <Input
-            allowClear
-            prefix={<SearchOutlined />}
-            placeholder="Search all endpoints"
-            aria-label="Search all endpoints"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            style={{ maxWidth: 360 }}
-          />
-          <Typography.Text type="secondary">
-            {searching
-              ? `${matchCount} of ${totalEndpoints} endpoints match`
-              : `${totalEndpoints} endpoints in ${sections.length} sections`}
-          </Typography.Text>
-        </div>
+      {/* summary strip: the figures beside the rail, the search above the detail */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          flexWrap: "wrap",
+          paddingBottom: 16,
+          borderBottom: cardBorder,
+          marginBottom: 16,
+        }}
+      >
+        <SummaryStat value={totalEndpoints} label="endpoints" />
+        <SummaryStat value={sections.length} label="sections" />
+        <div style={{ flex: 1 }} />
+        <Input
+          allowClear
+          prefix={<SearchOutlined />}
+          placeholder="Search all endpoints"
+          aria-label="Search all endpoints"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ minWidth: 220, maxWidth: 320 }}
+        />
+      </div>
 
-        {!showSider && (
-          <Select
-            showSearch
-            aria-label="API section"
-            optionFilterProp="label"
-            value={searching ? undefined : active?.slug}
-            placeholder="Go to a section"
-            onChange={(slug: string) => select(slug)}
-            options={sections.map((s) => ({ value: s.slug, label: `${s.tag} (${s.ops.length})` }))}
-            style={{ width: "100%", marginBottom: 16 }}
-          />
-        )}
+      {/* Events turns its rail into a row of chips on a narrow screen; ~90
+          sections need a searchable select instead. */}
+      {!showSider && (
+        <Select
+          showSearch
+          aria-label="API section"
+          optionFilterProp="label"
+          value={searching ? undefined : active?.slug}
+          placeholder="Go to a section"
+          onChange={(slug: string) => select(slug)}
+          options={sections.map((s) => ({ value: s.slug, label: `${s.tag} (${s.ops.length})` }))}
+          style={{ width: "100%", marginBottom: 16 }}
+        />
+      )}
 
-        <div
-          style={
-            showSider
-              ? { display: "grid", gridTemplateColumns: "240px 1fr", gap: 20, alignItems: "start" }
-              : undefined
-          }
-        >
-          {showSider && rail}
-          <section ref={detailRef} style={{ minWidth: 0, scrollMarginTop: "var(--imp-banner-h, 0px)" }}>
-            {searching ? (
-              results.length === 0 ? (
-                <Empty
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                  description="No endpoint matches your search"
-                  style={{ padding: "48px 0" }}
-                />
-              ) : (
-                results.map(({ section, ops }) => (
-                  <Card
-                    key={section.slug}
-                    title={sectionTitle(section, ops.length)}
-                    extra={
-                      <Button type="link" onClick={() => select(section.slug)}>
-                        Open section
-                      </Button>
-                    }
-                    style={{ marginBottom: 16 }}
-                  >
-                    <EndpointList ops={ops} />
-                  </Card>
-                ))
-              )
+      {/* master–detail */}
+      <div
+        style={
+          showSider
+            ? { display: "grid", gridTemplateColumns: "262px 1fr", gap: 20, alignItems: "start" }
+            : undefined
+        }
+      >
+        {showSider && rail}
+        <section ref={detailRef} style={{ minWidth: 0, scrollMarginTop: "var(--imp-banner-h, 0px)" }}>
+          {detailHeader}
+          {searching ? (
+            results.length === 0 ? (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="No endpoint matches your search"
+                style={{ padding: "48px 0" }}
+              />
             ) : (
-              active && (
-                <Card title={sectionTitle(active, active.ops.length)}>
-                  {tagDesc.has(active.tag) && <MiniMarkdown text={tagDesc.get(active.tag) ?? ""} />}
+              results.map(({ section, ops }) => (
+                <div key={section.slug} style={{ marginTop: 16 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <Typography.Text strong role="heading" aria-level={6}>
+                      {section.tag}
+                    </Typography.Text>
+                    <span style={countStyle}>{ops.length}</span>
+                    <Button
+                      type="link"
+                      size="small"
+                      onClick={() => select(section.slug)}
+                      style={{ marginLeft: "auto" }}
+                    >
+                      Open section
+                    </Button>
+                  </div>
+                  <EndpointList ops={ops} />
+                </div>
+              ))
+            )
+          ) : (
+            active && (
+              <>
+                {tagDesc.has(active.tag) && (
+                  <div style={{ paddingTop: 12, color: token.colorTextSecondary }}>
+                    <MiniMarkdown text={tagDesc.get(active.tag) ?? ""} />
+                  </div>
+                )}
+                <div style={{ marginTop: 12 }}>
                   <EndpointList ops={active.ops} />
-                </Card>
-              )
-            )}
-          </section>
-        </div>
-      </Layout.Content>
-    </Layout>
+                </div>
+              </>
+            )
+          )}
+        </section>
+      </div>
+    </div>
   );
 }
 

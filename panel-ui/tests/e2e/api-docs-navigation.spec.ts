@@ -21,15 +21,22 @@ function spec() {
   return { info: { title: "Jabali API", version: "1.0" }, tags, paths };
 }
 
-async function open(page: Page, who: MockUser, url: string) {
+async function open(page: Page, who: MockUser, url: string, firstRow: string | null = "/section-1/item-0") {
   await mockApi(page, { me: who });
   await page.route("**/api/v1/_meta/openapi.json", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(spec()) }),
   );
+  // The Personal API Tokens page: an empty token list, and the REST API on.
+  await page.route("**/api/v1/me/api-tokens", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) }),
+  );
+  await page.route("**/api/v1/me/server-capabilities", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+  );
   await signIn(page, who);
   await page.waitForURL(who.is_admin ? /\/jabali-admin/ : /\/jabali-panel/);
   await page.goto(url);
-  await expect(page.getByText("/section-1/item-0", { exact: true })).toBeVisible();
+  if (firstRow) await expect(page.getByText(firstRow, { exact: true })).toBeVisible();
 }
 
 // The section's entry in the left-hand list (the first element with its name).
@@ -76,3 +83,64 @@ test("admin: a section title just above the top of the content column is brought
   await navItem(page, "Section 7").click();
   await expect(page.getByRole("heading", { name: /^Section 7\b/ })).toBeInViewport({ ratio: 1 });
 });
+
+// The reporter's follow-up: the Personal API Tokens page should read like
+// Notifications > Events. The page's heading sits under the breadcrumbs, then
+// one card holds everything: the figures above the rail on the left, the
+// search above the section on the right.
+for (const [shell, who, base] of [
+  ["admin", admin, "/jabali-admin"],
+  ["tenant", user, "/jabali-panel"],
+] as const) {
+  test(`${shell}: Personal API Tokens → Automation API is one card laid out like Events (GH #2244)`, async ({ page }) => {
+    await open(page, who, `${base}/api-tokens`, null);
+    const heading = page.getByRole("heading", { level: 3, name: /Personal API Tokens/ });
+    await expect(heading).toBeVisible();
+    await page.getByRole("tab", { name: "Automation API" }).click();
+    await expect(page.getByText("/section-1/item-0", { exact: true })).toBeVisible();
+
+    const box = async (l: ReturnType<Page["locator"]>) => (await l.boundingBox())!;
+    const crumbs = await box(page.locator(".ant-breadcrumb").first());
+    const head = await box(heading);
+    const cards = page.locator(".ant-card");
+    await expect(cards).toHaveCount(1);
+    const card = await box(cards.first());
+    expect(crumbs.y + crumbs.height).toBeLessThanOrEqual(head.y);
+    expect(head.y + head.height).toBeLessThanOrEqual(card.y);
+
+    const nav = page.getByRole("navigation", { name: "API sections" });
+    const rail = await box(nav);
+    // The search box's outer frame, not the bare <input> inside it.
+    const search = await box(
+      page.locator(".ant-input-affix-wrapper", { has: page.getByRole("textbox", { name: "Search all endpoints" }) }),
+    );
+    const stat = await box(page.getByText("endpoints", { exact: true }).locator("xpath=.."));
+    const section = await box(nav.locator("xpath=following-sibling::section"));
+    for (const b of [rail, search, stat, section]) {
+      expect(b.x).toBeGreaterThanOrEqual(card.x);
+      expect(b.x + b.width).toBeLessThanOrEqual(card.x + card.width + 0.5);
+    }
+    // The figures start where the rail starts, above it.
+    expect(Math.abs(stat.x - rail.x)).toBeLessThanOrEqual(1);
+    expect(stat.y + stat.height).toBeLessThanOrEqual(rail.y);
+    // The search ends where the section ends, above it and right of the rail.
+    expect(Math.abs(search.x + search.width - (section.x + section.width))).toBeLessThanOrEqual(1);
+    expect(search.y + search.height).toBeLessThanOrEqual(section.y);
+    expect(search.x).toBeGreaterThan(rail.x + rail.width);
+  });
+
+  test(`${shell}: the list of sections stays in view down a long section (GH #2244)`, async ({ page }) => {
+    await open(page, who, `${base}/api-tokens#tag-section-1`);
+    await page.getByText("/section-1/item-50", { exact: true }).scrollIntoViewIfNeeded();
+    const nav = page.getByRole("navigation", { name: "API sections" });
+    await expect(nav).toBeInViewport();
+    await expect(nav.getByRole("button", { name: /^Section 1\s*60$/ })).toBeInViewport();
+  });
+
+  test(`${shell}: a link to a section far down the list shows it selected in the list (GH #2244)`, async ({ page }) => {
+    await open(page, who, `${base}/api-tokens#tag-section-25`, "/section-25/item-0");
+    const item = page.getByRole("navigation", { name: "API sections" }).getByRole("button", { name: /^Section 25\s*6$/ });
+    await expect(item).toHaveAttribute("aria-current", "true");
+    await expect(item).toBeInViewport({ ratio: 1 });
+  });
+}
