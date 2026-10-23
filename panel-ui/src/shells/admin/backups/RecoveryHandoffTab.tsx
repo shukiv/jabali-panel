@@ -5,8 +5,10 @@
 // copy-able command templates and the encryption-key prerequisite, instead of
 // leaving operators to find them mid-disaster.
 import { useTranslation } from "react-i18next";
-import { Alert, Space, Table, Typography } from "antd";
+import { Space, Table, Typography } from "antd";
 import { LifeBuoyOutlined, KeyOutlined } from "@icons";
+
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -70,7 +72,8 @@ export const RecoveryHandoffTab = () => {
   const { t } = useTranslation();
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Alert
+      <CollapsibleAlert
+        storageKey="backups.recovery.flows"
         type="info"
         showIcon
         icon={<LifeBuoyOutlined />}
@@ -108,7 +111,9 @@ export const RecoveryHandoffTab = () => {
 
       <div>
         <Title level={5}>System restore (CLI-only)</Title>
-        <Alert
+        <CollapsibleAlert
+          storageKey="backups.recovery.system-restore"
+          defaultOpen
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
@@ -118,7 +123,9 @@ export const RecoveryHandoffTab = () => {
         <CommandBlock label={t("recoveryhandofftab.bare_metal_recovery_sequence")} cmd={CMD_SYSTEM} />
       </div>
 
-      <Alert
+      <CollapsibleAlert
+        storageKey="backups.recovery.key-needed"
+        defaultOpen
         type="warning"
         showIcon
         icon={<KeyOutlined />}

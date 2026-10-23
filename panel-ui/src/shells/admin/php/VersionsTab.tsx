@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Spin, Table, Tag, Tooltip } from "antd";
+import { Spin, Table, Tag, Tooltip } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   CheckCircleOutlined,
@@ -8,6 +8,7 @@ import {
   DownloadOutlined,
   ReloadOutlined,
 } from "@icons";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { RowActions } from "../../../components/RowActions";
 import { apiClient } from "../../../apiClient";
@@ -39,7 +40,6 @@ export const VersionsTab = () => {
   const [reloadingVersion, setReloadingVersion] = useState<string | null>(null);
   const [uninstallingVersion, setUninstallingVersion] = useState<string | null>(null);
   const [settingDefaultVersion, setSettingDefaultVersion] = useState<string | null>(null);
-  const [dismissedWarning, setDismissedWarning] = useState(false);
 
   useEffect(() => {
     fetchStatus();
@@ -165,17 +165,17 @@ export const VersionsTab = () => {
 
   return (
     <>
-      {!dismissedWarning && (
-        <Alert
-          type="warning"
-          showIcon
-          title={t("versionstab.modifying_php_versions_can_cause_server_down")}
-          description={t("versionstab.uninstalling_php_versions_may_break_websites")}
-          closable
-          onClose={() => setDismissedWarning(true)}
-          style={{ marginBottom: 16 }}
-        />
-      )}
+      {/* GH #2242: closing this used to last until the next page load. */}
+      <CollapsibleAlert
+        storageKey="php.versions.caution"
+        defaultOpen
+        dismissible
+        type="warning"
+        showIcon
+        title={t("versionstab.modifying_php_versions_can_cause_server_down")}
+        description={t("versionstab.uninstalling_php_versions_may_break_websites")}
+        style={{ marginBottom: 16 }}
+      />
 
       <Table<PHPVersionStatus>
         dataSource={tableData}

@@ -7,7 +7,7 @@
 // loads the secret. Copy + Download buttons let the operator stash
 // it in a password manager / printed sheet / off-host vault.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Input, Space, Typography } from "antd";
+import { Button, Input, Space, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
   CopyOutlined,
@@ -20,6 +20,7 @@ import { useState } from "react";
 
 import { apiClient } from "../../../apiClient";
 import { extractApiError } from "../../../apiErrors";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 interface RevealResponse {
   status: string;
@@ -83,7 +84,9 @@ export function EncryptionKeyCard() {
         <KeyOutlined />
         <Typography.Text strong>Master encryption key</Typography.Text>
       </Space>
-      <Alert
+      <CollapsibleAlert
+        storageKey="backups.encryption-key"
+        defaultOpen
         type="warning"
         showIcon
         style={{ marginBottom: 16 }}
