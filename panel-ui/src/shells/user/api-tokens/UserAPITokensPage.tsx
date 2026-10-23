@@ -123,6 +123,10 @@ const initialTab = (): TabKey => (window.location.hash.startsWith("#tag-") ? "do
 export function UserAPITokensPage(): JSX.Element {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabKey>(initialTab);
+  // Each tab mounts the first time it is opened and then stays mounted, so
+  // the MCP wizard keeps its step and the API docs are fetched once while
+  // the user goes to Tokens and back (as the old <Tabs> did).
+  const [visited, setVisited] = useState<ReadonlySet<TabKey>>(() => new Set([tab]));
   const [rows, setRows] = useState<UserAPIToken[]>([]);
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -339,8 +343,8 @@ export function UserAPITokensPage(): JSX.Element {
     </>
   );
 
-  const renderTab = () => {
-    switch (tab) {
+  const renderTab = (k: TabKey) => {
+    switch (k) {
       case "tokens":
         return tokensTab;
       case "ddns":
@@ -366,9 +370,16 @@ export function UserAPITokensPage(): JSX.Element {
           tab: <span style={{ whiteSpace: "nowrap" }}>{TAB_LABELS[k]}</span>,
         }))}
         activeTabKey={tab}
-        onTabChange={(k) => setTab(k as TabKey)}
+        onTabChange={(k) => {
+          setTab(k as TabKey);
+          setVisited((prev) => new Set(prev).add(k as TabKey));
+        }}
       >
-        {renderTab()}
+        {TAB_KEYS.filter((k) => visited.has(k)).map((k) => (
+          <div key={k} hidden={k !== tab}>
+            {renderTab(k)}
+          </div>
+        ))}
       </Card>
 
       <Modal

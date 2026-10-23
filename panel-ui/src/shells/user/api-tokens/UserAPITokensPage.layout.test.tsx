@@ -103,6 +103,23 @@ describe("Personal API Tokens page layout (GH #2244)", () => {
     expect(container.querySelectorAll(".ant-card")).toHaveLength(1);
   });
 
+  it("a tab keeps its state while another tab is open", async () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
+    fireEvent.click(await screen.findByRole("button", { name: /Next/ }));
+    expect(screen.getByRole("button", { name: /Back/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Automation API" }));
+    await screen.findByRole("navigation", { name: "API sections" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Tokens" }));
+    fireEvent.click(screen.getByRole("tab", { name: "MCP" }));
+    expect(screen.getByRole("button", { name: /Back/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Automation API" }));
+    expect(screen.getByRole("navigation", { name: "API sections" })).toBeInTheDocument();
+    expect(get.mock.calls.filter(([url]) => url === "/_meta/openapi.json")).toHaveLength(1);
+  });
+
   it("a link to a docs section opens the Automation API tab on that section", async () => {
     window.history.replaceState(null, "", "/jabali-panel/api-tokens#tag-dns");
     renderPage();
