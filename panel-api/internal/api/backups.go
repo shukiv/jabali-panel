@@ -343,18 +343,7 @@ func (h *backupHandler) systemList(c *gin.Context) {
 }
 
 func (h *backupHandler) systemCancel(c *gin.Context) {
-	jobID := c.Param("job_id")
-	if h.cfg.Agent == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
-		return
-	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
-	defer cancel()
-	if _, err := h.cfg.Agent.Call(ctx, "system.backup_cancel", map[string]string{"job_id": jobID}); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed"})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	h.cancelJob(c, "system.backup_cancel")
 }
 
 type backupHandler struct{ cfg BackupHandlerConfig }
@@ -801,18 +790,93 @@ func (h *backupHandler) status(c *gin.Context) {
 }
 
 func (h *backupHandler) cancel(c *gin.Context) {
-	jobID := c.Param("job_id")
+	h.cancelJob(c, "backup.cancel")
+}
+
+// agentCancelReply is backup.cancel's reply (panel-agent
+// commands/backup_create.go backupCancelResult). Stopped is a pointer: an
+// agent from before GH #2245 answered {"cancel":"noop_v1"} and stopped
+// nothing, which must not read as "nothing was running".
+type agentCancelReply struct {
+	Stopped  *bool  `json:"stopped"`
+	JobState string `json:"job_state"`
+}
+
+// cancelledByAdminText is the error_text of a job an admin cancelled.
+const cancelledByAdminText = "cancelled by an administrator"
+
+// cancelJob stops a queued or running backup and records it cancelled
+// (GH #2245). Cancel used to only ask the agent, whose backup.cancel was a
+// no-op, and answer ok: the backup ran on and its row stayed "running".
+func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 	if h.cfg.Agent == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
-	defer cancel()
-	if _, err := h.cfg.Agent.Call(ctx, "backup.cancel", map[string]string{"job_id": jobID}); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed"})
+	if h.cfg.Jobs == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "jobs_repo_unavailable"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	reqCtx := c.Request.Context()
+	job, err := h.cfg.Jobs.Get(reqCtx, c.Param("job_id"))
+	if errors.Is(err, repository.ErrNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_get_job"})
+		return
+	}
+	if isRestoreKind(job.Kind) {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "not_cancellable",
+			"detail": "A restore can't be cancelled."})
+		return
+	}
+	if job.Status != models.BackupJobStatusQueued && job.Status != models.BackupJobStatusRunning {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "job_not_active",
+			"detail": "This backup has already finished (" + job.Status + ")."})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(reqCtx, backupCallTimeout)
+	defer cancel()
+	var reply agentCancelReply
+	raw, callErr := h.cfg.Agent.Call(ctx, rpc, map[string]string{"job_id": job.ID})
+	if callErr == nil {
+		callErr = json.Unmarshal(raw, &reply)
+	}
+	// A queued job is not on the agent yet, so the row alone decides. A
+	// running one is sealed only once the agent says nothing runs any more.
+	if job.Status == models.BackupJobStatusRunning {
+		if callErr != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed",
+				"detail": "Couldn't reach the agent to stop this backup. Try again in a moment."})
+			return
+		}
+		if reply.Stopped == nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_cannot_cancel",
+				"detail": "The agent on this server is too old to stop a backup. Update the panel and try again."})
+			return
+		}
+	}
+	// It finished before the cancel reached it; the finalizer records how.
+	if callErr == nil && reply.Stopped != nil && !*reply.Stopped &&
+		(reply.JobState == "succeeded" || reply.JobState == "failed") {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "job_already_finished",
+			"detail": "This backup finished before it could be cancelled."})
+		return
+	}
+	sealed, err := h.cfg.Jobs.MarkCancelledIfActive(reqCtx, job.ID, cancelledByAdminText)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update_job"})
+		return
+	}
+	if !sealed {
+		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "job_already_finished",
+			"detail": "This backup finished before it could be cancelled."})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "data": gin.H{"job_id": job.ID, "status": models.BackupJobStatusCancelled}})
 }
 
 // logs proxies journalctl tail of the transient unit

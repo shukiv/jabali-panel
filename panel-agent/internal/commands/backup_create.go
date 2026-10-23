@@ -767,8 +767,9 @@ func stripTar(b []byte) []byte {
 // It used to be a no-op, so Cancel in the panel stopped nothing. Cancelling
 // the job's context sends restic SIGINT and the remaining stages fail at
 // once, so no manifest snapshot is written. stopped=false means no job with
-// this id is running on this agent: it already ended, or it died with a
-// previous agent process.
+// this id is running on this agent; job_state then says how it ended, and is
+// empty when the agent has no record of it (it died with a previous agent
+// process, or never reached this one).
 func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
 		JobID string `json:"job_id"`
@@ -779,7 +780,19 @@ func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	return map[string]any{"job_id": req.JobID, "stopped": defaultBackupJobs.cancel(req.JobID)}, nil
+	res := backupCancelResult{JobID: req.JobID, Stopped: defaultBackupJobs.cancel(req.JobID)}
+	if out, ok := defaultBackupJobs.lookup(req.JobID); ok {
+		res.JobState = out.State
+	}
+	return res, nil
+}
+
+// backupCancelResult is backup.cancel's reply; panel-api's cancel handler
+// reads it as agentCancelReply.
+type backupCancelResult struct {
+	JobID    string `json:"job_id"`
+	Stopped  bool   `json:"stopped"`
+	JobState string `json:"job_state"`
 }
 
 // hostname returns the box's hostname for manifest source recording.

@@ -178,8 +178,8 @@ func TestBackupCancel_StopsTheRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup.cancel: %v", err)
 	}
-	if got := res.(map[string]any)["stopped"]; got != true {
-		t.Fatalf("stopped = %v, want true", got)
+	if got := res.(backupCancelResult); !got.Stopped || got.JobState != backupJobRunning {
+		t.Fatalf("cancel reply = %+v, want stopped while running", got)
 	}
 	select {
 	case <-done:
@@ -190,9 +190,16 @@ func TestBackupCancel_StopsTheRunningJob(t *testing.T) {
 		t.Fatalf("job_state after cancel = %q, want cancelled", st.JobState)
 	}
 
-	// A second cancel finds nothing running.
+	// A second cancel finds nothing running, and says how the job ended.
 	res, _ = backupCancelHandler(context.Background(), raw)
-	if got := res.(map[string]any)["stopped"]; got != false {
-		t.Fatalf("second cancel stopped = %v, want false", got)
+	if got := res.(backupCancelResult); got.Stopped || got.JobState != backupJobCancelled {
+		t.Fatalf("second cancel reply = %+v, want not stopped, job_state cancelled", got)
+	}
+
+	// No record at all: job_state is empty, so the panel knows nothing runs.
+	other, _ := json.Marshal(map[string]string{"job_id": "01HZ2245000000000000000009"})
+	res, _ = backupCancelHandler(context.Background(), other)
+	if got := res.(backupCancelResult); got.Stopped || got.JobState != "" {
+		t.Fatalf("unknown job cancel reply = %+v, want not stopped, no job_state", got)
 	}
 }

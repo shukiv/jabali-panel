@@ -39,6 +39,10 @@ type BackupJobRepository interface {
 	ListAll(ctx context.Context, limit, offset int) ([]models.BackupJob, int64, error)
 	MarkStarted(ctx context.Context, id string) error
 	MarkFinished(ctx context.Context, id, status string, snapshotID, parentSnapshot string, bytesAdded, bytesTotal uint64, manifest, warnings json.RawMessage, errText string) error
+	// MarkCancelledIfActive seals a queued or running job as cancelled and
+	// reports whether it did; false means the job had already ended, and its
+	// real outcome is kept (GH #2245).
+	MarkCancelledIfActive(ctx context.Context, id, errText string) (bool, error)
 
 	// Queue helpers — used by the in-process dispatcher (M30.1
 	// follow-up). CountByStatus + ListQueuedOldest let it cap
@@ -547,6 +551,25 @@ func (r *backupJobRepo) MarkFinished(
 		return ErrNotFound
 	}
 	return nil
+}
+
+// MarkCancelledIfActive implements BackupJobRepository. The status guard is
+// in the UPDATE itself, so a job the finalizer seals at the same moment keeps
+// the finalizer's outcome.
+func (r *backupJobRepo) MarkCancelledIfActive(ctx context.Context, id, errText string) (bool, error) {
+	res := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Where("id = ? AND status IN ?", id,
+			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning}).
+		Updates(map[string]any{
+			"status":      models.BackupJobStatusCancelled,
+			"finished_at": time.Now().UTC(),
+			"error_text":  errText,
+		})
+	if res.Error != nil {
+		return false, translate(res.Error)
+	}
+	return res.RowsAffected > 0, nil
 }
 
 // ListByStatusSince implements BackupJobRepository.
