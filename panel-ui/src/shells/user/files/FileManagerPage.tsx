@@ -1570,12 +1570,14 @@ export const FileManagerPage = ({ api = tenantFilesApi, rootPath: rootPathProp }
             borderRadius: token.borderRadius,
             color: token.colorText,
             // Sticky so bulk actions stay reachable even when scrolled
-            // deep into a long folder. top: 0 pins to the viewport top;
-            // zIndex keeps it above table rows that may have the row
-            // selection highlight. The page itself scrolls on the body,
-            // so `sticky` binds to the body scroll container.
+            // deep into a long folder. top pins it to the viewport top,
+            // below the "Viewing as" banner while an admin views as this
+            // user (GH #2243; --imp-banner-h is 0px otherwise). zIndex
+            // keeps it above table rows that may have the row selection
+            // highlight. The page itself scrolls on the body, so `sticky`
+            // binds to the body scroll container.
             position: "sticky",
-            top: 0,
+            top: "var(--imp-banner-h, 0px)",
             zIndex: 10,
           }}
         >
