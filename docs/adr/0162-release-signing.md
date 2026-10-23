@@ -105,7 +105,8 @@ each run until the signature lands.
 **The development channel follows signed releases only.** Every push to main
 publishes a release, but a box moves only to a commit whose release is signed.
 On a key-carrying build, a development-channel box therefore stays put until
-the newest main release is signed.
+the newest main release is signed. *Superseded on 2026-10-23: the development
+channel streams main unsigned (see the amendment below).*
 
 ## Amendment (2026-10-20): the checkout is verified too
 
@@ -142,6 +143,38 @@ usually unsigned, so its missing `.minisig` would have failed every stable
 update before the MANIFEST check could redirect to the by-commit release.
 
 `--from-source` still verifies the commit first, then builds it.
+
+## Amendment (2026-10-23): the development channel streams main
+
+GH #2240: with every main release waiting for a signature, development boxes
+stopped at 35d7d468d, the release that embedded the key, and stayed there. Main
+publishes several releases a day. Signing each one is not what the development
+channel is for.
+
+Decided by the maintainer: three lanes.
+
+- **Stable**: monthly. The release is signed before the `stable` tag moves.
+  Unchanged.
+- **Development**: every main release, installed as CI publishes it, on its
+  sha256 alone. `jabali update` on the development channel skips the commit
+  check and the tarball signature (`releaseSignatureRequiredOn`,
+  `panel-api/cmd/server/update_release_signature.go`), and uses the "latest"
+  download shortcut again. Every other channel value, and an unreadable
+  channel, keeps the signature.
+- **Critical**: a security fix between stable releases goes out as a signed
+  hotfix release with an advisory in the signed security feed. Every box,
+  on either channel, applies it within the hour. Unchanged.
+
+The trade-off is accepted: a development box trusts GitHub and CI again, as it
+did before this ADR. Development is for test hosts, and the Updates page says
+so. Stable boxes, and what the security feed makes every box do, still require
+the offline key.
+
+Boxes on a build from 35d7d468d up to this change require the signature on
+every channel. Their `jabali update` checks the target with the old rule, so a
+development box on one of them moves only to a signed release. Signing the
+first release that carries this change moves them once, and from there they
+stream main.
 
 ## Key ceremony
 
