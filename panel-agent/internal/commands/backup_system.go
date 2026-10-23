@@ -89,10 +89,13 @@ func systemBackupHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
 
+	// Registered so system.backup_cancel can stop it and backup.status can
+	// report how it ended (GH #2245).
+	ctxBg := defaultBackupJobs.start(req.JobID, systemBackupTimeout)
 	go func() {
-		ctxBg, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
-		defer cancel()
-		if err := runSystemBackupOrchestrator(ctxBg, req); err != nil {
+		err := runSystemBackupOrchestrator(ctxBg, req)
+		defaultBackupJobs.finish(req.JobID, err)
+		if err != nil {
 			fmt.Println("system backup orchestrator failed:", err)
 		}
 	}()
@@ -123,7 +126,7 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	jl.Printf("system_backup start include_accounts=%v destination=%s", req.IncludeAccounts, req.RepoURL)
 	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.PasswordFile, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
-		return fmt.Errorf("ensure repo: %w", err)
+		return &backupDestinationError{err: err}
 	}
 	cfg, cerr := systemResticConfig(req)
 	if cerr != nil {
@@ -203,6 +206,13 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 			s.Name, s.Status, s.BytesAdded, s.BytesTotal, s.Items, s.Warnings)
 		manifest.Restic.BytesAdded += s.BytesAdded
 		manifest.Restic.BytesTotal += s.BytesTotal
+	}
+
+	// A cancelled or timed-out job must not write its manifest: the panel
+	// reads the manifest snapshot as "this backup finished" (GH #2245).
+	if err := ctx.Err(); err != nil {
+		jl.Printf("stage=manifest skipped: %v", err)
+		return fmt.Errorf("stopped before the manifest snapshot: %w", err)
 	}
 
 	jl.Printf("stage=manifest start bytes_added_total=%d bytes_total_total=%d",
