@@ -1,9 +1,13 @@
 package backupfinalizer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -155,5 +159,24 @@ func TestTickOnce_DestinationOutageTripsTheBreakerOncePerTick(t *testing.T) {
 	}
 	if got := dests.recordFailures[dest]; got != 1 {
 		t.Fatalf("breaker tripped %d times for one outage, want 1", got)
+	}
+}
+
+// Contract with the agent: decode the fixture the agent's own test pins its
+// backup.status reply to (panel-agent commands/backup_job_registry_test.go).
+// An unknown key means the agent sends something agentStatus does not read.
+func TestAgentStatus_MatchesTheAgentFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "panel-agent", "internal", "commands", "testdata", "backup_status_failed_reply.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var st agentStatus
+	if err := dec.Decode(&st); err != nil {
+		t.Fatalf("agent backup.status reply does not decode into agentStatus: %v", err)
+	}
+	if st.JobState != agentJobFailed || st.Error == "" || !st.DestinationError || st.AgentStartedAt == nil {
+		t.Fatalf("decoded %+v, want failed with an error, destination_error and agent_started_at", st)
 	}
 }

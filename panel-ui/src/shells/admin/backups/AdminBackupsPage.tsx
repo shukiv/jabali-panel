@@ -6,7 +6,7 @@ import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { useTabParam } from "../../../hooks/useTabParam";
-import { RowActions } from "../../../components/RowActions";
+import { RowActions, type RowAction } from "../../../components/RowActions";
 import {
   DeleteOutlined,
   CalendarCheckOutlined,
@@ -308,15 +308,30 @@ export const AdminBackupsPage = () => {
     dl.start(row.id);
   };
 
+  // GH #2245: the API now stops the backup and seals the row before it
+  // answers, so success means cancelled, not "requested". A refusal (it
+  // already finished, the agent can't be reached) comes back as `detail`.
   const handleCancel = async (row: BackupJob) => {
     try {
       await apiClient.post(`/admin/backups/${row.id}/cancel`);
-      feedback.message.success(`Cancellation requested for ${row.id}`);
-      void reload();
+      feedback.message.success("Backup cancelled");
     } catch (err) {
       feedback.message.error(extractApiError(err, "Cancel failed"));
     }
+    void reload();
   };
+
+  // GH #2245: one Cancel for every job row (a scheduled run's jobs and a
+  // standalone backup alike), shown wherever there is a backup to stop.
+  const cancelAction = (job: BackupJob): RowAction => ({
+    key: "cancel",
+    label: "Cancel",
+    icon: <CloseOutlined />,
+    danger: true,
+    hidden: (job.status !== "running" && job.status !== "queued") || isRestoreKind(job.kind),
+    onClick: () => handleCancel(job),
+    confirm: { title: "Stop this backup?", description: "The backup stops now and is marked cancelled.", okText: "Stop backup" },
+  });
 
   // Restore is account-only — system_backup snapshots are managed via
   // `jabali aide rebuild` / system_restore CLI flows, not the panel UI.
@@ -480,7 +495,7 @@ export const AdminBackupsPage = () => {
                   shared.download,
                   { key: "log", label: "Log", icon: <FileTextOutlined />, onClick: () => setLogJob(row) },
                   shared.restore,
-                  { key: "cancel", label: "Cancel", icon: <CloseOutlined />, danger: true, hidden: row.status !== "running", onClick: () => handleCancel(row) },
+                  cancelAction(row),
                   shared.delete,
                 ]}
               />
@@ -737,6 +752,7 @@ export const AdminBackupsPage = () => {
                   ) : (
                     <RowActions
                       actions={[
+                        cancelAction(row.job),
                         {
                           key: "delete",
                           label: "Delete",

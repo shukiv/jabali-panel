@@ -6,11 +6,14 @@ package api
 // "running". The handler now seals the row cancelled once nothing runs.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -211,5 +214,23 @@ func TestCancel_LostTheRaceToTheFinalizer_Conflict(t *testing.T) {
 
 	if rec.Code != http.StatusConflict || errorCode(t, rec) != "job_already_finished" {
 		t.Fatalf("code=%d error=%q, want 409 job_already_finished", rec.Code, errorCode(t, rec))
+	}
+}
+
+// Contract with the agent: decode the fixture the agent's own test pins its
+// backup.cancel reply to (panel-agent commands/backup_job_registry_test.go).
+func TestAgentCancelReply_MatchesTheAgentFixture(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "panel-agent", "internal", "commands", "testdata", "backup_cancel_reply.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var reply agentCancelReply
+	if err := dec.Decode(&reply); err != nil {
+		t.Fatalf("agent backup.cancel reply does not decode into agentCancelReply: %v", err)
+	}
+	if reply.Stopped == nil || !*reply.Stopped || reply.JobState != "running" {
+		t.Fatalf("decoded %+v, want stopped=true job_state=running", reply)
 	}
 }

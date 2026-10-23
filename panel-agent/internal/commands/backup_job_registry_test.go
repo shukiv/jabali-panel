@@ -203,3 +203,79 @@ func TestBackupCancel_StopsTheRunningJob(t *testing.T) {
 		t.Fatalf("unknown job cancel reply = %+v, want not stopped, no job_state", got)
 	}
 }
+
+// jsonKinds maps each top-level key of a JSON object to its JSON kind
+// (string, bool, number, array, object, null).
+func jsonKinds(t *testing.T, raw []byte) map[string]string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	out := map[string]string{}
+	for k, v := range m {
+		switch v.(type) {
+		case string:
+			out[k] = "string"
+		case bool:
+			out[k] = "bool"
+		case float64:
+			out[k] = "number"
+		case []any:
+			out[k] = "array"
+		case map[string]any:
+			out[k] = "object"
+		default:
+			out[k] = "null"
+		}
+	}
+	return out
+}
+
+// assertWireMatchesFixture pins a reply's keys and their JSON kinds to the
+// fixture panel-api decodes (GH #2245 contract: backupfinalizer.agentStatus
+// and api.agentCancelReply read these same files).
+func assertWireMatchesFixture(t *testing.T, reply any, fixture string) {
+	t.Helper()
+	got, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gk, wk := jsonKinds(t, got), jsonKinds(t, want)
+	for k, kind := range wk {
+		if gk[k] != kind {
+			t.Errorf("%s: key %q is %q on the wire, fixture says %q", fixture, k, gk[k], kind)
+		}
+	}
+	for k := range gk {
+		if _, ok := wk[k]; !ok {
+			t.Errorf("%s: reply has key %q the fixture (and so panel-api) does not know", fixture, k)
+		}
+	}
+}
+
+func TestBackupStatusAndCancel_WireMatchesPanelFixtures(t *testing.T) {
+	const failedID = "01HZ2245000000000000000005"
+	defaultBackupJobs.start(failedID, time.Minute)
+	defaultBackupJobs.finish(failedID, &backupDestinationError{err: errors.New("ssh: connect to host 203.0.113.1 port 22: Connection timed out")})
+	raw, _ := json.Marshal(map[string]string{"job_id": failedID})
+	st, err := backupStatusHandler(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWireMatchesFixture(t, st, "backup_status_failed_reply.json")
+
+	const runningID = "01HZ2245000000000000000006"
+	ctx := defaultBackupJobs.start(runningID, time.Minute)
+	raw, _ = json.Marshal(map[string]string{"job_id": runningID})
+	res, err := backupCancelHandler(context.Background(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultBackupJobs.finish(runningID, ctx.Err())
+	assertWireMatchesFixture(t, res, "backup_cancel_reply.json")
+}

@@ -798,6 +798,7 @@ func (h *backupHandler) cancel(c *gin.Context) {
 // agent from before GH #2245 answered {"cancel":"noop_v1"} and stopped
 // nothing, which must not read as "nothing was running".
 type agentCancelReply struct {
+	JobID    string `json:"job_id"`
 	Stopped  *bool  `json:"stopped"`
 	JobState string `json:"job_state"`
 }
