@@ -3,10 +3,11 @@
 // deliberately loud: it exposes root-owned paths + edits through the panel UI
 // (a hard deny-list protects credentials, SSH, and jabali's own control plane),
 // so enabling it is a conscious decision.
-import { App, Alert, Card, Space, Switch, Tag, Typography } from "antd";
+import { App, Card, Space, Switch, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 interface ServerSettingsAdminFM {
   admin_file_manager_enabled: boolean;
@@ -56,7 +57,9 @@ export function AdminFileManagerCard() {
           server (starting from <code>/</code>) — useful for editing service configs, clearing
           logs, or cleaning caches without opening an SFTP client.
         </Typography.Paragraph>
-        <Alert
+        <CollapsibleAlert
+          storageKey="settings.admin-file-manager"
+          defaultOpen
           type="warning"
           showIcon
           message="Powerful — leave off unless you need it"

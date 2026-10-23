@@ -5,7 +5,6 @@
 // jabali-retention-sweep reads it (an absent category uses the code default).
 import { useTranslation } from "react-i18next";
 import {
-  Alert,
   App,
   Button,
   Card,
@@ -19,6 +18,7 @@ import {
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type RetentionMap = Record<string, number>;
 
@@ -128,7 +128,8 @@ export function LogRetentionCard() {
               </Form.Item>
             ))}
           </Space>
-          <Alert
+          <CollapsibleAlert
+            storageKey="settings.log-retention.audit"
             type="info"
             showIcon
             style={{ marginTop: 8, marginBottom: 16, maxWidth: 640 }}

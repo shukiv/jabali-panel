@@ -74,6 +74,7 @@ import {
 } from "../../../hooks/useSecurityCrowdsec";
 import { shortDateTime } from "../../../utils/datetime";
 import { Timestamp } from "../../../components/Timestamp";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const SCOPE_OPTIONS: Array<{ value: CrowdsecScope | "all"; label: string }> = [
   { value: "all", label: "All scopes" },
@@ -195,7 +196,8 @@ export const AdminSecurityCrowdsec = () => {
       <RecentChangesCard />
       <EngineIdentityCard />
       <RemediationComponentsCard />
-      <Alert
+      <CollapsibleAlert
+        storageKey="security.crowdsec.about"
         type="info"
         showIcon
         message={t("adminsecuritycrowdsec.what_is_crowdsec")}
@@ -281,7 +283,8 @@ export const AdminSecurityCrowdsec = () => {
               <Descriptions.Item label={t("adminsecuritycrowdsec.ban_duration")}>{detailDecision.duration || "—"}</Descriptions.Item>
               <Descriptions.Item label={t("adminsecuritycrowdsec.active_until")}>{detailDecision.until || "—"}</Descriptions.Item>
             </Descriptions>
-            <Alert
+            <CollapsibleAlert
+              storageKey="security.crowdsec.enforcement"
               style={{ marginTop: 12 }}
               type="info"
               showIcon
@@ -685,7 +688,9 @@ const AppSecBotDetectionCard = () => {
           challenge-unsafe paths (Let&apos;s Encrypt validation, the panel and
           its APIs, DB tools, WebDAV, webmail) are exempt automatically.
         </Typography.Paragraph>
-        <Alert
+        <CollapsibleAlert
+          storageKey="security.crowdsec.appsec-all-sites"
+          defaultOpen
           type="warning"
           showIcon
           message="This affects every site on the server"
@@ -1370,7 +1375,8 @@ const CaptchaRemediationCard = () => {
         </Typography.Text>
       }
     >
-      <Alert
+      <CollapsibleAlert
+        storageKey="security.crowdsec.captcha"
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
@@ -1722,7 +1728,8 @@ const RecommendedHubCard = ({
         </Typography.Link>
       }
     >
-      <Alert
+      <CollapsibleAlert
+        storageKey="security.crowdsec.hub"
         type="info"
         showIcon
         style={{ marginBottom: 12 }}
@@ -2579,7 +2586,9 @@ const LoginAllowlistCard = () => {
           legitimate operator is never locked out by a later false positive.
           Private/loopback addresses are always skipped.
         </Typography.Paragraph>
-        <Alert
+        <CollapsibleAlert
+          storageKey="security.crowdsec.exemption-trade-off"
+          defaultOpen
           type="warning"
           showIcon
           message={t("adminsecuritycrowdsec.security_trade_off")}

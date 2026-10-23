@@ -12,7 +12,7 @@
 // 5981541a).
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Grid, Alert, Button, Card, Empty, List, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
+import { Grid, Button, Card, Empty, List, Popconfirm, Space, Switch, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
@@ -26,6 +26,7 @@ import { CreateMigrationDrawer } from "./CreateMigrationDrawer";
 import { CreateMigrationWizard } from "./CreateMigrationWizard";
 import { MigrateImapDrawer } from "./MigrateImapDrawer";
 import { Timestamp } from "../../../components/Timestamp";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type MigrationJob = {
   id: string;
@@ -333,7 +334,8 @@ export const AdminMigrationsPage = () => {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Alert
+      <CollapsibleAlert
+        storageKey="migrations.importer"
         type="info"
         showIcon
         message={t("adminmigrationspage.account_migration_importer_m35")}

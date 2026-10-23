@@ -1,10 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Checkbox, Space, Table, Typography } from "antd";
+import { Button, Card, Checkbox, Space, Table, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { SaveOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 // DNS record-type permissions for non-admin tenants (GH #466, ADR-0150).
 // Admins always have full control; this matrix governs only regular users.
@@ -105,7 +106,8 @@ export function DNSPermissionsCard() {
 
   return (
     <Card title={t("dnspermissionscard.dns_record_permissions")} style={{ marginBottom: 16 }} loading={loading}>
-      <Alert
+      <CollapsibleAlert
+        storageKey="settings.dns-permissions"
         type="info"
         style={{ marginBottom: 16 }}
         message={t("dnspermissionscard.which_dns_record_types_regular_users_may_man")}

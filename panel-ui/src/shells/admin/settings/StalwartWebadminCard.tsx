@@ -3,11 +3,12 @@
 // allowlist + Stalwart's own admin login). Stalwart itself stays loopback-bound;
 // this is the only door. Default off. Lives on the Server Settings → Email tab.
 import { useTranslation } from "react-i18next";
-import { App, Alert, Button, Card, Input, Modal, Space, Switch, Typography } from "antd";
+import { App, Button, Card, Input, Modal, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 interface WebadminSettings {
   stalwart_webadmin_enabled: boolean;
@@ -166,7 +167,9 @@ export function StalwartWebadminCard() {
 
         {enabled && (
           <>
-            <Alert
+            <CollapsibleAlert
+              storageKey="settings.stalwart-webadmin.live"
+              defaultOpen
               type="warning"
               showIcon
               message={`Live at https://${hostname}:8449/`}

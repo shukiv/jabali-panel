@@ -22,6 +22,7 @@ import {
   type UfwProto,
   type UfwRule,
 } from "../../../hooks/useSecurityUfw";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const ACTION_OPTIONS = [
   { value: "allow", label: "allow" },
@@ -296,7 +297,8 @@ export const AdminSecurityUfw = () => {
             CrowdSec tab → Decisions → Add (or `cscli decisions add`).
             Reference: docs/security/decision-brains.md, ADR-0089.
           */}
-          <Alert
+          <CollapsibleAlert
+            storageKey="security.ufw.port-policy"
             type="info"
             showIcon
             style={{ marginTop: 8 }}

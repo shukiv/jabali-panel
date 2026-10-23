@@ -12,7 +12,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 import {
-  Alert,
   Button,
   Card,
   Col,
@@ -31,6 +30,7 @@ import { DeleteOutlined, SaveOutlined, UploadOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { useBranding } from "../../../hooks/useBranding";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type ServerSettingsShape = {
   panel_brand_text: string;
@@ -214,7 +214,8 @@ export const BrandingCard = () => {
           </Col>
         </Row>
 
-        <Alert
+        <CollapsibleAlert
+          storageKey="settings.branding.browser-cache"
           type="info"
           showIcon
           style={{ marginTop: 16 }}

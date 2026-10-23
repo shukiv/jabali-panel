@@ -6,10 +6,11 @@
 // (idempotent) and returns the credential — so we don't fetch a secret until
 // the user asks for it.
 import { useState } from "react";
-import { Card, Button, Descriptions, Typography, Alert, Popconfirm } from "antd";
+import { Card, Button, Descriptions, Typography, Popconfirm } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { apiClient } from "../../../apiClient";
 import { RedisKeysDrawer } from "./RedisKeysDrawer";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const { Text, Paragraph } = Typography;
 
@@ -118,7 +119,8 @@ export const RedisAccessCard = () => {
             </Descriptions.Item>
           </Descriptions>
 
-          <Alert
+          <CollapsibleAlert
+            storageKey="user.redis.key-prefix"
             type="info"
             showIcon
             style={{ marginTop: 16 }}

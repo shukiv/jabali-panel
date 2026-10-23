@@ -9,6 +9,7 @@ import { Alert, Card, Descriptions, Progress, Skeleton, Tag, Typography } from "
 
 import { apiClient } from "../../../apiClient";
 import { Timestamp } from "../../../components/Timestamp";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Component = {
   name: string;
@@ -80,7 +81,8 @@ export const MailDeliverabilityPage = () => {
           </Descriptions.Item>
         ))}
       </Descriptions>
-      <Alert
+      <CollapsibleAlert
+        storageKey="mail.deliverability.score"
         type="info"
         showIcon
         style={{ marginTop: 16 }}

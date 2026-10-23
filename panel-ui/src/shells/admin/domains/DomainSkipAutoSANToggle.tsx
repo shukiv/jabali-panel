@@ -5,11 +5,12 @@
 // or the helper subdomains aren't DNS-resolvable.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Skeleton, Space, Switch, Typography } from "antd";
+import { Skeleton, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Resp = { domain_id: string; domain_name: string; enabled: boolean };
 
@@ -60,7 +61,8 @@ export const DomainSkipAutoSANToggle = ({ domainId }: Props) => {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.skip-auto-san"
         type="info"
         showIcon
         message={t("domainskipautosantoggle.skip_auto_added_san_names")}

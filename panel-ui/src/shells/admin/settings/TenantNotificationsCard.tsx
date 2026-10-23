@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Alert, Card, Select, Space, Switch, Typography } from "antd";
+import { Card, Select, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
 import { kindLabels, type ChannelKind } from "../../../utils/channelKindConfig";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 // TenantNotificationsCard — Server Settings → General: the master switch for the
 // tenant-facing /me/notifications surface (JAB-171) plus the admin-controlled
@@ -115,7 +116,9 @@ export const TenantNotificationsCard = () => {
           placeholder="Safe defaults (ntfy, Telegram, Discord, web push)"
           options={CONFIGURABLE_KINDS.map((k) => ({ value: k, label: kindLabels[k] }))}
         />
-        <Alert
+        <CollapsibleAlert
+          storageKey="settings.tenant-notifications.risk"
+          defaultOpen
           type="warning"
           showIcon
           message="Higher-risk kinds"

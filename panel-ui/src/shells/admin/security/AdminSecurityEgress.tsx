@@ -4,7 +4,7 @@
 //
 // Backed by panel-api/internal/api/user_egress.go.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography } from "antd";
+import { Button, Card, Drawer, Form, Input, InputNumber, Select, Space, Statistic, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { CheckOutlined, CloseOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
@@ -26,6 +26,7 @@ import {
   useUserEgressPolicy,
 } from "../../../hooks/useUserEgress";
 import { Timestamp } from "../../../components/Timestamp";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type UserRow = {
   id: string;
@@ -71,7 +72,8 @@ export const AdminSecurityEgress = () => {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Alert
+      <CollapsibleAlert
+        storageKey="security.egress.about"
         type="info"
         showIcon
         message={t("adminsecurityegress.per_user_php_fpm_egress_firewall")}
@@ -235,7 +237,8 @@ export const DropEventsDrawer = ({
   const protos = Array.from(new Set((q.data?.events ?? []).map((e) => (e.proto || "?").toUpperCase())));
   return (
     <Drawer title="Egress outside the allowlist — recent" width={700} open={open} onClose={onClose}>
-      <Alert
+      <CollapsibleAlert
+        storageKey="security.egress.data-source"
         type="info"
         showIcon
         style={{ marginBottom: 16 }}

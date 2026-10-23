@@ -6,7 +6,7 @@
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Form, Input, Popconfirm, Skeleton, Space, Table, Typography } from "antd";
+import { Button, Form, Input, Popconfirm, Skeleton, Space, Table, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { DeleteOutlined, FolderOpenOutlined, PlusOutlined } from "@icons";
 
@@ -23,6 +23,7 @@ import {
   type DirectoryPrivacyCredential,
   type DirectoryPrivacyRule,
 } from "../../../hooks/useDomainDirectoryPrivacy";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Props = { domainId: string; domainName?: string };
 
@@ -99,7 +100,8 @@ export const DomainDirectoryPrivacySection = ({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.directory-privacy"
         type="info"
         showIcon
         message={t("domaindirectoryprivacysection.per_directory_password_protection")}

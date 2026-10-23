@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Tabs, Alert, Card, Select, Space, Typography } from "antd";
+import { Tabs, Card, Select, Space, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useEffect, useState } from "react";
 import { CodeOutlined } from "@icons";
@@ -11,6 +11,7 @@ import { PHPXdebugCard } from "./PHPXdebugCard";
 import { apiClient } from "../../../apiClient";
 import { getIdentity, type Identity } from "../../../identity";
 import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSettingsPanel";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Domain = {
   id: string;
@@ -139,7 +140,9 @@ export function UserPHPSettingsPage() {
           <CodeOutlined /> PHP Settings
         </Typography.Title>
 
-        <Alert
+        <CollapsibleAlert
+          storageKey="user.php-settings.caution"
+          defaultOpen
           title={t("userphpsettingspage.caution")}
           description={t("userphpsettingspage.changing_php_settings_can_affect_your_websit")}
           type="warning"

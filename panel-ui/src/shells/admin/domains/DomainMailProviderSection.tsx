@@ -4,11 +4,12 @@
 // DNS and reissues the cert on the next reconcile.
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Alert, Button, Input, Select, Space, Typography } from "antd";
+import { Button, Input, Select, Space, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Props = {
   domainId: string;
@@ -60,7 +61,8 @@ export const DomainMailProviderSection = ({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.mail-provider"
         type="info"
         showIcon
         message={t("domainmailprovidersection.mail_provider")}

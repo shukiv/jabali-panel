@@ -4,11 +4,12 @@
 // re-renders the vhost), and exposes a manual purge button.
 import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, InputNumber, Popconfirm, Select, Skeleton, Space, Switch } from "antd";
+import { Button, InputNumber, Popconfirm, Select, Skeleton, Space, Switch } from "antd";
 import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { CheckOutlined, CloseOutlined, ThunderboltOutlined } from "@icons";
 
 import { apiClient } from "../apiClient";
+import { CollapsibleAlert } from "./CollapsibleAlert";
 
 type CacheState = {
   domain_id: string;
@@ -224,14 +225,16 @@ export const DomainCacheSection = ({ domainId }: Props) => {
         </Button>
       </Space>
 
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.cache.query-params"
         type="info"
         showIcon
         title={t("domaincachesection.cacheable_query_parameters")}
         description={t("domaincachesection.query_string_params_that_get_their_own_cache")}
       />
 
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.cache.background-refresh"
         type="info"
         showIcon
         title={t("domaincachesection.page_cache_with_background_refresh")}

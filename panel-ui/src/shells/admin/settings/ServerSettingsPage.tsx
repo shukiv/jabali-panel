@@ -82,6 +82,7 @@ import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
 import { SupportChatCard } from "./SupportChatCard";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type ServerSettings = {
   id: number;
@@ -670,7 +671,8 @@ const StorageSettingsTab = () => {
             >
               <Input placeholder="/var/lib/jabali" />
             </Form.Item>
-            <Alert
+            <CollapsibleAlert
+              storageKey="settings.server.disk-size"
               type="info"
               showIcon
               message={t("settings.disk_size_matters")}
@@ -701,7 +703,8 @@ const StorageSettingsTab = () => {
                 When enabled, the reconciler applies per-user disk-quota limits from packages and overrides.
                 When disabled, disk-quota fields in Packages are read-only and only cgroup limits (cpu / memory / io / tasks) are enforced.
               </Typography.Text>
-              <Alert
+              <CollapsibleAlert
+                storageKey="settings.server.quota-kernel"
                 style={{ marginTop: 12 }}
                 type="info"
                 showIcon
@@ -731,7 +734,8 @@ const StorageSettingsTab = () => {
                 usage drops back below 80%. Only panel-driven suspensions are auto-restored — manual
                 admin disables stay disabled.
               </Typography.Text>
-              <Alert
+              <CollapsibleAlert
+                storageKey="settings.server.bandwidth-opt-in"
                 style={{ marginTop: 12 }}
                 type="warning"
                 showIcon
