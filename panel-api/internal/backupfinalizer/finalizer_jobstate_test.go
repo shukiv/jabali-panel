@@ -180,3 +180,31 @@ func TestAgentStatus_MatchesTheAgentFixture(t *testing.T) {
 		t.Fatalf("decoded %+v, want failed with an error, destination_error and agent_started_at", st)
 	}
 }
+
+// GH #2245: the stall bound sits just past the agent's own limit for each
+// kind (90m account, 6h system), not a flat 4h. An account backup two hours
+// in is sealed; a system backup two hours in is still within its 6h limit.
+func TestTickOnce_StallBoundFollowsTheKind(t *testing.T) {
+	twoHours := time.Now().Add(-2 * time.Hour)
+	jobs := &breakerJobs{running: []models.BackupJob{
+		{ID: "acct", Kind: models.BackupJobKindAccountBackup, Status: models.BackupJobStatusRunning, StartedAt: &twoHours},
+		{ID: "sys", Kind: models.BackupJobKindSystemBackup, Status: models.BackupJobStatusRunning, StartedAt: &twoHours},
+	}}
+	f := &Finalizer{deps: Deps{
+		Jobs:  jobs,
+		Agent: &fakeStatusAgent{reply: `{"manifest_found":false,"job_state":"running"}`},
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}}
+
+	f.tickOnce(context.Background())
+
+	if len(jobs.finished) != 1 || jobs.finished[0] != "acct" {
+		t.Fatalf("sealed %v, want only the account backup past its 1h45m bound", jobs.finished)
+	}
+	if got := stallTimeoutFor(models.BackupJobKindAccountBackup).String(); got != "1h45m0s" {
+		t.Errorf("account stall bound = %s", got)
+	}
+	if got := stallTimeoutFor(models.BackupJobKindSystemBackup).String(); got != "6h15m0s" {
+		t.Errorf("system stall bound = %s", got)
+	}
+}

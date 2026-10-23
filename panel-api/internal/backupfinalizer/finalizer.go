@@ -13,7 +13,8 @@
 //  3. If yes -> mark succeeded.
 //  4. If the agent reports the job failed or was cancelled, or lost it in
 //     a restart -> seal it so (GH #2245).
-//  5. If running >4h -> mark failed (safety timeout).
+//  5. If running past the agent's own limit for its kind -> mark failed
+//     (safety timeout).
 package backupfinalizer
 
 import (
@@ -30,9 +31,28 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
 
+// Stall bounds sit just past the agent's own limit for each kind
+// (accountBackupTimeout and systemBackupTimeout in panel-agent
+// commands/backup_job_registry.go). A job still "running" past its bound is
+// provably not running: the agent has stopped it, or lost it. The flat 4h
+// these replace left a dead account backup "running" long after the agent
+// had given up on it (GH #2245).
+const (
+	stallMargin         = 15 * time.Minute
+	AccountStallTimeout = 90*time.Minute + stallMargin
+	SystemStallTimeout  = 6*time.Hour + stallMargin
+)
+
+// stallTimeoutFor returns the stall bound for a backup job's kind.
+func stallTimeoutFor(kind string) time.Duration {
+	if kind == models.BackupJobKindSystemBackup {
+		return SystemStallTimeout
+	}
+	return AccountStallTimeout
+}
+
 const (
 	TickInterval = 30 * time.Second
-	StallTimeout = 4 * time.Hour
 	// RestoreStallTimeout seals `running` RESTORE rows whose background
 	// goroutine died without MarkFinished (GH #1044 — panel restart
 	// mid-restore). The restore goroutine bounds itself at 60 minutes,
@@ -208,12 +228,13 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 			}
 			continue
 		}
-		if j.StartedAt != nil && now.Sub(*j.StartedAt) > StallTimeout {
+		if bound := stallTimeoutFor(j.Kind); j.StartedAt != nil && now.Sub(*j.StartedAt) > bound {
 			f.deps.Log.Warn("backup stalled past timeout; marking failed",
-				"job_id", j.ID, "started_at", j.StartedAt)
+				"job_id", j.ID, "kind", j.Kind, "started_at", j.StartedAt, "bound", bound)
 			_ = f.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
-				"", "", 0, 0, nil, nil, "stalled: no manifest snapshot after 4h")
-			// JAB-362: a 4h stall is the signal that this destination is dead or
+				"", "", 0, 0, nil, nil,
+				"stalled: no result "+strings.TrimSuffix(bound.String(), "0s")+" after it started")
+			// JAB-362: a stall is the signal that this destination is dead or
 			// unreachable. Trip its breaker so the dispatcher backs it off
 			// instead of burning a shared slot on it every tick. Only the stall
 			// path counts — dispatch-time failures (user/dest lookup) are not
