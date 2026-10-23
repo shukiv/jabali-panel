@@ -17,9 +17,36 @@ func TestComposeSFTPURL(t *testing.T) {
 	require.Equal(t, "", ComposeSFTPURL(SFTPInputs{Host: "host"}))
 }
 
-func TestSFTPCommandFlag_DefaultsAreEmpty(t *testing.T) {
+// GH #2245: with default ssh config the command is still built, so ssh gets
+// the connect and keepalive bounds, but nothing else changes: no host-key
+// policy and no auth options beyond what the system ssh config says.
+func TestSFTPCommandFlag_DefaultsOnlyAddTheTimeouts(t *testing.T) {
 	got := SFTPCommandFlag(SFTPInputs{Host: "h", User: "u", Path: "/r"})
-	require.Empty(t, got, "default ssh config should not need an override")
+	require.Equal(t,
+		"sftp.command=ssh -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 u@h -s sftp", got)
+}
+
+// GH #2245: every auth mode bounds the connect and notices a dead
+// connection, so a destination that is down fails the backup in seconds
+// instead of holding it.
+func TestSFTPCommandFlag_EveryModeBoundsTheConnection(t *testing.T) {
+	for _, in := range []SFTPInputs{
+		{Host: "h", User: "u", Path: "/r"},
+		{Host: "h", User: "u", Path: "/r", Auth: "key"},
+		{Host: "h", User: "u", Path: "/r", Auth: "key", KeyPath: "/root/.ssh/id_ed25519"},
+		{Host: "h", User: "u", Path: "/r", Auth: "password"},
+		{Host: "h", User: "u", Path: "/r", Port: 2222},
+	} {
+		got := SFTPCommandFlag(in)
+		for _, opt := range []string{"-o ConnectTimeout=30", "-o ServerAliveInterval=15", "-o ServerAliveCountMax=4"} {
+			require.Contains(t, got, opt, "%+v", in)
+		}
+		require.NotContains(t, got, ",", "go-shellwords splits on commas: %+v", in)
+	}
+}
+
+func TestSFTPCommandFlag_NoHostNoCommand(t *testing.T) {
+	require.Empty(t, SFTPCommandFlag(SFTPInputs{User: "u", Path: "/r"}))
 }
 
 func TestSFTPCommandFlag_KeyPath(t *testing.T) {

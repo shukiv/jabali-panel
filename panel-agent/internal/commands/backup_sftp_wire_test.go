@@ -91,7 +91,7 @@ func TestBkResticOptionsMatchesSFTPCommandFlag(t *testing.T) {
 		in   *backupSFTPInputs
 	}{
 		{"nil means no options", nil},
-		{"defaults need no override", &backupSFTPInputs{Host: "h", User: "u", Path: "/p"}},
+		{"default auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p"}},
 		{"non-default port", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Port: 2222}},
 		{"key auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Auth: "key", KeyPath: "/root/.ssh/id_ed25519"}},
 		{"password auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Auth: "password"}},

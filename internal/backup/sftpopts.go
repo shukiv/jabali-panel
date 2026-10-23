@@ -40,20 +40,45 @@ func ComposeSFTPURL(in SFTPInputs) string {
 	return fmt.Sprintf("sftp:%s@%s:%s", in.User, in.Host, in.Path)
 }
 
+// sshTimeoutOpts bound how long ssh waits on an SFTP destination (GH #2245).
+// Without them a host that is down held a backup until the kernel gave up on
+// the TCP connect (about 2 minutes), and a connection that died mid-run left
+// restic waiting on a dead socket. ServerAlive ends the session after 4
+// unanswered probes 15s apart, so a dead connection is noticed within a
+// minute. A space-separated value with no commas: restic splits sftp.command
+// with go-shellwords.
+var sshTimeoutOpts = []string{
+	"-o", "ConnectTimeout=30",
+	"-o", "ServerAliveInterval=15",
+	"-o", "ServerAliveCountMax=4",
+}
+
 // SFTPCommandFlag returns the `-o sftp.command=...` option for the
-// given inputs, or an empty string if no override is needed (default
-// ssh config + default key + default port 22).
+// given inputs, or an empty string when there is no host to connect to.
 //
-// `accept-new` host-key policy keeps the first connection working
-// without operator intervention; subsequent connections require the
-// known_hosts entry to match. This matches the operator-friendly
+// With default ssh config, the default key and port 22, the command is
+// restic's own default (`ssh user@host -s sftp`) plus sshTimeoutOpts: the
+// host-key policy and auth methods stay whatever the system ssh config says.
+//
+// Otherwise `accept-new` host-key policy keeps the first connection
+// working without operator intervention; subsequent connections require
+// the known_hosts entry to match. This matches the operator-friendly
 // stance restic itself recommends.
 func SFTPCommandFlag(in SFTPInputs) string {
+	if in.Host == "" {
+		return ""
+	}
+	target := in.Host
+	if in.User != "" {
+		target = in.User + "@" + in.Host
+	}
 	needsOverride := in.Auth == "password" ||
 		(in.Auth == "key" && in.KeyPath != "") ||
 		(in.Port > 0 && in.Port != 22)
 	if !needsOverride {
-		return ""
+		parts := append([]string{"ssh"}, sshTimeoutOpts...)
+		parts = append(parts, shellQuote(target), "-s", "sftp")
+		return "sftp.command=" + strings.Join(parts, " ")
 	}
 	parts := []string{}
 	if in.Auth == "password" {
@@ -66,6 +91,7 @@ func SFTPCommandFlag(in SFTPInputs) string {
 		parts = append(parts, "-i", shellQuote(in.KeyPath), "-o", "IdentitiesOnly=yes")
 	}
 	parts = append(parts, "-o", "StrictHostKeyChecking=accept-new")
+	parts = append(parts, sshTimeoutOpts...)
 	// BatchMode=yes disables password+keyboard-interactive prompts. Safe
 	// for key auth (no prompt needed); fatal for password auth — sshpass
 	// drives the interactive prompt, so BatchMode would lock it out and
@@ -89,7 +115,7 @@ func SFTPCommandFlag(in SFTPInputs) string {
 	// `u -o ProxyCommand=<cmd>` would hand ssh its own options, and
 	// ProxyCommand runs through a shell. KeyPath was already quoted here; user
 	// and host were the gap.
-	parts = append(parts, shellQuote(fmt.Sprintf("%s@%s", in.User, in.Host)), "-s", "sftp")
+	parts = append(parts, shellQuote(target), "-s", "sftp")
 	return "sftp.command=" + strings.Join(parts, " ")
 }
 
