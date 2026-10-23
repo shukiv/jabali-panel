@@ -14,7 +14,8 @@ export function ImpersonationBanner() {
   const ref = useRef<HTMLDivElement>(null);
 
   // Publish the banner height + a body class so global.css can offset modal /
-  // drawer content below the always-on-top banner (GH #279). Measure live so
+  // drawer content below the always-on-top banner (GH #279), and the shell's
+  // sticky sidebar and bars can stick below it (GH #2243). Measure live so
   // the offset tracks the real height (wraps on narrow screens).
   useEffect(() => {
     if (!actAs) return;

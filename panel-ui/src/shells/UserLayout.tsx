@@ -222,9 +222,12 @@ export function UserLayout() {
               background: siderBg,
               paddingTop: 16,
               paddingInline: 8,
-              height: "100vh",
+              // GH #2243: stick below the "Viewing as" banner, which sticks
+              // to the top too. --imp-banner-h is set only while an admin
+              // views as this user (ImpersonationBanner); 0px otherwise.
+              height: "calc(100vh - var(--imp-banner-h, 0px))",
               position: "sticky",
-              top: 0,
+              top: "var(--imp-banner-h, 0px)",
               overflow: "hidden",
             }}
           >
