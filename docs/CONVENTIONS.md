@@ -308,7 +308,9 @@ const deleteMutation = useDeleteMutation({ resource: "admin/xxx" });
 - A button the admin must act on goes in `action`: it stays visible while the alert is folded. Don't use AntD's own `action` slot for this — at phone width it squeezes the text to a column of single words.
 - An alert with an X is `dismissible`, so closing it lasts past the next load.
 - One `storageKey` per variant that should open again by itself (e.g. `dashboard.os-security.off` vs `.reboot`).
-- Alerts that report a live problem (a failed operation, a service down, a form error) stay a plain `<Alert>`: they must not fold while the problem lasts.
+- When an alert's text changes in a way every admin must read again, give it a new key (e.g. `updates.caution.v2`). An old key keeps the alert folded for everyone who folded it.
+- Standing warnings about how the server is set up (updates pending, OS auto-updates off) are cautions: `defaultOpen`, one key per state, title and button always visible.
+- Alerts that report what just happened or a failure in progress (a failed operation, a service down, a form error) stay a plain `<Alert>`: they must not fold while the problem lasts.
 
 ### Row action buttons (Tables → "Actions" column)
 
