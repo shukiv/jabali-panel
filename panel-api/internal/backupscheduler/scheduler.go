@@ -17,6 +17,7 @@ package backupscheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -852,7 +853,7 @@ func (s *Scheduler) dispatchAccount(ctx context.Context, j models.BackupJob) {
 		logger.Error("agent backup.create failed", "err", err)
 		return
 	}
-	_ = s.deps.Jobs.MarkStarted(ctx, j.ID)
+	s.markStartedOrStop(ctx, j.ID, "backup.cancel", logger)
 }
 
 func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
@@ -901,7 +902,26 @@ func (s *Scheduler) dispatchSystem(ctx context.Context, j models.BackupJob) {
 		logger.Error("agent system.backup failed", "err", err)
 		return
 	}
-	_ = s.deps.Jobs.MarkStarted(ctx, j.ID)
+	s.markStartedOrStop(ctx, j.ID, "system.backup_cancel", logger)
+}
+
+// markStartedOrStop moves a dispatched job to running. MarkStarted only
+// moves a job that is still queued, so ErrNotFound here means an admin
+// cancelled it (or deleted it) while backup.create was in flight: the agent
+// is now running a backup its row says is cancelled, holding that user's job
+// slot. Stop it (GH #2245).
+func (s *Scheduler) markStartedOrStop(ctx context.Context, jobID, cancelRPC string, logger *slog.Logger) {
+	err := s.deps.Jobs.MarkStarted(ctx, jobID)
+	if !errors.Is(err, repository.ErrNotFound) {
+		return
+	}
+	callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, cerr := s.deps.Agent.Call(callCtx, cancelRPC, map[string]any{"job_id": jobID}); cerr != nil {
+		logger.Error("job was cancelled during dispatch; stopping it on the agent failed", "err", cerr)
+		return
+	}
+	logger.Warn("job was cancelled during dispatch; stopped it on the agent")
 }
 
 // isAgentConflict matches the agent's 409-equivalent NDJSON error string
