@@ -24,6 +24,7 @@ import {
   SettingOutlined,
 } from "@icons";
 
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 import { JobLogTail } from "../../../components/JobLogTail";
 import { apiClient } from "../../../apiClient";
 
@@ -75,8 +76,13 @@ const ReleaseChannelCard = () => {
           main commit. Keep production on Stable.
         </Typography.Text>
       </Space>
+      {/* GH #2242: the note on promoting builds to Stable is gone from here.
+          Only a maintainer with push access can promote, so an admin of this
+          server could not act on it; the docs cover promotion. */}
       {channel === "development" && (
-        <Alert
+        <CollapsibleAlert
+          storageKey="updates.development-channel"
+          defaultOpen
           type="warning"
           showIcon
           style={{ marginTop: 12 }}
@@ -84,21 +90,6 @@ const ReleaseChannelCard = () => {
           description={t("systemupdatespage.development_follows_the_latest_main_commit_a")}
         />
       )}
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginTop: 12 }}
-        message={t("systemupdatespage.promoting_a_build_to_stable_is_an_operator_c")}
-        description={
-          <span>
-            This switch only chooses which tag this host tracks. Moving the{" "}
-            <code>stable</code> tag to a reviewed build is done with{" "}
-            <code>jabali release promote</code> on a machine with push access to
-            the source remote (a maintainer box or CI) — the panel host is a
-            read-only deployment target, so promotion is intentionally CLI-only.
-          </span>
-        }
-      />
     </Card>
   );
 };
@@ -651,11 +642,17 @@ function SystemPackagesError({
 // bullets) always shown, and progressively disclose the detailed recovery
 // commands behind a "Show recovery steps" toggle (collapsed by default each
 // load, so the page stays compact). No safety content is removed.
+//
+// GH #2242: on a phone the bullets alone still filled the screen. The warning
+// now opens in full on the first visit and stays folded to its title once an
+// admin folds it in this browser (CollapsibleAlert).
 export function UpdateWarningAlert() {
   const { t } = useTranslation();
   const [showRecovery, setShowRecovery] = useState(false);
   return (
-    <Alert
+    <CollapsibleAlert
+      storageKey="updates.caution"
+      defaultOpen
       type="warning"
       showIcon
       style={{ marginBottom: 16 }}

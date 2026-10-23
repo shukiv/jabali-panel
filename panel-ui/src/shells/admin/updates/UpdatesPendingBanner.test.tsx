@@ -6,7 +6,7 @@
 // The cases that matter are the SILENT ones. A banner that shows up while
 // loading, or because a query failed, gets dismissed by reflex — and then it is
 // not there on the day it counts.
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -40,6 +40,7 @@ const ok = (jabali_behind: number) => ({
 
 describe("UpdatesPendingBanner (JAB-221)", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     mockState.mockReset();
     mockAuto.mockReset();
     mockAuto.mockReturnValue({ data: { jabali_enabled: false, jabali_time: "04:30" } });
@@ -94,5 +95,31 @@ describe("UpdatesPendingBanner (JAB-221)", () => {
     expect(screen.getByText(/auto-update is on/i)).toBeInTheDocument();
     expect(screen.getByText(/04:30/)).toBeInTheDocument();
     expect(screen.queryByText(/gets undone on the next render/i)).not.toBeInTheDocument();
+  });
+
+  // GH #2242: on a phone the banner took most of the dashboard. Once an admin
+  // folds it, it stays folded, but the count and the button stay on screen.
+  it("keeps the count and the button when folded, also after a reload", () => {
+    mockState.mockReturnValue(ok(7));
+    const first = renderBanner();
+    fireEvent.click(screen.getByRole("button", { name: /hide/i }));
+    first.unmount();
+
+    renderBanner();
+    expect(screen.getByText(/7 commits behind/i)).toBeInTheDocument();
+    expect(screen.queryByText(/gets undone on the next render/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/jabali-admin/updates");
+  });
+
+  it("opens again when auto-update is switched off", () => {
+    mockState.mockReturnValue(ok(4));
+    mockAuto.mockReturnValue({ data: { jabali_enabled: true, jabali_time: "04:30" } });
+    const first = renderBanner();
+    fireEvent.click(screen.getByRole("button", { name: /hide/i }));
+    first.unmount();
+
+    mockAuto.mockReturnValue({ data: { jabali_enabled: false, jabali_time: "04:30" } });
+    renderBanner();
+    expect(screen.getByText(/gets undone on the next render/i)).toBeInTheDocument();
   });
 });

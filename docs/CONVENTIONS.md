@@ -301,6 +301,17 @@ const deleteMutation = useDeleteMutation({ resource: "admin/xxx" });
 - `<Popconfirm title="Delete X?" onConfirm={...}>` wrapping the Delete button.
 - `message.success` / `message.error` for mutation outcomes — never `alert()` or silent failures.
 
+### Explanatory alerts (GH #2242)
+
+- An alert that explains something and reads the same on every load (guidance, a caution) is a `<CollapsibleAlert storageKey="area.name">` from `src/components/CollapsibleAlert.tsx`, not a bare `<Alert>`. It folds to its title behind a Details / Hide toggle, and the browser remembers each alert's state.
+- Plain notes start folded. Safety cautions pass `defaultOpen`: shown in full on the first visit, folded for good once an admin folds them.
+- A button the admin must act on goes in `action`: it stays visible while the alert is folded. Don't use AntD's own `action` slot for this — at phone width it squeezes the text to a column of single words.
+- An alert with an X is `dismissible`, so closing it lasts past the next load.
+- One `storageKey` per variant that should open again by itself (e.g. `dashboard.os-security.off` vs `.reboot`).
+- When an alert's text changes in a way every admin must read again, give it a new key (e.g. `updates.caution.v2`). An old key keeps the alert folded for everyone who folded it.
+- Standing warnings about how the server is set up (updates pending, OS auto-updates off) are cautions: `defaultOpen`, one key per state, title and button always visible.
+- Alerts that report what just happened or a failure in progress (a failed operation, a service down, a form error) stay a plain `<Alert>`: they must not fold while the problem lasts.
+
 ### Row action buttons (Tables → "Actions" column)
 
 - Use `<RowActionButton icon={...}>Label</RowActionButton>` from `src/components/RowActionButton.tsx` for non-destructive row actions (Edit, View, DNS, Open in PMA, Clone, …). Filled style, default `color="primary"`. Icon required.
