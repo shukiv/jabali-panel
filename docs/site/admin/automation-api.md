@@ -96,7 +96,10 @@ route's scope answers `403`.
 ## Endpoints
 
 Every route, with its scope, body and responses, is in the panel's **API Docs**
-page under the **Automation** tag (also at `/api/v1/_meta/openapi.json`). Start
+page (also at `/api/v1/_meta/openapi.json`). Pick **Automation** in the list of
+sections on the left, or type a path or a word in **Search all endpoints** to
+search every section at once. The address keeps the section you picked
+(`#tag-automation`), so you can link to it. Start
 with `GET /api/v1/automation/capabilities`: any valid token may call it, and it
 lists the write and billing actions this panel serves.
 
