@@ -57,8 +57,9 @@ var sshTimeoutOpts = []string{
 // given inputs, or an empty string when there is no host to connect to.
 //
 // With default ssh config, the default key and port 22, the command is
-// restic's own default (`ssh user@host -s sftp`) plus sshTimeoutOpts: the
-// host-key policy and auth methods stay whatever the system ssh config says.
+// restic's own default (ssh to user@host, sftp subsystem) plus
+// sshTimeoutOpts: the host-key policy and auth methods stay whatever the
+// system ssh config says.
 //
 // Otherwise `accept-new` host-key policy keeps the first connection
 // working without operator intervention; subsequent connections require
@@ -68,17 +69,12 @@ func SFTPCommandFlag(in SFTPInputs) string {
 	if in.Host == "" {
 		return ""
 	}
-	target := in.Host
-	if in.User != "" {
-		target = in.User + "@" + in.Host
-	}
 	needsOverride := in.Auth == "password" ||
 		(in.Auth == "key" && in.KeyPath != "") ||
 		(in.Port > 0 && in.Port != 22)
 	if !needsOverride {
 		parts := append([]string{"ssh"}, sshTimeoutOpts...)
-		parts = append(parts, shellQuote(target), "-s", "sftp")
-		return "sftp.command=" + strings.Join(parts, " ")
+		return "sftp.command=" + strings.Join(append(parts, sshDestination(in)...), " ")
 	}
 	parts := []string{}
 	if in.Auth == "password" {
@@ -109,14 +105,22 @@ func SFTPCommandFlag(in SFTPInputs) string {
 	if in.Port > 0 && in.Port != 22 {
 		parts = append(parts, "-p", fmt.Sprintf("%d", in.Port))
 	}
-	// Quote user@host like KeyPath above. restic tokenizes sftp.command on
-	// whitespace and then EXECUTES it, so an unquoted value containing spaces
-	// splits into extra argv entries -- a user of
-	// `u -o ProxyCommand=<cmd>` would hand ssh its own options, and
-	// ProxyCommand runs through a shell. KeyPath was already quoted here; user
-	// and host were the gap.
-	parts = append(parts, shellQuote(target), "-s", "sftp")
-	return "sftp.command=" + strings.Join(parts, " ")
+	return "sftp.command=" + strings.Join(append(parts, sshDestination(in)...), " ")
+}
+
+// sshDestination is the tail of every sftp.command: `[-l USER] -s -- HOST
+// sftp`. The user goes in as -l's argument and the host after `--`, so ssh
+// never reads either as one of its own options: `u@h` placed after the
+// options let a user or host starting with `-` (`-oProxyCommand=...`) become
+// an ssh option, and ProxyCommand runs through a shell. Both are also quoted
+// like KeyPath: restic tokenizes sftp.command on whitespace and then EXECUTES
+// it, so a value with spaces must stay one argv entry.
+func sshDestination(in SFTPInputs) []string {
+	parts := []string{}
+	if in.User != "" {
+		parts = append(parts, "-l", shellQuote(in.User))
+	}
+	return append(parts, "-s", "--", shellQuote(in.Host), "sftp")
 }
 
 // shellQuote single-quotes a path for embedding in `-o sftp.command=...`.

@@ -23,7 +23,7 @@ func TestComposeSFTPURL(t *testing.T) {
 func TestSFTPCommandFlag_DefaultsOnlyAddTheTimeouts(t *testing.T) {
 	got := SFTPCommandFlag(SFTPInputs{Host: "h", User: "u", Path: "/r"})
 	require.Equal(t,
-		"sftp.command=ssh -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 u@h -s sftp", got)
+		"sftp.command=ssh -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -l u -s -- h sftp", got)
 }
 
 // GH #2245: every auth mode bounds the connect and notices a dead
@@ -55,8 +55,7 @@ func TestSFTPCommandFlag_KeyPath(t *testing.T) {
 		KeyPath: "/root/.ssh/id_rsa",
 	})
 	require.Contains(t, got, "sftp.command=ssh -i /root/.ssh/id_rsa")
-	require.Contains(t, got, "u@h")
-	require.Contains(t, got, "-s sftp")
+	require.True(t, strings.HasSuffix(got, " -l u -s -- h sftp"), got)
 }
 
 func TestSFTPCommandFlag_Password(t *testing.T) {
@@ -64,7 +63,7 @@ func TestSFTPCommandFlag_Password(t *testing.T) {
 		Host: "h", User: "u", Path: "/r", Auth: "password",
 	})
 	require.True(t, strings.HasPrefix(got, "sftp.command=sshpass -e ssh"))
-	require.Contains(t, got, "u@h")
+	require.True(t, strings.HasSuffix(got, " -l u -s -- h sftp"), got)
 	// Password auth must NOT set BatchMode=yes — that would block the
 	// interactive prompt sshpass needs.
 	require.NotContains(t, got, "BatchMode=yes")
@@ -88,4 +87,32 @@ func TestSFTPCommandFlag_NonStandardPort(t *testing.T) {
 	})
 	require.Contains(t, got, "-p 2222")
 	require.Contains(t, got, "-i /root/.ssh/id_ed25519")
+}
+
+// A user or host that starts with `-` must never reach ssh where it would be
+// read as an ssh option (`-oProxyCommand=...` runs through a shell): the user
+// is -l's argument and the host comes after `--`.
+func TestSFTPCommandFlag_DashLedUserAndHostAreNotOptions(t *testing.T) {
+	for _, in := range []SFTPInputs{
+		{Host: "-oProxyCommand=host-cmd", User: "-oProxyCommand=user-cmd"},
+		{Host: "-oProxyCommand=host-cmd", User: "-oProxyCommand=user-cmd", Auth: "password"},
+		{Host: "-oProxyCommand=host-cmd", User: "-oProxyCommand=user-cmd", Auth: "key", KeyPath: "/k", Port: 2222},
+	} {
+		argv := strings.Fields(strings.TrimPrefix(SFTPCommandFlag(in), "sftp.command="))
+		dashdash := -1
+		for i, a := range argv {
+			if a == "--" {
+				dashdash = i
+				break
+			}
+		}
+		require.GreaterOrEqual(t, dashdash, 0, "no -- in %q", argv)
+		require.Equal(t, []string{"-oProxyCommand=host-cmd", "sftp"}, argv[dashdash+1:], "%+v", in)
+		for i, a := range argv[:dashdash] {
+			if a == in.User {
+				require.Equal(t, "-l", argv[i-1], "user must only appear as -l's argument: %q", argv)
+			}
+			require.NotEqual(t, in.Host, a, "host before --: %q", argv)
+		}
+	}
 }

