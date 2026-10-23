@@ -74,6 +74,14 @@ func extractBearer(c *gin.Context) string {
 	return tok
 }
 
+// hasOtherBearer reports an Authorization: Bearer header whose token is not
+// a jat_ token (extractBearer ignores those).
+func hasOtherBearer(c *gin.Context) bool {
+	parts := strings.SplitN(c.GetHeader("Authorization"), " ", 2)
+	return len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") &&
+		strings.TrimSpace(parts[1]) != "" && !strings.HasPrefix(strings.TrimSpace(parts[1]), userAPITokenPrefix)
+}
+
 // HashUserAPIToken is the canonical hash function. Plaintext token
 // (prefix included) → sha256 → lowercase hex. The repo's secret_hash
 // column stores the same encoding. Exported so the DDNS shim (api/
@@ -97,6 +105,23 @@ func RequireUserAuth(tokens repository.UserAPITokenRepository, users repository.
 			return // c.Next was either called by the helper or we aborted
 		}
 		if kratos != nil {
+			// A Bearer token that is not a jat_ token cannot authenticate here,
+			// and Kratos ignores the Authorization header, so without a session
+			// cookie the caller used to get "Kratos session cookie not found".
+			// Say what /api/v1 takes instead (GH #2245: a Server API Access
+			// token sent as a Bearer). A request with a session cookie keeps
+			// the cookie path untouched.
+			if hasOtherBearer(c) {
+				if _, err := c.Cookie("ory_kratos_session"); err != nil {
+					c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+						"error": "invalid_token",
+						"message": "This is not a Personal API Token. /api/v1 takes Authorization: Bearer jat_… " +
+							"(Personal API Tokens). A Server API Access token signs requests with " +
+							"Authorization: Jabali-HMAC and works only on /api/v1/automation/*.",
+					})
+					return
+				}
+			}
 			kratos(c)
 			return
 		}
