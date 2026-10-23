@@ -38,6 +38,9 @@ func (f *fakeBackupJobs) MarkStarted(context.Context, string) error { return nil
 func (f *fakeBackupJobs) MarkFinished(context.Context, string, string, string, string, uint64, uint64, json.RawMessage, json.RawMessage, string) error {
 	return nil
 }
+func (f *fakeBackupJobs) MarkCancelledIfActive(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeBackupJobs) CountByStatus(context.Context, string) (int64, error) { return 0, nil }
 func (f *fakeBackupJobs) HasPendingForTarget(context.Context, string, string, string) (bool, error) {
 	return false, nil

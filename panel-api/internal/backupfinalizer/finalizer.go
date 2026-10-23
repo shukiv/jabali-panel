@@ -11,7 +11,9 @@
 //  2. For each, ask the agent if the manifest snapshot exists on
 //     the destination's repo.
 //  3. If yes -> mark succeeded.
-//  4. If running >4h -> mark failed (safety timeout).
+//  4. If the agent reports the job failed or was cancelled, or lost it in
+//     a restart -> seal it so (GH #2245).
+//  5. If running >4h -> mark failed (safety timeout).
 package backupfinalizer
 
 import (
@@ -122,7 +124,27 @@ type agentStatus struct {
 	// is incomplete and must NOT report a plain "succeeded" (GH #454).
 	FailedStages []string `json:"failed_stages"`
 	Warnings     []string `json:"warnings"`
+	// GH #2245: how the agent's own run of the job ended, so a failure or a
+	// cancel is sealed at once instead of when the stall sweep gives up.
+	// JobState is running, succeeded, failed or cancelled, and empty when
+	// the agent has no record of the job. An older agent sends none of
+	// these, and AgentStartedAt stays nil: checkOne then behaves as before.
+	JobState         string     `json:"job_state"`
+	Error            string     `json:"error"`
+	DestinationError bool       `json:"destination_error"`
+	AgentStartedAt   *time.Time `json:"agent_started_at"`
 }
+
+// backup.status job_state values (panel-agent commands/backup_job_registry.go).
+const (
+	agentJobRunning   = "running"
+	agentJobFailed    = "failed"
+	agentJobCancelled = "cancelled"
+)
+
+// agentRestartedText is the error a job gets when the agent that ran it
+// restarted mid-run: the backup goroutine died with the old process.
+const agentRestartedText = "interrupted: the agent restarted while this backup was running"
 
 func (f *Finalizer) tickOnce(ctx context.Context) {
 	// A DR standby's job rows are the PRIMARY's replica — probing or
@@ -152,6 +174,16 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 			"limit", MaxJobsPerTick)
 	}
 	now := time.Now().UTC()
+	// JAB-362: each destination's breaker trips at most once per tick. A
+	// schedule fans out one job per account, and a destination that is down
+	// fails them all within seconds; counting each job would push the
+	// back-off to 1h*2^(N-1) after a single outage.
+	tripDests := map[string]bool{}
+	defer func() {
+		for id := range tripDests {
+			f.tripDestinationBreaker(ctx, id, now)
+		}
+	}()
 	for _, j := range rows {
 		if j.Status != models.BackupJobStatusRunning {
 			continue
@@ -187,15 +219,20 @@ func (f *Finalizer) tickOnce(ctx context.Context) {
 			// path counts — dispatch-time failures (user/dest lookup) are not
 			// destination health.
 			if j.DestinationID != nil && *j.DestinationID != "" {
-				f.tripDestinationBreaker(ctx, *j.DestinationID, now)
+				tripDests[*j.DestinationID] = true
 			}
 			continue
 		}
-		f.checkOne(ctx, j)
+		if id := f.checkOne(ctx, j); id != "" {
+			tripDests[id] = true
+		}
 	}
 }
 
-func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
+// checkOne seals a running backup job once the agent reports how it ended.
+// It returns the id of a destination whose breaker should trip (the job
+// failed because that destination could not be reached or opened), or "".
+func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) string {
 	logger := f.deps.Log.With("job_id", j.ID)
 
 	// backup.status now needs the destination repo URL/creds to query
@@ -231,15 +268,54 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 	})
 	if err != nil {
 		logger.Debug("backup.status query failed; will retry", "err", err)
-		return
+		return ""
 	}
 	var st agentStatus
 	if err := json.Unmarshal(raw, &st); err != nil {
 		logger.Warn("malformed backup.status reply; skipping", "err", err)
-		return
+		return ""
+	}
+	switch st.JobState {
+	case agentJobRunning:
+		return ""
+	case agentJobFailed:
+		errText := st.Error
+		if errText == "" {
+			errText = "backup failed on the agent"
+		}
+		if err := f.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
+			"", "", 0, 0, nil, nil, errText); err != nil {
+			logger.Error("mark finished failed", "err", err, "status", models.BackupJobStatusFailed)
+			return ""
+		}
+		logger.Warn("backup failed on the agent", "err", errText, "destination_error", st.DestinationError)
+		// JAB-362: a destination that could not be reached or opened counts
+		// toward its breaker, as a stall does. A stage failure does not.
+		if st.DestinationError && j.DestinationID != nil && *j.DestinationID != "" {
+			return *j.DestinationID
+		}
+		return ""
+	case agentJobCancelled:
+		if err := f.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusCancelled,
+			"", "", 0, 0, nil, nil, "cancelled"); err != nil {
+			logger.Error("mark finished failed", "err", err, "status", models.BackupJobStatusCancelled)
+		}
+		return ""
 	}
 	if !st.ManifestFound {
-		return // still running
+		// An agent with no record of the job, started after the job did,
+		// lost it in a restart: nothing will ever write its manifest.
+		if st.JobState == "" && st.AgentStartedAt != nil && j.StartedAt != nil &&
+			j.StartedAt.Before(*st.AgentStartedAt) {
+			if err := f.deps.Jobs.MarkFinished(ctx, j.ID, models.BackupJobStatusFailed,
+				"", "", 0, 0, nil, nil, agentRestartedText); err != nil {
+				logger.Error("mark finished failed", "err", err, "status", models.BackupJobStatusFailed)
+				return ""
+			}
+			logger.Warn("backup lost in an agent restart; sealed failed",
+				"started_at", j.StartedAt, "agent_started_at", st.AgentStartedAt)
+		}
+		return "" // still running
 	}
 
 	manifestSnapID := ""
@@ -272,7 +348,7 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 		status,
 		manifestSnapID, "", st.BytesAdded, st.BytesTotal, nil, warningsJSON, errText); err != nil {
 		logger.Error("mark finished failed", "err", err, "status", status)
-		return
+		return ""
 	}
 	logger.Info("backup finalized", "snapshot_id", manifestSnapID,
 		"status", status, "failed_stages", st.FailedStages)
@@ -287,6 +363,7 @@ func (f *Finalizer) checkOne(ctx context.Context, j models.BackupJob) {
 			logger.Warn("backup destination breaker RESET after success", "dest", dest.ID)
 		}
 	}
+	return ""
 }
 
 // backupBreakerBaseBackoff / backupBreakerMaxBackoff bound the exponential

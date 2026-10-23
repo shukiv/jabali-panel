@@ -243,3 +243,31 @@ func TestBackupJob_ListRuns_UserAndDestination(t *testing.T) {
 	require.Equal(t, 2, runs[2].Destinations)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #2245: Cancel seals only a job that is still queued or running. A job
+// that ended meanwhile keeps its real outcome.
+func TestBackupJob_MarkCancelledIfActive_GuardsOnActiveStatus(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	update := regexp.QuoteMeta("UPDATE `backup_jobs` SET") + ".*" +
+		regexp.QuoteMeta("WHERE id = ? AND status IN (?,?)")
+	mock.ExpectBegin()
+	mock.ExpectExec(update).
+		WithArgs("cancelled by an administrator", sqlmock.AnyArg(), models.BackupJobStatusCancelled,
+			"j1", models.BackupJobStatusQueued, models.BackupJobStatusRunning).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	ok, err := repo.MarkCancelledIfActive(context.Background(), "j1", "cancelled by an administrator")
+	require.NoError(t, err)
+	require.True(t, ok, "an active job is sealed")
+
+	mock.ExpectBegin()
+	mock.ExpectExec(update).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectCommit()
+	ok, err = repo.MarkCancelledIfActive(context.Background(), "j2", "cancelled by an administrator")
+	require.NoError(t, err)
+	require.False(t, ok, "a job that already ended is not sealed")
+	require.NoError(t, mock.ExpectationsWereMet())
+}

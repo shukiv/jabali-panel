@@ -26,6 +26,7 @@ vi.mock("../../../lib/feedback", () => ({
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 
 import { apiClient } from "../../../apiClient";
+import { feedback } from "../../../lib/feedback";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -128,5 +129,48 @@ describe("AdminBackupsPage per-job actions (JAB-332)", () => {
     renderPage();
     fireEvent.click(await screen.findByText("Delete"));
     await waitFor(() => expect(mocked.delete).toHaveBeenCalledWith("/admin/backups/m1"));
+  });
+
+  // GH #2245: Cancel now really stops the backup, so it shows wherever there
+  // is a backup to stop (queued or running), including a standalone backup's
+  // row, and never on a restore.
+  it.each([
+    ["running", "account_backup", true],
+    ["queued", "account_backup", true],
+    ["running", "system_backup", true],
+    ["succeeded", "account_backup", false],
+    ["running", "account_restore", false],
+  ])("Cancel on a %s %s: shown=%s", async (status, kind, shown) => {
+    mockData([job("m1", status, { kind })]);
+    renderPage();
+    await screen.findByText("Expand");
+    if (shown) {
+      expect(await screen.findByText("Cancel")).toBeTruthy();
+    } else {
+      await waitFor(() => expect(screen.queryByText("Cancel")).toBeNull());
+    }
+  });
+
+  it("Cancel reports the backup cancelled once the API answers", async () => {
+    mockData([job("m2", "running")]);
+    renderPage();
+    fireEvent.click(await screen.findByText("Cancel"));
+    await waitFor(() => expect(mocked.post).toHaveBeenCalledWith("/admin/backups/m2/cancel"));
+    await waitFor(() => expect(feedback.message.success).toHaveBeenCalledWith("Backup cancelled"));
+  });
+
+  it("Cancel shows the API's reason when it refuses", async () => {
+    mockData([job("m2", "running")]);
+    mocked.post.mockRejectedValueOnce(
+      Object.assign(new Error("Request failed with status code 409"), {
+        isAxiosError: true,
+        response: { status: 409, data: { status: "error", error: "job_already_finished", detail: "This backup finished before it could be cancelled." } },
+      }),
+    );
+    renderPage();
+    fireEvent.click(await screen.findByText("Cancel"));
+    await waitFor(() =>
+      expect(feedback.message.error).toHaveBeenCalledWith("This backup finished before it could be cancelled."),
+    );
   });
 });

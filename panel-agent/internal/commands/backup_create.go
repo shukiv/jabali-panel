@@ -153,9 +153,10 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		return nil, fmt.Errorf("backup already running for user_id=%s repo=%s job=%s", req.UserID, req.RepoURL, existing)
 	}
 
-	// Inline orchestration for v1. Future split into a transient
-	// systemd unit happens once the panel-side observation surface
-	// (status endpoint + journal-tail websocket) is wired.
+	// Inline orchestration: the job runs in this goroutine, registered in
+	// defaultBackupJobs so backup.cancel can stop it and backup.status can
+	// report how it ended (GH #2245).
+	ctxBg := defaultBackupJobs.start(req.JobID, accountBackupTimeout)
 	go func() {
 		defer defaultJobSlots.release("backup", req.UserID, req.RepoURL)
 		// The per-destination password tempfile belongs to THIS job, not to
@@ -166,13 +167,9 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		// it for every stage and for the manifest snapshot (up to 90
 		// minutes). Clean it up when the job actually ends.
 		defer func() { _ = removePasswordTempFile(req.PasswordFile) }()
-		ctxBg, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
-		defer cancel()
-		if err := runBackupOrchestrator(ctxBg, req); err != nil {
-			// Best-effort: orchestrator errors are observable via the
-			// next backup.status call (looks for a manifest snapshot;
-			// if absent, the run is treated as failed). v2 wires a
-			// callback POST to panel-api directly.
+		err := runBackupOrchestrator(ctxBg, req)
+		defaultBackupJobs.finish(req.JobID, err)
+		if err != nil {
 			fmt.Println("backup orchestrator failed:", err)
 		}
 	}()
@@ -194,7 +191,7 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 		req.UserID, req.Username, len(req.Databases), len(req.DatabasesPostgres), len(req.Mailboxes), req.RepoURL)
 	if err := bkEnsureRepoReady(ctx, req.RepoURL, req.CredentialsRef, req.DestinationKind, req.PasswordFile, req.SFTP); err != nil {
 		jl.Printf("ensure_repo_failed=%v", err)
-		return fmt.Errorf("ensure repo: %w", err)
+		return &backupDestinationError{err: err}
 	}
 	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
@@ -267,6 +264,13 @@ func runBackupOrchestrator(ctx context.Context, req backupCreateParams) error {
 	for _, s := range manifest.Stages {
 		manifest.Restic.BytesAdded += s.BytesAdded
 		manifest.Restic.BytesTotal += s.BytesTotal
+	}
+
+	// A cancelled or timed-out job must not write its manifest: the panel
+	// reads the manifest snapshot as "this backup finished" (GH #2245).
+	if err := ctx.Err(); err != nil {
+		jl.Printf("stage=manifest skipped: %v", err)
+		return fmt.Errorf("stopped before the manifest snapshot: %w", err)
 	}
 
 	// Stage: manifest snapshot (stdin-piped JSON blob)
@@ -597,6 +601,36 @@ func runMailStage(ctx context.Context, req backupCreateParams) backup.ManifestSt
 	return st
 }
 
+// backupStatusResult is backup.status's reply; panel-api's finalizer reads it
+// as agentStatus.
+type backupStatusResult struct {
+	JobID         string            `json:"job_id"`
+	Stages        []string          `json:"stages"`
+	ManifestFound bool              `json:"manifest_found"`
+	Snapshots     []backup.Snapshot `json:"snapshots"`
+	// Sums from the manifest's Restic block when manifest_found.
+	// Zero on system_backup (manifest schema doesn't carry totals
+	// at top level) or when the manifest can't be read.
+	BytesAdded uint64 `json:"bytes_added,omitempty"`
+	BytesTotal uint64 `json:"bytes_total,omitempty"`
+	// FailedStages names the manifest stages whose status=failed so the
+	// finalizer can downgrade the job to "partial" instead of reporting
+	// a full "succeeded" backup that is silently missing its home dir
+	// (GH #454). Warnings carries the per-stage failure reasons.
+	FailedStages []string `json:"failed_stages,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
+	// GH #2245: what this agent knows about the job without asking the repo.
+	// JobState is running, succeeded, failed or cancelled, and empty when
+	// the agent has no record of the job. Error is the failure, and
+	// DestinationError says the destination itself could not be reached or
+	// opened. AgentStartedAt lets the panel tell a job that died with a
+	// previous agent process from one still running.
+	JobState         string    `json:"job_state,omitempty"`
+	Error            string    `json:"error,omitempty"`
+	DestinationError bool      `json:"destination_error,omitempty"`
+	AgentStartedAt   time.Time `json:"agent_started_at"`
+}
+
 // backupStatusHandler returns aggregate status for a job-id by listing
 // snapshots tagged job-id=<id> and reporting the manifest snapshot if
 // present.
@@ -614,6 +648,18 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
+	resp := backupStatusResult{JobID: req.JobID, AgentStartedAt: agentStartedAt}
+	// GH #2245: a job this agent is running, or saw fail or get cancelled, is
+	// answered from the registry. Asking the repo would fail for the very
+	// jobs that matter here: one whose destination is down.
+	if out, ok := defaultBackupJobs.lookup(req.JobID); ok {
+		resp.JobState = out.State
+		if out.State != backupJobSucceeded {
+			resp.Error = out.Err
+			resp.DestinationError = out.DestinationErr
+			return resp, nil
+		}
+	}
 	cfg, cerr := bkResticConfigWithPassword(req.RepoURL, req.CredentialsRef, req.PasswordFile, req.SFTP)
 	if cerr != nil {
 		return nil, bkInternal("restic config", cerr)
@@ -623,26 +669,7 @@ func backupStatusHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if err != nil {
 		return nil, bkInternal("restic snapshots", err)
 	}
-	resp := struct {
-		JobID         string            `json:"job_id"`
-		Stages        []string          `json:"stages"`
-		ManifestFound bool              `json:"manifest_found"`
-		Snapshots     []backup.Snapshot `json:"snapshots"`
-		// Sums from the manifest's Restic block when manifest_found.
-		// Zero on system_backup (manifest schema doesn't carry totals
-		// at top level) or when the manifest can't be read.
-		BytesAdded uint64 `json:"bytes_added,omitempty"`
-		BytesTotal uint64 `json:"bytes_total,omitempty"`
-		// FailedStages names the manifest stages whose status=failed so the
-		// finalizer can downgrade the job to "partial" instead of reporting
-		// a full "succeeded" backup that is silently missing its home dir
-		// (GH #454). Warnings carries the per-stage failure reasons.
-		FailedStages []string `json:"failed_stages,omitempty"`
-		Warnings     []string `json:"warnings,omitempty"`
-	}{
-		JobID:     req.JobID,
-		Snapshots: snaps,
-	}
+	resp.Snapshots = snaps
 	manifestSnapID := ""
 	for _, s := range snaps {
 		for _, t := range s.Tags {
@@ -736,10 +763,13 @@ func stripTar(b []byte) []byte {
 	return b[512 : 512+size]
 }
 
-// backupCancelHandler is a no-op stub for v1 — orchestrator runs
-// inline so cancellation isn't observable via systemctl yet. v2
-// integrates the transient-unit harness and rewires this to
-// `systemctl stop jabali-backup-<id>.service`.
+// backupCancelHandler stops a running account or system backup (GH #2245).
+// It used to be a no-op, so Cancel in the panel stopped nothing. Cancelling
+// the job's context sends restic SIGINT and the remaining stages fail at
+// once, so no manifest snapshot is written. stopped=false means no job with
+// this id is running on this agent; job_state then says how it ended, and is
+// empty when the agent has no record of it (it died with a previous agent
+// process, or never reached this one).
 func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
 		JobID string `json:"job_id"`
@@ -750,7 +780,19 @@ func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	return map[string]any{"job_id": req.JobID, "cancel": "noop_v1"}, nil
+	res := backupCancelResult{JobID: req.JobID, Stopped: defaultBackupJobs.cancel(req.JobID)}
+	if out, ok := defaultBackupJobs.lookup(req.JobID); ok {
+		res.JobState = out.State
+	}
+	return res, nil
+}
+
+// backupCancelResult is backup.cancel's reply; panel-api's cancel handler
+// reads it as agentCancelReply.
+type backupCancelResult struct {
+	JobID    string `json:"job_id"`
+	Stopped  bool   `json:"stopped"`
+	JobState string `json:"job_state"`
 }
 
 // hostname returns the box's hostname for manifest source recording.
