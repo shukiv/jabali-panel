@@ -303,7 +303,7 @@ const deleteMutation = useDeleteMutation({ resource: "admin/xxx" });
 
 ### Explanatory alerts (GH #2242)
 
-- An alert that explains something and reads the same on every load (guidance, a caution) is a `<CollapsibleAlert storageKey="area.name">` from `src/components/CollapsibleAlert.tsx`, not a bare `<Alert>`. It folds to its title behind a Details / Hide toggle, and the browser remembers each alert's state.
+- An alert that explains something and reads the same on every load (guidance, a caution) is a `<CollapsibleAlert storageKey="area.name">` from `src/components/CollapsibleAlert.tsx`, not a bare `<Alert>`. It folds to its title behind an arrow at the right end of the title (no text; "Show details" / "Hide details" for screen readers), and the browser remembers each alert's state.
 - Plain notes start folded. Safety cautions pass `defaultOpen`: shown in full on the first visit, folded for good once an admin folds them.
 - A button the admin must act on goes in `action`: it stays visible while the alert is folded. Don't use AntD's own `action` slot for this — at phone width it squeezes the text to a column of single words.
 - An alert with an X is `dismissible`, so closing it lasts past the next load.

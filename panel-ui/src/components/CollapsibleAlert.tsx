@@ -1,6 +1,6 @@
 // CollapsibleAlert — GH #2242. An AntD Alert whose description folds away
-// behind a "Details" / "Hide" toggle, so a page opens on its content instead of
-// on its explanations. On a phone, three full alerts filled the Updates page
+// behind an arrow at the end of its title, so a page opens on its content
+// instead of on its explanations. On a phone, three full alerts filled the Updates page
 // before any update information showed.
 //
 // Two kinds of alert use it, and they differ only in how they first appear:
@@ -11,10 +11,13 @@
 // The title, the colour and `action` (e.g. an "Update now" button) stay
 // visible while folded, so nothing an admin must act on is ever hidden.
 //
-// The toggle sits at the end of the title row and `action` goes under the
-// text. AntD's own `action` slot is a column beside the text that does not
-// shrink: at phone width it squeezed the text to one or two words per line
-// and made a banner a full screen tall.
+// The arrow sits at the right end of the title row and never wraps under it:
+// a long title wraps beside it instead, so a folded alert stays one row on a
+// phone wherever the title fits (the reporter's follow-up on #2242). It has no
+// visible text; aria-label and the tooltip say "Show details" / "Hide details".
+// `action` goes under the text. AntD's own `action` slot is a column beside the
+// text that does not shrink: at phone width it squeezed the text to one or two
+// words per line and made a banner a full screen tall.
 //
 // The browser remembers each alert's state in localStorage under
 // `jabali.alert.<storageKey>`. That covers `dismissible` too: an alert closed
@@ -91,20 +94,18 @@ function CollapsibleAlertInner({
   };
 
   const open = state === "open";
+  const toggleLabel = open ? t("collapsiblealert.hide_details") : t("collapsiblealert.show_details");
   const toggle = description ? (
     <Button
       size="small"
-      type="link"
+      type="text"
       aria-expanded={open}
+      aria-label={toggleLabel}
+      title={toggleLabel}
       icon={open ? <UpOutlined /> : <DownOutlined />}
-      iconPlacement="end"
-      // No side padding: on a phone the toggle wraps under the title and must
-      // line up with it.
-      style={{ paddingInline: 0 }}
+      style={{ flex: "none" }}
       onClick={() => set(open ? "folded" : "open")}
-    >
-      {open ? t("collapsiblealert.hide") : t("collapsiblealert.details")}
-    </Button>
+    />
   ) : null;
 
   const shown = open && description;
@@ -112,16 +113,8 @@ function CollapsibleAlertInner({
     <Alert
       {...rest}
       title={
-        <span
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "center",
-            justifyContent: "space-between",
-            columnGap: 8,
-          }}
-        >
-          <span style={{ minWidth: 0 }}>{title ?? message}</span>
+        <span style={{ display: "flex", alignItems: "flex-start", columnGap: 8 }}>
+          <span style={{ flex: 1, minWidth: 0 }}>{title ?? message}</span>
           {toggle}
         </span>
       }

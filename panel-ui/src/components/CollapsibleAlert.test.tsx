@@ -26,14 +26,24 @@ describe("CollapsibleAlert (GH #2242)", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows only the title of a plain note until Details is clicked", () => {
+  it("shows only the title of a plain note until the arrow is clicked", () => {
     render(note());
     expect(screen.getByText("Short title")).toBeInTheDocument();
     expect(screen.queryByText("The long explanation")).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /details/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Show details" }));
     expect(screen.getByText("The long explanation")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /hide/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Hide details" })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  // The reporter's follow-up on #2242: an arrow only, no "Details" / "Hide"
+  // text taking room beside the title. Screen readers still get a name.
+  it("shows the toggle as an arrow with no text", () => {
+    render(note());
+    const toggle = screen.getByRole("button", { name: "Show details" });
+    expect(toggle.textContent).toBe("");
+    expect(toggle.querySelector("svg")).not.toBeNull();
+    expect(toggle).toHaveAttribute("title", "Show details");
   });
 
   it("opens a safety warning on the first visit", () => {

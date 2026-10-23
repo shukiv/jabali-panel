@@ -2064,7 +2064,7 @@
   },
   "collapsiblealert": {
     "close": "Close",
-    "details": "Details",
-    "hide": "Hide"
+    "hide_details": "Hide details",
+    "show_details": "Show details"
   }
 }
