@@ -59,3 +59,20 @@ for (const [shell, who, url] of [
     await expect(page.getByText("/section-7/item-0", { exact: true })).toBeInViewport();
   });
 }
+
+test("admin: a section title just above the top of the content column is brought back (GH #2244)", async ({ page }) => {
+  await open(page, admin, "/jabali-admin/api-docs");
+  // Scroll the admin content column until the section's top is 20px above
+  // the column's top edge: still inside the window, but cut off by the
+  // column, so checking against the window alone would miss it.
+  await page.evaluate(() => {
+    const section = document.querySelector("nav[aria-label='API sections']")!.nextElementSibling as HTMLElement;
+    let col = section.parentElement;
+    while (col && !(getComputedStyle(col).overflowY === "auto" && col.scrollHeight > col.clientHeight)) {
+      col = col.parentElement;
+    }
+    col!.scrollTop += section.getBoundingClientRect().top - col!.getBoundingClientRect().top + 20;
+  });
+  await navItem(page, "Section 7").click();
+  await expect(page.getByRole("heading", { name: /^Section 7\b/ })).toBeInViewport({ ratio: 1 });
+});
