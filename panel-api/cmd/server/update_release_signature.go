@@ -32,6 +32,25 @@ func releaseSignatureRequired() bool {
 	return strings.TrimSpace(releaseSigningPublicKey) != ""
 }
 
+// releaseSignatureRequiredOn reports whether `jabali update` on this release
+// channel installs only signed releases. The development channel streams main:
+// it installs each release as CI publishes it, on its sha256 alone (GH #2240).
+// Stable releases, hotfixes and the security feed stay signed. Any channel
+// other than "development" is held to the signature.
+func releaseSignatureRequiredOn(channel string) bool {
+	return releaseSignatureRequired() && channel != "development"
+}
+
+// checkReleaseSignature verifies a downloaded tarball when the channel requires
+// it, before the tarball is extracted. On the development channel it accepts
+// the tarball on its sha256 and fetches no signature.
+func checkReleaseSignature(ctx context.Context, required bool, tarPath, sigURL string, log func(string, ...any)) error {
+	if !required {
+		return nil
+	}
+	return verifyReleaseSignature(ctx, tarPath, sigURL, log)
+}
+
 // verifyReleaseSignature checks the release tarball against the embedded
 // public key.
 //

@@ -170,6 +170,12 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	var verifiedRelease *stagedRelease
 	defer func() { verifiedRelease.cleanup() }()
 
+	// Whether this update installs only signed releases. The git step sets it
+	// from the release channel (releaseSignatureRequiredOn): the development
+	// channel streams main on sha256 alone (GH #2240). Until then, and when the
+	// channel cannot be read, the build's own rule holds.
+	requireSignature := releaseSignatureRequired()
+
 	// Byte copies of the binaries as they were before this update replaced
 	// them, so a failed `migrate up` can put them back (JAB-210). Taken by
 	// whichever install path runs — release tarball or source build — and
@@ -411,6 +417,8 @@ chmod 0750 "$WR"`)
 			channel, channelErr := releaseChannel()
 			if channelErr != nil {
 				fmt.Printf("  release channel: could not read it (%v) — staying on the current build; the next update retries\n", channelErr)
+			} else {
+				requireSignature = releaseSignatureRequiredOn(channel)
 			}
 			// The VM is a deployment target, not a source of truth. Tracked-
 			// file drift (typical cause: operator `sed`/patches a file in
@@ -499,7 +507,7 @@ chmod 0750 "$WR"`)
 			// a build with the release key the target commit has to be the
 			// build of a signed release before it becomes the working tree
 			// (update_release_staged.go).
-			if resetRef != "HEAD" && releaseSignatureRequired() {
+			if resetRef != "HEAD" && requireSignature {
 				gitOut := func(args ...string) (string, error) {
 					return asUserOut(repoDir, "git", args...)
 				}
@@ -1200,7 +1208,7 @@ fi
 			}
 			ctx := cmd.Context()
 			snapshotBeforeSwap()
-			installed, sha, err := installFromRelease(ctx, repoDir, verifiedRelease, func(format string, args ...any) {
+			installed, sha, err := installFromRelease(ctx, repoDir, verifiedRelease, requireSignature, func(format string, args ...any) {
 				fmt.Printf("  "+format+"\n", args...)
 			})
 			if err != nil {

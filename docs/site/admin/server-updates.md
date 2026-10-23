@@ -92,6 +92,19 @@ reconciler. A fleet that is not
 auto-updating needs a deliberate deploy step after every merge that matters, and
 "we merged the fix" is not the same statement as "the fix is in force".
 
+### Release channels and signatures
+
+- **Stable** moves about once a month. A stable box installs a release only
+  when it carries the Jabali release signature (ADR-0162).
+- **Development** installs every main release as soon as CI publishes it,
+  checked against its sha256, without the release signature.
+- **Security fixes** reach boxes on both channels within the hour, through a
+  signed hotfix release and the signed advisory feed (see below).
+
+Builds from 35d7d468d to ae219af25 (22 and 23 October 2026) require the
+signature on every channel. A development box on one of them moves once, to the
+first signed release that carries this change, and streams main from there.
+
 ### Switching a box to the stable channel
 
 A box that followed main (the development channel) usually runs a newer build

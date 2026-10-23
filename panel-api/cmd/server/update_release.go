@@ -90,7 +90,10 @@ type releaseResponse struct {
 // pre is the release the git step already verified for the commit the
 // checkout was reset to (verifyResetTarget), or nil. It is used instead of
 // downloading the tarball a second time.
-func installFromRelease(ctx context.Context, repoDir string, pre *stagedRelease, log func(string, ...any)) (installed bool, sha string, err error) {
+//
+// requireSignature is the channel's rule (releaseSignatureRequiredOn): false
+// on the development channel, which installs releases on their sha256.
+func installFromRelease(ctx context.Context, repoDir string, pre *stagedRelease, requireSignature bool, log func(string, ...any)) (installed bool, sha string, err error) {
 	base := os.Getenv("JABALI_RELEASE_API_BASE")
 	if base == "" {
 		base = defaultReleaseAPIBase
@@ -105,7 +108,7 @@ func installFromRelease(ctx context.Context, repoDir string, pre *stagedRelease,
 	// published last. On a stable host that is a different build, usually not
 	// signed, and its missing .minisig would fail the update before the
 	// MANIFEST check could send it on to the by-commit path.
-	if releaseSignatureRequired() {
+	if requireSignature {
 		head, err := localHeadSHA(ctx, repoDir)
 		if err != nil {
 			return false, "", fmt.Errorf("release: %w", err)
@@ -226,8 +229,9 @@ func installFromRelease(ctx context.Context, repoDir string, pre *stagedRelease,
 		// more — whoever can publish one can publish the other. The signature
 		// is checked here, BEFORE extraction, so attacker-controlled bytes are
 		// never written to disk by tar on the strength of a checksum alone.
-		// No-op on builds with no embedded key; mandatory once there is one.
-		if err := verifyReleaseSignature(ctx, tarPath, releaseSignatureURL(tarURL), log); err != nil {
+		// No-op on builds with no embedded key and on the development channel
+		// (GH #2240); mandatory on every other channel once there is a key.
+		if err := checkReleaseSignature(ctx, requireSignature, tarPath, releaseSignatureURL(tarURL), log); err != nil {
 			return "", false, fmt.Errorf("release: %w", err)
 		}
 
