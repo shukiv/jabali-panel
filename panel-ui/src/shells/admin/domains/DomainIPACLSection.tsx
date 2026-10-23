@@ -4,7 +4,7 @@
 // inside the server block; lower priority = higher precedence.
 import { useTranslation } from "react-i18next";
 import { useState } from "react";
-import { Alert, Button, Form, Input, InputNumber, Popconfirm, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
+import { Button, Form, Input, InputNumber, Popconfirm, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { DeleteOutlined, PlusOutlined } from "@icons";
 
@@ -16,6 +16,7 @@ import {
   type CreateACLInput,
   type DomainIPACL,
 } from "../../../hooks/useDomainIPACL";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type Props = { domainId: string };
 
@@ -72,7 +73,8 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="middle">
-      <Alert
+      <CollapsibleAlert
+        storageKey="domain.ip-acl"
         type="info"
         showIcon
         message={t("domainipaclsection.per_domain_ip_allow_deny")}

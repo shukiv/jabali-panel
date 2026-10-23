@@ -11,7 +11,6 @@ import { useTranslation } from "react-i18next";
 
 import { useServiceInfo } from "../../../useServiceInfo";
 import {
-  Alert,
   App,
   Button,
   Card,
@@ -21,6 +20,7 @@ import {
 } from "antd";
 import { useMutation } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const { Text, Paragraph } = Typography;
 
@@ -85,7 +85,9 @@ export function SSOMaintenanceCard() {
         {/* rotate — guarded documented procedure */}
         <div>
           <Text strong>Encryption key rotation</Text>
-          <Alert
+          <CollapsibleAlert
+            storageKey="settings.sso.key-rotation"
+            defaultOpen
             style={{ margin: "8px 0" }}
             type="warning"
             showIcon

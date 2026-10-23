@@ -41,6 +41,7 @@ import {
 } from "../../../apiClient";
 import { getIdentity } from "../../../identity";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 // UserFtpAccountsPage — tenant self-service FTP/SFTP subaccounts (GH #1053).
 // Every account is a same-uid alias of the tenant: its own username +
@@ -167,7 +168,9 @@ export const UserFtpAccountsPage = () => {
         <CloudServerOutlined /> {t("ftpaccounts.title")}
       </Typography.Title>
 
-      <Alert
+      <CollapsibleAlert
+        storageKey="user.ftp.connection"
+        defaultOpen
         type="info"
         showIcon
         message={t("ftpaccounts.connection_info")}

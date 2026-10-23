@@ -38,6 +38,7 @@ import {
 } from "../../../apiClient";
 import { useQuery } from "@tanstack/react-query";
 import { Timestamp } from "../../../components/Timestamp";
+import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
 
@@ -249,7 +250,8 @@ export const UserSSHKeysPage = () => {
         </Space>
       </Flex>
 
-      <Alert
+      <CollapsibleAlert
+        storageKey="user.ssh.about"
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
