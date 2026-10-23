@@ -14,12 +14,12 @@ import { APIDocsPage } from "./APIDocsPage";
 
 const get = apiClient.get as unknown as ReturnType<typeof vi.fn>;
 
-// Declared order is Backups, then DNS; an untagged endpoint lands in "Other".
+// Declared out of order (DNS first); an untagged endpoint lands in "Other".
 const SPEC = {
   info: { title: "Jabali API", version: "1.0" },
   tags: [
-    { name: "Backups", description: "Backup jobs." },
     { name: "DNS", description: "Zones and records." },
+    { name: "Backups", description: "Backup jobs." },
   ],
   paths: {
     "/dns/zones": { get: { tags: ["DNS"], summary: "List zones" } },
@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 describe("APIDocsPage sections (GH #2244)", () => {
-  it("lists the sections in the spec's order with their counts, and shows only the first", async () => {
+  it("lists the sections A to Z with their counts, Other last, and shows only the first", async () => {
     render(<APIDocsPage />);
     await screen.findByText("/backups");
 

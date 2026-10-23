@@ -96,9 +96,10 @@ function slugFromHash(): string | null {
   return h.startsWith(HASH_PREFIX) ? decodeURIComponent(h.slice(HASH_PREFIX.length)) : null;
 }
 
-// buildSections groups the endpoints by tag: the spec's declared tags in its
-// order, then any undeclared tag as first met, then "Other" for an endpoint
-// with no tag (a failsafe while the spec grows).
+// buildSections groups the endpoints by tag, in alphabetical order so ~90
+// sections are easy to scan (the spec declares its tags in no useful order),
+// with "Other" last for an endpoint with no tag (a failsafe while the spec
+// grows).
 function buildSections(spec: OpenAPISpec): Section[] {
   const byTag = new Map<string, Endpoint[]>();
   for (const [path, methods] of Object.entries(spec.paths)) {
@@ -111,20 +112,11 @@ function buildSections(spec: OpenAPISpec): Section[] {
       }
     }
   }
-  const order = [
-    ...(spec.tags ?? []).map((t) => t.name).filter((n) => n !== "Other"),
-    ...Array.from(byTag.keys()).filter((n) => n !== "Other"),
-    "Other",
-  ];
-  const seen = new Set<string>();
-  const out: Section[] = [];
-  for (const tag of order) {
-    const ops = byTag.get(tag);
-    if (!ops || seen.has(tag)) continue;
-    seen.add(tag);
-    out.push({ tag, slug: tagSlug(tag), ops });
-  }
-  return out;
+  return Array.from(byTag.entries())
+    .sort(([a], [b]) =>
+      a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b, undefined, { sensitivity: "base" }),
+    )
+    .map(([tag, ops]) => ({ tag, slug: tagSlug(tag), ops }));
 }
 
 // scrollParent — the nearest ancestor that scrolls, or null for the window.
