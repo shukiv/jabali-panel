@@ -3215,10 +3215,18 @@ paths:
   /admin/backups/{job_id}/cancel:
     post:
       tags: [Backups]
-      summary: Cancel backups
+      summary: Cancel a queued or running backup
+      description: >-
+        Stops the backup on the agent and marks the job cancelled (GH #2245).
+        409 when the job has already finished or is a restore; 500 when the
+        agent can't be reached or can't stop a backup.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: Cancelled }
+        "404": { description: No such job }
+        "409": { description: "Already finished, or a restore" }
+        "500": { description: The agent couldn't stop it }
 
   /admin/backups/{job_id}/download:
     get:
@@ -6723,10 +6731,18 @@ paths:
   /admin/system/backups/{job_id}/cancel:
     post:
       tags: [System]
-      summary: Cancel backups
+      summary: Cancel a queued or running backup
+      description: >-
+        Stops the backup on the agent and marks the job cancelled (GH #2245).
+        409 when the job has already finished or is a restore; 500 when the
+        agent can't be reached or can't stop a backup.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses:
+        "200": { description: Cancelled }
+        "404": { description: No such job }
+        "409": { description: "Already finished, or a restore" }
+        "500": { description: The agent couldn't stop it }
 
   /admin/system/backups/{job_id}/logs:
     get:

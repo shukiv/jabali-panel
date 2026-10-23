@@ -144,8 +144,8 @@ func TestCancel_OlderAgent_RefusesToSeal(t *testing.T) {
 
 	rec := runCancel(t, false, jobs, ag)
 
-	if rec.Code != http.StatusBadGateway || errorCode(t, rec) != "agent_cannot_cancel" || jobs.sealed != 0 {
-		t.Fatalf("code=%d error=%q sealed=%d, want 502 agent_cannot_cancel, not sealed", rec.Code, errorCode(t, rec), jobs.sealed)
+	if rec.Code != http.StatusInternalServerError || errorCode(t, rec) != "agent_cannot_cancel" || jobs.sealed != 0 {
+		t.Fatalf("code=%d error=%q sealed=%d, want 500 agent_cannot_cancel, not sealed", rec.Code, errorCode(t, rec), jobs.sealed)
 	}
 }
 
@@ -155,8 +155,8 @@ func TestCancel_RunningJobAgentUnreachable_DoesNotSeal(t *testing.T) {
 
 	rec := runCancel(t, false, jobs, ag)
 
-	if rec.Code != http.StatusBadGateway || jobs.sealed != 0 {
-		t.Fatalf("code=%d sealed=%d, want 502 and not sealed", rec.Code, jobs.sealed)
+	if rec.Code != http.StatusInternalServerError || errorCode(t, rec) != "agent_call_failed" || jobs.sealed != 0 {
+		t.Fatalf("code=%d error=%q sealed=%d, want 500 agent_call_failed, not sealed", rec.Code, errorCode(t, rec), jobs.sealed)
 	}
 }
 

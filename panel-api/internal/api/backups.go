@@ -848,14 +848,16 @@ func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 	}
 	// A queued job is not on the agent yet, so the row alone decides. A
 	// running one is sealed only once the agent says nothing runs any more.
+	// The panel's own agent failing answers 500, not 502: Cloudflare would
+	// replace a 502's body, and the user needs this one (GH #2077).
 	if job.Status == models.BackupJobStatusRunning {
 		if callErr != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_call_failed",
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_call_failed",
 				"detail": "Couldn't reach the agent to stop this backup. Try again in a moment."})
 			return
 		}
 		if reply.Stopped == nil {
-			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": "agent_cannot_cancel",
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "agent_cannot_cancel",
 				"detail": "The agent on this server is too old to stop a backup. Update the panel and try again."})
 			return
 		}
