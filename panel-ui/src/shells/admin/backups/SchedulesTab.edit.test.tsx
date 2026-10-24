@@ -109,6 +109,21 @@ describe("SchedulesTab, an account's own schedule (GH #2246)", () => {
     expect(within(row).getByText("alice")).toBeTruthy();
   });
 
+  it("says what every account schedule backs up, the full account too", async () => {
+    // The reporter's follow-up: a Full account schedule showed only "Account's own".
+    mockLists([
+      { ...TENANT_ROW, id: "s-full", content: "full", cadence: "weekly" },
+      { ...ADMIN_ROW, user_ids: ["u1"], include_system_backup: false },
+    ]);
+    render(<SchedulesTab />);
+    const own = (await screen.findByText("Weekly")).closest("tr") as HTMLElement;
+    expect(within(own).getByText("Account's own")).toBeTruthy();
+    expect(within(own).getByText("Full account")).toBeTruthy();
+    const admin = screen.getByText("30 2 * * *").closest("tr") as HTMLElement;
+    expect(within(admin).getByText("Accounts")).toBeTruthy();
+    expect(within(admin).getByText("Full account")).toBeTruthy();
+  });
+
   it("an old single-user admin schedule widened to more users lists all of them", async () => {
     // user_id from before user_ids, then more users added: not the account's own.
     mockLists([{ ...ADMIN_ROW, user_id: "u1", user_ids: ["u1", "u2"] }]);

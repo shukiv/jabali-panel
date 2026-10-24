@@ -21,7 +21,7 @@ A schedule keeps its kind once it is saved: editing an Accounts or Full Server s
 
 ## Accounts' own schedules
 
-On a plan that allows more than one backup schedule, an account adds its own schedules on its **Backups** page. An admin can add one for it here: **New schedule → Type: Account's own**, then pick the account. They are listed here with the type **Account's own** and the account's name. Each one:
+On a plan that allows more than one backup schedule, an account adds its own schedules on its **Backups** page. An admin can add one for it here: **New schedule → Type: Account's own**, then pick the account. They are listed here with the type **Account's own**, what they back up, and the account's name. Every account schedule in the list shows what it backs up: Full account, Files only or Databases only. Each one:
 
 - backs up only that account;
 - runs on an interval instead of a cron expression: hourly, every 6 hours, every 12 hours, daily or weekly. When **Settings → Restrict tenant backups to a maintenance window** is on, it runs inside that window;
