@@ -63,6 +63,9 @@ type backupJob struct {
 	destinationErr  bool
 	cancelRequested bool
 	endedAt         time.Time
+	// done is closed by finish, once the job's goroutine has let go of
+	// everything it held (backup.cancel waits on it).
+	done chan struct{}
 }
 
 // backupJobOutcome is what lookup returns: a copy, safe to read unlocked.
@@ -92,18 +95,21 @@ func (r *backupJobRegistry) start(jobID string, timeout time.Duration) context.C
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prune()
-	r.jobs[jobID] = &backupJob{ctx: ctx, cancel: cancel, timeout: timeout, state: backupJobRunning}
+	r.jobs[jobID] = &backupJob{ctx: ctx, cancel: cancel, timeout: timeout, state: backupJobRunning, done: make(chan struct{})}
 	return ctx
 }
 
-// finish records how the job's goroutine ended.
+// finish records how the job's goroutine ended. Call it last, after the
+// goroutine has released its job slot: it closes done, and backup.cancel
+// answers as soon as done is closed.
 func (r *backupJobRegistry) finish(jobID string, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j, ok := r.jobs[jobID]
-	if !ok {
+	if !ok || j.state != backupJobRunning {
 		return
 	}
+	defer close(j.done)
 	j.cancel()
 	j.endedAt = r.now()
 	switch {
@@ -124,17 +130,18 @@ func (r *backupJobRegistry) finish(jobID string, err error) {
 
 // cancel stops a running job and reports whether there was one. The job's
 // goroutine still has to unwind (restic gets SIGINT, then a kill after
-// CancelGrace); finish records the cancel when it does.
-func (r *backupJobRegistry) cancel(jobID string) bool {
+// CancelGrace); finish records the cancel when it does and closes the
+// returned channel.
+func (r *backupJobRegistry) cancel(jobID string) (<-chan struct{}, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j, ok := r.jobs[jobID]
 	if !ok || j.state != backupJobRunning {
-		return false
+		return nil, false
 	}
 	j.cancelRequested = true
 	j.cancel()
-	return true
+	return j.done, true
 }
 
 // lookup returns what this agent knows about a job; false when it has no

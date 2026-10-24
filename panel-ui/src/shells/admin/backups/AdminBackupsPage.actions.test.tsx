@@ -159,6 +159,17 @@ describe("AdminBackupsPage per-job actions (JAB-332)", () => {
     await waitFor(() => expect(feedback.message.success).toHaveBeenCalledWith("Backup cancelled"));
   });
 
+  // GH #2245 follow-up: a backup still stopping is not called cancelled yet.
+  it("Cancel says the backup is still stopping when the API answers cancelling", async () => {
+    mockData([job("m2", "running")]);
+    mocked.post.mockResolvedValueOnce({ status: 202, data: { status: "ok", data: { status: "cancelling" } } });
+    vi.mocked(feedback.message.success).mockClear();
+    renderPage();
+    fireEvent.click(await screen.findByText("Cancel"));
+    await waitFor(() => expect(feedback.message.info).toHaveBeenCalledWith(expect.stringMatching(/still stopping/)));
+    expect(feedback.message.success).not.toHaveBeenCalledWith("Backup cancelled");
+  });
+
   it("Cancel shows the API's reason when it refuses", async () => {
     mockData([job("m2", "running")]);
     mocked.post.mockRejectedValueOnce(

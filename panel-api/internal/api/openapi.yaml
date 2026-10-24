@@ -3221,13 +3221,16 @@ paths:
       tags: [Backups]
       summary: Cancel a queued or running backup
       description: >-
-        Stops the backup on the agent and marks the job cancelled (GH #2245).
-        409 when the job has already finished or is a restore; 500 when the
-        agent can't be reached or can't stop a backup.
+        Stops the backup on the agent and marks the job cancelled once it has
+        stopped (GH #2245). 202 with status "cancelling" when it is still
+        stopping after about 20 seconds; the job turns cancelled when it
+        stops. 409 when the job has already finished or is a restore; 500
+        when the agent can't be reached or can't stop a backup.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
       responses:
         "200": { description: Cancelled }
+        "202": { description: Still stopping }
         "404": { description: No such job }
         "409": { description: "Already finished, or a restore" }
         "500": { description: The agent couldn't stop it }
@@ -4769,6 +4772,25 @@ paths:
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "204": { description: OK } }
+
+  /me/backups/{id}/cancel:
+    post:
+      tags: [Me]
+      summary: Cancel a queued or running backup of your account
+      description: >-
+        Stops a backup of the caller's own account, including one from an
+        admin schedule, and marks it cancelled once it has stopped (GH #2245).
+        202 with status "cancelling" when it is still stopping after about 20
+        seconds. 404 for another account's backup or a system backup; 409
+        when it has already finished or is a restore.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: Cancelled }
+        "202": { description: Still stopping }
+        "404": { description: No such backup on your account }
+        "409": { description: "Already finished, or a restore" }
+        "500": { description: The agent couldn't stop it }
 
   /me/backups/{id}/download:
     get:
@@ -6737,13 +6759,16 @@ paths:
       tags: [System]
       summary: Cancel a queued or running backup
       description: >-
-        Stops the backup on the agent and marks the job cancelled (GH #2245).
-        409 when the job has already finished or is a restore; 500 when the
-        agent can't be reached or can't stop a backup.
+        Stops the backup on the agent and marks the job cancelled once it has
+        stopped (GH #2245). 202 with status "cancelling" when it is still
+        stopping after about 20 seconds; the job turns cancelled when it
+        stops. 409 when the job has already finished or is a restore; 500
+        when the agent can't be reached or can't stop a backup.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: job_id, required: true, schema: { type: string } } ]
       responses:
         "200": { description: Cancelled }
+        "202": { description: Still stopping }
         "404": { description: No such job }
         "409": { description: "Already finished, or a restore" }
         "500": { description: The agent couldn't stop it }

@@ -25,6 +25,7 @@ vi.mock("../../lib/feedback", () => ({
 }));
 
 import { apiClient } from "../../apiClient";
+import { feedback } from "../../lib/feedback";
 
 const mocked = apiClient as unknown as {
   get: ReturnType<typeof vi.fn>;
@@ -64,12 +65,13 @@ beforeEach(() => {
 });
 
 describe("MyProfileBackupCard row actions (JAB-332)", () => {
-  it("hides every action while a backup is running", async () => {
+  it("offers only Cancel while a backup is running", async () => {
     mockBackups([row("r1", "running")]);
     renderCard();
     await screen.findByText(/running/i);
-    // canDelete is false while running (cancel-first policy); the tenant has no
-    // Cancel, so the row shows no destructive control until it settles.
+    // canDelete is false while running (cancel-first policy), so Cancel is the
+    // only control until the backup settles (GH #2245).
+    expect(await screen.findByText("Cancel")).toBeTruthy();
     expect(screen.queryByText("Download")).toBeNull();
     expect(screen.queryByText("Restore")).toBeNull();
     expect(screen.queryByText("Delete")).toBeNull();
@@ -108,5 +110,38 @@ describe("MyProfileBackupCard row actions (JAB-332)", () => {
     renderCard();
     fireEvent.click(await screen.findByText("Delete"));
     await waitFor(() => expect(mocked.delete).toHaveBeenCalledWith("/me/backups/f1"));
+  });
+
+  // GH #2245: a tenant can cancel a queued or running backup of their account.
+  it.each([
+    ["running", "account_backup", true],
+    ["queued", "account_backup", true],
+    ["succeeded", "account_backup", false],
+    ["running", "account_restore", false],
+  ])("Cancel on a %s %s: shown=%s", async (status, kind, shown) => {
+    mockBackups([row("c1", status, kind)]);
+    renderCard();
+    await screen.findByText(new RegExp(status, "i"));
+    if (shown) {
+      expect(await screen.findByText("Cancel")).toBeTruthy();
+    } else {
+      await waitFor(() => expect(screen.queryByText("Cancel")).toBeNull());
+    }
+  });
+
+  it("Cancel calls POST /me/backups/:id/cancel and reports it cancelled", async () => {
+    mockBackups([row("c2", "running")]);
+    renderCard();
+    fireEvent.click(await screen.findByText("Cancel"));
+    await waitFor(() => expect(mocked.post).toHaveBeenCalledWith("/me/backups/c2/cancel"));
+    await waitFor(() => expect(feedback.message.success).toHaveBeenCalledWith("Backup cancelled"));
+  });
+
+  it("Cancel says the backup is still stopping when the API answers cancelling", async () => {
+    mockBackups([row("c3", "running")]);
+    mocked.post.mockResolvedValueOnce({ status: 202, data: { status: "ok", data: { status: "cancelling" } } });
+    renderCard();
+    fireEvent.click(await screen.findByText("Cancel"));
+    await waitFor(() => expect(feedback.message.info).toHaveBeenCalledWith(expect.stringMatching(/still stopping/)));
   });
 });

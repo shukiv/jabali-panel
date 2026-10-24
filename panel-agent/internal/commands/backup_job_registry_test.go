@@ -51,7 +51,8 @@ func TestBackupJobRegistry_CancelStopsOnlyRunningJobs(t *testing.T) {
 	r := newBackupJobRegistry()
 	ctx := r.start("job", time.Minute)
 
-	if !r.cancel("job") {
+	done, ok := r.cancel("job")
+	if !ok {
 		t.Fatal("cancel of a running job returned false")
 	}
 	select {
@@ -59,14 +60,24 @@ func TestBackupJobRegistry_CancelStopsOnlyRunningJobs(t *testing.T) {
 	default:
 		t.Fatal("cancel did not cancel the job's context")
 	}
+	select {
+	case <-done:
+		t.Fatal("done closed before the job finished")
+	default:
+	}
 	r.finish("job", ctx.Err())
+	select {
+	case <-done:
+	default:
+		t.Fatal("finish did not close done")
+	}
 	if out, _ := r.lookup("job"); out.State != backupJobCancelled {
 		t.Fatalf("cancelled job state = %q, want cancelled", out.State)
 	}
-	if r.cancel("job") {
+	if _, ok := r.cancel("job"); ok {
 		t.Fatal("cancel of a finished job returned true")
 	}
-	if r.cancel("unknown") {
+	if _, ok := r.cancel("unknown"); ok {
 		t.Fatal("cancel of an unknown job returned true")
 	}
 }
@@ -178,8 +189,8 @@ func TestBackupCancel_StopsTheRunningJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("backup.cancel: %v", err)
 	}
-	if got := res.(backupCancelResult); !got.Stopped || got.JobState != backupJobRunning {
-		t.Fatalf("cancel reply = %+v, want stopped while running", got)
+	if got := res.(backupCancelResult); !got.Stopped || got.JobState != backupJobCancelled {
+		t.Fatalf("cancel reply = %+v, want stopped and cancelled", got)
 	}
 	select {
 	case <-done:
@@ -271,11 +282,91 @@ func TestBackupStatusAndCancel_WireMatchesPanelFixtures(t *testing.T) {
 
 	const runningID = "01HZ2245000000000000000006"
 	ctx := defaultBackupJobs.start(runningID, time.Minute)
+	go func() {
+		<-ctx.Done()
+		defaultBackupJobs.finish(runningID, ctx.Err())
+	}()
 	raw, _ = json.Marshal(map[string]string{"job_id": runningID})
 	res, err := backupCancelHandler(context.Background(), raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defaultBackupJobs.finish(runningID, ctx.Err())
 	assertWireMatchesFixture(t, res, "backup_cancel_reply.json")
+}
+
+// stubBackupJob runs fn in place of the backup orchestrator for one test.
+func stubBackupJob(t *testing.T, fn func(context.Context, backupCreateParams) error) {
+	t.Helper()
+	prev := runBackupJob
+	runBackupJob = fn
+	t.Cleanup(func() { runBackupJob = prev })
+}
+
+// GH #2245 follow-up: Cancel answered as soon as it had asked the job to
+// stop, so the panel showed Cancelled while restic was still unwinding, and a
+// delete right after found the job slot held ("another backup operation (…)
+// is running on this repository"). backup.cancel now answers once the job has
+// stopped and its slot is free.
+func TestBackupCancel_AnswersOnceTheJobHasStoppedAndFreedItsSlot(t *testing.T) {
+	const (
+		jobID  = "01HZ2245000000000000000010"
+		userID = "01HZ2245000000000000000011"
+		repo   = "/var/backups/gh2245-cancel-wait"
+	)
+	unwound := make(chan struct{})
+	stubBackupJob(t, func(ctx context.Context, _ backupCreateParams) error {
+		<-ctx.Done()
+		time.Sleep(200 * time.Millisecond) // restic cleaning up after SIGINT
+		close(unwound)
+		return ctx.Err()
+	})
+	raw, _ := json.Marshal(map[string]string{"job_id": jobID, "user_id": userID, "username": "gh2245", "repo_url": repo})
+	if _, err := backupCreateHandler(context.Background(), raw); err != nil {
+		t.Fatalf("backup.create: %v", err)
+	}
+
+	raw, _ = json.Marshal(map[string]string{"job_id": jobID})
+	res, err := backupCancelHandler(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("backup.cancel: %v", err)
+	}
+	if got := res.(backupCancelResult); !got.Stopped || got.JobState != backupJobCancelled {
+		t.Fatalf("cancel reply = %+v, want stopped and cancelled", got)
+	}
+	select {
+	case <-unwound:
+	default:
+		t.Fatal("backup.cancel answered before the job finished unwinding")
+	}
+	if existing, ok := defaultJobSlots.acquire("backup", userID, repo, "01HZ2245000000000000000012"); !ok {
+		t.Fatalf("job slot still held by %s after backup.cancel answered", existing)
+	}
+	defaultJobSlots.release("backup", userID, repo)
+}
+
+// A job that has not stopped by backupCancelWait is reported still running,
+// so the panel says it is cancelling instead of claiming it stopped.
+func TestBackupCancel_JobStillStopping_ReportsRunning(t *testing.T) {
+	const jobID = "01HZ2245000000000000000013"
+	prev := backupCancelWait
+	backupCancelWait = 50 * time.Millisecond
+	t.Cleanup(func() { backupCancelWait = prev })
+
+	ctx := defaultBackupJobs.start(jobID, time.Minute)
+	release := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		<-release
+		defaultBackupJobs.finish(jobID, ctx.Err())
+	}()
+	defer close(release)
+
+	raw, _ := json.Marshal(map[string]string{"job_id": jobID})
+	res, err := backupCancelHandler(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("backup.cancel: %v", err)
+	}
+	if got := res.(backupCancelResult); !got.Stopped || got.JobState != backupJobRunning {
+		t.Fatalf("cancel reply = %+v, want stopped=true while the job is still running", got)
+	}
 }

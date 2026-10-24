@@ -158,6 +158,11 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	// report how it ended (GH #2245).
 	ctxBg := defaultBackupJobs.start(req.JobID, accountBackupTimeout)
 	go func() {
+		var err error
+		// finish runs last, once the slot below is free: backup.cancel
+		// answers when finish has run, and the delete a user makes right
+		// after a cancel must not find the slot still held (GH #2245).
+		defer func() { defaultBackupJobs.finish(req.JobID, err) }()
 		defer defaultJobSlots.release("backup", req.UserID, req.RepoURL)
 		// The per-destination password tempfile belongs to THIS job, not to
 		// the RPC that started it. backup.create is fire-and-forget — it
@@ -167,8 +172,7 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		// it for every stage and for the manifest snapshot (up to 90
 		// minutes). Clean it up when the job actually ends.
 		defer func() { _ = removePasswordTempFile(req.PasswordFile) }()
-		err := runBackupOrchestrator(ctxBg, req)
-		defaultBackupJobs.finish(req.JobID, err)
+		err = runBackupJob(ctxBg, req)
 		if err != nil {
 			fmt.Println("backup orchestrator failed:", err)
 		}
@@ -763,13 +767,24 @@ func stripTar(b []byte) []byte {
 	return b[512 : 512+size]
 }
 
+// runBackupJob is runBackupOrchestrator; a var so tests can run a job that
+// stops only when it is cancelled.
+var runBackupJob = runBackupOrchestrator
+
+// backupCancelWait bounds how long backup.cancel waits for the job to stop.
+// restic is killed CancelGrace after its SIGINT, so a job normally ends well
+// inside it; panel-api's call allows a little longer.
+var backupCancelWait = backup.CancelGrace + 2*time.Second
+
 // backupCancelHandler stops a running account or system backup (GH #2245).
 // It used to be a no-op, so Cancel in the panel stopped nothing. Cancelling
 // the job's context sends restic SIGINT and the remaining stages fail at
-// once, so no manifest snapshot is written. stopped=false means no job with
-// this id is running on this agent; job_state then says how it ended, and is
-// empty when the agent has no record of it (it died with a previous agent
-// process, or never reached this one).
+// once, so no manifest snapshot is written. It answers once the job has
+// stopped and released its slot, so job_state is then "cancelled"; a job
+// still stopping after backupCancelWait is reported "running". stopped=false
+// means no job with this id is running on this agent; job_state then says
+// how it ended, and is empty when the agent has no record of it (it died
+// with a previous agent process, or never reached this one).
 func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var req struct {
 		JobID string `json:"job_id"`
@@ -780,7 +795,17 @@ func backupCancelHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	res := backupCancelResult{JobID: req.JobID, Stopped: defaultBackupJobs.cancel(req.JobID)}
+	done, stopped := defaultBackupJobs.cancel(req.JobID)
+	if stopped {
+		wait := time.NewTimer(backupCancelWait)
+		defer wait.Stop()
+		select {
+		case <-done:
+		case <-wait.C:
+		case <-ctx.Done():
+		}
+	}
+	res := backupCancelResult{JobID: req.JobID, Stopped: stopped}
 	if out, ok := defaultBackupJobs.lookup(req.JobID); ok {
 		res.JobState = out.State
 	}

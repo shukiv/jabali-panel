@@ -7,12 +7,13 @@ import { useBackupDownloadPrepare } from "../../utils/backupDownload";
 import { Button, Card, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { backupTypeColor, backupTypeLabel } from "../../utils/backupType";
-import { RowActions } from "../../components/RowActions";
+import { RowActions, type RowAction } from "../../components/RowActions";
 import { BackupStatusTag } from "../../components/backups/BackupStatusTag";
 import { backupArtifactEligibility, isRestoreKind } from "../../components/backups/backupArtifact";
 import { backupArtifactActions } from "../../components/backups/backupArtifactActions";
+import { cancelBackup } from "../../components/backups/cancelBackup";
 import { RestoreFromUploadDrawer } from "../admin/backups/RestoreFromUploadDrawer";
-import { DeleteOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
+import { CloseOutlined, DeleteOutlined, ReloadOutlined, SaveOutlined, WarningOutlined } from "@icons";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -112,6 +113,13 @@ export const MyProfileBackupCard = () => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  // GH #2245: the owner can cancel a queued or running backup of their
+  // account, including one from an admin schedule.
+  const handleCancel = async (id: string) => {
+    await cancelBackup(`/me/backups/${id}/cancel`);
+    query.refetch();
   };
 
   const handleDelete = async (id: string) => {
@@ -265,7 +273,16 @@ export const MyProfileBackupCard = () => {
                   },
                 },
               );
-              return <RowActions actions={[shared.download, shared.restore, shared.delete]} />;
+              const cancel: RowAction = {
+                key: "cancel",
+                label: "Cancel",
+                icon: <CloseOutlined />,
+                danger: true,
+                hidden: (row.status !== "running" && row.status !== "queued") || restore,
+                onClick: () => handleCancel(row.id),
+                confirm: { title: "Stop this backup?", description: "The backup stops and is marked cancelled. Stopping can take a few seconds.", okText: "Stop backup" },
+              };
+              return <RowActions actions={[cancel, shared.download, shared.restore, shared.delete]} />;
             },
           },
         ]}

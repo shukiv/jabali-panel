@@ -7,6 +7,7 @@ import { useBackupDownloadPrepare } from "../../../utils/backupDownload";
 import { backupTypeColor, backupTypeLabel, runScopeSummary } from "../../../utils/backupType";
 import { useTabParam } from "../../../hooks/useTabParam";
 import { RowActions, type RowAction } from "../../../components/RowActions";
+import { cancelBackup } from "../../../components/backups/cancelBackup";
 import {
   DeleteOutlined,
   CalendarCheckOutlined,
@@ -308,16 +309,8 @@ export const AdminBackupsPage = () => {
     dl.start(row.id);
   };
 
-  // GH #2245: the API now stops the backup and seals the row before it
-  // answers, so success means cancelled, not "requested". A refusal (it
-  // already finished, the agent can't be reached) comes back as `detail`.
   const handleCancel = async (row: BackupJob) => {
-    try {
-      await apiClient.post(`/admin/backups/${row.id}/cancel`);
-      feedback.message.success("Backup cancelled");
-    } catch (err) {
-      feedback.message.error(extractApiError(err, "Cancel failed"));
-    }
+    await cancelBackup(`/admin/backups/${row.id}/cancel`);
     void reload();
   };
 
@@ -330,7 +323,7 @@ export const AdminBackupsPage = () => {
     danger: true,
     hidden: (job.status !== "running" && job.status !== "queued") || isRestoreKind(job.kind),
     onClick: () => handleCancel(job),
-    confirm: { title: "Stop this backup?", description: "The backup stops now and is marked cancelled.", okText: "Stop backup" },
+    confirm: { title: "Stop this backup?", description: "The backup stops and is marked cancelled. Stopping can take a few seconds.", okText: "Stop backup" },
   });
 
   // Restore is account-only — system_backup snapshots are managed via
