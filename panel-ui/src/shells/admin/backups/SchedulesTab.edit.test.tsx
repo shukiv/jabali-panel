@@ -193,3 +193,93 @@ describe("SchedulesTab, editing keeps a schedule's kind (GH #2246)", () => {
     expect(body).not.toHaveProperty("include_system_backup");
   });
 });
+
+// --- GH #2246 follow-up: add an account's own schedule; hourly; unreadable times ---
+
+async function openNew() {
+  render(<SchedulesTab />);
+  const btn = await screen.findByRole("button", { name: /new schedule/i });
+  await waitFor(() => expect(btn).not.toBeDisabled());
+  fireEvent.click(btn);
+  // The drawer's title, not the button with the same text.
+  await waitFor(() =>
+    expect(screen.getAllByText("New schedule").some((el) => el.closest(".ant-drawer"))).toBe(true),
+  );
+  return screen.getAllByText("New schedule").find((el) => el.closest(".ant-drawer"))!.closest(".ant-drawer") as HTMLElement;
+}
+
+describe("SchedulesTab, the admin adds an account's own schedule (GH #2246)", () => {
+  it("posts the schedule the account would add on its Backups page", async () => {
+    mockLists([]);
+    const drawer = await openNew();
+    fireEvent.click(within(drawer).getByRole("radio", { name: "Account's own" }));
+    // The interval form: no cron, no user list, no system backup.
+    await waitFor(() => expect(within(drawer).queryByText("Frequency")).toBeNull());
+    expect(within(drawer).queryByLabelText("Users")).toBeNull();
+
+    await pick(drawer, "owner_id", "alice (alice@example.com)");
+    await pick(drawer, "content", "Databases only");
+    await pick(drawer, "cadence", "Every 12 hours");
+    await pick(drawer, "destination_id", "off-site (sftp)");
+    fireEvent.click(within(drawer).getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+    const [url, body] = mocked.post.mock.calls[0];
+    expect(url).toBe("/admin/backup-schedules");
+    expect(body).toEqual({
+      kind: "account_backup",
+      user_ids: ["u1"],
+      content: "database",
+      cadence: "every_12h",
+      destination_ids: ["d1"],
+      keep_daily: null,
+      enabled: true,
+    });
+  });
+
+  it("an existing cron schedule can't become an account's own", async () => {
+    mockLists([ADMIN_ROW]);
+    const drawer = await openEdit("30 2 * * *");
+    expect(within(drawer).getByRole("radio", { name: "Account's own" })).toBeDisabled();
+  });
+});
+
+describe("SchedulesTab, hourly admin schedules (GH #2246)", () => {
+  it("saves every N hours at a minute past the hour, with daily retention", async () => {
+    mockLists([]);
+    const drawer = await openNew();
+    fireEvent.click(within(drawer).getByRole("radio", { name: "Hourly" }));
+    await waitFor(() => expect(drawer.querySelector("#every")).toBeTruthy());
+    await pick(drawer, "every", "Every 6 hours");
+    const minute = drawer.querySelector<HTMLInputElement>("#minute") as HTMLInputElement;
+    fireEvent.change(minute, { target: { value: "15" } });
+    expect(within(drawer).queryByText("Time")).toBeNull();
+    await pick(drawer, "destination_ids", "off-site (sftp)");
+    const keep = drawer.querySelector<HTMLInputElement>("#keep") as HTMLInputElement;
+    fireEvent.change(keep, { target: { value: "7" } });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalled());
+    const [, body] = mocked.post.mock.calls[0];
+    expect(body.cron_expr).toBe("15 */6 * * *");
+    expect(body.keep_daily).toBe(7);
+    expect(body.keep_weekly).toBeNull();
+  });
+
+  it("opens an hourly schedule as hourly", async () => {
+    mockLists([{ ...ADMIN_ROW, cron_expr: "15 */6 * * *", keep_daily: 7 }]);
+    const drawer = await openEdit("15 */6 * * *");
+    expect(within(drawer).getByTitle("Every 6 hours")).toBeTruthy();
+    expect((drawer.querySelector("#minute") as HTMLInputElement).value).toBe("15");
+    expect((drawer.querySelector("#keep") as HTMLInputElement).value).toBe("7");
+    expect(within(drawer).queryByRole("alert")).toBeNull();
+  });
+
+  it("says when it can't show a schedule's time", async () => {
+    mockLists([{ ...ADMIN_ROW, cron_expr: "0 3 * 1 *" }]);
+    const drawer = await openEdit("0 3 * 1 *");
+    const alert = within(drawer).getByRole("alert");
+    expect(alert.textContent).toContain("0 3 * 1 *");
+    expect(alert.textContent).toContain("Saving replaces it");
+  });
+});

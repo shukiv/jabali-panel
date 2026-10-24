@@ -48,6 +48,17 @@ type fakeScheduleWriter struct {
 	getErr  error
 	updates []recordedUpdate
 	updErr  error
+	// owned is what ListForUser returns; dests what GetDestinations returns.
+	owned []models.BackupSchedule
+	dests []models.BackupDestination
+}
+
+func (f *fakeScheduleWriter) ListForUser(ctx context.Context, userID string) ([]models.BackupSchedule, error) {
+	return f.owned, nil
+}
+
+func (f *fakeScheduleWriter) GetDestinations(ctx context.Context, scheduleID string) ([]models.BackupDestination, error) {
+	return f.dests, nil
 }
 
 func (f *fakeScheduleWriter) CreateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs []string) error {
@@ -315,10 +326,182 @@ func tenantRowDeps(cadence string) (Deps, *fakeScheduleWriter, time.Time) {
 		ID: "s1", Kind: models.BackupScheduleKindAccount, UserID: &owner,
 		Cadence: cadence, Content: models.BackupContentDatabase, Enabled: true, NextRunAt: &next,
 	}}
-	return Deps{Schedules: w, Users: &fakeUserFinder{users: map[string]*models.User{
-		"u1": {ID: "u1"}, "u2": {ID: "u2"},
-	}}}, w, next
+	pkgID := "p1"
+	return Deps{
+		Schedules: w,
+		Users: &fakeUserFinder{users: map[string]*models.User{
+			"u1": {ID: "u1", PackageID: &pkgID}, "u2": {ID: "u2", PackageID: &pkgID},
+		}},
+		Packages:     fakePackages{"p1": planPkg()},
+		Destinations: fakeDests{"d1": {ID: "d1", Kind: "sftp", Enabled: true}, "s3": {ID: "s3", Kind: "s3", Enabled: true}, "off": {ID: "off", Kind: "sftp"}},
+	}, w, next
 }
+
+// --- GH #2246 follow-up: the account's plan applies to its own schedule ---
+
+type fakePackages map[string]*models.HostingPackage
+
+func (f fakePackages) FindByID(ctx context.Context, id string) (*models.HostingPackage, error) {
+	return f[id], nil
+}
+
+type fakeDests map[string]*models.BackupDestination
+
+func (f fakeDests) Get(ctx context.Context, id string) (*models.BackupDestination, error) {
+	return f[id], nil
+}
+
+// planPkg: scheduled backups on, up to 3 schedules, 5 copies, sftp only.
+func planPkg() *models.HostingPackage {
+	return &models.HostingPackage{
+		ID: "p1", MaxBackups: 5, ScheduledBackupsEnabled: true, MaxBackupSchedules: 3,
+		AllowedBackupDestinationKinds: "sftp",
+	}
+}
+
+func accountInput() AccountScheduleInput {
+	keep := 3
+	return AccountScheduleInput{
+		UserID: "u1", Content: models.BackupContentDatabase, Cadence: internalbackup.CadenceEvery6h,
+		DestinationID: "d1", KeepDaily: &keep, Enabled: true,
+	}
+}
+
+func TestCreateForAccount_HappyPath(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	before := time.Now().UTC()
+	s, err := CreateForAccount(context.Background(), d, accountInput())
+	require.NoError(t, err)
+	require.Len(t, w.calls, 1)
+	got := w.calls[0]
+	require.Equal(t, []string{"d1"}, got.destIDs)
+	require.Equal(t, []string{"u1"}, got.userIDs)
+	require.NotNil(t, got.s.UserID)
+	require.Equal(t, "u1", *got.s.UserID, "owned by the account, so its Backups page lists it")
+	require.Equal(t, models.BackupScheduleKindAccount, got.s.Kind)
+	require.Equal(t, internalbackup.CadenceEvery6h, got.s.Cadence)
+	require.Equal(t, models.BackupContentDatabase, got.s.Content)
+	require.Empty(t, got.s.CronExpr)
+	require.Equal(t, 3, *got.s.KeepDaily)
+	require.WithinDuration(t, before.Add(6*time.Hour), *s.NextRunAt, 2*time.Minute)
+}
+
+// Every rule the account's own page applies refuses here too, with no write.
+// Falsify: drop any one check in CreateForAccount → its case writes a row.
+func TestCreateForAccount_PlanRules_ZeroWrites(t *testing.T) {
+	cases := map[string]struct {
+		edit func(d *Deps, w *fakeScheduleWriter, in *AccountScheduleInput)
+		want error
+	}{
+		"admin account": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) {
+			d.Users.(*fakeUserFinder).users["u1"].IsAdmin = true
+		}, ErrAdminUser},
+		"unknown account": {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.UserID = "ghost" }, ErrUserNotFound},
+		"no plan": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) {
+			d.Users.(*fakeUserFinder).users["u1"].PackageID = nil
+		}, ErrScheduledBackupsNotAllowed},
+		"plan unreadable": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) { d.Packages = nil }, ErrPlanUnavailable},
+		"plan missing":    {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) { d.Packages = fakePackages{} }, ErrPlanUnavailable},
+		"no scheduled": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) {
+			d.Packages.(fakePackages)["p1"].ScheduledBackupsEnabled = false
+		}, ErrScheduledBackupsNotAllowed},
+		"backups off": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) {
+			d.Packages.(fakePackages)["p1"].MaxBackups = 0
+		}, ErrScheduledBackupsNotAllowed},
+		"one-schedule plan": {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) {
+			d.Packages.(fakePackages)["p1"].MaxBackupSchedules = 1
+		}, ErrSingleSchedulePlan},
+		"at the limit": {func(_ *Deps, w *fakeScheduleWriter, _ *AccountScheduleInput) {
+			w.owned = make([]models.BackupSchedule, 3)
+			for i := range w.owned {
+				w.owned[i].Kind = models.BackupScheduleKindAccount
+			}
+		}, ErrScheduleLimit},
+		"bad cadence":             {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.Cadence = "monthly" }, ErrInvalidCadence},
+		"bad content":             {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.Content = "everything" }, ErrInvalidContent},
+		"unknown destination":     {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.DestinationID = "nope" }, ErrUnknownDestination},
+		"disabled destination":    {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.DestinationID = "off" }, ErrDestinationDisabled},
+		"kind not on plan":        {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.DestinationID = "s3" }, ErrDestinationNotAllowed},
+		"no destination lookup":   {func(d *Deps, _ *fakeScheduleWriter, _ *AccountScheduleInput) { d.Destinations = nil }, ErrPlanUnavailable},
+		"enabled, no destination": {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { in.DestinationID = "" }, ErrDestinationRequired},
+		"too many copies":         {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { k := 6; in.KeepDaily = &k }, ErrKeepOutOfRange},
+		"no copies":               {func(_ *Deps, _ *fakeScheduleWriter, in *AccountScheduleInput) { k := 0; in.KeepDaily = &k }, ErrKeepOutOfRange},
+	}
+	for name, tc := range cases {
+		d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+		in := accountInput()
+		tc.edit(&d, w, &in)
+		s, err := CreateForAccount(context.Background(), d, in)
+		require.Nil(t, s, name)
+		require.ErrorIs(t, err, tc.want, name)
+		require.Empty(t, w.calls, name)
+	}
+}
+
+// A disabled schedule may wait for its destination, as on the account's page.
+func TestCreateForAccount_DisabledWithoutDestination(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	in := accountInput()
+	in.DestinationID, in.Enabled = "", false
+	_, err := CreateForAccount(context.Background(), d, in)
+	require.NoError(t, err)
+	require.Equal(t, []string{}, w.calls[0].destIDs)
+}
+
+// Editing an account's own schedule: a new destination or copy count must fit
+// the plan. Falsify: skip checkAccountPatch in Update → the s3 patch is written.
+func TestUpdate_AccountSchedule_PlanRules(t *testing.T) {
+	cases := map[string]struct {
+		in   UpdateInput
+		want error
+	}{
+		"destination kind not on plan": {UpdateInput{ID: "s1", DestinationIDs: &[]string{"s3"}}, ErrDestinationNotAllowed},
+		"disabled destination":         {UpdateInput{ID: "s1", DestinationIDs: &[]string{"off"}}, ErrDestinationDisabled},
+		"two destinations":             {UpdateInput{ID: "s1", DestinationIDs: &[]string{"d1", "d2"}}, ErrOneDestination},
+		"enabled without destination":  {UpdateInput{ID: "s1", DestinationIDs: &[]string{}}, ErrDestinationRequired},
+		"too many copies":              {UpdateInput{ID: "s1", KeepDaily: intPtr(9)}, ErrKeepOutOfRange},
+	}
+	for name, tc := range cases {
+		d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+		w.dests = []models.BackupDestination{{ID: "d1"}}
+		s, err := Update(context.Background(), d, tc.in)
+		require.Nil(t, s, name)
+		require.ErrorIs(t, err, tc.want, name)
+		require.Empty(t, w.updates, name)
+	}
+}
+
+// Values that don't change need no plan: an admin can still turn off, or
+// re-save, a schedule whose account's plan can't be read. Falsify: check the
+// plan before comparing → this fails with ErrPlanUnavailable.
+func TestUpdate_AccountSchedule_UnchangedValuesNeedNoPlan(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	keep := 4
+	w.getRow.KeepDaily = &keep
+	w.dests = []models.BackupDestination{{ID: "d1"}}
+	d.Packages = nil
+	off := false
+	s, err := Update(context.Background(), d, UpdateInput{
+		ID: "s1", Enabled: &off, DestinationIDs: &[]string{"d1"}, KeepDaily: intPtr(4),
+	})
+	require.NoError(t, err)
+	require.False(t, s.Enabled)
+
+	// Turned off, it may drop its destination too.
+	d, w, _ = tenantRowDeps(internalbackup.CadenceDaily)
+	w.dests = []models.BackupDestination{{ID: "d1"}}
+	_, err = Update(context.Background(), d, UpdateInput{ID: "s1", Enabled: &off, DestinationIDs: &[]string{}})
+	require.NoError(t, err)
+
+	// A change that does need the plan fails closed without it.
+	d, w, _ = tenantRowDeps(internalbackup.CadenceDaily)
+	w.dests = []models.BackupDestination{{ID: "d1"}}
+	d.Packages = nil
+	_, err = Update(context.Background(), d, UpdateInput{ID: "s1", KeepDaily: intPtr(2)})
+	require.ErrorIs(t, err, ErrPlanUnavailable)
+}
+
+func intPtr(n int) *int { return &n }
 
 // The bug: the admin form sent the "Daily 03:00" it fell back to as cron_expr,
 // and the leaf moved the interval schedule's next run to the next 03:00 while

@@ -85,6 +85,10 @@ type scheduleWriter interface {
 	CreateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs []string) error
 	Get(ctx context.Context, id string) (*models.BackupSchedule, error)
 	UpdateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs *[]string) error
+	// ListForUser and GetDestinations let the plan rules for an account's own
+	// schedule count the account's schedules and see the current destination.
+	ListForUser(ctx context.Context, userID string) ([]models.BackupSchedule, error)
+	GetDestinations(ctx context.Context, scheduleID string) ([]models.BackupDestination, error)
 }
 
 // SettingsGetter reads the server settings that hold the tenant backup window.
@@ -99,6 +103,10 @@ type Deps struct {
 	// Settings supplies the tenant backup window an interval schedule's next
 	// run is computed in. nil = the whole day (ungated), the window's default.
 	Settings SettingsGetter
+	// Packages and Destinations apply the account's plan to its own schedule
+	// (see account.go). nil fails closed when a plan-bound value is set.
+	Packages     PackageFinder
+	Destinations DestinationGetter
 }
 
 // tenantWindow is the window an interval schedule fires inside, computed the
@@ -273,6 +281,11 @@ func Update(ctx context.Context, d Deps, in UpdateInput) (*models.BackupSchedule
 
 	if in.IncludeSystemBackup != nil && *in.IncludeSystemBackup && owner != "" && s.Kind == models.BackupScheduleKindAccount {
 		return nil, ErrAccountSchedule
+	}
+	if owner != "" && s.Kind == models.BackupScheduleKindAccount {
+		if err := checkAccountPatch(ctx, d, s, owner, in); err != nil {
+			return nil, err
+		}
 	}
 
 	if in.CronExpr != nil {

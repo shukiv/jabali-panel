@@ -28,6 +28,25 @@ type BackupSchedulesConfig struct {
 	// Settings holds the tenant backup window an account's own (interval)
 	// schedule is re-timed in when its cadence changes. nil = whole day.
 	Settings repository.ServerSettingsRepository
+	// Packages applies an account's plan to its own schedule (GH #2246): the
+	// admin creates and edits it under the rules the account's page uses.
+	Packages repository.PackageRepository
+}
+
+// leafDeps hands the lifecycle only the collaborators that are wired: a nil
+// repository stored in an interface field would read as present.
+func (h *backupScheduleHandler) leafDeps() backupscheduleops.Deps {
+	d := backupscheduleops.Deps{Schedules: h.cfg.Schedules, Users: h.cfg.Users}
+	if h.cfg.Settings != nil {
+		d.Settings = h.cfg.Settings
+	}
+	if h.cfg.Packages != nil {
+		d.Packages = h.cfg.Packages
+	}
+	if h.cfg.Destinations != nil {
+		d.Destinations = h.cfg.Destinations
+	}
+	return d
 }
 
 func RegisterBackupScheduleRoutes(rg *gin.RouterGroup, cfg BackupSchedulesConfig) {
@@ -142,13 +161,17 @@ type createScheduleRequest struct {
 	UserID              *string  `json:"user_id"`
 	UserIDs             []string `json:"user_ids"`
 	IncludeSystemBackup bool     `json:"include_system_backup"`
-	CronExpr            string   `json:"cron_expr"       binding:"required"`
-	Content             string   `json:"content"`
-	Enabled             *bool    `json:"enabled"`
-	KeepDaily           *int     `json:"keep_daily"`
-	KeepWeekly          *int     `json:"keep_weekly"`
-	KeepMonthly         *int     `json:"keep_monthly"`
-	DestinationIDs      []string `json:"destination_ids"`
+	// CronExpr times an admin schedule. An account's own schedule sends
+	// Cadence instead (one user, one destination) and is created under the
+	// account's plan (GH #2246).
+	CronExpr       string   `json:"cron_expr"`
+	Cadence        string   `json:"cadence"`
+	Content        string   `json:"content"`
+	Enabled        *bool    `json:"enabled"`
+	KeepDaily      *int     `json:"keep_daily"`
+	KeepWeekly     *int     `json:"keep_weekly"`
+	KeepMonthly    *int     `json:"keep_monthly"`
+	DestinationIDs []string `json:"destination_ids"`
 }
 
 func (h *backupScheduleHandler) create(c *gin.Context) {
@@ -162,11 +185,12 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 	if req.UserID != nil && *req.UserID != "" {
 		req.UserIDs = append(req.UserIDs, *req.UserID)
 	}
+	if req.Cadence != "" {
+		h.createForAccount(c, req)
+		return
+	}
 
-	s, err := backupscheduleops.Create(c.Request.Context(), backupscheduleops.Deps{
-		Schedules: h.cfg.Schedules,
-		Users:     h.cfg.Users,
-	}, backupscheduleops.CreateInput{
+	s, err := backupscheduleops.Create(c.Request.Context(), h.leafDeps(), backupscheduleops.CreateInput{
 		Kind:                req.Kind,
 		UserIDs:             req.UserIDs,
 		IncludeSystemBackup: req.IncludeSystemBackup,
@@ -177,6 +201,53 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		KeepWeekly:          req.KeepWeekly,
 		KeepMonthly:         req.KeepMonthly,
 		DestinationIDs:      req.DestinationIDs,
+	})
+	if err != nil {
+		writeScheduleOpError(c, err, "db_create")
+		return
+	}
+	dests, _ := h.cfg.Schedules.GetDestinations(c.Request.Context(), s.ID)
+	c.JSON(http.StatusCreated, toScheduleDTO(s, dests))
+}
+
+// createForAccount creates an account's own interval schedule: the kind the
+// account adds on its Backups page, with one account, one destination, and
+// no cron or system backup.
+func (h *backupScheduleHandler) createForAccount(c *gin.Context, req createScheduleRequest) {
+	if req.Kind != "" && req.Kind != models.BackupScheduleKindAccount {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_kind"})
+		return
+	}
+	users := make([]string, 0, len(req.UserIDs))
+	for _, u := range req.UserIDs {
+		if u != "" {
+			users = append(users, u)
+		}
+	}
+	if len(users) != 1 || req.IncludeSystemBackup || req.CronExpr != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "account_schedule",
+			"detail": "an account's own schedule backs up one account, runs on its cadence and has no cron expression or system backup"})
+		return
+	}
+	if len(req.DestinationIDs) > 1 {
+		writeScheduleOpError(c, backupscheduleops.ErrOneDestination, "db_create")
+		return
+	}
+	dest := ""
+	if len(req.DestinationIDs) == 1 {
+		dest = req.DestinationIDs[0]
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	s, err := backupscheduleops.CreateForAccount(c.Request.Context(), h.leafDeps(), backupscheduleops.AccountScheduleInput{
+		UserID:        users[0],
+		Content:       req.Content,
+		Cadence:       req.Cadence,
+		DestinationID: dest,
+		KeepDaily:     req.KeepDaily,
+		Enabled:       enabled,
 	})
 	if err != nil {
 		writeScheduleOpError(c, err, "db_create")
@@ -213,6 +284,28 @@ func writeScheduleOpError(c *gin.Context, err error, dbErrCode string) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "cron_schedule", "detail": err.Error()})
 	case errors.Is(err, backupscheduleops.ErrAccountSchedule):
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "account_schedule", "detail": err.Error()})
+	// The account's plan (GH #2246): the codes the account's own Backups page
+	// returns for the same refusals.
+	case errors.Is(err, backupscheduleops.ErrPlanUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "backup_gating_unavailable", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrScheduledBackupsNotAllowed):
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "scheduled_backups_not_enabled", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrSingleSchedulePlan):
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "single_schedule_plan", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrScheduleLimit):
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "schedule_limit_reached", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrUnknownDestination):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "unknown_destination", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrDestinationDisabled):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_disabled", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrDestinationNotAllowed):
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "destination_not_allowed", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrDestinationRequired):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_required", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrOneDestination):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "one_destination", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrKeepOutOfRange):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "keep_out_of_range", "detail": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": dbErrCode})
 	}
@@ -250,13 +343,7 @@ func (h *backupScheduleHandler) update(c *gin.Context) {
 	// broadens the blast radius. (Admin-target rejection was already enforced
 	// on this surface inline; this change is atomicity plus de-duplication of
 	// the policy the leaf already owns.)
-	deps := backupscheduleops.Deps{Schedules: h.cfg.Schedules, Users: h.cfg.Users}
-	if h.cfg.Settings != nil {
-		// Assigned only when set: a nil repository in the interface field would
-		// be a non-nil SettingsGetter.
-		deps.Settings = h.cfg.Settings
-	}
-	s, err := backupscheduleops.Update(c.Request.Context(), deps, backupscheduleops.UpdateInput{
+	s, err := backupscheduleops.Update(c.Request.Context(), h.leafDeps(), backupscheduleops.UpdateInput{
 		ID:                  id,
 		CronExpr:            req.CronExpr,
 		Cadence:             req.Cadence,

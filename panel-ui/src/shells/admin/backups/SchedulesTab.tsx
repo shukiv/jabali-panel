@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { Alert, Button, Checkbox, Drawer, Form, InputNumber, Radio, Segmented, Select, Space, Switch, Table, Tag, TimePicker, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { RowActions } from "../../../components/RowActions";
-import dayjs, { type Dayjs } from "dayjs";
+import dayjs from "dayjs";
 import {
   CalendarCheckOutlined,
   DeleteOutlined,
@@ -23,6 +23,7 @@ import {
   backupCadenceLabel,
   backupContentLabel,
 } from "../../../lib/backupScheduleOptions";
+import { HOURLY_EVERY, cronFromSpec, specFromCron, type Freq } from "./scheduleCron";
 
 interface BackupSchedule {
   id: string;
@@ -69,8 +70,6 @@ interface User {
 // strips ALL_USERS out of the array before sending.
 const ALL_USERS = "__all__";
 
-type Freq = "daily" | "weekly" | "monthly";
-
 // Scope is the schedule's backup TYPE, mirroring the on-demand
 // "Create backup" drawer (GH #502). It maps onto the wire fields the
 // backend already understands (kind + user_ids + include_system_backup):
@@ -79,7 +78,10 @@ type Freq = "daily" | "weekly" | "monthly";
 //   system_backup  — panel/system only, no account fan-out.
 //   full_server    — every account PLUS the system, in one schedule
 //                    (kind=account_backup, all users, include_system=true).
-type Scope = "account_backup" | "system_backup" | "full_server";
+//   account_own    — one account's own schedule, the kind it adds on its
+//                    Backups page: an interval instead of cron, one
+//                    destination, under the account's plan (GH #2246).
+type Scope = "account_backup" | "system_backup" | "full_server" | "account_own";
 
 // scopeOf derives the drawer's Scope from an existing schedule row so
 // editing reopens on the right type.
@@ -88,63 +90,6 @@ const scopeOf = (s: BackupSchedule): Scope => {
   const hasSelected = (s.user_ids ?? []).length > 0;
   if (!hasSelected && s.include_system_backup) return "full_server";
   return "account_backup";
-};
-
-interface ScheduleSpec {
-  freq: Freq;
-  time: Dayjs;          // hour:minute only used
-  weekdays?: number[];  // weekly only — 0=Sun..6=Sat (cron numbering)
-  dom?: number;         // monthly only — 1..31
-}
-
-// cronFromSpec converts the form values into a 5-field cron expression.
-// Monthly is day-of-month only (Option A); nth-weekday lands when we
-// switch off robfig/cron, which OR-merges dom/dow restrictions.
-const cronFromSpec = (s: ScheduleSpec): string => {
-  const m = s.time.minute();
-  const h = s.time.hour();
-  switch (s.freq) {
-    case "daily":
-      return `${m} ${h} * * *`;
-    case "weekly": {
-      const days = (s.weekdays ?? []).slice().sort((a, b) => a - b);
-      const dow = days.length === 0 || days.length === 7 ? "*" : days.join(",");
-      return `${m} ${h} * * ${dow}`;
-    }
-    case "monthly":
-      return `${m} ${h} ${s.dom ?? 1} * *`;
-  }
-};
-
-// specFromCron is best-effort — recognises the shapes cronFromSpec
-// emits. Anything else returns null and the drawer falls back to
-// daily-default with a notice.
-const specFromCron = (expr: string): ScheduleSpec | null => {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return null;
-  const [mm, hh, dom, mon, dow] = parts;
-  const m = Number(mm);
-  const h = Number(hh);
-  if (!Number.isInteger(m) || !Number.isInteger(h)) return null;
-  if (mon !== "*") return null;
-  const time = dayjs().hour(h).minute(m).second(0);
-  // daily: dom * dow *
-  if (dom === "*" && dow === "*") {
-    return { freq: "daily", time };
-  }
-  // weekly: dom * dow restricted
-  if (dom === "*") {
-    const days = dow.split(",").map((x) => Number(x)).filter((n) => Number.isInteger(n));
-    if (days.length === 0 || days.some((d) => d < 0 || d > 6)) return null;
-    return { freq: "weekly", time, weekdays: days };
-  }
-  // monthly: dom restricted, dow *
-  if (dow === "*") {
-    const d = Number(dom);
-    if (!Number.isInteger(d) || d < 1 || d > 31) return null;
-    return { freq: "monthly", time, dom: d };
-  }
-  return null;
 };
 
 // listedAsOwn: a row shown as an account's own schedule. A single-user admin
@@ -189,7 +134,8 @@ function ScheduleDrawer({
   // interval (cadence) instead of cron. It opens in the form the account edits
   // it in, with the same choices, instead of falling back to "Daily 03:00"
   // and sending that cron time on Save.
-  const interval = !!editing?.cadence;
+  // New schedules pick it as the Type "Account's own".
+  const interval = editing ? !!editing.cadence : scope === "account_own";
   // An account's own schedule backs up that account only, so its account is
   // shown, not picked, and it can't become a System or Full Server schedule.
   const ownerID = editing?.user_id || "";
@@ -201,9 +147,15 @@ function ScheduleDrawer({
   // empty user list, which backs up every account.
   const kindLocked = (value: Scope) => {
     if (!editing) return false;
+    // A cron schedule can't become an interval one.
+    if (value === "account_own") return true;
     if (ownerID) return value !== "account_backup";
     return editing.kind === "system_backup" ? value !== "system_backup" : value === "system_backup";
   };
+
+  // A time the form can't show (set with the CLI, say) would be replaced by
+  // the form's default on Save, the same failure as GH #2246; say so.
+  const unreadCron = !!editing && !editing.cadence && specFromCron(editing.cron_expr) === null;
 
   useEffect(() => {
     if (open) {
@@ -229,17 +181,22 @@ function ScheduleDrawer({
           user_ids: editingIDs,
           freq: spec.freq,
           time: spec.time,
+          every: spec.every ?? 1,
+          minute: spec.freq === "hourly" ? spec.time.minute() : 0,
           weekdays: spec.weekdays ?? [1],
           dom: spec.dom ?? 1,
           enabled: editing.enabled,
           keep:
-            spec.freq === "daily"
+            spec.freq === "daily" || spec.freq === "hourly"
               ? (editing.keep_daily ?? undefined)
               : spec.freq === "weekly"
                 ? (editing.keep_weekly ?? undefined)
                 : (editing.keep_monthly ?? undefined),
           include_system_backup: editing.include_system_backup ?? false,
-          destination_ids: editing.destinations?.map((d) => d.id) ?? [],
+          // An account's own schedule writes to one destination.
+          destination_ids: editing.user_id
+            ? editing.destinations?.[0]?.id
+            : (editing.destinations?.map((d) => d.id) ?? []),
           content: editing.content || "full",
         });
       } else {
@@ -249,11 +206,14 @@ function ScheduleDrawer({
           user_ids: [ALL_USERS],
           freq: "daily" as Freq,
           time: dayjs().hour(3).minute(0).second(0),
+          every: 1,
+          minute: 0,
           weekdays: [1],
           dom: 1,
           enabled: true,
           destination_ids: [],
           include_system_backup: false,
+          cadence: "daily",
         });
       }
     }
@@ -268,18 +228,28 @@ function ScheduleDrawer({
     }
     setBusy(true);
     try {
-      if (editing?.cadence) {
+      if (interval) {
         // Only what the account can set itself. No cron time (the schedule
         // runs on its cadence), and no users or system backup (it backs up
         // its account only).
-        await apiClient.patch(`/admin/backup-schedules/${editing.id}`, {
+        const body = {
           content: values.content,
           cadence: values.cadence,
           destination_ids: values.destination_id ? [values.destination_id] : [],
           keep_daily: values.keep ?? null,
           enabled: values.enabled,
-        });
-        feedback.message.success("Schedule updated");
+        };
+        if (editing) {
+          await apiClient.patch(`/admin/backup-schedules/${editing.id}`, body);
+          feedback.message.success("Schedule updated");
+        } else {
+          await apiClient.post("/admin/backup-schedules", {
+            kind: "account_backup",
+            user_ids: [values.owner_id],
+            ...body,
+          });
+          feedback.message.success("Schedule created");
+        }
         onSaved();
         return;
       }
@@ -322,15 +292,23 @@ function ScheduleDrawer({
       }
       const cron = cronFromSpec({
         freq: values.freq,
-        time: values.time,
+        // Hourly runs at a minute past the hour; the hour doesn't apply.
+        time: values.freq === "hourly" ? dayjs().hour(0).minute(values.minute ?? 0) : values.time,
+        every: values.every,
         weekdays: values.weekdays,
         dom: values.dom,
       });
+      // One destination (an account's own schedule) or several.
+      const dests: string[] = Array.isArray(values.destination_ids)
+        ? values.destination_ids
+        : values.destination_ids
+          ? [values.destination_ids]
+          : [];
       const body: Record<string, unknown> = {
         kind,
         cron_expr: cron,
         enabled: values.enabled,
-        destination_ids: values.destination_ids ?? [],
+        destination_ids: dests,
       };
       if (!ownerID) {
         body.user_ids = userIDs;
@@ -342,7 +320,8 @@ function ScheduleDrawer({
       // Retention is one knob, scoped to the chosen frequency. The
       // matching keep_* column is set; the other two stay null so
       // restic forget skips them.
-      body.keep_daily = values.freq === "daily" ? (values.keep ?? null) : null;
+      // Hourly keeps daily backups: retention has no hourly count.
+      body.keep_daily = values.freq === "daily" || values.freq === "hourly" ? (values.keep ?? null) : null;
       body.keep_weekly = values.freq === "weekly" ? (values.keep ?? null) : null;
       body.keep_monthly = values.freq === "monthly" ? (values.keep ?? null) : null;
 
@@ -377,50 +356,8 @@ function ScheduleDrawer({
         </Space>
       }
     >
-      {interval ? (
-        <Form form={form} layout="vertical">
-          <Typography.Paragraph type="secondary">
-            This account set up this schedule on its Backups page. It backs up only this account and runs
-            on the interval below; these are the same choices the account has, and it sees your changes.
-          </Typography.Paragraph>
-          <Form.Item label="Account">
-            <Typography.Text>{ownerLabel}</Typography.Text>
-          </Form.Item>
-          <Form.Item name="content" label="What to back up" rules={[{ required: true }]}>
-            <Select options={BACKUP_CONTENT_OPTIONS} />
-          </Form.Item>
-          <Form.Item
-            name="cadence"
-            label="How often"
-            rules={[{ required: true }]}
-            extra="When Settings restricts tenant backups to a maintenance window, it runs inside that window."
-          >
-            <Select options={BACKUP_CADENCE_OPTIONS} />
-          </Form.Item>
-          <Form.Item
-            name="destination_id"
-            label="Destination"
-            rules={[{ required: !!enabled, message: "Pick a destination to enable this schedule" }]}
-          >
-            <Select
-              allowClear
-              placeholder="Pick a destination"
-              options={destinations.map((d) => ({
-                value: d.id,
-                label: `${d.name} (${d.kind})${d.enabled ? "" : " — disabled"}`,
-                disabled: !d.enabled,
-              }))}
-            />
-          </Form.Item>
-          <Form.Item name="keep" label="Copies to keep" extra="Leave blank to keep the current value.">
-            <InputNumber min={1} style={{ width: 200 }} />
-          </Form.Item>
-          <Form.Item name="enabled" label="Enabled" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
-      ) : (
-        <Form form={form} layout="vertical">
+      <Form form={form} layout="vertical">
+        {!(editing && interval) && (
           <Form.Item
             name="scope"
             label="Type"
@@ -430,153 +367,262 @@ function ScheduleDrawer({
                 ? "Panel/system only — panel DBs, service config, mail state. No account files."
                 : scope === "full_server"
                   ? "Every account (home, databases, mailboxes) PLUS the system, in one schedule. Disaster recovery."
-                  : "Per-account backup — all accounts or a chosen subset. Add the system with the switch below."
+                  : scope === "account_own"
+                    ? "The schedule an account adds on its Backups page: one account, on an interval, within its plan's limits. The account sees it and can change it."
+                    : "Per-account backup — all accounts or a chosen subset. Add the system with the switch below."
             }
           >
             <Radio.Group optionType="button" buttonStyle="solid">
               <Radio.Button value="account_backup" disabled={kindLocked("account_backup")}>Accounts</Radio.Button>
               <Radio.Button value="system_backup" disabled={kindLocked("system_backup")}>System</Radio.Button>
               <Radio.Button value="full_server" disabled={kindLocked("full_server")}>Full Server</Radio.Button>
+              <Radio.Button value="account_own" disabled={kindLocked("account_own")}>Account&apos;s own</Radio.Button>
             </Radio.Group>
           </Form.Item>
-          {scope === "account_backup" && !!ownerID && (
-            <Form.Item label="Account" extra="This account's own schedule backs up only this account.">
-              <Typography.Text>{ownerLabel}</Typography.Text>
-            </Form.Item>
-          )}
-          {scope === "account_backup" && !ownerID && (
-            <>
+        )}
+        {interval ? (
+          <>
+            {editing ? (
+              <>
+                <Typography.Paragraph type="secondary">
+                  This account set up this schedule on its Backups page. It backs up only this account and runs
+                  on the interval below; these are the same choices the account has, and it sees your changes.
+                </Typography.Paragraph>
+                <Form.Item label="Account">
+                  <Typography.Text>{ownerLabel}</Typography.Text>
+                </Form.Item>
+              </>
+            ) : (
               <Form.Item
-                name="user_ids"
-                label="Users"
-                rules={[{ required: true, message: "Pick at least one user, or 'All users'" }]}
-                extra="Select 'All users' OR pick specific accounts. Admins are excluded from the list."
+                name="owner_id"
+                label="Account"
+                rules={[{ required: true, message: "Pick an account" }]}
+                extra="Its plan must allow scheduled backups and more than one schedule."
               >
                 <Select
-                  mode="multiple"
                   showSearch
-                  allowClear
-                  placeholder="Pick users (or 'All users')"
+                  placeholder="Pick an account"
                   optionFilterProp="label"
-                  options={[
-                    { value: ALL_USERS, label: "All users (every non-admin)" },
-                    ...users
-                      .filter((u) => !u.is_admin)
-                      .map((u) => ({
-                        value: u.id,
-                        label: `${u.username} (${u.email})`,
-                      })),
-                  ]}
+                  options={users
+                    .filter((u) => !u.is_admin)
+                    .map((u) => ({ value: u.id, label: `${u.username} (${u.email})` }))}
                 />
               </Form.Item>
-              <Form.Item
-                name="include_system_backup"
-                label="Include system backup"
-                valuePropName="checked"
-                extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
-              >
-                <Switch />
-              </Form.Item>
-            </>
-          )}
-          {scope !== "system_backup" && (
-            <Form.Item
-              name="content"
-              label="What to back up"
-              rules={[{ required: true }]}
-              extra={scope === "full_server" ? "For the account backups. The system backup is always complete." : undefined}
-            >
+            )}
+            <Form.Item name="content" label="What to back up" rules={[{ required: true }]}>
               <Select options={BACKUP_CONTENT_OPTIONS} />
             </Form.Item>
-          )}
-          <Form.Item
-            name="freq"
-            label="Frequency"
-            rules={[{ required: true }]}
-          >
-            <Segmented
-              options={[
-                { label: "Daily", value: "daily" },
-                { label: "Weekly", value: "weekly" },
-                { label: "Monthly", value: "monthly" },
-              ]}
-            />
-          </Form.Item>
-          {freq === "weekly" && (
             <Form.Item
-              name="weekdays"
-              label="Days"
-              rules={[{ required: true, message: "Pick at least one weekday" }]}
+              name="cadence"
+              label="How often"
+              rules={[{ required: true }]}
+              extra="When Settings restricts tenant backups to a maintenance window, it runs inside that window."
             >
-              <Checkbox.Group options={WEEKDAY_OPTIONS} />
+              <Select options={BACKUP_CADENCE_OPTIONS} />
             </Form.Item>
-          )}
-          {freq === "monthly" && (
             <Form.Item
-              name="dom"
-              label="Day of month"
-              rules={[{ required: true, type: "number", min: 1, max: 31 }]}
-              extra="1–31. Months without that day are skipped (e.g. day 31 in February)."
+              name="destination_id"
+              label="Destination"
+              rules={[{ required: !!enabled, message: "Pick a destination to enable this schedule" }]}
+              extra="One the account's plan allows."
             >
-              <InputNumber min={1} max={31} style={{ width: 120 }} />
+              <Select
+                allowClear
+                placeholder="Pick a destination"
+                options={destinations.map((d) => ({
+                  value: d.id,
+                  label: `${d.name} (${d.kind})${d.enabled ? "" : " — disabled"}`,
+                  disabled: !d.enabled,
+                }))}
+              />
             </Form.Item>
-          )}
-          <Form.Item
-            name="time"
-            label="Time"
-            rules={[{ required: true, message: "Pick a time" }]}
-          >
-            <TimePicker format="HH:mm" minuteStep={5} />
-          </Form.Item>
-          <Form.Item
-            name="destination_ids"
-            label="Destinations"
-            rules={[{ required: true, message: "Pick at least one destination" }]}
-            extra={
-              destinations.length === 0
-                ? "Create at least one destination first."
-                : "Each destination receives its own independent backup (no source-then-mirror)."
-            }
-          >
-            <Select
-              mode="multiple"
-              placeholder="Select destinations"
-              options={destinations.map((d) => ({
-                value: d.id,
-                label: `${d.name} (${d.kind})${d.enabled ? "" : " — disabled"}`,
-                disabled: !d.enabled,
-              }))}
-            />
-          </Form.Item>
+            <Form.Item
+              name="keep"
+              label="Copies to keep"
+              extra={editing ? "Up to the account's plan limit. Leave blank to keep the current value." : "Up to the account's plan limit."}
+            >
+              <InputNumber min={1} style={{ width: 200 }} />
+            </Form.Item>
+          </>
+        ) : (
+          <>
+            {unreadCron && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 16 }}
+                message={
+                  <>
+                    This form can&apos;t show this schedule&apos;s time (<code>{editing?.cron_expr}</code>). Saving
+                    replaces it with the time below.
+                  </>
+                }
+              />
+            )}
+            {scope === "account_backup" && !!ownerID && (
+              <Form.Item label="Account" extra="This account's own schedule backs up only this account.">
+                <Typography.Text>{ownerLabel}</Typography.Text>
+              </Form.Item>
+            )}
+            {scope === "account_backup" && !ownerID && (
+              <>
+                <Form.Item
+                  name="user_ids"
+                  label="Users"
+                  rules={[{ required: true, message: "Pick at least one user, or 'All users'" }]}
+                  extra="Select 'All users' OR pick specific accounts. Admins are excluded from the list."
+                >
+                  <Select
+                    mode="multiple"
+                    showSearch
+                    allowClear
+                    placeholder="Pick users (or 'All users')"
+                    optionFilterProp="label"
+                    options={[
+                      { value: ALL_USERS, label: "All users (every non-admin)" },
+                      ...users
+                        .filter((u) => !u.is_admin)
+                        .map((u) => ({
+                          value: u.id,
+                          label: `${u.username} (${u.email})`,
+                        })),
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="include_system_backup"
+                  label="Include system backup"
+                  valuePropName="checked"
+                  extra="Also fire a system backup (panel DBs + service config + mail state + …) every time this schedule runs."
+                >
+                  <Switch />
+                </Form.Item>
+              </>
+            )}
+            {scope !== "system_backup" && (
+              <Form.Item
+                name="content"
+                label="What to back up"
+                rules={[{ required: true }]}
+                extra={scope === "full_server" ? "For the account backups. The system backup is always complete." : undefined}
+              >
+                <Select options={BACKUP_CONTENT_OPTIONS} />
+              </Form.Item>
+            )}
+            <Form.Item
+              name="freq"
+              label="Frequency"
+              rules={[{ required: true }]}
+            >
+              <Segmented
+                options={[
+                  { label: "Hourly", value: "hourly" },
+                  { label: "Daily", value: "daily" },
+                  { label: "Weekly", value: "weekly" },
+                  { label: "Monthly", value: "monthly" },
+                ]}
+              />
+            </Form.Item>
+            {freq === "hourly" && (
+              <>
+                <Form.Item
+                  name="every"
+                  label="Every"
+                  rules={[{ required: true }]}
+                  extra="Each run backs up every account this schedule covers."
+                >
+                  <Select
+                    style={{ width: 200 }}
+                    options={HOURLY_EVERY.map((n) => ({ value: n, label: n === 1 ? "Every hour" : `Every ${n} hours` }))}
+                  />
+                </Form.Item>
+                <Form.Item name="minute" label="Minute past the hour" rules={[{ required: true, type: "number", min: 0, max: 59 }]}>
+                  <InputNumber min={0} max={59} step={5} style={{ width: 120 }} />
+                </Form.Item>
+              </>
+            )}
+            {freq === "weekly" && (
+              <Form.Item
+                name="weekdays"
+                label="Days"
+                rules={[{ required: true, message: "Pick at least one weekday" }]}
+              >
+                <Checkbox.Group options={WEEKDAY_OPTIONS} />
+              </Form.Item>
+            )}
+            {freq === "monthly" && (
+              <Form.Item
+                name="dom"
+                label="Day of month"
+                rules={[{ required: true, type: "number", min: 1, max: 31 }]}
+                extra="1–31. Months without that day are skipped (e.g. day 31 in February)."
+              >
+                <InputNumber min={1} max={31} style={{ width: 120 }} />
+              </Form.Item>
+            )}
+            {freq !== "hourly" && (
+              <Form.Item
+                name="time"
+                label="Time"
+                rules={[{ required: true, message: "Pick a time" }]}
+              >
+                <TimePicker format="HH:mm" minuteStep={5} />
+              </Form.Item>
+            )}
+            <Form.Item
+              name="destination_ids"
+              label={ownerID ? "Destination" : "Destinations"}
+              rules={[{ required: true, message: "Pick at least one destination" }]}
+              extra={
+                destinations.length === 0
+                  ? "Create at least one destination first."
+                  : "Each destination receives its own independent backup (no source-then-mirror)."
+              }
+            >
+              <Select
+                mode={ownerID ? undefined : "multiple"}
+                placeholder="Select destinations"
+                options={destinations.map((d) => ({
+                  value: d.id,
+                  label: `${d.name} (${d.kind})${d.enabled ? "" : " — disabled"}`,
+                  disabled: !d.enabled,
+                }))}
+              />
+            </Form.Item>
 
-          <Typography.Title level={5}>Retention</Typography.Title>
-          <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
-            restic forget runs daily and prunes snapshots from this
-            schedule beyond this limit. Leave blank to keep every snapshot.
-          </Typography.Paragraph>
-          <Form.Item
-            name="keep"
-            label={
-              freq === "daily"
-                ? "Keep last N daily backups"
-                : freq === "weekly"
-                  ? "Keep last N weekly backups"
-                  : "Keep last N monthly backups"
-            }
-          >
-            <InputNumber
-              min={0}
-              max={freq === "daily" ? 365 : freq === "weekly" ? 104 : 120}
-              placeholder="keep all"
-              style={{ width: 200 }}
-            />
-          </Form.Item>
-
-          <Form.Item name="enabled" label="Enabled" valuePropName="checked">
-            <Switch />
-          </Form.Item>
-        </Form>
-      )}
+            <Typography.Title level={5}>Retention</Typography.Title>
+            <Typography.Paragraph type="secondary" style={{ marginTop: -8 }}>
+              restic forget runs daily and prunes snapshots from this
+              schedule beyond this limit. Leave blank to keep every snapshot.
+            </Typography.Paragraph>
+            <Form.Item
+              name="keep"
+              extra={
+                freq === "hourly"
+                  ? "Retention keeps one backup a day, so the daily sweep removes the day's other hourly backups."
+                  : undefined
+              }
+              label={
+                freq === "daily" || freq === "hourly"
+                  ? "Keep last N daily backups"
+                  : freq === "weekly"
+                    ? "Keep last N weekly backups"
+                    : "Keep last N monthly backups"
+              }
+            >
+              <InputNumber
+                min={0}
+                max={freq === "daily" || freq === "hourly" ? 365 : freq === "weekly" ? 104 : 120}
+                placeholder="keep all"
+                style={{ width: 200 }}
+              />
+            </Form.Item>
+          </>
+        )}
+        <Form.Item name="enabled" label="Enabled" valuePropName="checked">
+          <Switch />
+        </Form.Item>
+      </Form>
     </Drawer>
   );
 }

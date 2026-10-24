@@ -413,7 +413,7 @@ components:
         include_system_backup: { type: boolean }
         cron_expr: { type: string, example: "0 3 * * *", description: "Empty on an account's own schedule, which runs on its cadence." }
         content: { type: string, enum: [full, files, database, folders], description: "What each run backs up." }
-        cadence: { type: string, enum: ["", hourly, every_6h, every_12h, daily, weekly], description: "Set on an account's own schedule, which runs on this interval instead of cron_expr. A PATCH may change cadence only on such a schedule, and cron_expr only on a cron schedule (GH #2246)." }
+        cadence: { type: string, enum: ["", hourly, every_6h, every_12h, daily, weekly], description: "Set on an account's own schedule, which runs on this interval instead of cron_expr. A PATCH may change cadence only on such a schedule, and cron_expr only on a cron schedule. A POST with cadence creates an account's own schedule for the one account in user_ids, under that account's hosting plan (GH #2246)." }
         enabled: { type: boolean }
         keep_daily: { type: integer }
         keep_weekly: { type: integer }
