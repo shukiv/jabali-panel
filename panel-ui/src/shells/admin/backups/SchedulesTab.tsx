@@ -722,9 +722,9 @@ export function SchedulesTab() {
           render={(_, row) => {
             const sc = scopeOf(row);
             if (sc === "system_backup") return <Tag color="purple">System</Tag>;
-            // What the runs back up, when it is not the whole account.
-            const content =
-              row.content && row.content !== "full" ? <Tag>{backupContentLabel(row.content)}</Tag> : null;
+            // What the runs back up, the full account too, so every account
+            // schedule says it (GH #2246).
+            const content = <Tag>{backupContentLabel(row.content ?? "")}</Tag>;
             if (sc === "full_server") {
               return (
                 <Space size={4} wrap>
