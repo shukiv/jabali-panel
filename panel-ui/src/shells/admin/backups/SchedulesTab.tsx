@@ -147,6 +147,11 @@ const specFromCron = (expr: string): ScheduleSpec | null => {
   return null;
 };
 
+// listedAsOwn: a row shown as an account's own schedule. A single-user admin
+// schedule from before user_ids also has user_id set; one later widened to
+// more users is listed with all of them, so none is hidden.
+const listedAsOwn = (s: BackupSchedule) => !!s.user_id && (s.user_ids ?? []).length <= 1;
+
 const WEEKDAY_OPTIONS = [
   { label: "Mon", value: 1 },
   { label: "Tue", value: 2 },
@@ -407,7 +412,7 @@ function ScheduleDrawer({
               }))}
             />
           </Form.Item>
-          <Form.Item name="keep" label="Copies to keep">
+          <Form.Item name="keep" label="Copies to keep" extra="Leave blank to keep the current value.">
             <InputNumber min={1} style={{ width: 200 }} />
           </Form.Item>
           <Form.Item name="enabled" label="Enabled" valuePropName="checked">
@@ -685,7 +690,7 @@ export function SchedulesTab() {
             return (
               <Space size={4} wrap>
                 <Tag color="blue">
-                  {row.user_id ? "Account's own" : row.include_system_backup ? "Accounts + system" : "Accounts"}
+                  {listedAsOwn(row) ? "Account's own" : row.include_system_backup ? "Accounts + system" : "Accounts"}
                 </Tag>
                 {content}
               </Space>
@@ -696,7 +701,7 @@ export function SchedulesTab() {
           title={t("schedulestab.users")}
           render={(_, row) => {
             if (row.kind === "system_backup") return "—";
-            if (row.user_id) {
+            if (row.user_id && listedAsOwn(row)) {
               return <Tag>{users.find((u) => u.id === row.user_id)?.username ?? row.user_id.slice(0, 8)}</Tag>;
             }
             const ids = row.user_ids ?? [];

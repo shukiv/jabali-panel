@@ -109,6 +109,15 @@ describe("SchedulesTab, an account's own schedule (GH #2246)", () => {
     expect(within(row).getByText("alice")).toBeTruthy();
   });
 
+  it("an old single-user admin schedule widened to more users lists all of them", async () => {
+    // user_id from before user_ids, then more users added: not the account's own.
+    mockLists([{ ...ADMIN_ROW, user_id: "u1", user_ids: ["u1", "u2"] }]);
+    render(<SchedulesTab />);
+    const row = (await screen.findByText("30 2 * * *")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("2 selected")).toBeTruthy();
+    expect(within(row).queryByText("Account's own")).toBeNull();
+  });
+
   it("opens with the account's settings and saves only those", async () => {
     mockLists([TENANT_ROW]);
     const drawer = await openEdit("Every 6 hours");
