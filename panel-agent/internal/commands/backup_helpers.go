@@ -579,7 +579,8 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 			// to die later with a worse error.
 		case repoProbeOther:
 			// Not a missing-repo signal, not a known unopenable signal — surface raw.
-			return fmt.Errorf("snapshots probe: %w (stderr: %s)", snapErr, lower)
+			// snapErr already carries restic's stderr.
+			return fmt.Errorf("snapshots probe: %w", snapErr)
 		default:
 			// A repository that EXISTS but cannot be opened: a foreign/rotated
 			// password (GH #454) or a key/config mismatch from a concurrent-init
