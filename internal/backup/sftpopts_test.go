@@ -116,3 +116,10 @@ func TestSFTPCommandFlag_DashLedUserAndHostAreNotOptions(t *testing.T) {
 		}
 	}
 }
+
+// GH #2245: an SFTP repo stored as a bare URL gets the same ssh bounds,
+// appended to restic's own ssh command through sftp.args.
+func TestSFTPArgsFlag_CarriesTheTimeoutsOnly(t *testing.T) {
+	require.Equal(t,
+		"sftp.args=-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4", SFTPArgsFlag())
+}
