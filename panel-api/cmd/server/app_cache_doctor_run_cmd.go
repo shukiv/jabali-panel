@@ -1,7 +1,7 @@
 // app_cache_doctor_run_cmd.go — JAB-11 fleet follow-up. `jabali app
 // cache-doctor-run` runs the SAME fleet sweep as the admin GUI's
 // POST /admin/cache/doctor-runs (api.SweepCacheDoctor) and persists a
-// cache_doctor_runs row. The jabali-cache-doctor.timer runs this nightly so
+// cache_doctor_runs row. The jabali-cache-doctor.timer runs this hourly so
 // standing drift shows up in the admin Cache page's run history without anyone
 // clicking "Run doctor". (The older `cache-doctor` command prints to stdout and
 // does not record a run; this one records.)

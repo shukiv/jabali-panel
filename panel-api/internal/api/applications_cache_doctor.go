@@ -154,7 +154,7 @@ func CacheDoctorHasWork(ctx context.Context, installs repository.ApplicationInst
 
 // SweepCacheDoctor runs a fleet cache-maintenance sweep synchronously against
 // cfg, updating the (already-Created) run row as it progresses. Exported so the
-// nightly CLI timer (`jabali app cache-doctor-run`) runs the exact same executor
+// hourly CLI timer (`jabali app cache-doctor-run`) runs the exact same executor
 // as the HTTP trigger — no second sweep implementation to drift. The caller owns
 // the context deadline.
 func SweepCacheDoctor(ctx context.Context, cfg ApplicationHandlerConfig, run *models.CacheDoctorRun, actorUserID string) error {
