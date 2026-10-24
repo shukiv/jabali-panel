@@ -124,6 +124,15 @@ func TestResolveUserScope(t *testing.T) {
 		{"GET", "/api/v1/me/api-tokens", "", false},
 		{"GET", "/api/v1/branding", "", false},
 		{"GET", "/api/v1/domains/:id/unmapped-feature", "", false},
+		// Admin backups stay out of the backups scope (GH #2245): a scoped
+		// token reaches only its owner's /me/backups, never the server's.
+		{"GET", "/api/v1/admin/backups", "", false},
+		{"GET", "/api/v1/admin/backups/:job_id", "", false},
+		{"POST", "/api/v1/admin/backups/:job_id/cancel", "", false},
+		{"POST", "/api/v1/admin/backups/restore", "", false},
+		{"GET", "/api/v1/admin/users/:id/backups", "", false},
+		{"GET", "/api/v1/admin/backup-runs", "", false},
+		{"POST", "/api/v1/admin/system/backups/:job_id/cancel", "", false},
 	}
 	for _, c := range cases {
 		got, ok := resolveUserScope(c.method, c.path)
