@@ -82,6 +82,32 @@ func TestBackupJobRegistry_CancelStopsOnlyRunningJobs(t *testing.T) {
 	}
 }
 
+// GH #2245: finish frees what the job held (its job slot) before it closes
+// done, so backup.cancel never answers while the slot is still held.
+func TestBackupJobRegistry_ReleasesBeforeDone(t *testing.T) {
+	r := newBackupJobRegistry()
+	var done <-chan struct{}
+	released := false
+	ctx := r.start("job", time.Minute, func() {
+		select {
+		case <-done:
+			t.Error("done closed before the job released what it held")
+		default:
+		}
+		released = true
+	})
+	done, _ = r.cancel("job")
+	r.finish("job", ctx.Err())
+	if !released {
+		t.Fatal("finish did not run the job's release")
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("finish did not close done")
+	}
+}
+
 func TestBackupJobRegistry_TimeoutNamesTheLimit(t *testing.T) {
 	r := newBackupJobRegistry()
 	ctx := r.start("slow", 10*time.Millisecond)

@@ -156,14 +156,9 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 	// Inline orchestration: the job runs in this goroutine, registered in
 	// defaultBackupJobs so backup.cancel can stop it and backup.status can
 	// report how it ended (GH #2245).
-	ctxBg := defaultBackupJobs.start(req.JobID, accountBackupTimeout)
-	go func() {
-		var err error
-		// finish runs last, once the slot below is free: backup.cancel
-		// answers when finish has run, and the delete a user makes right
-		// after a cancel must not find the slot still held (GH #2245).
-		defer func() { defaultBackupJobs.finish(req.JobID, err) }()
-		defer defaultJobSlots.release("backup", req.UserID, req.RepoURL)
+	// finish runs the release before it records how the job ended, so the
+	// slot is free by the time backup.cancel answers (GH #2245).
+	ctxBg := defaultBackupJobs.start(req.JobID, accountBackupTimeout, func() {
 		// The per-destination password tempfile belongs to THIS job, not to
 		// the RPC that started it. backup.create is fire-and-forget — it
 		// returns as soon as this goroutine is spawned — so the caller
@@ -171,8 +166,12 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		// to unlink it seconds in, while the orchestrator below still needed
 		// it for every stage and for the manifest snapshot (up to 90
 		// minutes). Clean it up when the job actually ends.
-		defer func() { _ = removePasswordTempFile(req.PasswordFile) }()
-		err = runBackupJob(ctxBg, req)
+		_ = removePasswordTempFile(req.PasswordFile)
+		defaultJobSlots.release("backup", req.UserID, req.RepoURL)
+	})
+	go func() {
+		err := runBackupJob(ctxBg, req)
+		defaultBackupJobs.finish(req.JobID, err)
 		if err != nil {
 			fmt.Println("backup orchestrator failed:", err)
 		}

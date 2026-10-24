@@ -63,8 +63,11 @@ type backupJob struct {
 	destinationErr  bool
 	cancelRequested bool
 	endedAt         time.Time
-	// done is closed by finish, once the job's goroutine has let go of
-	// everything it held (backup.cancel waits on it).
+	// release frees what the job holds (its job slot, its password file).
+	// finish runs it before closing done.
+	release []func()
+	// done is closed by finish, once the job has let go of everything it
+	// held (backup.cancel waits on it).
 	done chan struct{}
 }
 
@@ -89,24 +92,38 @@ var defaultBackupJobs = newBackupJobRegistry()
 
 // start records a running job and returns the context its goroutine must run
 // under. Call it before spawning the goroutine, so a cancel that arrives right
-// after backup.create returns finds the job.
-func (r *backupJobRegistry) start(jobID string, timeout time.Duration) context.Context {
+// after backup.create returns finds the job. release frees what the job holds;
+// finish runs it.
+func (r *backupJobRegistry) start(jobID string, timeout time.Duration, release ...func()) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prune()
-	r.jobs[jobID] = &backupJob{ctx: ctx, cancel: cancel, timeout: timeout, state: backupJobRunning, done: make(chan struct{})}
+	r.jobs[jobID] = &backupJob{ctx: ctx, cancel: cancel, timeout: timeout, state: backupJobRunning,
+		release: release, done: make(chan struct{})}
 	return ctx
 }
 
-// finish records how the job's goroutine ended. Call it last, after the
-// goroutine has released its job slot: it closes done, and backup.cancel
-// answers as soon as done is closed.
+// finish records how the job's goroutine ended. It frees what the job held
+// before it closes done: backup.cancel answers once done is closed, and the
+// delete a user makes right after a cancel must find the job slot free
+// (GH #2245).
 func (r *backupJobRegistry) finish(jobID string, err error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	j, ok := r.jobs[jobID]
 	if !ok || j.state != backupJobRunning {
+		r.mu.Unlock()
+		return
+	}
+	release := j.release
+	r.mu.Unlock()
+	for _, f := range release {
+		f()
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if j.state != backupJobRunning {
 		return
 	}
 	defer close(j.done)
