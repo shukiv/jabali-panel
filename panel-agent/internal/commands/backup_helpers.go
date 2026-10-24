@@ -113,8 +113,13 @@ func bkResticConfig(repoURL, credentialsRef string, sftp *backupSFTPInputs) (bac
 //
 // TestNoAgentBackupStructAcceptsExtraOptions keeps the wire field from coming
 // back.
-func bkResticOptions(sftp *backupSFTPInputs) []string {
+func bkResticOptions(repoURL string, sftp *backupSFTPInputs) []string {
 	if sftp == nil {
+		// An SFTP repo stored as a bare URL still gets the ssh timeouts
+		// (GH #2245), appended to restic's own ssh command.
+		if strings.HasPrefix(repoURL, "sftp:") {
+			return []string{backup.SFTPArgsFlag()}
+		}
 		return nil
 	}
 	flag := backup.SFTPCommandFlag(backup.SFTPInputs{
@@ -145,7 +150,7 @@ func bkResticConfigWithPassword(repoURL, credentialsRef, passwordFile string, sf
 		cfg.PasswordFile = passwordFile
 	}
 	// Built from typed inputs, never taken from the request (JAB-194).
-	cfg.ExtraOptions = bkResticOptions(sftp)
+	cfg.ExtraOptions = bkResticOptions(repoURL, sftp)
 	if credentialsRef != "" {
 		env, err := backup.LoadEnvFile(credentialsRef)
 		if err != nil {
@@ -560,7 +565,7 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 		extraEnv = env
 	}
 	return withRepoInitLock(ctx, repoURL, func() error {
-		_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+		_, snapStderr, snapErr := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(repoURL, sftp))
 		if snapErr == nil {
 			return nil
 		}
@@ -609,7 +614,7 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 					return moveKeyAside(ctx, destKind, repoURL, sftp, extraEnv, named)
 				}
 				reprobe := func(ctx context.Context) (string, error) {
-					_, st, e := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+					_, st, e := backup.SnapshotsRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(repoURL, sftp))
 					return strings.ToLower(strings.TrimSpace(string(st))), e
 				}
 				return repairKeyMismatch(ctx, keys, repoURL, pwFile, lower, move, reprobe)
@@ -622,7 +627,7 @@ func bkEnsureRepoReady(ctx context.Context, repoURL, credentialsRef, destKind, p
 		// Init with the SAME password the probe used: a fresh repo for a
 		// destination that carries its own sealed password must be created under
 		// that password, or every later open fails.
-		_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(sftp))
+		_, initStderr, initErr := backup.InitRemote(ctx, nil, repoURL, pwFile, extraEnv, bkResticOptions(repoURL, sftp))
 		if initErr != nil {
 			ls := strings.ToLower(strings.TrimSpace(string(initStderr)))
 			if strings.Contains(ls, "already initialized") ||

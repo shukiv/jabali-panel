@@ -51,6 +51,11 @@ func ResticOptionsFor(d *models.BackupDestination) []string {
 		return nil
 	}
 	opts := d.ExtraOptionsTyped()
+	// An SFTP destination stored as a bare URL still gets the ssh timeouts
+	// (GH #2245), appended to restic's own ssh command.
+	if d.Kind == models.BackupDestinationKindSFTP && opts.SFTP == nil {
+		return []string{internalbackup.SFTPArgsFlag()}
+	}
 	if d.Kind == models.BackupDestinationKindSFTP && opts.SFTP != nil {
 		s := opts.SFTP
 		flag := internalbackup.SFTPCommandFlag(internalbackup.SFTPInputs{

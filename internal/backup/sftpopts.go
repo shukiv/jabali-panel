@@ -53,6 +53,18 @@ var sshTimeoutOpts = []string{
 	"-o", "ServerAliveCountMax=4",
 }
 
+// SFTPArgsFlag returns the `-o sftp.args=...` option that adds
+// sshTimeoutOpts to restic's own ssh command. It is for an SFTP repo with no
+// typed SFTP inputs (a destination stored as a bare `sftp:user@host:/path`
+// URL): restic builds the ssh command from the URL and appends these
+// arguments, so such a destination is bounded the same way without the panel
+// parsing the URL. restic refuses sftp.args together with sftp.command, so a
+// caller passes one or the other. Needs restic 0.15+ (Debian 13 ships 0.18,
+// Ubuntu 24.04 0.16).
+func SFTPArgsFlag() string {
+	return "sftp.args=" + strings.Join(sshTimeoutOpts, " ")
+}
+
 // SFTPCommandFlag returns the `-o sftp.command=...` option for the
 // given inputs, or an empty string when there is no host to connect to.
 //

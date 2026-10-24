@@ -90,17 +90,19 @@ func TestBkResticOptionsMatchesSFTPCommandFlag(t *testing.T) {
 		name string
 		in   *backupSFTPInputs
 	}{
-		{"nil means no options", nil},
+		{"no typed inputs", nil},
 		{"default auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p"}},
 		{"non-default port", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Port: 2222}},
 		{"key auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Auth: "key", KeyPath: "/root/.ssh/id_ed25519"}},
 		{"password auth", &backupSFTPInputs{Host: "h", User: "u", Path: "/p", Auth: "password"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := bkResticOptions(tc.in)
+			got := bkResticOptions("sftp:u@h:/p", tc.in)
 			if tc.in == nil {
-				if got != nil {
-					t.Fatalf("nil inputs must yield no options, got %q", got)
+				// GH #2245: an SFTP repo with no typed inputs still gets
+				// the ssh timeouts, appended to restic's own ssh command.
+				if len(got) != 1 || got[0] != backup.SFTPArgsFlag() {
+					t.Fatalf("bare sftp URL must yield only sftp.args, got %q", got)
 				}
 				return
 			}
@@ -161,5 +163,16 @@ func TestWireExtraOptionsAreIgnored(t *testing.T) {
 	}
 	if !strings.Contains(cfg.ExtraOptions[0], "2222") {
 		t.Errorf("agent-built option lost the typed port: %q", cfg.ExtraOptions[0])
+	}
+}
+
+// GH #2245: the bare-URL fallback applies only to an SFTP repo; any other
+// repo (local, s3, …) gets no options.
+func TestBkResticOptions_NonSFTPRepoGetsNoOptions(t *testing.T) {
+	t.Parallel()
+	for _, repo := range []string{"/var/lib/jabali-backups/repo", "s3:s3.amazonaws.com/b/p", "rest:https://h/r", ""} {
+		if got := bkResticOptions(repo, nil); got != nil {
+			t.Errorf("%q: got %q, want no options", repo, got)
+		}
 	}
 }

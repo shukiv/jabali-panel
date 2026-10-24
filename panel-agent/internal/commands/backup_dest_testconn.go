@@ -47,7 +47,7 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 		p.URL,
 		backup.DefaultPasswordFile,
 		extraEnv,
-		bkResticOptions(p.SFTP),
+		bkResticOptions(p.URL, p.SFTP),
 	)
 	if err != nil {
 		stderrStr := strings.TrimSpace(string(stderr))
@@ -76,7 +76,7 @@ func backupDestTestHandler(ctx context.Context, raw json.RawMessage) (any, error
 					p.URL,
 					backup.DefaultPasswordFile,
 					extraEnv,
-					bkResticOptions(p.SFTP),
+					bkResticOptions(p.URL, p.SFTP),
 				)
 				return initErr
 			}); lockErr != nil && initErr == nil {
