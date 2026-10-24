@@ -170,8 +170,9 @@ func backupCreateHandler(ctx context.Context, raw json.RawMessage) (any, error) 
 		defaultJobSlots.release("backup", req.UserID, req.RepoURL)
 	})
 	go func() {
-		err := runBackupJob(ctxBg, req)
-		defaultBackupJobs.finish(req.JobID, err)
+		var err error
+		defer func() { defaultBackupJobs.finish(req.JobID, err) }()
+		err = runBackupJob(ctxBg, req)
 		if err != nil {
 			fmt.Println("backup orchestrator failed:", err)
 		}
