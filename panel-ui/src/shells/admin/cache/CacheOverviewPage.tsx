@@ -4,6 +4,7 @@
 import { useTranslation } from "react-i18next";
 import { App, Card, Table, Tag, Typography } from "antd";
 import { useEffect, useState } from "react";
+import { ThunderboltOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { FleetCacheDoctor } from "./FleetCacheDoctor";
@@ -36,6 +37,10 @@ export function CacheOverviewPage() {
 
   return (
     <>
+      {/* GH #2251: the page opens with a heading that carries the sidebar's icon. */}
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <ThunderboltOutlined /> Cache
+      </Typography.Title>
       <FleetCacheDoctor />
       <Card title={t("cacheoverviewpage.cache_overview_page_cache_hit_ratio_by_domai")}>
       <Typography.Paragraph type="secondary">

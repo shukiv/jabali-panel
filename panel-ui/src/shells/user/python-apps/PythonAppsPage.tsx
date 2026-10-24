@@ -16,7 +16,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined, FolderOpenOutlined } from "@icons";
+import { CodeOutlined, PlusOutlined, ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined, FolderOpenOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { PythonAppEnvDrawer } from "./PythonAppEnvDrawer";
 import { useEffect, useMemo, useState } from "react";
@@ -204,9 +204,9 @@ export function PythonAppsPage() {
         style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Python Apps
+          <CodeOutlined /> Python Apps
         </Typography.Title>
-        <Button type="primary" onClick={() => openCreate()}>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
           Create app
         </Button>
       </Space>

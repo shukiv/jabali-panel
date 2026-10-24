@@ -76,14 +76,44 @@ test.describe("GH #2251 — admin page layouts", () => {
     await page.goto("/jabali-admin/migrations");
     await expectPageHeading(page, /^Migrations$/);
   });
+
+  test("Cache and Server API Access have a level-3 heading with their icon", async ({ page }) => {
+    await page.goto("/jabali-admin/cache");
+    await expectPageHeading(page, /^Cache$/);
+
+    await page.goto("/jabali-admin/automation");
+    await expectPageHeading(page, /^Server API Access$/);
+  });
 });
 
+// The tenant pages below sit behind capability gates, and Disk Usage and Mail
+// read data mockApi does not serve.
+async function mockTenantPages(page: Page): Promise<void> {
+  const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  await page.route("**/api/v1/me/server-capabilities", (route) =>
+    route.fulfill(json({ python_apps_enabled: true, mail_enabled: true, dns_enabled: true })),
+  );
+  const none = { bytes: 0, items: [] };
+  await page.route("**/api/v1/me/disk-usage", (route) =>
+    route.fulfill(
+      json({ computed_at: "2026-10-24T08:00:00Z", total_bytes: 0, quota_bytes: 0, files: none, email: none, databases: none }),
+    ),
+  );
+  await page.route("**/api/v1/me/disk-usage/files*", (route) => route.fulfill(json({ path: "", total: 0, entries: [] })));
+  await page.route("**/api/v1/me/mail-domains*", (route) =>
+    route.fulfill(json({ data: [], total: 0, page: 1, page_size: 25 })),
+  );
+}
+
 test.describe("GH #2251 — tenant page layouts", () => {
-  test("Logs & Statistics: heading with its icon, tabs in the card below it", async ({ page }) => {
+  test.beforeEach(async ({ page }) => {
     await mockApi(page, { me: user });
+    await mockTenantPages(page);
     await signIn(page, user);
     await page.waitForURL(/\/jabali-panel/);
+  });
 
+  test("Logs & Statistics: heading with its icon, tabs in the card below it", async ({ page }) => {
     await page.goto("/jabali-panel/logs");
     const heading = await expectPageHeading(page, /Logs & Statistics/);
     await expectTabsInCardBelow(page, heading, ["Domain logs", "Account activity"]);
@@ -94,5 +124,38 @@ test.describe("GH #2251 — tenant page layouts", () => {
     await expect(page).toHaveURL(/\/jabali-panel\/logs\?tab=activity/);
     await expect(page.getByRole("tab", { name: "Account activity", selected: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: /Account Activity/i })).toHaveCount(0);
+  });
+
+  test("PHP Settings: tabs in the card below the heading, no card inside a tab", async ({ page }) => {
+    await page.goto("/jabali-panel/php-settings");
+    const heading = await expectPageHeading(page, /^PHP Settings$/);
+    await expectTabsInCardBelow(page, heading, [
+      "Version & Domains",
+      "Performance",
+      "OPcache & JIT",
+      "Environment",
+      "Extensions",
+      "Xdebug",
+    ]);
+
+    await page.getByRole("tab", { name: "Environment" }).click();
+    await expect(page).toHaveURL(/[?&]tab=env/);
+    await expect(page.getByText("Per-domain environment variables for PHP apps.")).toBeVisible();
+    await expect(page.locator(".ant-card .ant-card")).toHaveCount(0);
+  });
+
+  test("Disk Usage, Python Apps, Mail Domains and Notifications have a heading with their icon", async ({ page }) => {
+    await page.goto("/jabali-panel/disk-usage");
+    await expectPageHeading(page, /^Disk Usage$/);
+
+    await page.goto("/jabali-panel/python-apps");
+    await expectPageHeading(page, /^Python Apps$/);
+
+    await page.goto("/jabali-panel/mail-domains");
+    await expectPageHeading(page, /^Mail Domains$/);
+    await expect(page.getByRole("button", { name: /Create Mail Domain/ }).first()).toBeVisible();
+
+    await page.goto("/jabali-panel/notifications");
+    await expectPageHeading(page, /^Notifications$/);
   });
 });

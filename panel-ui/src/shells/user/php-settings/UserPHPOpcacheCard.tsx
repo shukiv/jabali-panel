@@ -4,7 +4,7 @@
 // no override (server default), On/Off (or a size) writes one. Saving restarts
 // the version's FPM master so the change takes effect (a graceful reload keeps
 // the old SHM), so Reset lives here too.
-import { Alert, Button, Card, Col, Row, Select, Space, Spin, Typography } from "antd";
+import { Alert, Button, Col, Row, Select, Space, Spin, Typography } from "antd";
 import { feedback } from "../../../lib/feedback";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -112,7 +112,8 @@ export const UserPHPOpcacheCard = () => {
   const sel = { width: "100%" as const };
 
   return (
-    <Card title="OPcache & JIT" size="small">
+    // GH #2251: no card of its own; the PHP Settings tab it sits in names it.
+    <div>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Per PHP version — these apply to every site you run on the selected
@@ -191,6 +192,6 @@ export const UserPHPOpcacheCard = () => {
           </>
         )}
       </Space>
-    </Card>
+    </div>
   );
 };

@@ -8,7 +8,6 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Button,
-  Card,
   Checkbox,
   Empty,
   Select,
@@ -130,7 +129,8 @@ export function PHPExtensionsCard() {
   } as const;
 
   return (
-    <Card>
+    // GH #2251: no card of its own; the PHP Settings tab it sits in frames it.
+    <div>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Turn on additional PHP extensions for a version. This affects every
@@ -195,6 +195,6 @@ export function PHPExtensionsCard() {
           </div>
         </Spin>
       </Space>
-    </Card>
+    </div>
   );
 }

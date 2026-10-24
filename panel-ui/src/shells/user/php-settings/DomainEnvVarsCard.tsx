@@ -45,7 +45,7 @@ function keyError(key: string): string | null {
   return null;
 }
 
-export function DomainEnvVarsCard({ domainId }: { domainId?: string } = {}) {
+export function DomainEnvVarsCard({ domainId, bare = false }: { domainId?: string; bare?: boolean } = {}) {
   const [domains, setDomains] = useState<Domain[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
   const [rows, setRows] = useState<EnvVar[]>([]);
@@ -120,8 +120,12 @@ export function DomainEnvVarsCard({ domainId }: { domainId?: string } = {}) {
     }
   };
 
+  // GH #2251: `bare` drops the card when the caller already frames this (the
+  // PHP Settings page's Environment tab); the Web Domain page keeps the card.
+  const Frame = bare ? "div" : Card;
+
   return (
-    <Card>
+    <Frame>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Per-domain environment variables for PHP apps. They're delivered to
@@ -210,6 +214,6 @@ export function DomainEnvVarsCard({ domainId }: { domainId?: string } = {}) {
           </Spin>
         )}
       </Space>
-    </Card>
+    </Frame>
   );
 }

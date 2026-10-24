@@ -179,10 +179,8 @@ export const AdminAutomationTokensPage = () => {
 
   return (
     <div>
-      <Typography.Title level={2}>
-        <Space>
-          <KeyOutlined /> Server API Access
-        </Space>
+      <Typography.Title level={3} style={{ marginTop: 0 }}>
+        <KeyOutlined /> Server API Access
       </Typography.Title>
       <Typography.Paragraph type="secondary">
         HMAC-signed bearer tokens for external automations (CI scripts, monitoring,

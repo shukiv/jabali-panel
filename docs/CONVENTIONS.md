@@ -248,7 +248,8 @@ References: `AdminSecurityPage.tsx`, `AdminBackupsPage.tsx`, `admin/logs/LogsPag
 - Every page opens with `<Typography.Title level={3}>` carrying the page's sidebar icon from `nav.ts` (`<FileTextOutlined /> Logs & Statistics`). Page actions go on the same row, right-aligned.
 - A page with tabs puts them in the tab bar of one card under the heading: `<Card tabList activeTabKey onTabChange>`, not a bare `<Tabs>`. Each tab is `<Space size={6} style={{ whiteSpace: "nowrap" }}>{icon}{label}</Space>` so two-word labels stay on one line at phone width. Keep the tab in the URL (`useTabParam`, `?tab=`).
 - A tab's body sits in that card directly: no heading that repeats the tab label, no card that only frames a table. A tab with several distinct sections may keep titled small cards for them.
-- Exception: the app marketplaces (Applications, Docker Apps, Python Apps) use a plain `<Tabs>` around their catalog grids, on purpose.
+- A component that renders a whole tab's body (the PHP Settings cards, `DomainEnvVarsCard bare`) brings no card of its own, so the tab's body isn't a card inside the card.
+- Exceptions, on purpose: the app marketplaces (Applications, Docker Apps, Python Apps) keep a plain `<Tabs>` around their catalog grids; Server Settings keeps its vertical side tabs (too many sections for a tab bar); the dashboards, File Manager and Terminal are workspaces with no page heading.
 
 ### List page pattern
 

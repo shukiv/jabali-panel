@@ -2,7 +2,7 @@
 // modes only (develop/coverage/profile); no remote step-debugging. Xdebug loads
 // once per FPM master, so it's version-scoped, not per-domain.
 import { useEffect, useState } from "react";
-import { Alert, Button, Card, Select, Space, Spin, Switch, Typography } from "antd";
+import { Alert, Button, Select, Space, Spin, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback";
 import { apiClient } from "../../../apiClient";
 
@@ -69,7 +69,8 @@ export function PHPXdebugCard() {
   }
 
   return (
-    <Card>
+    // GH #2251: no card of its own; the PHP Settings tab it sits in frames it.
+    <div>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Turn on Xdebug for a PHP version — better error messages, stack traces,
@@ -102,6 +103,6 @@ export function PHPXdebugCard() {
           </Button>
         )}
       </Space>
-    </Card>
+    </div>
   );
 }

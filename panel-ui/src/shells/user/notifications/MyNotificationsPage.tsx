@@ -19,7 +19,7 @@ import { Alert, Button, Card, Empty, Popconfirm, Select, Space, Table, Tag, Typo
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { AxiosError } from "axios";
 
-import { DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
+import { BellOutlined, DeleteOutlined, EditOutlined, PlusOutlined, SendOutlined } from "@icons";
 import { apiClient } from "../../../apiClient";
 import { type ChannelKind } from "../../../utils/channelKindConfig";
 import { MyChannelDrawer, TENANT_KINDS, type MyChannel } from "./MyChannelDrawer";
@@ -145,16 +145,26 @@ export function MyNotificationsPage(): JSX.Element {
     }
   };
 
+  // GH #2251: the page opens with a heading that carries the sidebar's icon.
+  const heading = (
+    <Typography.Title level={3} style={{ margin: 0 }}>
+      <BellOutlined /> {t("nav.user.notifications", "Notifications")}
+    </Typography.Title>
+  );
+
   if (disabled) {
     return (
-      <Card>
-        <Alert
-          type="info"
-          showIcon
-          message="Notifications are not enabled"
-          description="Per-user notification channels are turned off on this server. Ask your administrator to enable them."
-        />
-      </Card>
+      <Space direction="vertical" size={16} style={{ width: "100%" }}>
+        {heading}
+        <Card>
+          <Alert
+            type="info"
+            showIcon
+            message="Notifications are not enabled"
+            description="Per-user notification channels are turned off on this server. Ask your administrator to enable them."
+          />
+        </Card>
+      </Space>
     );
   }
 
@@ -181,7 +191,8 @@ export function MyNotificationsPage(): JSX.Element {
   });
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+    <Space direction="vertical" size={16} style={{ width: "100%" }}>
+      {heading}
       <Card
         title="My notification channels"
         extra={
@@ -268,8 +279,6 @@ export function MyNotificationsPage(): JSX.Element {
         existing={editing}
         allowedKinds={allowedKinds}
       />
-      {/* t() kept referenced for future i18n of this page */}
-      <span style={{ display: "none" }}>{t("nav.user.notifications", "Notifications")}</span>
     </Space>
   );
 }

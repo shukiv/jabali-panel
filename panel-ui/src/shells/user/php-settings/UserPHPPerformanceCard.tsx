@@ -8,7 +8,7 @@
 // version's stored values instead of static defaults — so switching version
 // reflects the real per-version configuration.
 import { useTranslation } from "react-i18next";
-import { Alert, Button, Card, Collapse, Form, InputNumber, Select, Space, Spin, Typography } from "antd";
+import { Alert, Button, Collapse, Form, InputNumber, Select, Space, Spin, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -175,7 +175,8 @@ export const UserPHPPerformanceCard = () => {
   };
 
   return (
-    <Card title={t("userphpperformancecard.php_performance")}>
+    // GH #2251: no card of its own; the PHP Settings tab it sits in names it.
+    <div>
       <Space direction="vertical" size="large" style={{ width: "100%", maxWidth: 560 }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
           Pick how your PHP workers scale. Values are capped for your plan (max{" "}
@@ -275,6 +276,6 @@ export const UserPHPPerformanceCard = () => {
           />
         )}
       </Space>
-    </Card>
+    </div>
   );
 };

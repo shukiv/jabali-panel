@@ -28,6 +28,7 @@ import {
   DeleteOutlined,
   FileTextOutlined,
   GlobalOutlined,
+  MailOutlined,
   MoreOutlined,
   PlusOutlined,
   PoweroffOutlined,
@@ -277,10 +278,22 @@ export function MailDomainsPage() {
   ];
 
   return (
-    <Card
-      title="Mail Domains"
-      extra={
-        mailEnabled ? (
+    <div>
+      {/* GH #2251: the page opens with a heading that carries the sidebar's
+          icon, actions on its row, as on Web Domains. */}
+      <Space
+        style={{
+          marginBottom: 16,
+          width: "100%",
+          justifyContent: "space-between",
+          flexWrap: "wrap",
+          rowGap: 8,
+        }}
+      >
+        <Typography.Title level={3} style={{ margin: 0 }}>
+          <MailOutlined /> Mail Domains
+        </Typography.Title>
+        {mailEnabled ? (
           <Button
             type="primary"
             icon={<PlusOutlined />}
@@ -288,98 +301,100 @@ export function MailDomainsPage() {
           >
             Create Mail Domain
           </Button>
-        ) : null
-      }
-    >
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        Domains with mail active, at a glance. Select a domain to manage its
-        accounts and add mailboxes.
-      </Typography.Paragraph>
-      {query.isLoading ? (
-        <Spin />
-      ) : rows.length === 0 ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={
-            mailEnabled
-              ? "No domains have mail active yet. Create a mail domain here, or enable mail on an existing domain from the Domains page."
-              : "Mail is disabled on this server."
-          }
-        >
-          {mailEnabled && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-              Create Mail Domain
-            </Button>
-          )}
-        </Empty>
-      ) : (
-        <Table<MailDomainRow>
-          rowKey="id"
-          dataSource={rows}
-          columns={columns}
-          pagination={false}
-          scroll={{ x: "max-content" }}
-        />
-      )}
+        ) : null}
+      </Space>
 
-      <Modal
-        open={!!deleteRow}
-        title={deleteRow ? `Delete mail for ${deleteRow.name}?` : "Delete mail"}
-        okText="Delete mail"
-        okButtonProps={{
-          danger: true,
-          loading: busyId === deleteRow?.id,
-          disabled: !deleteRow || confirmText.trim() !== deleteRow.name,
-        }}
-        onOk={() => deleteRow && purgeMail(deleteRow)}
-        onCancel={() => setDeleteRow(null)}
-        destroyOnClose
-      >
-        <Alert
-          type="error"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="This permanently deletes the mail service for this domain"
-          description={
-            <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-              <li>All mailboxes in this domain and the mail they store</li>
-              <li>The mail TLS certificate (mail, autodiscover, autoconfig)</li>
-              <li>The managed mail DNS records (MX, SPF, DKIM, autodiscover…)</li>
-            </ul>
-          }
-        />
-        <Typography.Paragraph style={{ marginBottom: 8 }}>
-          The website, its DNS zone, and its certificate are kept. Type{" "}
-          <Typography.Text code>{deleteRow?.name}</Typography.Text> to confirm.
+      <Card>
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+          Domains with mail active, at a glance. Select a domain to manage its
+          accounts and add mailboxes.
         </Typography.Paragraph>
-        <Input
-          autoFocus
-          placeholder={deleteRow?.name}
-          value={confirmText}
-          onChange={(e) => setConfirmText(e.target.value)}
-          onPressEnter={() => {
-            if (deleteRow && confirmText.trim() === deleteRow.name) purgeMail(deleteRow);
+        {query.isLoading ? (
+          <Spin />
+        ) : rows.length === 0 ? (
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={
+              mailEnabled
+                ? "No domains have mail active yet. Create a mail domain here, or enable mail on an existing domain from the Domains page."
+                : "Mail is disabled on this server."
+            }
+          >
+            {mailEnabled && (
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+                Create Mail Domain
+              </Button>
+            )}
+          </Empty>
+        ) : (
+          <Table<MailDomainRow>
+            rowKey="id"
+            dataSource={rows}
+            columns={columns}
+            pagination={false}
+            scroll={{ x: "max-content" }}
+          />
+        )}
+
+        <Modal
+          open={!!deleteRow}
+          title={deleteRow ? `Delete mail for ${deleteRow.name}?` : "Delete mail"}
+          okText="Delete mail"
+          okButtonProps={{
+            danger: true,
+            loading: busyId === deleteRow?.id,
+            disabled: !deleteRow || confirmText.trim() !== deleteRow.name,
+          }}
+          onOk={() => deleteRow && purgeMail(deleteRow)}
+          onCancel={() => setDeleteRow(null)}
+          destroyOnClose
+        >
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 12 }}
+            message="This permanently deletes the mail service for this domain"
+            description={
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                <li>All mailboxes in this domain and the mail they store</li>
+                <li>The mail TLS certificate (mail, autodiscover, autoconfig)</li>
+                <li>The managed mail DNS records (MX, SPF, DKIM, autodiscover…)</li>
+              </ul>
+            }
+          />
+          <Typography.Paragraph style={{ marginBottom: 8 }}>
+            The website, its DNS zone, and its certificate are kept. Type{" "}
+            <Typography.Text code>{deleteRow?.name}</Typography.Text> to confirm.
+          </Typography.Paragraph>
+          <Input
+            autoFocus
+            placeholder={deleteRow?.name}
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            onPressEnter={() => {
+              if (deleteRow && confirmText.trim() === deleteRow.name) purgeMail(deleteRow);
+            }}
+          />
+        </Modal>
+
+        <MailDNSRecordsModal
+          open={!!dnsRecordsRow}
+          domainId={dnsRecordsRow?.id}
+          domainName={dnsRecordsRow?.name}
+          onClose={() => setDnsRecordsRow(null)}
+        />
+
+        <UserDomainDrawer
+          open={createOpen}
+          mode="mail"
+          onClose={() => {
+            setCreateOpen(false);
+            // The drawer creates via the "domains" resource; this page lists
+            // "me/mail-domains", so refetch to show the new mail domain.
+            void query.refetch?.();
           }}
         />
-      </Modal>
-
-      <MailDNSRecordsModal
-        open={!!dnsRecordsRow}
-        domainId={dnsRecordsRow?.id}
-        domainName={dnsRecordsRow?.name}
-        onClose={() => setDnsRecordsRow(null)}
-      />
-
-      <UserDomainDrawer
-        open={createOpen}
-        mode="mail"
-        onClose={() => {
-          setCreateOpen(false);
-          // The drawer creates via the "domains" resource; this page lists
-          // "me/mail-domains", so refetch to show the new mail domain.
-          void query.refetch?.();
-        }}
-      />
-    </Card>
+      </Card>
+    </div>
   );
 }
