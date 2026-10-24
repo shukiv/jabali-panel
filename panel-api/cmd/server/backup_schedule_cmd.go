@@ -326,6 +326,10 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 			s, err := backupscheduleops.Update(ctx, backupscheduleops.Deps{
 				Schedules: backupScheduleRepoFromDB(),
 				Users:     repository.NewUserRepository(sharedDB),
+				// An account's own schedule keeps to the account's plan when its
+				// destination or copies change (GH #2246).
+				Packages:     repository.NewPackageRepository(sharedDB),
+				Destinations: repository.NewBackupDestinationRepository(sharedDB),
 			}, in)
 			if err != nil {
 				var ure *backupscheduleops.UserRejectedError

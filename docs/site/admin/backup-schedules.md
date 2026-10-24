@@ -8,27 +8,39 @@ Backups → Schedules. The cron expressions that drive periodic backup runs.
 - **Kind** — `account_full` or `system_backup`.
 - **Subject** — for `account_full`, one user, a set of users, or "all users". For `system_backup`, the panel host (single subject).
 - **Destination(s)** — one or more from [Destinations](./backup-destinations.md). Restic writes to each.
-- **Cron expression** — standard 5-field cron (`min hour day month dow`), read in the server's timezone ([Server Settings → Server Time](./server-settings.md#server-time)): `0 3 * * *` runs at 03:00 server time.
+- **Cron expression** — standard 5-field cron (`min hour day month dow`), read in the server's timezone ([Server Settings → Server Time](./server-settings.md#server-time)): `0 3 * * *` runs at 03:00 server time. The form sets it from a frequency:
+  - **Hourly** — every 1, 2, 3, 4, 6, 8 or 12 hours, at a minute past the hour (`15 */6 * * *` runs at 00:15, 06:15, 12:15 and 18:15). Each run backs up every account the schedule covers.
+  - **Daily**, **Weekly** (on chosen days) or **Monthly** (on a day of the month), at a time.
+
+  A schedule whose cron the form can't show (one set with the CLI, say) opens with a notice that shows its cron; saving replaces it with the time in the form.
 - **What to back up** — for account schedules: the full account, files only, or databases only. A Full Server schedule applies it to the account backups; its system backup is always complete.
-- **Retention** — `--keep-daily N`, `--keep-weekly N`, `--keep-monthly N`, with restic's meaning. A schedule with none set keeps every backup.
+- **Retention** — `--keep-daily N`, `--keep-weekly N`, `--keep-monthly N`, with restic's meaning. A schedule with none set keeps every backup. An hourly schedule uses the daily count: retention keeps one backup a day, so the daily sweep removes the day's other hourly backups.
 - **Enabled** — schedule may be paused without deletion.
 
 A schedule keeps its kind once it is saved: editing an Accounts or Full Server schedule cannot turn it into a System schedule, or the other way round. Create a new schedule instead.
 
 ## Accounts' own schedules
 
-On a plan that allows more than one backup schedule, an account adds its own schedules on its **Backups** page. They are listed here with the type **Account's own** and the account's name. Each one:
+On a plan that allows more than one backup schedule, an account adds its own schedules on its **Backups** page. An admin can add one for it here: **New schedule → Type: Account's own**, then pick the account. They are listed here with the type **Account's own** and the account's name. Each one:
 
 - backs up only that account;
 - runs on an interval instead of a cron expression: hourly, every 6 hours, every 12 hours, daily or weekly. When **Settings → Restrict tenant backups to a maintenance window** is on, it runs inside that window;
 - backs up the full account, files only, or databases only;
 - writes to one destination.
 
-**Edit** opens it with the same choices the account has: what to back up, how often, the destination, the copies to keep, and on or off. The account sees your changes on its Backups page. Changing how often re-times the next run; other changes leave it where it is. Its account cannot be changed, and it cannot include the system backup.
+**Edit** opens it with the same choices the account has: what to back up, how often, the destination, the copies to keep, and on or off. The account sees your changes on its Backups page. Changing how often re-times the next run; other changes leave it where it is. Its account cannot be changed, and it cannot include the system backup. An existing cron schedule cannot become one.
+
+The account's hosting plan applies to it the same way it does on the account's page, so the account can always open and save it:
+
+- Adding one needs a plan that allows scheduled backups and more than one schedule, with room left: the account's own schedules count toward the plan's limit, however they were added. For a plan with one schedule, raise the plan's backup schedule limit first.
+- Its destination must be enabled and of a kind the plan allows. An enabled schedule needs a destination.
+- Copies to keep: 1 up to the plan's backup limit.
+
+When editing, the destination and copies are checked only when they change, so a schedule can always be turned off.
 
 On a plan with a single backup schedule, the account's one schedule is also listed as **Account's own**. It runs at **Settings → Tenant scheduled-backup time (cron)** and opens in the cron form with its account fixed. When the account saves it again, its time goes back to that setting.
 
-The API refuses a `cron_expr` for an interval schedule (`interval_schedule`), a `cadence` for a cron schedule (`cron_schedule`), and, on any account's own schedule, a user list other than that account or `include_system_backup: true` (`account_schedule`).
+The API refuses a `cron_expr` for an interval schedule (`interval_schedule`), a `cadence` for a cron schedule (`cron_schedule`), and, on any account's own schedule, a user list other than that account or `include_system_backup: true` (`account_schedule`). `POST /admin/backup-schedules` with a `cadence` creates an account's own schedule: exactly one entry in `user_ids`, at most one in `destination_ids`, no `cron_expr`. The plan refusals use the codes of the account's own page: `scheduled_backups_not_enabled`, `schedule_limit_reached`, `destination_not_allowed`, `destination_disabled`, `unknown_destination`, `destination_required`, plus `single_schedule_plan`, `one_destination` and `keep_out_of_range`. A plan that can't be read refuses with 503 `backup_gating_unavailable`.
 
 ## Implementation
 
