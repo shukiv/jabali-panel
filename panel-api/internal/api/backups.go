@@ -2395,10 +2395,10 @@ func (h *meBackupHandler) findOwnedSchedule(ctx context.Context, userID, id stri
 // to the configured window. A missing settings row also stays ungated.
 func (h *meBackupHandler) tenantWindow(ctx context.Context) internalbackup.TenantWindow {
 	settings, err := h.cfg.Settings.Get(ctx)
-	if err != nil || settings == nil || !settings.TenantBackupWindowEnforce {
+	if err != nil || settings == nil {
 		return internalbackup.TenantWindow{} // whole-day / ungated
 	}
-	return internalbackup.ParseWindow(settings.TenantBackupWindowStart, settings.TenantBackupWindowEnd)
+	return internalbackup.EffectiveTenantWindow(settings.TenantBackupWindowEnforce, settings.TenantBackupWindowStart, settings.TenantBackupWindowEnd)
 }
 
 func (h *meBackupHandler) listSchedules(c *gin.Context) {

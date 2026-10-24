@@ -374,6 +374,7 @@
     "actions": "Actions",
     "create_at_least_one_destination_before_addin": "Create at least one destination before adding schedules.",
     "cron": "Cron",
+    "schedule": "Schedule",
     "destinations": "Destinations",
     "enabled": "Enabled",
     "last_run": "Last run",

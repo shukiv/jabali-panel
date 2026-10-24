@@ -16,6 +16,13 @@ import { apiClient } from "../../apiClient";
 import { extractApiError } from "../../apiErrors";
 import { MyProfileScheduleCard } from "./MyProfileScheduleCard";
 import { Timestamp, usePanelClock } from "../../components/Timestamp";
+// The same lists the admin Schedules tab uses for these schedules (GH #2246).
+import {
+  BACKUP_CADENCE_OPTIONS as CADENCE_OPTIONS,
+  BACKUP_CONTENT_OPTIONS as CONTENT_OPTIONS,
+  backupCadenceLabel as cadenceLabel,
+  backupContentLabel as contentLabel,
+} from "../../lib/backupScheduleOptions";
 
 interface ScheduleRow {
   id: string;
@@ -45,23 +52,6 @@ interface DestOption {
   name: string;
   kind: string;
 }
-
-const CONTENT_OPTIONS = [
-  { value: "full", label: "Full account" },
-  { value: "files", label: "Files only" },
-  { value: "database", label: "Databases only" },
-];
-
-const CADENCE_OPTIONS = [
-  { value: "hourly", label: "Hourly" },
-  { value: "every_6h", label: "Every 6 hours" },
-  { value: "every_12h", label: "Every 12 hours" },
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-];
-
-const contentLabel = (c: string) => CONTENT_OPTIONS.find((o) => o.value === c)?.label ?? c;
-const cadenceLabel = (c: string) => CADENCE_OPTIONS.find((o) => o.value === c)?.label ?? c;
 
 interface DrawerForm {
   content: string;
