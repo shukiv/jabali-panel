@@ -124,7 +124,7 @@ func TestTickOnce_FinalizesRunningJobsBeyondTheNewestPage(t *testing.T) {
 
 // A job past the stall timeout is still failed rather than polled forever.
 func TestTickOnce_StallTimeoutStillApplies(t *testing.T) {
-	stale := time.Now().Add(-(StallTimeout + time.Hour))
+	stale := time.Now().Add(-(AccountStallTimeout + time.Minute))
 	jobs := &pagingJobs{all: []models.BackupJob{{
 		ID:        "01HSTALLED00000000000000AA",
 		Kind:      models.BackupJobKindAccountBackup,

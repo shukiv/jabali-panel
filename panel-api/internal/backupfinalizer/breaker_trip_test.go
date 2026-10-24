@@ -41,7 +41,7 @@ func (f *breakerDests) RecordFailure(_ context.Context, id string, failures int,
 	return nil
 }
 
-// JAB-362: a 4h stall-failure of a backup job trips its destination's breaker,
+// JAB-362: a stall-failure of a backup job trips its destination's breaker,
 // incrementing the existing consecutive-failure count.
 func TestFinalizer_StallTripsDestinationBreaker(t *testing.T) {
 	dead := "dead-dest"
@@ -49,7 +49,7 @@ func TestFinalizer_StallTripsDestinationBreaker(t *testing.T) {
 		ID:            "j1",
 		Kind:          models.BackupJobKindAccountBackup,
 		Status:        models.BackupJobStatusRunning,
-		StartedAt:     startedAgo(5 * time.Hour), // past the 4h StallTimeout
+		StartedAt:     startedAgo(2 * time.Hour), // past AccountStallTimeout
 		DestinationID: &dead,
 	}}}
 	dests := &breakerDests{got: &models.BackupDestination{ID: dead, ConsecutiveFailures: 2}}

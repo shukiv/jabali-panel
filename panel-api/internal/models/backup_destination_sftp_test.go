@@ -26,6 +26,8 @@ func TestValidateSFTPHostUser(t *testing.T) {
 		{"backslash host", "h\\x", "u"},
 		{"paren user", "h", "u(x)"},
 		{"newline host", "h\nx", "u"},
+		{"dash-led host", "-oProxyCommand=x", "u"},
+		{"dash-led user", "h", "-oProxyCommand=x"},
 	}
 	for _, tc := range bad {
 		if err := ValidateSFTPHostUser(tc.host, tc.user); err == nil {

@@ -115,6 +115,11 @@ func ValidateSFTPHostUser(host, user string) error {
 	if sftpUnsafeRe.MatchString(host) || sftpUnsafeRe.MatchString(user) {
 		return errors.New("host and user must not contain whitespace or shell metacharacters")
 	}
+	// ssh reads a leading `-` as one of its own options; no real host name
+	// or user name starts with one.
+	if strings.HasPrefix(host, "-") || strings.HasPrefix(user, "-") {
+		return errors.New("host and user must not start with '-'")
+	}
 	return nil
 }
 

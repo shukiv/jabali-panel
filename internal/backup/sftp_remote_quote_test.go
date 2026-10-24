@@ -27,8 +27,9 @@ func remoteShellHost(t *testing.T) (string, string) {
 			t.Fatal(err)
 		}
 	}
+	// Like ssh: options up to `--`, then the host, then the remote command.
 	write("ssh", `while [ $# -gt 0 ] && [ "$1" != "--" ]; do shift; done
-shift
+shift 2
 exec sh -c "$*"
 `)
 	logArgs := `{ echo "$(basename "$0") argc=$#"; for a in "$@"; do echo "arg=$a"; done; } >> "` + logf + `"

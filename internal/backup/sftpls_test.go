@@ -25,7 +25,7 @@ func TestBuildSSHConnArgs_Pin(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "PreferredAuthentications=password",
 				"-o", "PubkeyAuthentication=no",
-				"u@h",
+				"-l", "u", "--", "h",
 			},
 		},
 		{
@@ -35,7 +35,7 @@ func TestBuildSSHConnArgs_Pin(t *testing.T) {
 				"ssh", "-i", "/k", "-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h",
+				"-l", "u", "--", "h",
 			},
 		},
 		{
@@ -45,7 +45,7 @@ func TestBuildSSHConnArgs_Pin(t *testing.T) {
 				"ssh",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h",
+				"-l", "u", "--", "h",
 			},
 		},
 		{
@@ -56,7 +56,7 @@ func TestBuildSSHConnArgs_Pin(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
 				"-p", "2222",
-				"u@h",
+				"-l", "u", "--", "h",
 			},
 		},
 	}
@@ -87,7 +87,7 @@ func TestBuildSSHListArgs(t *testing.T) {
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "BatchMode=yes",
 		"-p", "2222",
-		"u@h", "--", "ls", "-1", "/home/puzzle/jabali/keys",
+		"-l", "u", "--", "h", "ls", "-1", "/home/puzzle/jabali/keys",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ls argv mismatch\n got: %#v\nwant: %#v", got, want)
@@ -127,7 +127,7 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "PreferredAuthentications=password",
 				"-o", "PubkeyAuthentication=no",
-				"u@h", "--", "mv", "-n", src, dst,
+				"-l", "u", "--", "h", "mv", "-n", src, dst,
 			},
 		},
 		{
@@ -137,7 +137,7 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 				"ssh", "-i", "/k", "-o", "IdentitiesOnly=yes",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h", "--", "mv", "-n", src, dst,
+				"-l", "u", "--", "h", "mv", "-n", src, dst,
 			},
 		},
 		{
@@ -147,7 +147,7 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 				"ssh",
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
-				"u@h", "--", "mv", "-n", src, dst,
+				"-l", "u", "--", "h", "mv", "-n", src, dst,
 			},
 		},
 		{
@@ -158,7 +158,7 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 				"-o", "StrictHostKeyChecking=accept-new",
 				"-o", "BatchMode=yes",
 				"-p", "2222",
-				"u@h", "--", "mv", "-n", src, dst,
+				"-l", "u", "--", "h", "mv", "-n", src, dst,
 			},
 		},
 	}
@@ -176,5 +176,23 @@ func TestBuildSSHRenameArgs(t *testing.T) {
 	spaced := buildSSHRenameArgs(SFTPInputs{User: "u", Host: "h"}, "/a b/keys/K", "/a b/K aside")
 	if spaced[len(spaced)-2] != "'/a b/keys/K'" || spaced[len(spaced)-1] != "'/a b/K aside'" {
 		t.Errorf("src/dst not quoted for the remote shell: tail = %#v", spaced[len(spaced)-2:])
+	}
+}
+
+// A user or host that starts with `-` must never reach ssh where it would be
+// read as an ssh option: the user is -l's argument and the host comes right
+// after `--`, so the remote command's first word can't become the host either.
+func TestBuildSSHConnArgs_DashLedUserAndHostAreNotOptions(t *testing.T) {
+	t.Parallel()
+
+	got := buildSSHListArgs(SFTPInputs{User: "-oProxyCommand=user-cmd", Host: "-oProxyCommand=host-cmd"}, "/r/keys")
+	want := []string{
+		"ssh",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "BatchMode=yes",
+		"-l", "-oProxyCommand=user-cmd", "--", "-oProxyCommand=host-cmd", "ls", "-1", "/r/keys",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("argv mismatch\n got: %#v\nwant: %#v", got, want)
 	}
 }

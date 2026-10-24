@@ -20,8 +20,13 @@ import (
 
 // buildSSHConnArgs assembles the argv prefix shared by every remote ssh exec:
 // `[sshpass -e] ssh [-i KEY -o IdentitiesOnly=yes] -o StrictHostKeyChecking=...
-// [auth opts] [-p PORT] user@host`. The caller appends `--` and the remote
+// [auth opts] [-p PORT] -l USER -- HOST`. The caller appends the remote
 // command. TestBuildSSHConnArgs_Pin holds it byte-for-byte.
+//
+// The user goes in as -l's argument and the host after `--`, so ssh never
+// reads either as one of its own options. With `user@host -- cmd`, a user
+// starting with `-` (`-oProxyCommand=...`) became an ssh option and the
+// remote command's first word became the host.
 func buildSSHConnArgs(in SFTPInputs) []string {
 	parts := []string{}
 	if in.Auth == "password" {
@@ -41,8 +46,7 @@ func buildSSHConnArgs(in SFTPInputs) []string {
 	if in.Port > 0 && in.Port != 22 {
 		parts = append(parts, "-p", fmt.Sprintf("%d", in.Port))
 	}
-	parts = append(parts, fmt.Sprintf("%s@%s", in.User, in.Host))
-	return parts
+	return append(parts, "-l", in.User, "--", in.Host)
 }
 
 // remoteShellArg makes s one word for the remote shell. ssh joins the remote
@@ -71,7 +75,7 @@ const remoteShellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ012
 // so a path with spaces or shell metacharacters must be quoted to stay one
 // argument.
 func buildSSHListArgs(in SFTPInputs, remotePath string) []string {
-	return append(buildSSHConnArgs(in), "--", "ls", "-1", remoteShellArg(remotePath))
+	return append(buildSSHConnArgs(in), "ls", "-1", remoteShellArg(remotePath))
 }
 
 // ListRemoteSFTP runs `ssh user@host -- ls -1 <remotePath>` over the same auth
@@ -101,7 +105,7 @@ func ListRemoteSFTP(ctx context.Context, in SFTPInputs, remotePath string, extra
 // (no-clobber) is belt-and-braces: the JAB-405 caller builds dst from a
 // nanosecond timestamp, so the destination never pre-exists.
 func buildSSHRenameArgs(in SFTPInputs, src, dst string) []string {
-	return append(buildSSHConnArgs(in), "--", "mv", "-n", remoteShellArg(src), remoteShellArg(dst))
+	return append(buildSSHConnArgs(in), "mv", "-n", remoteShellArg(src), remoteShellArg(dst))
 }
 
 // RenameRemoteSFTP runs `ssh user@host -- mv -n <src> <dst>` over the same auth
