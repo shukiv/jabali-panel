@@ -4,15 +4,17 @@
 // or disabled, and how its last run went. Run now shows only where the server
 // allows a manual run; jobs whose settings live on another page (Updates,
 // Backups) link there instead of offering a second editor. Nothing here turns
-// a job off: the security jobs stay on by design.
+// a job off: the security jobs stay on by design. It is a tab of the Cron Jobs
+// page's card, so the tab names it and it has no heading or card of its own
+// (GH #2251).
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { Alert, Button, Card, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { Alert, Button, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 import { useQuery } from "@tanstack/react-query";
-import { EyeOutlined, LinkOutlined, PlayCircleOutlined, ReloadOutlined, ToolOutlined } from "@icons";
+import { EyeOutlined, LinkOutlined, PlayCircleOutlined, ReloadOutlined } from "@icons";
 
 import {
   getAdminSystemJobLog,
@@ -203,10 +205,11 @@ export const AdminSystemJobs = () => {
 
   return (
     <div>
-      <Space wrap align="center" style={{ marginBottom: 8, width: "100%", justifyContent: "space-between" }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          <ToolOutlined /> System jobs
-        </Typography.Title>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <Typography.Text type="secondary" style={{ flex: "1 1 320px" }}>
+          Scheduled jobs Jabali runs on this server. Security jobs always stay on. Jobs that are set up on another page
+          link there.
+        </Typography.Text>
         <Space>
           <Typography.Text type="secondary">
             {jobs.length} job{jobs.length === 1 ? "" : "s"}
@@ -215,23 +218,17 @@ export const AdminSystemJobs = () => {
             Refresh
           </Button>
         </Space>
-      </Space>
-      <Typography.Paragraph type="secondary">
-        Scheduled jobs Jabali runs on this server. Security jobs always stay on. Jobs that are set up on another page
-        link there.
-      </Typography.Paragraph>
+      </div>
       {isError && <Alert type="error" showIcon message="Could not load the system jobs." style={{ marginBottom: 16 }} />}
-      <Card>
-        <Table<AdminSystemJob>
-          rowKey="id"
-          columns={columns}
-          dataSource={jobs}
-          loading={isLoading}
-          pagination={false}
-          size="small"
-          scroll={{ x: "max-content" }}
-        />
-      </Card>
+      <Table<AdminSystemJob>
+        rowKey="id"
+        columns={columns}
+        dataSource={jobs}
+        loading={isLoading}
+        pagination={false}
+        size="small"
+        scroll={{ x: "max-content" }}
+      />
       <CronLogDrawer
         open={logJob !== null}
         onClose={() => setLogJob(null)}

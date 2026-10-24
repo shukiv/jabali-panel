@@ -334,6 +334,11 @@ export const AdminMigrationsPage = () => {
 
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      {/* GH #2251: the page heading every other page has, with the sidebar's icon. */}
+      <Typography.Title level={3} style={{ margin: 0 }}>
+        <SwapOutlined /> Migrations
+      </Typography.Title>
+
       <CollapsibleAlert
         storageKey="migrations.importer"
         type="info"
@@ -351,7 +356,7 @@ export const AdminMigrationsPage = () => {
         }
       />
 
-      <Card size="small" style={{ marginBottom: 16 }}>
+      <Card size="small">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
           <div>
             <Typography.Title level={4} style={{ margin: 0 }}>
@@ -370,11 +375,10 @@ export const AdminMigrationsPage = () => {
       <Card
         size="small"
         title={t("adminmigrationspage.recent_migration_jobs")}
-        extra={screens.md ? migrationsToolbar : undefined}
       >
-        {!screens.md ? (
-          <div style={{ width: "100%", marginBottom: 12 }}>{migrationsToolbar}</div>
-        ) : null}
+        {/* GH #2251: the toolbar sits above the table at every width; in the
+            card's header it squeezed the title down to "Rec…". */}
+        <div style={{ width: "100%", marginBottom: 12 }}>{migrationsToolbar}</div>
         {screens.md ? (
         <Table<MigrationJob>
           dataSource={rows}

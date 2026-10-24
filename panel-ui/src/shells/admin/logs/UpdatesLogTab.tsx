@@ -1,8 +1,9 @@
 // UpdatesLogTab — the panel/system update run history (from
 // /admin/updates/history). Surfaced as a tab on the Logs & Statistics page
 // so update logs live alongside the other log surfaces. The Updates page
-// keeps a "Recent Update History" timeline; this is the full table view.
-import { Card, Table, Tag, Typography } from "antd";
+// keeps a "Recent Update History" timeline; this is the full table view. The
+// page's card frames the tab, so the table sits in it directly (GH #2251).
+import { Table, Tag, Typography } from "antd";
 
 import {
   useUpdateHistory,
@@ -22,45 +23,43 @@ export const UpdatesLogTab = () => {
   const rows = data?.items ?? [];
 
   return (
-    <Card>
-      <Table<UpdateHistoryRow>
-        rowKey="id"
-        size="middle"
-        loading={isLoading}
-        dataSource={rows}
-        scroll={{ x: "max-content" }}
-        pagination={{ defaultPageSize: 20, showTotal: (t) => `${t} runs` }}
-        columns={[
-          {
-            title: "Time",
-            dataIndex: "started_at",
-            render: (v: string) => <Timestamp value={v} />,
-            sorter: (a, b) => a.started_at.localeCompare(b.started_at),
-            defaultSortOrder: "descend",
-          },
-          {
-            title: "Type",
-            dataIndex: "kind",
-            render: (k: string) => (k === "jabali" ? "Jabali panel" : "System packages"),
-            filters: [
-              { text: "Jabali panel", value: "jabali" },
-              { text: "System packages", value: "apt" },
-            ],
-            onFilter: (val, r) => r.kind === val,
-          },
-          { title: "Action", dataIndex: "action" },
-          {
-            title: "Status",
-            dataIndex: "status",
-            render: (s: string) => statusTag(s),
-          },
-          {
-            title: "Summary",
-            dataIndex: "summary",
-            render: (s: string) => <Text type="secondary">{s || "—"}</Text>,
-          },
-        ]}
-      />
-    </Card>
+    <Table<UpdateHistoryRow>
+      rowKey="id"
+      size="middle"
+      loading={isLoading}
+      dataSource={rows}
+      scroll={{ x: "max-content" }}
+      pagination={{ defaultPageSize: 20, showTotal: (t) => `${t} runs` }}
+      columns={[
+        {
+          title: "Time",
+          dataIndex: "started_at",
+          render: (v: string) => <Timestamp value={v} />,
+          sorter: (a, b) => a.started_at.localeCompare(b.started_at),
+          defaultSortOrder: "descend",
+        },
+        {
+          title: "Type",
+          dataIndex: "kind",
+          render: (k: string) => (k === "jabali" ? "Jabali panel" : "System packages"),
+          filters: [
+            { text: "Jabali panel", value: "jabali" },
+            { text: "System packages", value: "apt" },
+          ],
+          onFilter: (val, r) => r.kind === val,
+        },
+        { title: "Action", dataIndex: "action" },
+        {
+          title: "Status",
+          dataIndex: "status",
+          render: (s: string) => statusTag(s),
+        },
+        {
+          title: "Summary",
+          dataIndex: "summary",
+          render: (s: string) => <Text type="secondary">{s || "—"}</Text>,
+        },
+      ]}
+    />
   );
 };
