@@ -282,3 +282,41 @@ commonActionMatrix("tenant", {
   paginated: false,
   canEdit: true,
 });
+
+// GH #2251: admin Cron Jobs has the page heading above one card whose tab bar
+// holds Tenant jobs / System jobs; the workspace inside the tab adds no heading
+// or card of its own. The tenant page has no tabs and keeps both.
+describe("cron page layout", () => {
+  beforeEach(() => {
+    Object.values(api).forEach((m) => m.mockReset());
+    setList(api.listAdminCronJobs, [makeRow({ id: "j1", name: "alpha" })]);
+    setList(api.listCronJobs, [makeRow({ id: "j1", name: "alpha" })]);
+  });
+
+  it("admin: one Cron Jobs heading, then the tabs in the head of the only card", async () => {
+    const { container } = renderAdapter(AdminCronList);
+    await screen.findByText("alpha");
+
+    const headings = screen.getAllByRole("heading");
+    expect(headings.map((h) => h.textContent?.trim())).toEqual(["Cron Jobs"]);
+    expect(headings[0].querySelector("svg")).not.toBeNull();
+
+    const cards = container.querySelectorAll(".ant-card");
+    expect(cards).toHaveLength(1);
+    const tabs = Array.from(cards[0].querySelectorAll(".ant-card-head [role=tab]")).map((t) => t.textContent?.trim());
+    expect(tabs).toEqual(["Tenant jobs", "System jobs"]);
+    // The heading comes before the card in the page.
+    expect(headings[0].compareDocumentPosition(cards[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The toolbar stays inside the tab.
+    expect(cards[0].contains(screen.getByRole("button", { name: /New Cron Job/ }))).toBe(true);
+  });
+
+  it("tenant: keeps its own Cron Jobs heading and card", async () => {
+    const { container } = renderAdapter(UserCronList);
+    await screen.findByText("alpha");
+
+    expect(screen.getAllByRole("heading").map((h) => h.textContent?.trim())).toEqual(["Cron Jobs"]);
+    expect(container.querySelectorAll(".ant-card")).toHaveLength(1);
+    expect(container.querySelectorAll("[role=tab]")).toHaveLength(0);
+  });
+});

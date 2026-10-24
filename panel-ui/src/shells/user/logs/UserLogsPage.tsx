@@ -4,8 +4,11 @@
 // tenant deltas: the outer Domain-logs / Account-activity tabs, the ?domain=
 // focus filter (GH #1332), and — by using the domain-only column context — the
 // structural guarantee that no request here ever omits domain identity (AC2).
-import { Card, Typography, Button, Space, Table, Tabs } from "antd";
+// Laid out like Security and Backups (GH #2251): the heading with the
+// sidebar's icon, then one card whose tab bar holds the two tabs.
+import { Card, Typography, Button, Space, Table } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
+import { FileTextOutlined, GlobalOutlined, UserOutlined } from "@icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 import { LogStreamModal } from "../../../components/LogStreamModal";
@@ -67,34 +70,51 @@ export const UserLogsPage = () => {
           Refresh
         </Button>
       </Space>
-      <Card>
-        <Table
-          columns={columns}
-          dataSource={shownDomains}
-          rowKey="id"
-          loading={isLoading}
-          pagination={false}
-          size="middle"
-          scroll={{ x: "max-content" }}
-        />
-      </Card>
+      <Table
+        columns={columns}
+        dataSource={shownDomains}
+        rowKey="id"
+        loading={isLoading}
+        pagination={false}
+        size="middle"
+        scroll={{ x: "max-content" }}
+      />
     </>
   );
 
   return (
     <div>
-      <Title level={2} style={{ marginTop: 0 }}>
-        Logs & Statistics
+      <Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <FileTextOutlined /> Logs & Statistics
       </Title>
 
-      <Tabs
-        activeKey={activeTab}
-        onChange={(k) => setSearchParams(k === "activity" ? { tab: "activity" } : {}, { replace: true })}
-        items={[
-          { key: "domains", label: "Domain logs", children: domainLogsTab },
-          { key: "activity", label: "Account activity", children: <AccountActivity /> },
+      <Card
+        // nowrap keeps two-word tabs on one line at phone width (as Notifications).
+        tabList={[
+          {
+            key: "domains",
+            tab: (
+              <Space size={6} style={{ whiteSpace: "nowrap" }}>
+                <GlobalOutlined />
+                Domain logs
+              </Space>
+            ),
+          },
+          {
+            key: "activity",
+            tab: (
+              <Space size={6} style={{ whiteSpace: "nowrap" }}>
+                <UserOutlined />
+                Account activity
+              </Space>
+            ),
+          },
         ]}
-      />
+        activeTabKey={activeTab}
+        onTabChange={(k) => setSearchParams(k === "activity" ? { tab: "activity" } : {}, { replace: true })}
+      >
+        {activeTab === "activity" ? <AccountActivity /> : domainLogsTab}
+      </Card>
 
       <LogStreamModal {...streams.modalProps} />
     </div>

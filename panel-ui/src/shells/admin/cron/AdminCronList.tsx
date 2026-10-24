@@ -6,10 +6,13 @@
 // edit / delete / log / overlays all live in the Module; they authorise admins
 // server-side via fetchAndAuthorize's claims.IsAdmin bypass. A second tab,
 // System jobs (GH #1686), lists the scheduled jobs Jabali itself installs,
-// kept apart from tenant jobs; ?tab=system opens it.
+// kept apart from tenant jobs; ?tab=system opens it. Laid out like Security
+// and Backups (GH #2251): the heading, then one card whose tab bar holds the
+// two lists, so the heading sits above the tabs.
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router";
-import { Space, Tabs, Tag, Tooltip, Typography } from "antd";
+import { Card, Space, Tag, Tooltip, Typography } from "antd";
+import { CalendarCheckOutlined, TeamOutlined, ToolOutlined } from "@icons";
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
 
@@ -35,8 +38,8 @@ export const AdminCronList = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") === "system" ? "system" : "tenant";
 
+  // No title: the page's heading and card frame the Tenant jobs tab.
   const audience: CronWorkspaceAudience = {
-    title: "Cron Jobs (all tenants)",
     showCount: true,
     query: { key: ["admin-cron-jobs"], fn: () => listAdminCronJobs() },
     searchPlaceholder: "admincronlist.search_by_name_command_schedule_or_owner",
@@ -118,13 +121,38 @@ export const AdminCronList = () => {
   };
 
   return (
-    <Tabs
-      activeKey={tab}
-      onChange={(k) => setSearchParams(k === "system" ? { tab: "system" } : {}, { replace: true })}
-      items={[
-        { key: "tenant", label: "Tenant jobs", children: <CronJobWorkspace audience={audience} /> },
-        { key: "system", label: "System jobs", children: <AdminSystemJobs /> },
-      ]}
-    />
+    <div>
+      <Typography.Title level={3} style={{ marginTop: 0, marginBottom: 16 }}>
+        <CalendarCheckOutlined /> Cron Jobs
+      </Typography.Title>
+
+      <Card
+        // nowrap keeps two-word tabs on one line at phone width (as Notifications).
+        tabList={[
+          {
+            key: "tenant",
+            tab: (
+              <Space size={6} style={{ whiteSpace: "nowrap" }}>
+                <TeamOutlined />
+                Tenant jobs
+              </Space>
+            ),
+          },
+          {
+            key: "system",
+            tab: (
+              <Space size={6} style={{ whiteSpace: "nowrap" }}>
+                <ToolOutlined />
+                System jobs
+              </Space>
+            ),
+          },
+        ]}
+        activeTabKey={tab}
+        onTabChange={(k) => setSearchParams(k === "system" ? { tab: "system" } : {}, { replace: true })}
+      >
+        {tab === "system" ? <AdminSystemJobs /> : <CronJobWorkspace audience={audience} />}
+      </Card>
+    </div>
   );
 };

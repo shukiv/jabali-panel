@@ -76,7 +76,9 @@ test.describe("GH #1686 — admin System jobs", () => {
 
     await page.getByRole("tab", { name: "System jobs" }).click();
     await expect(page).toHaveURL(/[?&]tab=system/);
-    await expect(page.getByRole("heading", { name: /System jobs/ })).toBeVisible();
+    // GH #2251: the tab names the list (no heading of its own under the page's).
+    await expect(page.getByRole("tab", { name: "System jobs", selected: true })).toBeVisible();
+    await expect(page.getByText(/Scheduled jobs Jabali runs on this server/)).toBeVisible();
 
     const sweep = page.getByRole("row", { name: /Log retention sweep/ });
     await expect(sweep.getByText("Scheduled")).toBeVisible();

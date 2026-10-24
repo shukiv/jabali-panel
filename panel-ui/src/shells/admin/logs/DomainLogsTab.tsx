@@ -2,9 +2,10 @@
 // real-time) for the admin. One tab of the consolidated Logs & Statistics
 // page. The stream lifecycle, request shaping, and columns are the neutral
 // Domain Log Streams module (JAB-296); this shell only adds the admin delta:
-// the "All Domains" aggregate row and its cross-domain open capability.
+// the "All Domains" aggregate row and its cross-domain open capability. The
+// page's card frames the tab, so the table sits in it directly (GH #2251).
 import { useState } from "react";
-import { Card, Button, Space, Table } from "antd";
+import { Button, Space, Table } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
@@ -50,17 +51,15 @@ export const DomainLogsTab = () => {
         </Button>
       </Space>
 
-      <Card>
-        <Table
-          columns={columns}
-          dataSource={tableData}
-          rowKey="id"
-          loading={isLoading}
-          pagination={false}
-          size="middle"
-          scroll={{ x: "max-content" }}
-        />
-      </Card>
+      <Table
+        columns={columns}
+        dataSource={tableData}
+        rowKey="id"
+        loading={isLoading}
+        pagination={false}
+        size="middle"
+        scroll={{ x: "max-content" }}
+      />
 
       <LogStreamModal {...streams.modalProps} />
     </div>

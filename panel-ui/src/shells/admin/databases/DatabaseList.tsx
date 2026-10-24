@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card, Space, Table, Tag, Typography } from "antd";
 import { useNavigate } from "react-router";
+import { DatabaseOutlined, PlusOutlined } from "@icons";
 import { sorterToParams } from "../../../utils/tableSorter";
 
 import { columnSearchProps } from "../../../components/columnSearch";
@@ -69,10 +70,11 @@ export const DatabaseList = () => {
         }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-          Databases
+          <DatabaseOutlined /> Databases
         </Typography.Title>
         <Button
           type="primary"
+          icon={<PlusOutlined />}
           onClick={() => navigate("/jabali-admin/databases/create")}
         >
           Create

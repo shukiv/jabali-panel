@@ -41,7 +41,10 @@ export interface CronEditorRenderProps {
 }
 
 export interface CronWorkspaceAudience {
-  title: string; // "Cron Jobs" (tenant) / "Cron Jobs (all tenants)" (admin)
+  // The screen's heading ("Cron Jobs", tenant). Left out when the workspace is
+  // a tab of a page that owns the heading and the card (admin Cron Jobs →
+  // Tenant jobs, GH #2251): it then renders its toolbar and table only.
+  title?: string;
   showCount: boolean; // admin shows the job count next to New
   query: { key: unknown[]; fn: () => Promise<{ items: CronWorkspaceRow[] }> }; // list operation
   searchPlaceholder: string; // i18n key
@@ -170,46 +173,70 @@ export function CronJobWorkspace({ audience }: { audience: CronWorkspaceAudience
     onDelete: handleDelete,
   });
 
+  const actions = (
+    <Space>
+      {audience.showCount && (
+        <Typography.Text type="secondary">
+          {jobs.length} job{jobs.length === 1 ? "" : "s"}
+        </Typography.Text>
+      )}
+      <Button type="primary" icon={<PlusSquareOutlined />} onClick={openCreate}>
+        New Cron Job
+      </Button>
+    </Space>
+  );
+  const searchBox = (
+    <Input.Search
+      placeholder={t(audience.searchPlaceholder)}
+      allowClear
+      value={search}
+      onChange={(e) => setSearch(e.target.value)}
+      onSearch={(value) => setSearch(value.trim())}
+      style={{ maxWidth: 480 }}
+    />
+  );
+  const table = (
+    <Table<CronWorkspaceRow>
+      rowKey="id"
+      size={audience.tableSize}
+      loading={isLoading || deletingId !== null}
+      dataSource={filteredJobs}
+      pagination={audience.pagination}
+      scroll={{ x: "max-content" }}
+      locale={audience.renderEmpty ? { emptyText: audience.renderEmpty(openCreate) } : undefined}
+      columns={columns}
+    />
+  );
+
   return (
     <div>
-      <Space wrap align="center" style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
-        <Typography.Title level={3} style={{ margin: 0 }}>
-          <CalendarCheckOutlined /> {audience.title}
-        </Typography.Title>
-        <Space>
-          {audience.showCount && (
-            <Typography.Text type="secondary">
-              {jobs.length} job{jobs.length === 1 ? "" : "s"}
-            </Typography.Text>
-          )}
-          <Button type="primary" icon={<PlusSquareOutlined />} onClick={openCreate}>
-            New Cron Job
-          </Button>
-        </Space>
-      </Space>
-
-      <Card>
+      {audience.title === undefined ? (
+        // A tab of a page that owns the heading and the card: search and
+        // actions share one toolbar row above the table.
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Input.Search
-            placeholder={t(audience.searchPlaceholder)}
-            allowClear
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onSearch={(value) => setSearch(value.trim())}
-            style={{ maxWidth: 480 }}
-          />
-          <Table<CronWorkspaceRow>
-            rowKey="id"
-            size={audience.tableSize}
-            loading={isLoading || deletingId !== null}
-            dataSource={filteredJobs}
-            pagination={audience.pagination}
-            scroll={{ x: "max-content" }}
-            locale={audience.renderEmpty ? { emptyText: audience.renderEmpty(openCreate) } : undefined}
-            columns={columns}
-          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", justifyContent: "space-between" }}>
+            {searchBox}
+            {actions}
+          </div>
+          {table}
         </Space>
-      </Card>
+      ) : (
+        <>
+          <Space wrap align="center" style={{ marginBottom: 16, width: "100%", justifyContent: "space-between" }}>
+            <Typography.Title level={3} style={{ margin: 0 }}>
+              <CalendarCheckOutlined /> {audience.title}
+            </Typography.Title>
+            {actions}
+          </Space>
+
+          <Card>
+            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              {searchBox}
+              {table}
+            </Space>
+          </Card>
+        </>
+      )}
 
       {audience.renderEditor({
         open: editorOpen,
