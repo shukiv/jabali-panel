@@ -69,6 +69,28 @@ func TestRetentionTargets_SecurityTablesKeptLong(t *testing.T) {
 	}
 }
 
+// GH #2261: the hourly cache-doctor sweep records a run each time, so its
+// history is pruned. Only finished runs: a queued or running one is in use.
+func TestRetentionTargets_CacheDoctorRunsFinishedOnly(t *testing.T) {
+	for _, tgt := range retentionTargets {
+		if tgt.table != "cache_doctor_runs" {
+			continue
+		}
+		for _, s := range []string{"'done'", "'failed'"} {
+			if !strings.Contains(tgt.extraWhere, s) {
+				t.Errorf("cache_doctor_runs prune must cover finished state %s, got %q", s, tgt.extraWhere)
+			}
+		}
+		for _, s := range []string{"queued", "running"} {
+			if strings.Contains(tgt.extraWhere, s) {
+				t.Errorf("cache_doctor_runs prune must NOT include the active state %q", s)
+			}
+		}
+		return
+	}
+	t.Fatal("cache_doctor_runs must be a retention target (GH #2261)")
+}
+
 // JAB-102: the migration_jobs prune must be gated to TERMINAL states — never
 // delete an in-flight job. JAB-124: bw_daily is a configurable target.
 func TestRetentionTargets_P2MigrationAndBandwidth(t *testing.T) {

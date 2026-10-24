@@ -130,9 +130,31 @@ func (h *wordPressHandler) runCacheDoctorSweep(runID, kind, actorUserID string) 
 	_ = SweepCacheDoctor(ctx, h.cfg, run, actorUserID)
 }
 
+// cacheDoctorChecks reports whether a sweep checks this install: a ready
+// WordPress site with the page cache on.
+func cacheDoctorChecks(in *models.ApplicationInstall) bool {
+	return in.AppType == "wordpress" && in.CacheEnabled && in.Status == "ready"
+}
+
+// CacheDoctorHasWork reports whether a sweep would check any install. The
+// hourly timer skips the sweep without one, so a server with no cache-enabled
+// WordPress site records nothing (GH #2261).
+func CacheDoctorHasWork(ctx context.Context, installs repository.ApplicationInstallRepository) (bool, error) {
+	rows, _, err := installs.List(ctx, repository.ListOptions{Limit: 100000})
+	if err != nil {
+		return false, err
+	}
+	for i := range rows {
+		if cacheDoctorChecks(&rows[i]) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // SweepCacheDoctor runs a fleet cache-maintenance sweep synchronously against
 // cfg, updating the (already-Created) run row as it progresses. Exported so the
-// nightly CLI timer (`jabali app cache-doctor-run`) runs the exact same executor
+// hourly CLI timer (`jabali app cache-doctor-run`) runs the exact same executor
 // as the HTTP trigger — no second sweep implementation to drift. The caller owns
 // the context deadline.
 func SweepCacheDoctor(ctx context.Context, cfg ApplicationHandlerConfig, run *models.CacheDoctorRun, actorUserID string) error {
@@ -151,8 +173,7 @@ func SweepCacheDoctor(ctx context.Context, cfg ApplicationHandlerConfig, run *mo
 
 	items := make([]models.CacheDoctorItem, 0)
 	for i := range installs {
-		in := installs[i]
-		if in.AppType != "wordpress" || !in.CacheEnabled || in.Status != "ready" {
+		if !cacheDoctorChecks(&installs[i]) {
 			continue
 		}
 		if ctx.Err() != nil {
