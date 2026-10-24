@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 
-import { DatabaseOutlined, ExportOutlined, FileOutlined, FolderOutlined, MailOutlined, ReloadOutlined } from "@icons";
+import { DatabaseOutlined, ExportOutlined, FileOutlined, FolderOutlined, HddOutlined, MailOutlined, ReloadOutlined } from "@icons";
 
 import { apiClient } from "../../../apiClient";
 import { StatCard } from "../../../components/StatCard";
@@ -379,7 +379,7 @@ export function DiskUsagePage() {
       }}
     >
       <Typography.Title level={3} style={{ margin: 0 }}>
-        Disk Usage
+        <HddOutlined /> Disk Usage
       </Typography.Title>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <Typography.Text type="secondary">

@@ -174,15 +174,8 @@ export function FleetCacheDoctor() {
   const busy = startMutation.isPending || run?.state === "running" || run?.state === "queued";
 
   return (
-    <Card
-      title={
-        <Space>
-          <ThunderboltOutlined />
-          <span>Fleet cache doctor</span>
-        </Space>
-      }
-      style={{ marginBottom: 16 }}
-    >
+    // The page heading above carries the Cache icon (GH #2251); a section title has none.
+    <Card title="Fleet cache doctor" style={{ marginBottom: 16 }}>
       <Typography.Paragraph type="secondary">
         Sweep every cache-enabled WordPress install. <b>Doctor</b> detects drift
         (plugin inactive, missing drop-in/constants, unreachable Redis) read-only.
