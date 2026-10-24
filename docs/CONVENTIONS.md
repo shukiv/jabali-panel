@@ -241,6 +241,15 @@ New admin page:
 
 Same 4 steps for user shell routes under `<Route path="/jabali-panel">` + `userNav`.
 
+### Page heading and tabs (GH #2251)
+
+References: `AdminSecurityPage.tsx`, `AdminBackupsPage.tsx`, `admin/logs/LogsPage.tsx`.
+
+- Every page opens with `<Typography.Title level={3}>` carrying the page's sidebar icon from `nav.ts` (`<FileTextOutlined /> Logs & Statistics`). Page actions go on the same row, right-aligned.
+- A page with tabs puts them in the tab bar of one card under the heading: `<Card tabList activeTabKey onTabChange>`, not a bare `<Tabs>`. Each tab is `<Space size={6} style={{ whiteSpace: "nowrap" }}>{icon}{label}</Space>` so two-word labels stay on one line at phone width. Keep the tab in the URL (`useTabParam`, `?tab=`).
+- A tab's body sits in that card directly: no heading that repeats the tab label, no card that only frames a table. A tab with several distinct sections may keep titled small cards for them.
+- Exception: the app marketplaces (Applications, Docker Apps, Python Apps) use a plain `<Tabs>` around their catalog grids, on purpose.
+
 ### List page pattern
 
 Copy `src/shells/admin/ips/AdminIPList.tsx` as the reference. Key pieces:
