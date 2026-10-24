@@ -95,7 +95,7 @@ var catalog = []Job{
 		Description: "Deletes expired rows from the panel's log and report tables."},
 	{ID: "cache-doctor", Timer: "jabali-cache-doctor.timer", Service: "jabali-cache-doctor.service",
 		Label: "WordPress cache health check", Category: CategoryMaintenance, RunNow: true,
-		Description: "Checks the page-cache setup of WordPress sites and repairs drift."},
+		Description: "Checks the page-cache setup of WordPress sites and repairs drift. Without a WordPress site that has the page cache on, it does nothing."},
 	{ID: "hostname-heartbeat", Timer: "jabali-hostname-heartbeat.timer", Service: "jabali-hostname-heartbeat.service",
 		Label: "Free hostname check-in", Category: CategoryMaintenance, RunNow: true,
 		Description: "Checks in so this server's free hostname stays registered, and logs a warning when the server's public IP no longer matches it."},

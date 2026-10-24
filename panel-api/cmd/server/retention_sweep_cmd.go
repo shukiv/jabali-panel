@@ -72,6 +72,9 @@ var retentionTargets = []retentionTarget{
 	// Only terminal states + rows with ended_at set — never touches an in-flight
 	// job. reap-secrets already wiped their secrets/staging.
 	{"migration_jobs", "ended_at", models.RetentionCatMigrations, 90 * retentionDay, "state IN ('done','failed','degraded','cancelled')", "terminal migration job + stage rows (JAB-102)"},
+	// GH #2261: the hourly cache-doctor sweep records a run each time. Fixed
+	// window; finished runs only (a queued or running one is still in use).
+	{"cache_doctor_runs", "created_at", "", 90 * retentionDay, "state IN ('done','failed')", "cache-doctor sweep history (GH #2261)"},
 }
 
 // retentionBatchSize bounds each DELETE so a large backlog can't hold a long

@@ -268,7 +268,12 @@ func runWPCacheGC(parent context.Context, cfg WPCacheGCConfig) wpCacheGCResult {
 	}
 	res.Sites = len(sites)
 
-	res.Complete = wpCacheScan(ctx, cfg, sites)
+	// The scan only sorts keys of the sites above. With none, there is nothing
+	// to scan for (GH #2261: most servers have no cache-enabled WordPress).
+	res.Complete = true
+	if len(sites) > 0 {
+		res.Complete = wpCacheScan(ctx, cfg, sites)
+	}
 	now := time.Now().UTC()
 	for _, s := range sites {
 		s.flush(ctx, cfg)
@@ -291,6 +296,9 @@ func runWPCacheGC(parent context.Context, cfg WPCacheGCConfig) wpCacheGCResult {
 	// Reaping decides from the install list, so it needs the whole list.
 	if int64(len(installs)) == total {
 		res.ReapedUsers = wpCacheReapOrphans(ctx, cfg, exists)
+	}
+	if res.Sites == 0 && res.ReapedUsers == 0 {
+		return res // nothing to report every 15 minutes
 	}
 	slog.InfoContext(ctx, "wp-cache gc", "sites", res.Sites, "stale_deleted", res.Stale,
 		"trimmed", res.Trimmed, "complete", res.Complete, "reaped_users", res.ReapedUsers,

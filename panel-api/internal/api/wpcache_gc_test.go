@@ -538,6 +538,36 @@ func TestSetApplicationCache_DisableRemovesTheKeysThenTheUser(t *testing.T) {
 	}
 }
 
+// GH #2261: on a server with no cache-enabled WordPress site the pass sends
+// nothing to Redis. It still reaps a removed site's user.
+func TestWPCacheGC_WithoutACacheSiteSendsRedisNothing(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	stubGCRedis(t, mr, map[string]string{})
+	before := mr.CommandCount()
+
+	res := runWPCacheGC(context.Background(), gcConfig(rdb, gcInstall(gcC, false, "ready", ""), gcInstall(gcD, true, "installing", "")))
+
+	if n := mr.CommandCount() - before; n != 0 {
+		t.Errorf("sent Redis %d commands, want none without a cache site", n)
+	}
+	if res.Sites != 0 || !res.Complete {
+		t.Errorf("sites %d complete %v, want 0 and complete", res.Sites, res.Complete)
+	}
+}
+
+func TestWPCacheGC_WithoutACacheSiteStillReapsTheLastOnesUser(t *testing.T) {
+	mr, rdb := newMiniRedis(t)
+	defer mr.Close()
+	g := stubGCRedis(t, mr, map[string]string{installACLUser("bob", gcGone): "unknown"})
+
+	res := runWPCacheGC(context.Background(), gcConfig(rdb, gcInstall(gcC, false, "ready", "")))
+
+	if res.ReapedUsers != 1 || !strings.Contains(strings.Join(g.acl, "|"), "DELUSER wp_bob_"+gcGone) {
+		t.Errorf("reaped %d, acl %v: the removed site's user must still go", res.ReapedUsers, g.acl)
+	}
+}
+
 func TestWPCacheGC_ForgetsStatsOfSitesNoLongerCached(t *testing.T) {
 	mr, rdb := newMiniRedis(t)
 	defer mr.Close()
