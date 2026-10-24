@@ -64,3 +64,37 @@ func TestRequireUserAuth_NoAuthorizationKeepsTheCookiePath(t *testing.T) {
 		t.Fatalf("kratosRan=%v body=%v, want the cookie path's missing_session", kratosRan, body)
 	}
 }
+
+// GH #2245 follow-up: the reporter's Personal API Token never reached the
+// panel as "Bearer jat_…" (its Last used stayed empty) and the answer was
+// still "Kratos session cookie not found". A jat_ token sent without the
+// Bearer scheme, or a Jabali-HMAC signature, gets the 401 that says how
+// /api/v1 takes a token.
+func TestRequireUserAuth_MisformedAPIAuthNamesTheFormat(t *testing.T) {
+	for _, authz := range []string{
+		"jat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"Token jat_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"Jabali-HMAC key=k,ts=1,sig=s",
+	} {
+		code, body, kratosRan := runUserAuth(t, authz, false)
+		if code != http.StatusUnauthorized || body["error"] != "invalid_token" {
+			t.Errorf("%q: code=%d body=%v, want 401 invalid_token", authz, code, body)
+			continue
+		}
+		if !strings.Contains(body["message"], "Authorization: Bearer jat_") {
+			t.Errorf("%q: message should show the Bearer format: %q", authz, body["message"])
+		}
+		if kratosRan {
+			t.Errorf("%q: the cookie path ran for a request with no cookie", authz)
+		}
+	}
+}
+
+// Basic auth is what an nginx htpasswd in front of the panel sends with every
+// browser request; a logged-out browser keeps the cookie path's answer.
+func TestRequireUserAuth_BasicKeepsTheCookiePath(t *testing.T) {
+	_, body, kratosRan := runUserAuth(t, "Basic dXNlcjpwYXNz", false)
+	if !kratosRan || body["error"] != "missing_session" {
+		t.Fatalf("kratosRan=%v body=%v, want the cookie path's missing_session", kratosRan, body)
+	}
+}

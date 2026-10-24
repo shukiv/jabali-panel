@@ -806,6 +806,15 @@ type agentCancelReply struct {
 // cancelledByAdminText is the error_text of a job an admin cancelled.
 const cancelledByAdminText = "cancelled by an administrator"
 
+// cancelledByOwnerText is the error_text of a job its account's owner
+// cancelled from the tenant panel.
+const cancelledByOwnerText = "cancelled by the account owner"
+
+// backupCancelTimeout bounds the agent's backup.cancel call. The agent waits
+// up to CancelGrace+2s for the job to stop before answering, so the call
+// allows a little more, and stays under the server's 30s WriteTimeout.
+var backupCancelTimeout = internalbackup.CancelGrace + 5*time.Second
+
 // cancelJob stops a queued or running backup and records it cancelled
 // (GH #2245). Cancel used to only ask the agent, whose backup.cancel was a
 // no-op, and answer ok: the backup ran on and its row stayed "running".
@@ -818,8 +827,7 @@ func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "jobs_repo_unavailable"})
 		return
 	}
-	reqCtx := c.Request.Context()
-	job, err := h.cfg.Jobs.Get(reqCtx, c.Param("job_id"))
+	job, err := h.cfg.Jobs.Get(c.Request.Context(), c.Param("job_id"))
 	if errors.Is(err, repository.ErrNotFound) {
 		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
 		return
@@ -828,6 +836,13 @@ func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_get_job"})
 		return
 	}
+	cancelBackupJob(c, h.cfg.Agent, h.cfg.Jobs, job, rpc, cancelledByAdminText)
+}
+
+// cancelBackupJob is the cancel shared by the admin and tenant routes, once
+// the caller has loaded the job and checked it may cancel it.
+func cancelBackupJob(c *gin.Context, ag agent.AgentInterface, jobs repository.BackupJobRepository, job *models.BackupJob, rpc, cancelledText string) {
+	reqCtx := c.Request.Context()
 	if isRestoreKind(job.Kind) {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "not_cancellable",
 			"detail": "A restore can't be cancelled."})
@@ -839,10 +854,10 @@ func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(reqCtx, backupCallTimeout)
+	ctx, cancel := context.WithTimeout(reqCtx, backupCancelTimeout)
 	defer cancel()
 	var reply agentCancelReply
-	raw, callErr := h.cfg.Agent.Call(ctx, rpc, map[string]string{"job_id": job.ID})
+	raw, callErr := ag.Call(ctx, rpc, map[string]string{"job_id": job.ID})
 	if callErr == nil {
 		callErr = json.Unmarshal(raw, &reply)
 	}
@@ -862,14 +877,23 @@ func (h *backupHandler) cancelJob(c *gin.Context, rpc string) {
 			return
 		}
 	}
-	// It finished before the cancel reached it; the finalizer records how.
-	if callErr == nil && reply.Stopped != nil && !*reply.Stopped &&
+	// It finished before the cancel reached it, or on its own while the agent
+	// waited for it to stop; the finalizer records how.
+	if callErr == nil && reply.Stopped != nil &&
 		(reply.JobState == "succeeded" || reply.JobState == "failed") {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": "job_already_finished",
 			"detail": "This backup finished before it could be cancelled."})
 		return
 	}
-	sealed, err := h.cfg.Jobs.MarkCancelledIfActive(reqCtx, job.ID, cancelledByAdminText)
+	// The agent answers once the job has stopped. One still stopping when it
+	// gave up waiting keeps its row as it is: calling it cancelled now would
+	// let a delete run into the job's slot. The finalizer seals it when the
+	// agent reports it cancelled.
+	if callErr == nil && reply.Stopped != nil && *reply.Stopped && reply.JobState == "running" {
+		c.JSON(http.StatusAccepted, gin.H{"status": "ok", "data": gin.H{"job_id": job.ID, "status": "cancelling"}})
+		return
+	}
+	sealed, err := jobs.MarkCancelledIfActive(reqCtx, job.ID, cancelledText)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_update_job"})
 		return
@@ -1670,6 +1694,9 @@ func RegisterMeBackupRoutes(rg *gin.RouterGroup, cfg MeBackupsHandlerConfig) {
 	g.POST("/restore-upload/apply", h.restoreUploadApply)
 	g.GET("/restore-upload/status", h.restoreUploadStatus)
 	g.DELETE("/:id", h.delete)
+	// GH #2245: the owner can cancel a queued or running backup of their
+	// account, as an admin can.
+	g.POST("/:id/cancel", h.cancel)
 	g.GET("/:id/manifest", h.manifest)
 	g.POST("/:id/restore", h.restoreSelective)
 	g.GET("/destinations", h.destinations)
@@ -1753,6 +1780,32 @@ func (h *meBackupHandler) destinations(c *gin.Context) {
 }
 
 type meBackupHandler struct{ cfg MeBackupsHandlerConfig }
+
+// cancel stops a queued or running backup of the caller's own account,
+// including one from an admin schedule: the same rows their Delete reaches.
+// A system backup or restore is the server's, so it is not found here.
+func (h *meBackupHandler) cancel(c *gin.Context) {
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
+		return
+	}
+	if h.cfg.Agent == nil || h.cfg.Jobs == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "agent_unavailable"})
+		return
+	}
+	job, err := h.cfg.Jobs.Get(c.Request.Context(), c.Param("id"))
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_get_job"})
+		return
+	}
+	if err != nil || job.UserID != claims.UserID ||
+		job.Kind == models.BackupJobKindSystemBackup || job.Kind == models.BackupJobKindSystemRestore {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "not_found"})
+		return
+	}
+	cancelBackupJob(c, h.cfg.Agent, h.cfg.Jobs, job, "backup.cancel", cancelledByOwnerText)
+}
 
 // delete forgets the caller's own backup run (default local repo — me-backups
 // never use a destination) then drops the job row (GH #294).

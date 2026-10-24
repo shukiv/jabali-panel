@@ -15,9 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -44,15 +48,19 @@ func (r *cancelJobsRepo) MarkCancelledIfActive(_ context.Context, _ string, errT
 }
 
 type cancelAgent struct {
-	reply string
-	err   error
-	rpc   string
-	calls int
+	reply   string
+	err     error
+	rpc     string
+	calls   int
+	timeout time.Duration // how long the handler let the call run
 }
 
-func (a *cancelAgent) Call(_ context.Context, method string, _ any) (json.RawMessage, error) {
+func (a *cancelAgent) Call(ctx context.Context, method string, _ any) (json.RawMessage, error) {
 	a.calls++
 	a.rpc = method
+	if dl, ok := ctx.Deadline(); ok {
+		a.timeout = time.Until(dl)
+	}
 	return json.RawMessage(a.reply), a.err
 }
 
@@ -80,7 +88,7 @@ func cancelTestJob(status, kind string) *models.BackupJob {
 
 func TestCancel_RunningJobStopped_SealsCancelled(t *testing.T) {
 	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup), sealResult: true}
-	ag := &cancelAgent{reply: `{"job_id":"` + cancelTestJobID + `","stopped":true,"job_state":"running"}`}
+	ag := &cancelAgent{reply: `{"job_id":"` + cancelTestJobID + `","stopped":true,"job_state":"cancelled"}`}
 
 	rec := runCancel(t, false, jobs, ag)
 
@@ -97,7 +105,7 @@ func TestCancel_RunningJobStopped_SealsCancelled(t *testing.T) {
 
 func TestSystemCancel_UsesTheSystemRPC(t *testing.T) {
 	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindSystemBackup), sealResult: true}
-	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"running"}`}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
 
 	rec := runCancel(t, true, jobs, ag)
 
@@ -208,7 +216,7 @@ func TestCancel_UnknownJob_NotFound(t *testing.T) {
 // The finalizer sealed the job between Get and the cancel: keep its outcome.
 func TestCancel_LostTheRaceToTheFinalizer_Conflict(t *testing.T) {
 	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup), sealResult: false}
-	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"running"}`}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
 
 	rec := runCancel(t, false, jobs, ag)
 
@@ -230,7 +238,121 @@ func TestAgentCancelReply_MatchesTheAgentFixture(t *testing.T) {
 	if err := dec.Decode(&reply); err != nil {
 		t.Fatalf("agent backup.cancel reply does not decode into agentCancelReply: %v", err)
 	}
-	if reply.Stopped == nil || !*reply.Stopped || reply.JobState != "running" {
-		t.Fatalf("decoded %+v, want stopped=true job_state=running", reply)
+	if reply.Stopped == nil || !*reply.Stopped || reply.JobState != "cancelled" {
+		t.Fatalf("decoded %+v, want stopped=true job_state=cancelled", reply)
+	}
+}
+
+// GH #2245 follow-up: the row said Cancelled while the agent was still
+// stopping the backup, and a delete right after was refused because the job
+// still held its slot. The agent now answers once the job has stopped; one
+// that is still stopping is reported running, and the row must stay as it is
+// until the finalizer reads "cancelled" from the agent.
+func TestCancel_StillStopping_AnswersCancellingWithoutSealing(t *testing.T) {
+	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup), sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"running"}`}
+
+	rec := runCancel(t, false, jobs, ag)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("code = %d, want 202 (%s)", rec.Code, rec.Body)
+	}
+	var body struct {
+		Data struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	if body.Data.Status != "cancelling" {
+		t.Errorf("data.status = %q, want cancelling", body.Data.Status)
+	}
+	if jobs.sealed != 0 {
+		t.Fatal("a backup that is still stopping was sealed cancelled")
+	}
+}
+
+// It finished on its own while the agent waited for it to stop: keep the
+// real outcome.
+func TestCancel_FinishedWhileStopping_KeepsTheOutcome(t *testing.T) {
+	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup), sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"succeeded"}`}
+
+	rec := runCancel(t, false, jobs, ag)
+
+	if rec.Code != http.StatusConflict || errorCode(t, rec) != "job_already_finished" || jobs.sealed != 0 {
+		t.Fatalf("code=%d error=%q sealed=%d, want 409 job_already_finished, not sealed", rec.Code, errorCode(t, rec), jobs.sealed)
+	}
+}
+
+// The agent waits up to restic's CancelGrace for the job to stop, so the call
+// must outlast that, and still answer inside the server's 30s WriteTimeout.
+func TestCancel_AgentCallOutlastsTheStopButNotTheWriteTimeout(t *testing.T) {
+	jobs := &cancelJobsRepo{job: cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup), sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
+
+	runCancel(t, false, jobs, ag)
+
+	if ag.timeout <= internalbackup.CancelGrace || ag.timeout >= 30*time.Second {
+		t.Fatalf("agent call timeout = %s, want above CancelGrace (%s) and below 30s", ag.timeout, internalbackup.CancelGrace)
+	}
+}
+
+func runMeCancel(t *testing.T, userID string, jobs *cancelJobsRepo, ag *cancelAgent) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/me/backups/"+cancelTestJobID+"/cancel", nil)
+	c.Params = gin.Params{{Key: "id", Value: cancelTestJobID}}
+	ginctx.SetClaims(c, &auth.AccessClaims{UserID: userID})
+	h := &meBackupHandler{cfg: MeBackupsHandlerConfig{Jobs: jobs, Agent: ag}}
+	h.cancel(c)
+	return rec
+}
+
+// GH #2245: a tenant can cancel a queued or running backup of their own
+// account, including one from an admin schedule (the same rows their Delete
+// already reaches).
+func TestMeCancel_OwnRunningBackup_SealsCancelled(t *testing.T) {
+	job := cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup)
+	job.UserID = "01HZ2245TENANT000000000001"
+	jobs := &cancelJobsRepo{job: job, sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
+
+	rec := runMeCancel(t, job.UserID, jobs, ag)
+
+	if rec.Code != http.StatusOK || ag.rpc != "backup.cancel" {
+		t.Fatalf("code=%d rpc=%q, want 200 via backup.cancel (%s)", rec.Code, ag.rpc, rec.Body)
+	}
+	if jobs.sealed != 1 || jobs.sealText != cancelledByOwnerText {
+		t.Fatalf("sealed %d times with %q, want once with %q", jobs.sealed, jobs.sealText, cancelledByOwnerText)
+	}
+}
+
+func TestMeCancel_SomeoneElsesBackup_NotFound(t *testing.T) {
+	job := cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindAccountBackup)
+	job.UserID = "01HZ2245TENANT000000000001"
+	jobs := &cancelJobsRepo{job: job, sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
+
+	rec := runMeCancel(t, "01HZ2245TENANT000000000002", jobs, ag)
+
+	if rec.Code != http.StatusNotFound || ag.calls != 0 || jobs.sealed != 0 {
+		t.Fatalf("code=%d agent calls=%d sealed=%d, want 404 and nothing touched", rec.Code, ag.calls, jobs.sealed)
+	}
+}
+
+// A system backup is the server's, not the tenant's, even if its row names
+// them.
+func TestMeCancel_SystemBackup_NotFound(t *testing.T) {
+	job := cancelTestJob(models.BackupJobStatusRunning, models.BackupJobKindSystemBackup)
+	job.UserID = "01HZ2245TENANT000000000001"
+	jobs := &cancelJobsRepo{job: job, sealResult: true}
+	ag := &cancelAgent{reply: `{"stopped":true,"job_state":"cancelled"}`}
+
+	rec := runMeCancel(t, job.UserID, jobs, ag)
+
+	if rec.Code != http.StatusNotFound || ag.calls != 0 {
+		t.Fatalf("code=%d agent calls=%d, want 404 and no agent call", rec.Code, ag.calls)
 	}
 }
