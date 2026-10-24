@@ -34,10 +34,24 @@ import (
 
 // Sentinel errors. Adapters test with errors.Is and map to their own codes.
 var (
-	ErrInvalidKind  = errors.New("invalid backup schedule kind")
-	ErrInvalidCron  = errors.New("invalid cron expression")
-	ErrAdminUser    = errors.New("admin accounts cannot be backup-schedule targets")
-	ErrUserNotFound = errors.New("backup-schedule target user not found")
+	ErrInvalidKind    = errors.New("invalid backup schedule kind")
+	ErrInvalidCron    = errors.New("invalid cron expression")
+	ErrAdminUser      = errors.New("admin accounts cannot be backup-schedule targets")
+	ErrUserNotFound   = errors.New("backup-schedule target user not found")
+	ErrInvalidContent = errors.New("invalid backup content")
+	ErrInvalidCadence = errors.New("invalid backup cadence")
+	// GH #2246: a schedule is timed one of two ways, fixed when it is created. An
+	// account's own schedule (made on its Backups page) runs on an interval
+	// (cadence) and has no cron expression; an admin schedule runs on cron. A
+	// patch may only change the timing the schedule already uses: a cron
+	// expression sent for an interval schedule used to move its next run to that
+	// cron time while it kept firing on its interval.
+	ErrIntervalSchedule = errors.New("this schedule runs on an interval; change its cadence, not a cron expression")
+	ErrCronSchedule     = errors.New("this schedule runs on a cron expression; it has no cadence")
+	// ErrAccountSchedule refuses a patch that would make an account's own
+	// schedule back up anything but that account: other or all users, or the
+	// system backup. The account can edit that schedule from its Backups page.
+	ErrAccountSchedule = errors.New("this schedule belongs to one account and backs up only that account")
 )
 
 // UserRejectedError names the offending user id and wraps the reason
@@ -73,10 +87,31 @@ type scheduleWriter interface {
 	UpdateWithMemberships(ctx context.Context, s *models.BackupSchedule, destIDs, userIDs *[]string) error
 }
 
+// SettingsGetter reads the server settings that hold the tenant backup window.
+type SettingsGetter interface {
+	Get(ctx context.Context) (*models.ServerSettings, error)
+}
+
 // Deps are the leaf's collaborators, injected by the adapter.
 type Deps struct {
 	Schedules scheduleWriter
 	Users     UserFinder
+	// Settings supplies the tenant backup window an interval schedule's next
+	// run is computed in. nil = the whole day (ungated), the window's default.
+	Settings SettingsGetter
+}
+
+// tenantWindow is the window an interval schedule fires inside, computed the
+// same way as the tenant Backups page and the scheduler.
+func tenantWindow(ctx context.Context, settings SettingsGetter) internalbackup.TenantWindow {
+	if settings == nil {
+		return internalbackup.TenantWindow{}
+	}
+	s, err := settings.Get(ctx)
+	if err != nil || s == nil {
+		return internalbackup.TenantWindow{}
+	}
+	return internalbackup.EffectiveTenantWindow(s.TenantBackupWindowEnforce, s.TenantBackupWindowStart, s.TenantBackupWindowEnd)
 }
 
 // CreateInput is the resolved, transport-neutral create request. UserIDs and
@@ -86,11 +121,14 @@ type CreateInput struct {
 	UserIDs             []string
 	IncludeSystemBackup bool
 	CronExpr            string
-	Enabled             *bool
-	KeepDaily           *int
-	KeepWeekly          *int
-	KeepMonthly         *int
-	DestinationIDs      []string
+	// Content is what each run backs up: full / files / database / folders.
+	// "" = full. Ignored on a system schedule.
+	Content        string
+	Enabled        *bool
+	KeepDaily      *int
+	KeepWeekly     *int
+	KeepMonthly    *int
+	DestinationIDs []string
 }
 
 // Create validates and persists a backup schedule with its memberships. The
@@ -107,6 +145,10 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.BackupSchedule
 
 	userIDs := cleanIDs(in.UserIDs)
 	includeSys := in.IncludeSystemBackup
+	if !models.ValidBackupContent(in.Content) {
+		return nil, ErrInvalidContent
+	}
+	content := models.NormalizeBackupContent(in.Content)
 
 	if kind == models.BackupScheduleKindSystem {
 		// A system schedule has no per-user membership and the
@@ -114,6 +156,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.BackupSchedule
 		// backup) — normalise both so a kind flip can't leave leftovers.
 		userIDs = nil
 		includeSys = false
+		content = models.BackupContentFull
 	} else if d.Users != nil {
 		// account_backup: every explicit target must exist and must not
 		// be an admin (an admin account is panel-only, nothing to back up).
@@ -143,6 +186,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.BackupSchedule
 		Kind:                kind,
 		IncludeSystemBackup: includeSys,
 		CronExpr:            strings.TrimSpace(in.CronExpr),
+		Content:             content,
 		Enabled:             enabled,
 		KeepDaily:           in.KeepDaily,
 		KeepWeekly:          in.KeepWeekly,
@@ -164,8 +208,13 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.BackupSchedule
 // deliberately absent: a schedule's kind is immutable, so the patch is always
 // validated against the stored kind.
 type UpdateInput struct {
-	ID                  string
-	CronExpr            *string
+	ID       string
+	CronExpr *string
+	// Cadence re-times an interval schedule (an account's own, GH #2246); a
+	// cron schedule refuses it. Content is what each run backs up; ignored on
+	// a system schedule.
+	Cadence             *string
+	Content             *string
 	Enabled             *bool
 	IncludeSystemBackup *bool
 	KeepDaily           *int
@@ -193,9 +242,21 @@ func Update(ctx context.Context, d Deps, in UpdateInput) (*models.BackupSchedule
 	// Resolve the user set to persist. Only account schedules carry per-user
 	// membership; for those, validate every target before any write. A system
 	// schedule ignores the patch (nil = leave untouched).
+	// An account's own schedule (user_id set: made on the account's Backups
+	// page, or a single-user schedule from before the user list existed) backs
+	// up that account only. The account can edit it, so turning it into an
+	// other- or every-user fan-out, or adding the system backup, would hand an
+	// account a schedule that reaches beyond it.
+	owner := ""
+	if s.UserID != nil {
+		owner = *s.UserID
+	}
 	var userIDs *[]string
 	if in.UserIDs != nil && s.Kind == models.BackupScheduleKindAccount {
 		ids := cleanIDs(*in.UserIDs)
+		if owner != "" && (len(ids) != 1 || ids[0] != owner) {
+			return nil, ErrAccountSchedule
+		}
 		if d.Users != nil {
 			for _, uid := range ids {
 				u, err := d.Users.FindByID(ctx, uid)
@@ -210,13 +271,43 @@ func Update(ctx context.Context, d Deps, in UpdateInput) (*models.BackupSchedule
 		userIDs = &ids
 	}
 
+	if in.IncludeSystemBackup != nil && *in.IncludeSystemBackup && owner != "" && s.Kind == models.BackupScheduleKindAccount {
+		return nil, ErrAccountSchedule
+	}
+
 	if in.CronExpr != nil {
+		if s.Cadence != "" {
+			return nil, ErrIntervalSchedule
+		}
 		next, err := internalbackup.NextFire(*in.CronExpr, time.Now().UTC())
 		if err != nil {
 			return nil, fmt.Errorf("%w: %v", ErrInvalidCron, err)
 		}
 		s.CronExpr = strings.TrimSpace(*in.CronExpr)
 		s.NextRunAt = &next
+	}
+	if in.Cadence != nil {
+		if s.Cadence == "" {
+			return nil, ErrCronSchedule
+		}
+		if !internalbackup.ValidCadence(*in.Cadence) {
+			return nil, ErrInvalidCadence
+		}
+		// Re-time only on a change, as the tenant page does on every save: an
+		// edit that keeps the cadence (retention, destination, on/off) leaves the
+		// next run where it is, so a weekly schedule is not pushed a week out.
+		if *in.Cadence != s.Cadence {
+			s.Cadence = *in.Cadence
+			next := internalbackup.NextTenantRun(time.Now().UTC(), s.Cadence, tenantWindow(ctx, d.Settings), s.ID)
+			s.NextRunAt = &next
+		}
+	}
+	if in.Content != nil && s.Kind == models.BackupScheduleKindAccount {
+		// A system schedule always backs up the whole system; content is ignored.
+		if !models.ValidBackupContent(*in.Content) {
+			return nil, ErrInvalidContent
+		}
+		s.Content = models.NormalizeBackupContent(*in.Content)
 	}
 	if in.Enabled != nil {
 		s.Enabled = *in.Enabled

@@ -99,6 +99,17 @@ func ParseWindow(start, end string) TenantWindow {
 	return TenantWindow{StartMin: s, EndMin: e}
 }
 
+// EffectiveTenantWindow is the window tenant interval schedules fire inside.
+// GH #1097: the window is opt-in, so with enforcement off it is the whole day
+// (ungated) and a schedule fires on its plain interval; only with enforcement on
+// does it narrow to the configured start/end.
+func EffectiveTenantWindow(enforce bool, start, end string) TenantWindow {
+	if !enforce {
+		return TenantWindow{}
+	}
+	return ParseWindow(start, end)
+}
+
 // ValidHHMM reports whether s is a well-formed 24h "HH:MM" clock string. Used by
 // the admin settings validator to reject a bad window bound instead of silently
 // falling back to the default (which ParseWindow does at read time).

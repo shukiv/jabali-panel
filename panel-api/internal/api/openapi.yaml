@@ -408,8 +408,12 @@ components:
       properties:
         id: { type: string, format: ulid }
         kind: { type: string }
-        user_id: { type: string, format: ulid, nullable: true }
-        cron_expr: { type: string, example: "0 3 * * *" }
+        user_id: { type: string, format: ulid, nullable: true, description: "Set only on an account's own schedule (made on its Backups page). It backs up that account only." }
+        user_ids: { type: array, items: { type: string, format: ulid }, description: "Accounts an account_backup schedule backs up. Empty = every non-admin account." }
+        include_system_backup: { type: boolean }
+        cron_expr: { type: string, example: "0 3 * * *", description: "Empty on an account's own schedule, which runs on its cadence." }
+        content: { type: string, enum: [full, files, database, folders], description: "What each run backs up." }
+        cadence: { type: string, enum: ["", hourly, every_6h, every_12h, daily, weekly], description: "Set on an account's own schedule, which runs on this interval instead of cron_expr. A PATCH may change cadence only on such a schedule, and cron_expr only on a cron schedule (GH #2246)." }
         enabled: { type: boolean }
         keep_daily: { type: integer }
         keep_weekly: { type: integer }

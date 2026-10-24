@@ -455,8 +455,8 @@ func (s *Scheduler) enqueueTenantWindow(ctx context.Context, sched models.Backup
 	// throttle to a few hours".
 	w := internalbackup.TenantWindow{} // whole-day / ungated
 	if s.deps.Settings != nil {
-		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil && set.TenantBackupWindowEnforce {
-			w = internalbackup.ParseWindow(set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
+		if set, err := s.deps.Settings.Get(ctx); err == nil && set != nil {
+			w = internalbackup.EffectiveTenantWindow(set.TenantBackupWindowEnforce, set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
 		}
 	}
 	next := internalbackup.NextTenantRun(now, sched.Cadence, w, sched.ID)

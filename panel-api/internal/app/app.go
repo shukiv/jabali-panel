@@ -1455,6 +1455,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Destinations: deps.BackupDestinations,
 				Users:        deps.Users,
 				Jobs:         deps.BackupJobs,
+				Settings:     deps.ServerSettings,
 			})
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {

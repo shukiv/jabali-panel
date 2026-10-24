@@ -25,6 +25,9 @@ type BackupSchedulesConfig struct {
 	Destinations repository.BackupDestinationRepository
 	Users        repository.UserRepository
 	Jobs         repository.BackupJobRepository
+	// Settings holds the tenant backup window an account's own (interval)
+	// schedule is re-timed in when its cadence changes. nil = whole day.
+	Settings repository.ServerSettingsRepository
 }
 
 func RegisterBackupScheduleRoutes(rg *gin.RouterGroup, cfg BackupSchedulesConfig) {
@@ -46,20 +49,25 @@ type backupScheduleHandler struct {
 }
 
 type scheduleDTO struct {
-	ID                  string                 `json:"id"`
-	Kind                string                 `json:"kind"`
-	UserID              *string                `json:"user_id,omitempty"`
-	UserIDs             []string               `json:"user_ids"`
-	IncludeSystemBackup bool                   `json:"include_system_backup"`
-	CronExpr            string                 `json:"cron_expr"`
-	Enabled             bool                   `json:"enabled"`
-	KeepDaily           *int                   `json:"keep_daily,omitempty"`
-	KeepWeekly          *int                   `json:"keep_weekly,omitempty"`
-	KeepMonthly         *int                   `json:"keep_monthly,omitempty"`
-	LastRunAt           *string                `json:"last_run_at,omitempty"`
-	NextRunAt           *string                `json:"next_run_at,omitempty"`
-	NextFirings         []string               `json:"next_firings,omitempty"`
-	Destinations        []backupDestinationDTO `json:"destinations,omitempty"`
+	ID                  string   `json:"id"`
+	Kind                string   `json:"kind"`
+	UserID              *string  `json:"user_id,omitempty"`
+	UserIDs             []string `json:"user_ids"`
+	IncludeSystemBackup bool     `json:"include_system_backup"`
+	CronExpr            string   `json:"cron_expr"`
+	// Content is what each run backs up (full / files / database / folders).
+	// Cadence is set on an account's own schedule, which runs on that interval
+	// instead of cron_expr (GH #2246); "" = a cron schedule.
+	Content      string                 `json:"content"`
+	Cadence      string                 `json:"cadence"`
+	Enabled      bool                   `json:"enabled"`
+	KeepDaily    *int                   `json:"keep_daily,omitempty"`
+	KeepWeekly   *int                   `json:"keep_weekly,omitempty"`
+	KeepMonthly  *int                   `json:"keep_monthly,omitempty"`
+	LastRunAt    *string                `json:"last_run_at,omitempty"`
+	NextRunAt    *string                `json:"next_run_at,omitempty"`
+	NextFirings  []string               `json:"next_firings,omitempty"`
+	Destinations []backupDestinationDTO `json:"destinations,omitempty"`
 }
 
 func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) scheduleDTO {
@@ -68,6 +76,8 @@ func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) s
 		UserIDs:             append([]string{}, s.UserIDs...),
 		IncludeSystemBackup: s.IncludeSystemBackup,
 		CronExpr:            s.CronExpr, Enabled: s.Enabled,
+		Content:   models.NormalizeBackupContent(s.Content),
+		Cadence:   s.Cadence,
 		KeepDaily: s.KeepDaily, KeepWeekly: s.KeepWeekly, KeepMonthly: s.KeepMonthly,
 	}
 	if s.LastRunAt != nil {
@@ -133,6 +143,7 @@ type createScheduleRequest struct {
 	UserIDs             []string `json:"user_ids"`
 	IncludeSystemBackup bool     `json:"include_system_backup"`
 	CronExpr            string   `json:"cron_expr"       binding:"required"`
+	Content             string   `json:"content"`
 	Enabled             *bool    `json:"enabled"`
 	KeepDaily           *int     `json:"keep_daily"`
 	KeepWeekly          *int     `json:"keep_weekly"`
@@ -160,6 +171,7 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		UserIDs:             req.UserIDs,
 		IncludeSystemBackup: req.IncludeSystemBackup,
 		CronExpr:            req.CronExpr,
+		Content:             req.Content,
 		Enabled:             req.Enabled,
 		KeepDaily:           req.KeepDaily,
 		KeepWeekly:          req.KeepWeekly,
@@ -191,6 +203,16 @@ func writeScheduleOpError(c *gin.Context, err error, dbErrCode string) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "user_not_found", "detail": ure.UserID})
 	case errors.Is(err, backupscheduleops.ErrInvalidCron):
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cron", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrInvalidContent):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_content", "detail": "content must be full/files/database/folders"})
+	case errors.Is(err, backupscheduleops.ErrInvalidCadence):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cadence", "detail": "cadence must be hourly/every_6h/every_12h/daily/weekly"})
+	case errors.Is(err, backupscheduleops.ErrIntervalSchedule):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "interval_schedule", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrCronSchedule):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "cron_schedule", "detail": err.Error()})
+	case errors.Is(err, backupscheduleops.ErrAccountSchedule):
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "account_schedule", "detail": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": dbErrCode})
 	}
@@ -198,6 +220,8 @@ func writeScheduleOpError(c *gin.Context, err error, dbErrCode string) {
 
 type updateScheduleRequest struct {
 	CronExpr            *string   `json:"cron_expr"`
+	Cadence             *string   `json:"cadence"`
+	Content             *string   `json:"content"`
 	Enabled             *bool     `json:"enabled"`
 	IncludeSystemBackup *bool     `json:"include_system_backup"`
 	KeepDaily           *int      `json:"keep_daily"`
@@ -226,12 +250,17 @@ func (h *backupScheduleHandler) update(c *gin.Context) {
 	// broadens the blast radius. (Admin-target rejection was already enforced
 	// on this surface inline; this change is atomicity plus de-duplication of
 	// the policy the leaf already owns.)
-	s, err := backupscheduleops.Update(c.Request.Context(), backupscheduleops.Deps{
-		Schedules: h.cfg.Schedules,
-		Users:     h.cfg.Users,
-	}, backupscheduleops.UpdateInput{
+	deps := backupscheduleops.Deps{Schedules: h.cfg.Schedules, Users: h.cfg.Users}
+	if h.cfg.Settings != nil {
+		// Assigned only when set: a nil repository in the interface field would
+		// be a non-nil SettingsGetter.
+		deps.Settings = h.cfg.Settings
+	}
+	s, err := backupscheduleops.Update(c.Request.Context(), deps, backupscheduleops.UpdateInput{
 		ID:                  id,
 		CronExpr:            req.CronExpr,
+		Cadence:             req.Cadence,
+		Content:             req.Content,
 		Enabled:             req.Enabled,
 		IncludeSystemBackup: req.IncludeSystemBackup,
 		KeepDaily:           req.KeepDaily,

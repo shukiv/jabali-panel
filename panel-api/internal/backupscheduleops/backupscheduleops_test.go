@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -296,3 +299,190 @@ func TestUpdate_HappyPath_AppliesPatch(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// --- GH #2246: an account's own (interval) schedule edited from the admin side ---
+
+type fakeSettings struct{ s *models.ServerSettings }
+
+func (f fakeSettings) Get(ctx context.Context) (*models.ServerSettings, error) { return f.s, nil }
+
+// tenantRowDeps binds the leaf to an account's own schedule as the tenant
+// Backups page creates it: user_id set, a cadence, a content, no cron_expr.
+func tenantRowDeps(cadence string) (Deps, *fakeScheduleWriter, time.Time) {
+	owner := "u1"
+	next := time.Now().UTC().Add(90 * time.Minute).Truncate(time.Minute)
+	w := &fakeScheduleWriter{getRow: &models.BackupSchedule{
+		ID: "s1", Kind: models.BackupScheduleKindAccount, UserID: &owner,
+		Cadence: cadence, Content: models.BackupContentDatabase, Enabled: true, NextRunAt: &next,
+	}}
+	return Deps{Schedules: w, Users: &fakeUserFinder{users: map[string]*models.User{
+		"u1": {ID: "u1"}, "u2": {ID: "u2"},
+	}}}, w, next
+}
+
+// The bug: the admin form sent the "Daily 03:00" it fell back to as cron_expr,
+// and the leaf moved the interval schedule's next run to the next 03:00 while
+// it kept firing on its interval. Falsify: drop the s.Cadence != "" refusal
+// → the writer records an update with the cron time.
+func TestUpdate_IntervalSchedule_RefusesCron_ZeroWrites(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceEvery6h)
+	cron := validCron
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", CronExpr: &cron})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrIntervalSchedule)
+	require.Empty(t, w.updates)
+}
+
+// A new cadence re-times the schedule on that interval (whole-day window when
+// no settings are wired). Falsify: skip the NextTenantRun assignment → the
+// next run stays 90 minutes out instead of moving to one hour.
+func TestUpdate_IntervalSchedule_CadenceChangeRetimes(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceEvery6h)
+	hourly := internalbackup.CadenceHourly
+	before := time.Now().UTC()
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Cadence: &hourly})
+	require.NoError(t, err)
+	require.Len(t, w.updates, 1)
+	require.Equal(t, internalbackup.CadenceHourly, s.Cadence)
+	require.Empty(t, s.CronExpr, "an interval schedule keeps no cron expression")
+	require.NotNil(t, s.NextRunAt)
+	require.WithinDuration(t, before.Add(time.Hour), *s.NextRunAt, 2*time.Minute)
+}
+
+// With the window enforced, the re-timed run lands inside it, as on the tenant
+// page. Falsify: pass TenantWindow{} instead of the settings window → the run
+// lands one hour out, outside a window that excludes it.
+func TestUpdate_IntervalSchedule_CadenceChangeHonoursWindow(t *testing.T) {
+	d, _, _ := tenantRowDeps(internalbackup.CadenceEvery6h)
+	// A one-hour window that starts three hours from now, on the panel clock.
+	start := time.Now().Add(3 * time.Hour).In(paneltime.Location())
+	set := &models.ServerSettings{
+		TenantBackupWindowEnforce: true,
+		TenantBackupWindowStart:   start.Format("15:04"),
+		TenantBackupWindowEnd:     start.Add(time.Hour).Format("15:04"),
+	}
+	d.Settings = fakeSettings{s: set}
+	hourly := internalbackup.CadenceHourly
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Cadence: &hourly})
+	require.NoError(t, err)
+	want := internalbackup.NextTenantRun(time.Now().UTC(), hourly, internalbackup.EffectiveTenantWindow(true, set.TenantBackupWindowStart, set.TenantBackupWindowEnd), "s1")
+	require.WithinDuration(t, want, *s.NextRunAt, 2*time.Minute)
+	require.Greater(t, s.NextRunAt.Sub(time.Now().UTC()), 90*time.Minute, "the run waits for the window")
+}
+
+// Saving without changing the cadence (retention, destination, on/off) keeps
+// the next run, so a weekly schedule is not pushed a week out by an edit.
+func TestUpdate_IntervalSchedule_SameCadenceKeepsNextRun(t *testing.T) {
+	d, _, next := tenantRowDeps(internalbackup.CadenceWeekly)
+	weekly := internalbackup.CadenceWeekly
+	keep := 3
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Cadence: &weekly, KeepDaily: &keep})
+	require.NoError(t, err)
+	require.Equal(t, next, *s.NextRunAt)
+}
+
+func TestUpdate_InvalidCadence_ZeroWrites(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	for _, c := range []string{"", "monthly", "every_2h"} {
+		c := c
+		s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Cadence: &c})
+		require.Nil(t, s, c)
+		require.ErrorIs(t, err, ErrInvalidCadence, c)
+	}
+	require.Empty(t, w.updates)
+}
+
+// A cron schedule has no cadence; setting one would silently move it onto the
+// tenant window path. Falsify: drop the s.Cadence == "" refusal.
+func TestUpdate_CronSchedule_RefusesCadence_ZeroWrites(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindAccount, nil)
+	daily := internalbackup.CadenceDaily
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Cadence: &daily})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrCronSchedule)
+	require.Empty(t, w.updates)
+}
+
+// Content is what each run backs up; the admin can now change it, and it is
+// validated with the tenant's allow-list.
+func TestUpdate_Content_AppliedAndValidated(t *testing.T) {
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	files := models.BackupContentFiles
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Content: &files})
+	require.NoError(t, err)
+	require.Equal(t, models.BackupContentFiles, s.Content)
+
+	bogus := "everything"
+	s, err = Update(context.Background(), d, UpdateInput{ID: "s1", Content: &bogus})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrInvalidContent)
+	require.Len(t, w.updates, 1, "the invalid patch wrote nothing")
+}
+
+func TestUpdate_SystemKind_IgnoresContent(t *testing.T) {
+	d, w := updateDeps(models.BackupScheduleKindSystem, nil)
+	w.getRow.Content = models.BackupContentFull
+	db := models.BackupContentDatabase
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", Content: &db})
+	require.NoError(t, err)
+	require.Equal(t, models.BackupContentFull, s.Content)
+}
+
+// An account's own schedule backs up that account only: the patch may not
+// widen it to other users, every user, or the system backup. Falsify: drop the
+// owner check → the every-user patch is written.
+func TestUpdate_AccountSchedule_StaysOnItsAccount(t *testing.T) {
+	for name, ids := range map[string][]string{
+		"every user": {},
+		"other user": {"u2"},
+		"added user": {"u1", "u2"},
+	} {
+		d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+		ids := ids
+		s, err := Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &ids})
+		require.Nil(t, s, name)
+		require.ErrorIs(t, err, ErrAccountSchedule, name)
+		require.Empty(t, w.updates, name)
+	}
+
+	d, w, _ := tenantRowDeps(internalbackup.CadenceDaily)
+	inc := true
+	s, err := Update(context.Background(), d, UpdateInput{ID: "s1", IncludeSystemBackup: &inc})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrAccountSchedule)
+	require.Empty(t, w.updates)
+
+	// Re-sending the owner, or include-system off, is what an unchanged save
+	// sends; it goes through.
+	off := false
+	s, err = Update(context.Background(), d, UpdateInput{ID: "s1", UserIDs: &[]string{"u1"}, IncludeSystemBackup: &off})
+	require.NoError(t, err)
+	require.Equal(t, []string{"u1"}, s.UserIDs)
+}
+
+// Create stores the content each run backs up; a system schedule is always full.
+func TestCreate_Content(t *testing.T) {
+	d, w := accountDeps(map[string]*models.User{"u1": {ID: "u1"}})
+	s, err := Create(context.Background(), d, CreateInput{
+		Kind: models.BackupScheduleKindAccount, UserIDs: []string{"u1"}, CronExpr: validCron,
+		Content: models.BackupContentDatabase,
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.BackupContentDatabase, w.calls[0].s.Content)
+	require.Equal(t, models.BackupContentDatabase, s.Content)
+
+	s, err = Create(context.Background(), d, CreateInput{Kind: models.BackupScheduleKindAccount, CronExpr: validCron})
+	require.NoError(t, err)
+	require.Equal(t, models.BackupContentFull, s.Content, `"" = full`)
+
+	s, err = Create(context.Background(), d, CreateInput{
+		Kind: models.BackupScheduleKindSystem, CronExpr: validCron, Content: models.BackupContentFiles,
+	})
+	require.NoError(t, err)
+	require.Equal(t, models.BackupContentFull, s.Content)
+
+	s, err = Create(context.Background(), d, CreateInput{Kind: models.BackupScheduleKindAccount, CronExpr: validCron, Content: "bogus"})
+	require.Nil(t, s)
+	require.ErrorIs(t, err, ErrInvalidContent)
+	require.Len(t, w.calls, 3)
+}
