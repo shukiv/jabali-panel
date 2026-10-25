@@ -106,11 +106,9 @@ export function MailboxSendAsSection({ mailboxId, domainId }: MailboxSendAsSecti
   );
 }
 
+// The detail, when there is one, is the sentence for people; error is the code.
 function errMsg(err: unknown, fallback: string): string {
-  return (
-    (err as { response?: { data?: { error?: string; detail?: string } } })?.response
-      ?.data?.error ??
-    (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
-    fallback
-  );
+  const data = (err as { response?: { data?: { error?: string; detail?: string } } })?.response
+    ?.data;
+  return data?.detail ?? data?.error ?? fallback;
 }

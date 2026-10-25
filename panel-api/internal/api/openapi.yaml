@@ -4654,18 +4654,38 @@ paths:
       responses: { "200": { description: OK } }
     post:
       tags: [Mailboxes]
-      summary: Send As mailboxes
+      summary: Let the mailbox send as another mailbox
+      description: "The grantor must be an enabled mailbox in the same domain. The grant is kept only once the mail server has taken it (GH #2267)."
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: mbid, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                grantor_mailbox_id: { type: string }
+                grantor_email: { type: string, description: "Used when grantor_mailbox_id is not set" }
+      responses:
+        "201": { description: "{ id, grantor_mailbox_id, grantor_email, delegate_mailbox_id, delegate_email, created_at }" }
+        "400": { description: "invalid_body, grantor_required, mailbox_disabled, self_delegation or grantor_different_domain" }
+        "403": { description: Not the mailbox's owner or an admin }
+        "404": { description: "Mailbox not found, or grantor_not_found" }
+        "409": { description: "already_delegated" }
+        "500": { description: "sendas_not_applied: the mail server did not take the grant, so it was not saved. The panel log has the reason." }
 
   /mailboxes/{mbid}/send-as/{grantorId}:
     delete:
       tags: [Mailboxes]
-      summary: Delete send a
+      summary: Stop the mailbox sending as another mailbox
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: mbid, required: true, schema: { type: string } }, { in: path, name: grantorId, required: true, schema: { type: string } } ]
-      responses: { "204": { description: OK } }
+      responses:
+        "204": { description: Removed }
+        "403": { description: Not the mailbox's owner or an admin }
+        "404": { description: "Mailbox or grant not found" }
+        "500": { description: "sendas_not_applied: the mail server did not take the removal, so the grant stays. The panel log has the reason." }
 
   /mailboxes/{mbid}/trusted-senders:
     get:

@@ -15,6 +15,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -181,8 +182,16 @@ func (h *sendAsHandler) add(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	if rErr := h.reconcile(ctx); rErr != nil {
+		// GH #2267: a grant the mail server did not take can't be used, so
+		// undo it. The tab then lists only what the server lets through.
+		if dErr := h.cfg.SendDelegations.DeleteByPair(ctx, delegate.ID, grantor.ID); dErr != nil {
+			slog.Warn("sendas.add: undo after a failed reconcile", "err", dErr)
+		}
+		h.writeNotApplied(c, rErr)
+		return
+	}
 	slog.Info("sendas.add", "delegate", delegate.EmailCached, "grantor", grantor.EmailCached, "actor", claims.UserID)
-	h.reconcile(ctx)
 	c.JSON(http.StatusCreated, sendAsGrantorResponse{
 		ID:                row.ID,
 		GrantorMailboxID:  grantor.ID,
@@ -202,6 +211,18 @@ func (h *sendAsHandler) del(c *gin.Context) {
 		return
 	}
 	grantorID := c.Param("grantorId")
+	// Kept so the grant can be put back if the mail server refuses the removal.
+	var removed *models.MailboxSendDelegation
+	if rows, lErr := h.cfg.SendDelegations.ListByDelegate(ctx, delegate.ID); lErr != nil {
+		slog.Warn("sendas.remove: list grants", "err", lErr)
+	} else {
+		for i := range rows {
+			if rows[i].GrantorMailboxID == grantorID {
+				removed = &rows[i]
+				break
+			}
+		}
+	}
 	if dErr := h.cfg.SendDelegations.DeleteByPair(ctx, delegate.ID, grantorID); dErr != nil {
 		if errors.Is(dErr, repository.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
@@ -210,28 +231,48 @@ func (h *sendAsHandler) del(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	if rErr := h.reconcile(ctx); rErr != nil {
+		// GH #2267: the mailbox can still send as the address, so keep the
+		// grant listed rather than show it removed.
+		if removed == nil {
+			slog.Warn("sendas.remove: grant gone from the panel, but the mail server may still allow it",
+				"delegate", delegate.EmailCached, "grantor_mailbox_id", grantorID)
+		} else if cErr := h.cfg.SendDelegations.Create(ctx, removed); cErr != nil {
+			slog.Warn("sendas.remove: restore after a failed reconcile", "err", cErr)
+		}
+		h.writeNotApplied(c, rErr)
+		return
+	}
 	slog.Info("sendas.remove", "delegate", delegate.EmailCached, "grantor_mailbox_id", grantorID, "actor", claims.UserID)
-	h.reconcile(ctx)
 	c.Status(http.StatusNoContent)
 }
 
 // reconcile recomputes the full delegation set and pushes it to the agent, which
-// rebuilds Stalwart's mustMatchSender expression. Best-effort + full-replace: a
-// failure is logged, and the next change (or an install/update run) self-heals.
-func (h *sendAsHandler) reconcile(ctx context.Context) {
+// rebuilds Stalwart's mustMatchSender expression. Full-replace, so the next
+// change or panel start also heals a push that was missed.
+func (h *sendAsHandler) reconcile(ctx context.Context) error {
 	if h.cfg.Agent == nil {
-		return
+		return nil
 	}
 	pairs, err := h.cfg.SendDelegations.ListAllPairs(ctx)
 	if err != nil {
-		slog.Warn("sendas.reconcile: list pairs failed", "err", err)
-		return
+		return fmt.Errorf("list pairs: %w", err)
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	if _, err := h.cfg.Agent.Call(cctx, "mail.sendas.reconcile", map[string]any{"pairs": pairs}); err != nil {
-		slog.Warn("sendas.reconcile: agent push failed", "err", err)
-	}
+	_, err = h.cfg.Agent.Call(cctx, "mail.sendas.reconcile", map[string]any{"pairs": pairs})
+	return err
+}
+
+// writeNotApplied answers a change the mail server did not take. The reason
+// goes to the panel log only: the agent's message can carry stalwart-cli
+// output (JAB-114).
+func (h *sendAsHandler) writeNotApplied(c *gin.Context, err error) {
+	logAgentError(c, "sendas_not_applied", err)
+	c.JSON(http.StatusInternalServerError, gin.H{
+		"error":  "sendas_not_applied",
+		"detail": "The mail server did not take the change, so nothing was changed. Try again in a minute. If it keeps failing, the panel log says why.",
+	})
 }
 
 func (h *sendAsHandler) writeErr(c *gin.Context, err error) {
