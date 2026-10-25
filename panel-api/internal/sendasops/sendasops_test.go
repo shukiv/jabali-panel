@@ -120,8 +120,15 @@ func TestPush_WaitingGivesUpWithTheContext(t *testing.T) {
 	s.lock <- struct{}{} // a push is running
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if err := s.Push(ctx); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	done := make(chan error, 1)
+	go func() { done <- s.Push(ctx) }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Push kept waiting after its context ended")
 	}
 }
 
