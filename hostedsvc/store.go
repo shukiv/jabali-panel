@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS labels (
   created_at INTEGER NOT NULL,
   last_seen  INTEGER NOT NULL,
   moved_at   INTEGER,          -- source IP stopped matching at this time
-  revoked_at INTEGER
+  revoked_at INTEGER,
+  checked_in_at INTEGER        -- first heartbeat/ACME call from the box
 );
 CREATE INDEX IF NOT EXISTS ix_labels_email ON labels(email);
 CREATE INDEX IF NOT EXISTS ix_labels_ipv4  ON labels(ipv4);
@@ -70,7 +71,41 @@ func NewStore(db *sql.DB) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := addCheckedInAt(db); err != nil {
+		return nil, fmt.Errorf("migrate checked_in_at: %w", err)
+	}
 	return &Store{db: db, now: time.Now}, nil
+}
+
+// addCheckedInAt adds labels.checked_in_at to a database created before the
+// column existed (CREATE TABLE IF NOT EXISTS never alters an existing table).
+// Rows whose box already heartbeated (last_seen moved past created_at) are
+// backfilled, so a label in real use is never treated as abandoned and
+// reissued by claim.
+func addCheckedInAt(db *sql.DB) error {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('labels')`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return err
+		}
+		if name == "checked_in_at" {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+	if _, err := db.Exec(`ALTER TABLE labels ADD COLUMN checked_in_at INTEGER`); err != nil {
+		return err
+	}
+	_, err = db.Exec(`UPDATE labels SET checked_in_at = last_seen WHERE last_seen > created_at`)
+	return err
 }
 
 func hashToken(raw string) string {
@@ -191,6 +226,44 @@ func (s *Store) DeleteLabel(label string) error {
 	return err
 }
 
+// ReusableLabel returns a label this email already claimed from this IPv4
+// that its box never put into use: live, not moved, and no heartbeat or ACME
+// call ever arrived on its token. That is a claim whose setup never finished
+// (installer re-run, Back through the installer screens, a retried panel
+// claim), so the same verified email at the same address gets it back instead
+// of a fresh collision suffix — each of which would hold one of the IP's 26
+// names and one slot of the per-email cap for good. Oldest first, so every
+// retry lands on the same, shortest name. ErrNotFound when there is none.
+func (s *Store) ReusableLabel(email, ipv4 string) (string, error) {
+	var label string
+	err := s.db.QueryRow(`SELECT label FROM labels
+		WHERE email = ? AND ipv4 = ? AND revoked_at IS NULL AND moved_at IS NULL
+		  AND checked_in_at IS NULL
+		ORDER BY created_at, label LIMIT 1`, email, ipv4).Scan(&label)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return label, err
+}
+
+// ReissueToken replaces the token of a never-checked-in label (see
+// ReusableLabel). The old token stops working at once. The WHERE clause
+// re-checks the conditions, so a label that checked in after the lookup is
+// left alone (ErrNotFound) rather than taken from its box.
+func (s *Store) ReissueToken(label, email, tokenHash string) error {
+	res, err := s.db.Exec(`UPDATE labels SET token_hash = ?
+		WHERE label = ? AND email = ? AND revoked_at IS NULL AND moved_at IS NULL
+		  AND checked_in_at IS NULL`, tokenHash, label, email)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	s.Audit(email, "label.reissue", label)
+	return nil
+}
+
 // LabelExists reports whether a label row exists (revoked rows count: a
 // revoked label's name is burned, never reissued to someone else).
 func (s *Store) LabelExists(label string) (bool, error) {
@@ -227,9 +300,13 @@ func (s *Store) LabelByToken(rawToken string) (*Label, error) {
 	return &l, nil
 }
 
-// TouchLabel updates last_seen (heartbeat).
+// TouchLabel updates last_seen (heartbeat, ACME present) and stamps
+// checked_in_at the first time: from then on the label is in use and claim
+// never reissues it.
 func (s *Store) TouchLabel(label string) error {
-	_, err := s.db.Exec(`UPDATE labels SET last_seen = ? WHERE label = ?`, s.now().Unix(), label)
+	now := s.now().Unix()
+	_, err := s.db.Exec(`UPDATE labels SET last_seen = ?, checked_in_at = COALESCE(checked_in_at, ?)
+		WHERE label = ?`, now, now, label)
 	return err
 }
 

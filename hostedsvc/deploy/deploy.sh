@@ -109,6 +109,11 @@ install -m 0644 "${HERE}/jabalihosted-svc.service" /etc/systemd/system/jabalihos
 # The unit runs as the service user; it needs the env file readable.
 chown root:jabalihosted /etc/jabalihosted/svc.env
 chmod 0640 /etc/jabalihosted/svc.env
+# Daily reap runs as the service user through a timer, never root cron: a
+# root run can leave root-owned files beside svc.db ("readonly database").
+# The timer is installed but NOT enabled here — see step 6.
+install -m 0644 "${HERE}/jabalihosted-reap.service" /etc/systemd/system/jabalihosted-reap.service
+install -m 0644 "${HERE}/jabalihosted-reap.timer" /etc/systemd/system/jabalihosted-reap.timer
 systemctl daemon-reload
 systemctl enable --now jabalihosted-svc
 install -m 0644 "${HERE}/nginx-api.conf" /etc/nginx/sites-available/jabalihosted-api.conf
@@ -134,8 +139,11 @@ NEXT (in this order — do not reorder):
  5. Nightly off-box dump (add to root crontab):
       sqlite3 /var/lib/jabalihosted/svc.db ".backup /root/svc-db-backup/svc-\$(date +%u).db"
       + rsync that dir off-box. Lost DB = every issued token dead.
- 6. Daily reap of moved-away labels (add to root crontab). Deletes the
-    dangling DNS a box leaves when it re-claims at a new IP. Dry-run once
-    first to see the worklist, then wire the real run:
-      17 4 * * *  /usr/local/bin/jabalihosted-svc reap >> /var/log/jabalihosted-reap.log 2>&1
+ 6. Daily reap of moved-away labels. Deletes the dangling DNS a box leaves
+    when it re-claims at a new IP. Dry-run once first, as the service user,
+    to see the worklist:
+      systemd-run --wait --pipe --collect -p User=jabalihosted -p Group=jabalihosted \\
+        -p EnvironmentFile=/etc/jabalihosted/svc.env /usr/local/bin/jabalihosted-svc reap --dry-run
+    then turn on the timer:
+      systemctl enable --now jabalihosted-reap.timer
 EOF
