@@ -22,7 +22,7 @@ TOKEN="$(jh_env TOKEN)"
 API="$(jh_env API)"
 : "${TOKEN:?}" "${API:?}"
 
-code=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+code=$(curl -4 -sS --max-time 30 -o /dev/null -w '%{http_code}' \
   -H 'Content-Type: application/json' \
   -d "{\"token\":\"${TOKEN}\",\"txt\":\"${CERTBOT_VALIDATION}\"}" \
   "${API}/v1/acme/present")

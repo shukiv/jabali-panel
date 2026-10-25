@@ -19,7 +19,7 @@ TOKEN="$(jh_env TOKEN)"
 API="$(jh_env API)"
 : "${TOKEN:?}" "${API:?}"
 
-curl -sS --max-time 30 -o /dev/null \
+curl -4 -sS --max-time 30 -o /dev/null \
   -H 'Content-Type: application/json' \
   -d "{\"token\":\"${TOKEN}\"}" \
   "${API}/v1/acme/cleanup" || true

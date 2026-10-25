@@ -2,9 +2,12 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -83,14 +86,26 @@ func (m fhModel) httpPost(path, body string) (int, []byte, error) {
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	cl := &http.Client{Timeout: 30 * time.Second}
-	resp, err := cl.Do(req)
+	resp, err := fhHTTPClient().Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	return resp.StatusCode, out, nil
+}
+
+// fhHTTPClient dials IPv4 only. The service derives the label from the
+// caller's IPv4 address and refuses an IPv6 caller, and api.jabalihosted.com
+// also answers AAAA, so on a dual-stack box the code email arrived and then
+// every claim was refused ("only IPv4 sources are supported in v1").
+func fhHTTPClient() *http.Client {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	t.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		return d.DialContext(ctx, "tcp4", addr)
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: t}
 }
 
 func (m fhModel) registerCmd(email string) tea.Cmd {
@@ -140,8 +155,20 @@ var (
 	fhEmailRegex = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$`)
 )
 
+// dropClaim forgets a claimed hostname when the operator switches to their own
+// domain after all: the credential file goes, so install.sh does not turn on
+// the heartbeat for a name this server will not use. The label itself stays
+// with the service, and a later claim from this server and email gets it back.
+func (m *fhModel) dropClaim() error {
+	m.fqdn, m.label, m.token = "", "", ""
+	if err := os.Remove(m.tokenFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 // writeCredential persists the token 0600 so install.sh's slice step enables
-// the heartbeat and the cert issues. Best-effort; the hostname still works.
+// the heartbeat. Best-effort; the hostname still works.
 func (m fhModel) writeCredential() error {
 	// Validate before persisting: hostname.env is read by root-run scripts
 	// (heartbeat timer, certbot renew hooks), so a value carrying shell

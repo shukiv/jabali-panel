@@ -20,8 +20,15 @@ import (
 //   1. write /etc/jabali-panel/hostname.env (0600 root:root) — the bearer
 //      token that every later /v1/* call authenticates with;
 //   2. enable the daily heartbeat timer;
-//   3. issue the wildcard cert in the background (best-effort; the panel-cert
-//      reconciler also covers <label> via HTTP-01 if this lags).
+//   3. send the first heartbeat right away. It marks the label in use at the
+//      service, so a later claim from this server can never reissue it away
+//      from this box.
+//
+// The certificate comes from the panel-cert reconciler (HTTP-01 for the new
+// hostname). This command does not run jabali-hostname-cert.sh: its DNS-01
+// wildcard run used the same lineage name as the panel cert, so the two
+// overwrote each other, and each run spent a second certificate from the
+// base domain's shared Let's Encrypt quota for a cert nothing served.
 //
 // The hostname itself is changed by the existing system.set_hostname path the
 // settings handler already dispatches — this command does not touch it.
@@ -92,18 +99,12 @@ func hostnameFreeApplyHandler(ctx context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("chown: %v", err)}
 	}
 
-	// Enable the heartbeat timer (best-effort; skipped in test env).
+	// Enable the heartbeat timer and send the first heartbeat now
+	// (best-effort; skipped in test env). --no-block: the oneshot calls the
+	// service over the network and this RPC must return promptly.
 	if os.Getenv("JABALI_HOSTNAME_SKIP_SYSTEMD") == "" {
 		_ = execCommandContext(ctx, "systemctl", "enable", "--now", "jabali-hostname-heartbeat.timer").Run()
-		// Background wildcard-cert issuance. Detached so the settings PATCH
-		// returns promptly; the panel-cert reconciler is the backstop for
-		// <label> if this run is slow or fails.
-		certScript := "/usr/local/libexec/jabali/jabali-hostname-cert.sh"
-		if _, err := os.Stat(certScript); err == nil {
-			cmd := execCommand(certScript)
-			cmd.Env = os.Environ()
-			_ = cmd.Start()
-		}
+		_ = execCommandContext(ctx, "systemctl", "start", "--no-block", "jabali-hostname-heartbeat.service").Run()
 	}
 
 	return okBody{Ok: true}, nil

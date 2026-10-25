@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -29,7 +30,22 @@ var freeHostnameAPI = "https://api.jabalihosted.com"
 
 // freeHostnameHTTP is the outbound client; overridable for tests. TLS
 // verification stays ON (production defaults, per CONVENTIONS security rule).
-var freeHostnameHTTP = &http.Client{Timeout: 30 * time.Second}
+// It dials IPv4 only: the service derives the label from the caller's IPv4
+// address and refuses an IPv6 caller, and api.jabalihosted.com also answers
+// AAAA, so a dual-stack box would otherwise get its email code and then have
+// every claim refused.
+var freeHostnameHTTP = &http.Client{Timeout: 30 * time.Second, Transport: ipv4OnlyTransport()}
+
+// ipv4OnlyTransport is http.DefaultTransport (proxy, TLS and pool settings
+// kept) with every connection forced onto IPv4.
+func ipv4OnlyTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	t.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
+		return d.DialContext(ctx, "tcp4", addr)
+	}
+	return t
+}
 
 func (h *serverSettingsHandler) freeHostnamePost(ctx context.Context, path string, in any) (int, []byte, error) {
 	body, err := json.Marshal(in)

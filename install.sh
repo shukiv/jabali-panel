@@ -1677,13 +1677,29 @@ _detect_public_ipv6() {
 JH_API="${JABALI_HOSTNAME_API:-https://api.jabalihosted.com}"
 JH_TOKEN_FILE=/etc/jabali-panel/hostname.env
 
+# -4: the service labels a box by its IPv4 source address and refuses an IPv6
+# caller, and the API name also answers AAAA — over IPv6 the code email
+# arrives and then every claim is refused.
 jh_post() {
   local path="$1" body="$2"
-  curl -sS --max-time 30 -w $'\n%{http_code}' \
+  curl -4 -sS --max-time 30 -w $'\n%{http_code}' \
     -H 'Content-Type: application/json' \
     -d "$body" "${JH_API}${path}" 2>/dev/null || printf '\n000'
 }
 jh_field() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$2" 2>/dev/null; }
+
+# First heartbeat, sent only at the end of a successful install. It marks the
+# label in use at the service; until then, an installer re-run that claims
+# again from this server and email gets the same label back, so a failed
+# install does not burn a name. --no-block keeps the installer off the network.
+jh_first_checkin() {
+  [[ -r "$JH_TOKEN_FILE" ]] || return 0
+  if systemctl start --no-block jabali-hostname-heartbeat.service >/dev/null 2>&1; then
+    _ok "free hostname: first heartbeat sent"
+  else
+    _warn "could not send the first free-hostname heartbeat (non-fatal; the daily timer sends it)"
+  fi
+}
 
 jh_free_hostname_flow() {
   local fd="$1" email code body fqdn label token
@@ -3270,7 +3286,9 @@ install_jabali_slices() {
   # JAB-213: free-hostname heartbeat helper (always installed; the timer below
   # is only enabled when the box actually uses a free jabalihosted.com name).
   install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.sh" /usr/local/libexec/jabali/jabali-hostname-heartbeat.sh
-  # JAB-213 phase 3b: wildcard-cert DNS-01 hooks + issuance wrapper.
+  # JAB-213 phase 3b: wildcard-cert DNS-01 hooks + issuance wrapper. Manual
+  # use only — nothing runs them automatically: the panel-cert reconciler
+  # issues the hostname cert, and the wrapper would overwrite that lineage.
   install -m 0755 "$REPO_DIR/install/hostname/certbot-auth-hook.sh" /usr/local/libexec/jabali/certbot-auth-hook.sh
   install -m 0755 "$REPO_DIR/install/hostname/certbot-cleanup-hook.sh" /usr/local/libexec/jabali/certbot-cleanup-hook.sh
   install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-cert.sh" /usr/local/libexec/jabali/jabali-hostname-cert.sh
@@ -17338,8 +17356,8 @@ EOF
   # JAB-213 — free-hostname helper scripts + heartbeat units live under
   # install_jabali_slices, which the trimmed update path does NOT call. Without
   # this, Server-Settings activation on an UPDATED (vs freshly-installed) box
-  # would set the hostname + token but silently skip the heartbeat + wildcard
-  # cert. Self-heal on every update; idempotent installs.
+  # would set the hostname + token but silently skip the heartbeat. Self-heal
+  # on every update; idempotent installs.
   if [[ -d "$REPO_DIR/install/hostname" ]]; then
     install -d -m 0755 /usr/local/libexec/jabali
     install -m 0755 "$REPO_DIR/install/hostname/jabali-hostname-heartbeat.sh" /usr/local/libexec/jabali/jabali-hostname-heartbeat.sh
@@ -17772,6 +17790,7 @@ main() {
   # earlier (post clone_or_update_repo).
   ensure_jabali_sockets_group
   seed_last_built_sha
+  jh_first_checkin
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"
