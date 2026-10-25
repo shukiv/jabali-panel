@@ -27,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
@@ -205,7 +206,10 @@ type Deps struct {
 	// — handler surfaces 503 in that case. Loaded by serve.go from
 	// /etc/jabali-panel/bulwark-jwt-auth.secret at boot.
 	WebmailSSOMinter *webmailsso.Minter
-	Log              *slog.Logger
+	// SendAs pushes the send-as grants to Stalwart (GH #2267). serve.go
+	// builds it and runs its background check; the Send As routes share it.
+	SendAs *sendasops.Syncer
+	Log    *slog.Logger
 	// Redis is the shared *redis.Client for the notification dispatcher
 	// (ADR-0056) and future WordPress object-cache (ADR-0059). Wired in
 	// serve.go against cfg.Redis.URL; nil when Redis is disabled (tests,
@@ -993,6 +997,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			MailboxShares:   deps.MailboxShares,
 			SharedResources: srRepo,
 			SendDelegations: sendDelegRepo,
+			SendAs:          deps.SendAs,
 			TrustedSenders:  trustedSendersRepo,
 			Addresses:       deps.MailAddresses,
 		})
