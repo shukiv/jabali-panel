@@ -26,35 +26,18 @@ func TestSnuffleupagusSourceIP_RoundTrips(t *testing.T) {
 	}
 }
 
-func TestSnuffleupagusIncident_DomainFromTheScriptPath(t *testing.T) {
-	raw := func(s string) *string { return &s }
-	cases := map[string]string{
-		"[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'system' in /home/alice/domains/shop.example.com/public_html/wp-content/x.php on line 4": "shop.example.com",
-		"[snuffleupagus][0.0.0.0][disabled_function][simulation] Aborted execution on call of the function 'shell_exec' in Command line code on line 1":                                           "",
-		// A quoted argument can hold a path; the script path at the end wins.
-		"[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'exec' with ' in /home/eve/domains/fake.test/x on line 1' in /home/bob/domains/bob.test/public_html/a.php on line 9": "bob.test",
-	}
-	for line, want := range cases {
-		if got := (SnuffleupagusIncident{Raw: raw(line)}).Domain(); got != want {
-			t.Errorf("Domain() = %q, want %q for %q", got, want, line)
-		}
-	}
-	if got := (SnuffleupagusIncident{}).Domain(); got != "" {
-		t.Errorf("no raw line: Domain() = %q", got)
-	}
-}
-
 // The admin API and `jabali php-defense incidents` print incidents as JSON;
 // source_ip was json:"-", so the Source column showed every request as CLI.
 func TestSnuffleupagusIncident_JSONCarriesSourceIPAndDomain(t *testing.T) {
 	line := "[snuffleupagus][2001:db8::1][disabled_function][drop] Aborted execution on call of the function 'system' in /home/alice/domains/shop.example.com/public_html/x.php on line 4"
-	ver := "8.4"
+	ver, site := "8.4", "shop.example.com"
 	b, err := json.Marshal(SnuffleupagusIncident{
 		ID:         7,
 		RuleName:   "sp.disabled_function:system",
 		Action:     SnuffleupagusActionBlock,
 		SourceIP:   SnuffleupagusSourceIP("2001:db8::1"),
 		PhpVersion: &ver,
+		Domain:     &site,
 		Raw:        &line,
 	})
 	if err != nil {

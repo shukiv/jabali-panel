@@ -46,6 +46,38 @@ func snufJournalLine(t *testing.T, realtimeUS, exe, comm, msg string) string {
 	return string(b)
 }
 
+// GH #2262: an incident names the site whose script the rule stopped. Any
+// local process can log a line tagged snuffleupagus, so the domain counts
+// only when the journal's _UID is root or owns that /home/<user>.
+func TestSnuffleupagusDomain_OnlyFromTheHomesOwner(t *testing.T) {
+	prev := snufLookupUser
+	snufLookupUser = func(uid string) (string, error) {
+		return map[string]string{"1001": "alice", "1002": "bob"}[uid], nil
+	}
+	t.Cleanup(func() { snufLookupUser = prev })
+
+	cases := []struct{ name, uid, want string }{
+		{"the home's owner", "1001", "a.test"},
+		{"root", "0", "a.test"},
+		{"another account", "1002", ""},
+		{"no _UID", "", ""},
+	}
+	for _, c := range cases {
+		if got := snuffleupagusDomain(snufMsgSystem, c.uid); got != c.want {
+			t.Errorf("%s (uid %q): domain %q, want %q", c.name, c.uid, got, c.want)
+		}
+	}
+	cli := "[snuffleupagus][0.0.0.0][disabled_function][simulation] Aborted execution on call of the function 'shell_exec' in Command line code on line 1"
+	if got := snuffleupagusDomain(cli, "0"); got != "" {
+		t.Errorf("CLI code: domain %q, want none", got)
+	}
+	// A path in a quoted argument doesn't count; the script at the end does.
+	quoted := "[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'exec' with ' in /home/alice/domains/a.test/x on line 1' in /home/bob/domains/b.test/public_html/a.php on line 9"
+	if got := snuffleupagusDomain(quoted, "1001"); got != "" {
+		t.Errorf("alice naming her site in an argument of bob's script: domain %q, want none", got)
+	}
+}
+
 func fetchIncidents(t *testing.T, params map[string]any) snuffleupagusFetchResponse {
 	t.Helper()
 	raw, err := json.Marshal(params)

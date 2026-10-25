@@ -72,10 +72,10 @@ func TestSnuffleupagusClearIncidents_AdminOnly(t *testing.T) {
 // The Source column read source_ip, which the API never sent, so every
 // request showed as CLI. Incidents now carry it, and the domain.
 func TestSnuffleupagusListIncidents_CarriesSourceIPAndDomain(t *testing.T) {
-	line := "[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'system' in /home/alice/domains/a.test/public_html/x.php on line 3"
+	site := "a.test"
 	repo := &fakeSnufIncidents{rows: []models.SnuffleupagusIncident{{
 		ID: 1, RuleName: "sp.disabled_function:system", Action: models.SnuffleupagusActionBlock,
-		SourceIP: models.SnuffleupagusSourceIP("203.0.113.9"), Raw: &line,
+		SourceIP: models.SnuffleupagusSourceIP("203.0.113.9"), Domain: &site,
 	}}}
 
 	w := httptest.NewRecorder()

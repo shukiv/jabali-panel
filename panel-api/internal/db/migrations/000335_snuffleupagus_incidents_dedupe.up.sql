@@ -12,4 +12,5 @@ JOIN snuffleupagus_incidents kept
  AND kept.request_uri <=> dup.request_uri
  AND kept.php_version <=> dup.php_version
  AND kept.domain_id <=> dup.domain_id
+ AND kept.domain <=> dup.domain
  AND kept.raw <=> dup.raw;

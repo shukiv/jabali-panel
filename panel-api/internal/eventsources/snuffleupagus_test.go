@@ -74,7 +74,7 @@ func TestSnuffleupagusIngestPass_SendsSinceUSAndStoresThePackedAddress(t *testin
 	since := time.Date(2026, 10, 25, 1, 43, 31, 2000, time.UTC)
 	repo := &fakeSnufRepo{}
 	ag := &fakeSnufAgent{reply: `{"incidents":[{"ts":"2026-10-25T01:43:31.000003Z","rule_name":"sp.disabled_function:exec",
-		"action":"simulated_block","source_ip":"2001:db8::1","php_version":"8.4","raw":"x"}],
+		"action":"simulated_block","source_ip":"2001:db8::1","php_version":"8.4","domain":"a.test","raw":"x"}],
 		"next_since":"2026-10-25T01:43:31.000004Z"}`}
 
 	next, n := snuffleupagusIngestPass(context.Background(), snufDeps(repo, ag), since)
@@ -94,6 +94,9 @@ func TestSnuffleupagusIngestPass_SendsSinceUSAndStoresThePackedAddress(t *testin
 	}
 	if in.PhpVersion == nil || *in.PhpVersion != "8.4" {
 		t.Errorf("php_version = %v, want 8.4", in.PhpVersion)
+	}
+	if in.Domain == nil || *in.Domain != "a.test" {
+		t.Errorf("domain = %v, want a.test", in.Domain)
 	}
 	if want := time.Date(2026, 10, 25, 1, 43, 31, 4000, time.UTC); !next.Equal(want) {
 		t.Errorf("next = %v, want %v", next, want)

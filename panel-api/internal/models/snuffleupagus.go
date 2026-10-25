@@ -5,7 +5,6 @@ package models
 import (
 	"encoding/json"
 	"net"
-	"regexp"
 	"time"
 )
 
@@ -56,7 +55,11 @@ type SnuffleupagusIncident struct {
 	RequestURI *string             `gorm:"type:varchar(2048)" json:"request_uri,omitempty"`
 	PhpVersion *string             `gorm:"type:varchar(8);column:php_version" json:"php_version,omitempty"`
 	DomainID   *string             `gorm:"type:char(26);column:domain_id;index:ix_snuf_inc_domain" json:"domain_id,omitempty"`
-	Raw        *string             `gorm:"type:text" json:"raw,omitempty"`
+	// Domain is the site whose script the rule stopped (GH #2262). The agent
+	// sets it only when the journal's _UID owns that /home/<user>, so a
+	// line another account wrote can't name someone else's site.
+	Domain *string `gorm:"type:varchar(253);column:domain" json:"domain,omitempty"`
+	Raw    *string `gorm:"type:text" json:"raw,omitempty"`
 }
 
 func (SnuffleupagusIncident) TableName() string { return "snuffleupagus_incidents" }
@@ -87,30 +90,11 @@ func (in SnuffleupagusIncident) SourceIPString() string {
 	return ""
 }
 
-// snufScriptDomainRe matches the script path Snuffleupagus names at the end
-// of a log line: "... in /home/<user>/domains/<domain>/... on line <n>".
-var snufScriptDomainRe = regexp.MustCompile(` in /home/[^/ ]+/domains/([A-Za-z0-9.-]+)/[^ ]* on line `)
-
-// Domain is the site whose script the rule stopped, from the last script
-// path in the log line. Empty for CLI code and paths outside a site.
-func (in SnuffleupagusIncident) Domain() string {
-	if in.Raw == nil {
-		return ""
-	}
-	m := snufScriptDomainRe.FindAllStringSubmatch(*in.Raw, -1)
-	if len(m) == 0 {
-		return ""
-	}
-	return m[len(m)-1][1]
-}
-
-// MarshalJSON adds source_ip as text and the domain, for the admin API and
-// the CLI.
+// MarshalJSON adds source_ip as text, for the admin API and the CLI.
 func (in SnuffleupagusIncident) MarshalJSON() ([]byte, error) {
 	type plain SnuffleupagusIncident
 	return json.Marshal(struct {
 		plain
 		SourceIP string `json:"source_ip,omitempty"`
-		Domain   string `json:"domain,omitempty"`
-	}{plain(in), in.SourceIPString(), in.Domain()})
+	}{plain(in), in.SourceIPString()})
 }

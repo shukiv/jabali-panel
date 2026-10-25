@@ -91,6 +91,7 @@ func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time
 			SourceIP   string    `json:"source_ip"`
 			RequestURI string    `json:"request_uri"`
 			PhpVersion string    `json:"php_version"`
+			Domain     string    `json:"domain"`
 			Raw        string    `json:"raw"`
 		} `json:"incidents"`
 		NextSince time.Time `json:"next_since"`
@@ -119,6 +120,7 @@ func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time
 			Action:     models.SnuffleupagusAction(in.Action),
 			RequestURI: stringPtr(uri),
 			PhpVersion: stringPtr(ph),
+			Domain:     stringPtr(in.Domain),
 			Raw:        stringPtr(raw),
 		}
 		row.SourceIP = models.SnuffleupagusSourceIP(in.SourceIP)
@@ -173,6 +175,7 @@ func snuffleupagusBatchBody(items []struct {
 	SourceIP   string    `json:"source_ip"`
 	RequestURI string    `json:"request_uri"`
 	PhpVersion string    `json:"php_version"`
+	Domain     string    `json:"domain"`
 	Raw        string    `json:"raw"`
 }) string {
 	const max = 10

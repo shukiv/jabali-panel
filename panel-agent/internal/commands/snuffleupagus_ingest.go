@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -42,6 +43,7 @@ type snuffleupagusIncidentDTO struct {
 	SourceIP   string    `json:"source_ip,omitempty"`
 	RequestURI string    `json:"request_uri,omitempty"`
 	PhpVersion string    `json:"php_version,omitempty"`
+	Domain     string    `json:"domain,omitempty"`
 	Raw        string    `json:"raw"`
 }
 
@@ -126,6 +128,7 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 			Message    string `json:"MESSAGE"`
 			Exe        string `json:"_EXE"`
 			Comm       string `json:"_COMM"`
+			UID        string `json:"_UID"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
@@ -138,6 +141,7 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 			continue
 		}
 		inc.PhpVersion = snuffleupagusPHPVersion(entry.Exe, entry.Comm)
+		inc.Domain = snuffleupagusDomain(entry.Message, entry.UID)
 		resp.Incidents = append(resp.Incidents, inc)
 	}
 	_ = cmd.Wait()
@@ -224,6 +228,39 @@ func snuffleupagusPHPVersion(exe, comm string) string {
 		}
 	}
 	return ""
+}
+
+// snufScriptPathRe matches the script Snuffleupagus names at the end of its
+// line: "... in /home/<user>/domains/<domain>/... on line <n>".
+var snufScriptPathRe = regexp.MustCompile(` in /home/([^/ ]+)/domains/([A-Za-z0-9.-]+)/[^ ]* on line `)
+
+// snufLookupUser maps a journal _UID to its user name. A var for tests.
+var snufLookupUser = func(uid string) (string, error) {
+	u, err := user.LookupId(uid)
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
+// snuffleupagusDomain is the site whose script the rule stopped, from the
+// last script path in the line (GH #2262). Any local process can write a
+// line tagged snuffleupagus, so the domain counts only when the journal's
+// _UID, which journald takes from the sending socket, is root or the owner
+// of that /home/<user>.
+func snuffleupagusDomain(msg, uid string) string {
+	m := snufScriptPathRe.FindAllStringSubmatch(msg, -1)
+	if len(m) == 0 || uid == "" {
+		return ""
+	}
+	owner, domain := m[len(m)-1][1], m[len(m)-1][2]
+	if uid == "0" {
+		return domain
+	}
+	if name, err := snufLookupUser(uid); err != nil || name != owner {
+		return ""
+	}
+	return domain
 }
 
 func parseRealtime(realtimeUS string) time.Time {
