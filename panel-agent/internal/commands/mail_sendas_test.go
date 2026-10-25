@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"context"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -90,5 +92,23 @@ func TestBuildMustMatchSenderExpr_AcceptsPunycodeTLD(t *testing.T) {
 	want := "!((authenticated_as == 'info@xn--e1afmkfd.xn--p1ai' && sender == 'billing@xn--e1afmkfd.xn--p1ai'))"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// GH #2267: a stalwart-cli that printed nothing (missing, killed) gave an
+// error with no reason, so the panel log could not say why a grant failed.
+func TestRunStalwartCLI_SaysWhyWhenNothingWasPrinted(t *testing.T) {
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/nonexistent/stalwart-cli")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+	prevToken := stalwartAdminTokenFunc
+	stalwartAdminTokenFunc = func() (string, error) { return "test-token", nil }
+	t.Cleanup(func() { stalwartAdminTokenFunc = prevToken })
+
+	_, err := runStalwartCLI(context.Background(), "update", "MtaStageAuth")
+	if err == nil || !strings.Contains(err.Error(), "no such file or directory") {
+		t.Fatalf("err = %v, want the reason the command did not run", err)
 	}
 }

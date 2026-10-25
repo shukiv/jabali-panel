@@ -114,6 +114,11 @@ func runStalwartCLI(ctx context.Context, args ...string) ([]byte, error) {
 	out, runErr := cmd.CombinedOutput()
 	if runErr != nil {
 		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			// Nothing printed (binary missing, killed): the exec error is the
+			// only reason there is (GH #2267).
+			msg = runErr.Error()
+		}
 		// Never echo the token; it is only ever in env, but scrub
 		// defensively in case a future cli prints its config.
 		msg = strings.ReplaceAll(msg, token, "<redacted>")
