@@ -134,7 +134,15 @@ func TestComposerPharForPicksThePharTheDispatcherWould(t *testing.T) {
 }
 
 func TestComposerPharForRejectsAnUnsafeUser(t *testing.T) {
-	if _, err := composerPharFor("../etc"); err == nil {
-		t.Fatal("composerPharFor accepted ../etc")
+	bin := t.TempDir()
+	prev := composerBinDir
+	composerBinDir = bin
+	t.Cleanup(func() { composerBinDir = prev })
+	t.Setenv("JABALI_COMPOSER_CHOICE_ROOT", t.TempDir())
+	if err := os.WriteFile(filepath.Join(bin, "composer-latest"), []byte(testComposerPhar), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := composerPharFor("../etc"); err == nil {
+		t.Fatalf("composerPharFor accepted ../etc (returned %q)", got)
 	}
 }
