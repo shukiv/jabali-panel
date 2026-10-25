@@ -127,16 +127,10 @@ func runRepair(cmd *cobra.Command, args []string) error {
 
 	// Run every detector first. Even in fix mode, surfacing the full
 	// list before mutating state lets the operator see the plan.
-	type result struct {
-		step   repairStep
-		broken bool
-		detail string
-		err    error
-	}
-	var results []result
+	var results []repairResult
 	for _, s := range steps {
 		broken, detail, err := s.detect(ctx)
-		results = append(results, result{s, broken, detail, err})
+		results = append(results, repairResult{s, broken, detail, err})
 	}
 
 	fmt.Println("Diagnostics:")
@@ -156,12 +150,8 @@ func runRepair(cmd *cobra.Command, args []string) error {
 			}
 			anyBroken = true
 		}
-		safety := ""
-		if r.step.destructive {
-			safety = " [destructive]"
-		}
 		fmt.Printf("%s [%s] %s%s\n     %s\n",
-			marker, r.step.id, r.step.label, safety, state)
+			marker, r.step.id, r.step.label, repairMarkers(r.step), state)
 	}
 
 	if diagnose {
@@ -175,24 +165,7 @@ func runRepair(cmd *cobra.Command, args []string) error {
 	}
 
 	// Decide which steps to actually fix.
-	toFix := []repairStep{}
-	for _, r := range results {
-		if r.err != nil || !r.broken {
-			continue
-		}
-		switch {
-		case anySpecific:
-			if selected[r.step.id] {
-				toFix = append(toFix, r.step)
-			}
-		case all:
-			toFix = append(toFix, r.step)
-		case auto:
-			if !r.step.destructive {
-				toFix = append(toFix, r.step)
-			}
-		}
-	}
+	toFix := selectRepairs(results, selected, anySpecific, all, auto)
 
 	if len(toFix) == 0 {
 		if anyBroken {
@@ -231,6 +204,56 @@ func runRepair(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("\n✓ Repair pass complete. Re-run `jabali update` to continue.")
 	return nil
+}
+
+// repairResult is one detector's outcome in a repair pass.
+type repairResult struct {
+	step   repairStep
+	broken bool
+	detail string
+	err    error
+}
+
+// repairMarkers is the suffix printed after a step's label in the
+// diagnose output, naming what --auto won't do for it: [destructive]
+// (needs --all --yes or its own flag) and [manual] (no fix at all). The
+// Repair Center reads them to say which broken rows Auto-Repair leaves,
+// instead of letting the row stay Broken after a run with no reason
+// (GH #2266).
+func repairMarkers(s repairStep) string {
+	m := ""
+	if s.destructive {
+		m += " [destructive]"
+	}
+	if s.fix == nil {
+		m += " [manual]"
+	}
+	return m
+}
+
+// selectRepairs picks the broken steps a pass fixes: the named ones when
+// any --<id> flag is set, every one with --all, and the non-destructive
+// ones with --auto.
+func selectRepairs(results []repairResult, selected map[string]bool, anySpecific, all, auto bool) []repairStep {
+	toFix := []repairStep{}
+	for _, r := range results {
+		if r.err != nil || !r.broken {
+			continue
+		}
+		switch {
+		case anySpecific:
+			if selected[r.step.id] {
+				toFix = append(toFix, r.step)
+			}
+		case all:
+			toFix = append(toFix, r.step)
+		case auto:
+			if !r.step.destructive {
+				toFix = append(toFix, r.step)
+			}
+		}
+	}
+	return toFix
 }
 
 func envOr(key, fallback string) string {
@@ -411,11 +434,12 @@ func repairSteps() []repairStep {
 			fix:    fixAutomation443Include,
 		},
 		{
-			id:          "docroot-www-data-group",
-			label:       "web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)",
-			destructive: true,
-			detect:      detectDocrootGroup,
-			fix:         fixDocrootGroup,
+			// Safe, so --auto (the Repair Center's Auto-Repair) fixes it;
+			// see the docroot-www-data-group section below (GH #2266).
+			id:     "docroot-www-data-group",
+			label:  "web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)",
+			detect: detectDocrootGroup,
+			fix:    fixDocrootGroup,
 		},
 		{
 			id:     "bulwark-jwt-secret",
@@ -1110,8 +1134,15 @@ func orphanMigrationStagingDirs(_ repairCtx) ([]string, error) {
 // provisioned before that, or whose group ownership was clobbered by an
 // out-of-band restore / chown -R (GH reviews-il.co.il, 2026-06-16).
 //
-// Destructive: it rewrites group ownership + the setgid bit across every
-// docroot, so it runs only with --all --yes or the explicit flag.
+// Not destructive (it was until GH #2266, so Auto-Repair skipped it and
+// the row stayed Broken). It puts back the state domain create lays
+// down: group www-data on every entry and setgid on every directory.
+// Owners and read/write/execute bits stay as they are, symlinks are
+// never followed or touched, and a second run changes nothing. The same
+// fsperm walk already runs unasked on a backup restore and a migration,
+// and from Domain repair's per-account "Repair permissions". Nothing
+// runs --auto on its own: only an admin, from the Repair Center or a
+// shell.
 
 // jabaliDocrootRe matches `root /home/...;` directives in the per-domain
 // nginx configs. We read the authoritative docroot list from nginx

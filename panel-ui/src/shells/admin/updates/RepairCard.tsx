@@ -3,6 +3,9 @@
 // broken; "Auto-Repair safe issues" fires `jabali repair --auto` as a
 // transient unit and tails its output until done. Destructive fixes are
 // intentionally NOT exposed here — they stay on the CLI (`--all --yes`).
+// A broken row Auto-Repair leaves (destructive, or no fix at all) says so
+// and names the command, so it doesn't just stay Broken after a run
+// (GH #2266).
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -39,11 +42,16 @@ interface RepairItem {
   id: string;
   label: string;
   detail: string;
+  // destructive: Auto-Repair (--auto) skips it; it needs --all --yes or
+  // its own flag. manual: there is no fix to run at all.
+  destructive: boolean;
+  manual: boolean;
 }
 
 // parseDiagnose turns `jabali repair --diagnose` text into rows. Each issue
-// is a `  ✓/✗ [id] label [destructive]` line followed by an indented status
-// line (OK / BROKEN — detail). Unparseable output falls back to a raw block.
+// is a `  ✓/✗ [id] label [destructive] [manual]` line (markers optional, see
+// repairMarkers in repair.go) followed by an indented status line
+// (OK / BROKEN — detail). Unparseable output falls back to a raw block.
 function parseDiagnose(text: string): RepairItem[] {
   const items: RepairItem[] = [];
   const lines = text.split("\n");
@@ -52,11 +60,25 @@ function parseDiagnose(text: string): RepairItem[] {
     if (!m) continue;
     const ok = m[1] === "✓";
     const id = m[2];
-    const label = m[3].replace(/\s*\[destructive\]\s*$/, "").trim();
+    let label = m[3].trim();
+    let destructive = false;
+    let manual = false;
+    for (;;) {
+      const mk = label.match(/\s*\[(destructive|manual)\]$/);
+      if (!mk) break;
+      if (mk[1] === "destructive") destructive = true;
+      else manual = true;
+      label = label.slice(0, mk.index).trim();
+    }
     const detail = (lines[i + 1] ?? "").trim();
-    items.push({ ok, id, label, detail });
+    items.push({ ok, id, label, detail, destructive, manual });
   }
   return items;
+}
+
+// autoFixes: Auto-Repair (`jabali repair --auto`) clears this broken row.
+function autoFixes(it: RepairItem): boolean {
+  return !it.ok && !it.destructive && !it.manual;
 }
 
 export function RepairCard() {
@@ -83,6 +105,7 @@ export function RepairCard() {
     [diagnose.data],
   );
   const brokenCount = items.filter((i) => !i.ok).length;
+  const autoCount = items.filter(autoFixes).length;
   const parsedOk = items.length > 0;
 
   const onAutoRepair = async () => {
@@ -116,7 +139,7 @@ export function RepairCard() {
           type="primary"
           icon={<ToolOutlined />}
           loading={run.isPending || running}
-          disabled={parsedOk && brokenCount === 0}
+          disabled={parsedOk && autoCount === 0}
         >
           Auto-Repair safe issues
         </Button>
@@ -172,7 +195,13 @@ export function RepairCard() {
                 type="warning"
                 showIcon
                 message={`${brokenCount} issue${brokenCount === 1 ? "" : "s"} detected`}
-                description={t("repaircard.click_auto_repair_to_fix_the_non_destructive")}
+                description={
+                  autoCount === brokenCount
+                    ? t("repaircard.click_auto_repair_to_fix_the_non_destructive")
+                    : autoCount === 0
+                      ? "Auto-Repair can't fix these. Each one says below what to do."
+                      : `Auto-Repair fixes ${autoCount} of them. Each one it leaves says below what to do.`
+                }
               />
             )}
             <List
@@ -192,6 +221,24 @@ export function RepairCard() {
                       {!it.ok && it.detail && (
                         <div>
                           <Text type="secondary" style={{ fontSize: 12 }}>{it.detail}</Text>
+                        </div>
+                      )}
+                      {!it.ok && it.manual && (
+                        <div>
+                          <Text type="warning" style={{ fontSize: 12 }}>
+                            Auto-Repair leaves this one: it needs your decision. The line above says what to check.
+                          </Text>
+                        </div>
+                      )}
+                      {!it.ok && !it.manual && it.destructive && (
+                        <div>
+                          <Text type="warning" style={{ fontSize: 12 }}>
+                            Auto-Repair leaves this one: it rebuilds or deletes files. To fix it, run{" "}
+                            <Text code copyable style={{ fontSize: 12 }}>
+                              {`jabali repair --${it.id} --yes`}
+                            </Text>{" "}
+                            in a root shell.
+                          </Text>
                         </div>
                       )}
                     </div>
