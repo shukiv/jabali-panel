@@ -44,6 +44,7 @@ type snuffleupagusIncidentDTO struct {
 	RequestURI string    `json:"request_uri,omitempty"`
 	PhpVersion string    `json:"php_version,omitempty"`
 	Domain     string    `json:"domain,omitempty"`
+	Owner      string    `json:"owner,omitempty"` // the account Domain is under; the panel checks it owns Domain
 	Raw        string    `json:"raw"`
 }
 
@@ -141,7 +142,7 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 			continue
 		}
 		inc.PhpVersion = snuffleupagusPHPVersion(entry.Exe, entry.Comm)
-		inc.Domain = snuffleupagusDomain(entry.Message, entry.UID)
+		inc.Owner, inc.Domain = snuffleupagusDomain(entry.Message, entry.UID)
 		resp.Incidents = append(resp.Incidents, inc)
 	}
 	_ = cmd.Wait()
@@ -215,17 +216,23 @@ func parseSnuffleupagusLine(realtimeUS, msg string) (snuffleupagusIncidentDTO, b
 
 // snufPHPBinaryRe matches the PHP binaries that log: php8.4 (CLI) and
 // php-fpm8.4 (FPM).
-var snufPHPBinaryRe = regexp.MustCompile(`^php(?:-fpm)?([0-9]+\.[0-9]+)$`)
+var snufPHPBinaryRe = regexp.MustCompile(`^php(?:-fpm)?([0-9]{1,2}\.[0-9]{1,2})$`)
 
 // snuffleupagusPHPVersion is the PHP version that logged the incident, from
-// the journal's _EXE (/usr/sbin/php-fpm8.4), else _COMM. journald sets both
-// from the process, so the script can't choose them. Empty when neither is
-// a versioned PHP binary.
+// the journal's _EXE (/usr/sbin/php-fpm8.4), which journald reads from the
+// process. Only the system's PHP binaries in /usr/bin and /usr/sbin count:
+// a copy elsewhere can carry any name. _COMM is the fallback only when
+// journald recorded no _EXE. Empty otherwise.
 func snuffleupagusPHPVersion(exe, comm string) string {
-	for _, name := range []string{filepath.Base(exe), comm} {
-		if m := snufPHPBinaryRe.FindStringSubmatch(name); m != nil {
-			return m[1]
+	name := comm
+	if exe != "" {
+		if dir := filepath.Dir(exe); dir != "/usr/bin" && dir != "/usr/sbin" {
+			return ""
 		}
+		name = filepath.Base(exe)
+	}
+	if m := snufPHPBinaryRe.FindStringSubmatch(name); m != nil {
+		return m[1]
 	}
 	return ""
 }
@@ -243,24 +250,42 @@ var snufLookupUser = func(uid string) (string, error) {
 	return u.Username, nil
 }
 
-// snuffleupagusDomain is the site whose script the rule stopped, from the
-// last script path in the line (GH #2262). Any local process can write a
-// line tagged snuffleupagus, so the domain counts only when the journal's
-// _UID, which journald takes from the sending socket, is root or the owner
-// of that /home/<user>.
-func snuffleupagusDomain(msg, uid string) string {
+// snuffleupagusDomain is the site whose script the rule stopped and the
+// account it is under, from the last script path in the line (GH #2262).
+// Any local process can write a line tagged snuffleupagus, so the pair
+// counts only when the journal's _UID, which journald takes from the
+// sending socket, is root or the owner of that /home/<user>. A directory
+// name is still the account's choice; the panel keeps the domain only if
+// that account owns it.
+func snuffleupagusDomain(msg, uid string) (owner, domain string) {
 	m := snufScriptPathRe.FindAllStringSubmatch(msg, -1)
 	if len(m) == 0 || uid == "" {
-		return ""
+		return "", ""
 	}
-	owner, domain := m[len(m)-1][1], m[len(m)-1][2]
+	owner, domain = m[len(m)-1][1], m[len(m)-1][2]
+	if !snufValidHostname(domain) {
+		return "", ""
+	}
 	if uid == "0" {
-		return domain
+		return owner, domain
 	}
 	if name, err := snufLookupUser(uid); err != nil || name != owner {
-		return ""
+		return "", ""
 	}
-	return domain
+	return owner, domain
+}
+
+// snufValidHostname: at most 253 characters, labels of 1 to 63.
+func snufValidHostname(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+	}
+	return true
 }
 
 func parseRealtime(realtimeUS string) time.Time {

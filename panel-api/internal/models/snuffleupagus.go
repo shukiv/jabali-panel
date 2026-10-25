@@ -55,9 +55,10 @@ type SnuffleupagusIncident struct {
 	RequestURI *string             `gorm:"type:varchar(2048)" json:"request_uri,omitempty"`
 	PhpVersion *string             `gorm:"type:varchar(8);column:php_version" json:"php_version,omitempty"`
 	DomainID   *string             `gorm:"type:char(26);column:domain_id;index:ix_snuf_inc_domain" json:"domain_id,omitempty"`
-	// Domain is the site whose script the rule stopped (GH #2262). The agent
-	// sets it only when the journal's _UID owns that /home/<user>, so a
-	// line another account wrote can't name someone else's site.
+	// Domain is the site whose script the rule stopped (GH #2262), set with
+	// DomainID only when the account that logged the line (the journal's
+	// _UID) owns that domain on the panel. Another account can't put a
+	// site's name on an incident.
 	Domain *string `gorm:"type:varchar(253);column:domain" json:"domain,omitempty"`
 	Raw    *string `gorm:"type:text" json:"raw,omitempty"`
 }

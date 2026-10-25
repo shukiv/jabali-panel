@@ -63,18 +63,25 @@ func TestSnuffleupagusDomain_OnlyFromTheHomesOwner(t *testing.T) {
 		{"no _UID", "", ""},
 	}
 	for _, c := range cases {
-		if got := snuffleupagusDomain(snufMsgSystem, c.uid); got != c.want {
-			t.Errorf("%s (uid %q): domain %q, want %q", c.name, c.uid, got, c.want)
+		owner, got := snuffleupagusDomain(snufMsgSystem, c.uid)
+		if got != c.want || (got != "" && owner != "alice") {
+			t.Errorf("%s (uid %q): owner %q domain %q, want alice %q", c.name, c.uid, owner, got, c.want)
 		}
 	}
 	cli := "[snuffleupagus][0.0.0.0][disabled_function][simulation] Aborted execution on call of the function 'shell_exec' in Command line code on line 1"
-	if got := snuffleupagusDomain(cli, "0"); got != "" {
+	if _, got := snuffleupagusDomain(cli, "0"); got != "" {
 		t.Errorf("CLI code: domain %q, want none", got)
 	}
 	// A path in a quoted argument doesn't count; the script at the end does.
 	quoted := "[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'exec' with ' in /home/alice/domains/a.test/x on line 1' in /home/bob/domains/b.test/public_html/a.php on line 9"
-	if got := snuffleupagusDomain(quoted, "1001"); got != "" {
+	if _, got := snuffleupagusDomain(quoted, "1001"); got != "" {
 		t.Errorf("alice naming her site in an argument of bob's script: domain %q, want none", got)
+	}
+	// Longer than a hostname can be: dropped, so it can't overflow the column.
+	long := "[snuffleupagus][203.0.113.9][disabled_function][drop] Aborted execution on call of the function 'exec' in /home/alice/domains/" +
+		strings.Repeat("a", 64) + ".test/public_html/a.php on line 9"
+	if _, got := snuffleupagusDomain(long, "1001"); got != "" {
+		t.Errorf("64-character label: domain %q, want none", got)
 	}
 }
 
@@ -150,6 +157,9 @@ func TestSnuffleupagusPHPVersion(t *testing.T) {
 		{"/usr/bin/php8.3", "php8.3", "8.3"},
 		{"", "php-fpm8.5", "8.5"},
 		{"/usr/bin/php", "php", ""},
+		// A copy outside the system's PHP binaries can carry any name.
+		{"/home/alice/bin/php8.4", "php8.4", ""},
+		{"/usr/bin/php123.4", "php123.4", ""},
 		{"/usr/bin/python3", "python3", ""},
 		{"", "", ""},
 	}
