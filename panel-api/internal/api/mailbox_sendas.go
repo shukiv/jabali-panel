@@ -213,7 +213,9 @@ func (h *sendAsHandler) del(c *gin.Context) {
 	grantorID := c.Param("grantorId")
 	// Kept so the grant can be put back if the mail server refuses the removal.
 	var removed *models.MailboxSendDelegation
-	if rows, lErr := h.cfg.SendDelegations.ListByDelegate(ctx, delegate.ID); lErr == nil {
+	if rows, lErr := h.cfg.SendDelegations.ListByDelegate(ctx, delegate.ID); lErr != nil {
+		slog.Warn("sendas.remove: list grants", "err", lErr)
+	} else {
 		for i := range rows {
 			if rows[i].GrantorMailboxID == grantorID {
 				removed = &rows[i]
@@ -232,10 +234,11 @@ func (h *sendAsHandler) del(c *gin.Context) {
 	if rErr := h.reconcile(ctx); rErr != nil {
 		// GH #2267: the mailbox can still send as the address, so keep the
 		// grant listed rather than show it removed.
-		if removed != nil {
-			if cErr := h.cfg.SendDelegations.Create(ctx, removed); cErr != nil {
-				slog.Warn("sendas.remove: restore after a failed reconcile", "err", cErr)
-			}
+		if removed == nil {
+			slog.Warn("sendas.remove: grant gone from the panel, but the mail server may still allow it",
+				"delegate", delegate.EmailCached, "grantor_mailbox_id", grantorID)
+		} else if cErr := h.cfg.SendDelegations.Create(ctx, removed); cErr != nil {
+			slog.Warn("sendas.remove: restore after a failed reconcile", "err", cErr)
 		}
 		h.writeNotApplied(c, rErr)
 		return
