@@ -16,6 +16,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/freehostname"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -263,7 +264,72 @@ func routeClient(route dns01.Route, cands []cftoken.Candidate, clients []*hosted
 	return clients[route.CFIndex], whose, nil
 }
 
+// Free jabalihosted.com hostname (JAB-213). The hostname service publishes
+// the box's records under jabalihosted.com and writes _acme-challenge.<label>
+// for the box's own token, so the preview wildcard (*.<label>.jabalihosted.com)
+// validates through it. Checked BEFORE hookRoute: a DNS-module box carries a
+// local zone row for its own hostname (the panel hostname is also a domain),
+// and Let's Encrypt never queries it — Cloudflare answers for
+// jabalihosted.com. Vars so tests can stub the network.
+var (
+	freeHostnameHTTP      = freehostname.HTTPClient
+	freeHostnameLookupNS  = dnsverify.LookupNSExternal
+	freeHostnameLookupTXT = dnsverify.LookupTXTOnServer
+	freeHostnameGrace     = cfChallengeGrace
+)
+
+// freeHostnameCredentialFor returns this box's free-hostname credential when
+// domain IS its free hostname, nil otherwise (no credential, or another
+// name). A broken credential file is an error only for a free-hostname name;
+// every other domain carries on to the normal routes.
+func freeHostnameCredentialFor(domain string) (*freehostname.Credential, error) {
+	cred, err := freehostname.ReadCredential(freehostname.EnvPath)
+	if errors.Is(err, freehostname.ErrNoCredential) {
+		return nil, nil
+	}
+	if err != nil {
+		if models.IsFreeHostnameBase(domain) {
+			return nil, err
+		}
+		return nil, nil
+	}
+	if !strings.EqualFold(domain, cred.FQDN) {
+		return nil, nil
+	}
+	return cred, nil
+}
+
+func freeHostnameAuth(ctx context.Context, cred *freehostname.Credential, domain, validation string) error {
+	if err := cred.PresentChallenge(ctx, freeHostnameHTTP(), validation); err != nil {
+		return fmt.Errorf("challenge write for %s: %w", domain, err)
+	}
+	name := acmeChallengeName(domain)
+	if waitForChallengeTXT(ctx, models.FreeHostnameBase, name, validation,
+		freeHostnameLookupNS, freeHostnameLookupTXT,
+		cfChallengePollInterval, cfChallengePollBudget) {
+		time.Sleep(freeHostnameGrace)
+		fmt.Printf("acme-hook: TXT %s set through the free hostname service — confirmed on the %s nameservers\n", name, models.FreeHostnameBase)
+	} else {
+		fmt.Printf("acme-hook: TXT %s set through the free hostname service — NOT yet visible on the %s nameservers after %s; proceeding anyway\n",
+			name, models.FreeHostnameBase, cfChallengePollBudget)
+	}
+	return nil
+}
+
+func freeHostnameCleanup(ctx context.Context, cred *freehostname.Credential, domain string) error {
+	if err := cred.ClearChallenge(ctx, freeHostnameHTTP()); err != nil {
+		return fmt.Errorf("challenge cleanup for %s: %w", domain, err)
+	}
+	fmt.Printf("acme-hook: challenge records for %s cleared through the free hostname service\n", acmeChallengeName(domain))
+	return nil
+}
+
 func acmeHookAuth(ctx context.Context, lineage, domain, validation string) error {
+	if cred, err := freeHostnameCredentialFor(domain); err != nil {
+		return err
+	} else if cred != nil {
+		return freeHostnameAuth(ctx, cred, domain, validation)
+	}
 	zones := dnsZoneRepoFromDB()
 	records := dnsRecordRepoFromDB()
 
@@ -320,6 +386,11 @@ func acmeHookAuth(ctx context.Context, lineage, domain, validation string) error
 }
 
 func acmeHookCleanup(ctx context.Context, lineage, domain, validation string) error {
+	if cred, err := freeHostnameCredentialFor(domain); err != nil {
+		return err
+	} else if cred != nil {
+		return freeHostnameCleanup(ctx, cred, domain)
+	}
 	zones := dnsZoneRepoFromDB()
 	records := dnsRecordRepoFromDB()
 

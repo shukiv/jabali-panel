@@ -19,6 +19,11 @@ import (
 //   - one server-wide shared certificate row for `*.preview.<hostname>`
 //     (source=acme) that reconcileAcmeSharedCerts issues via DNS-01.
 //
+// On a free jabalihosted.com hostname the base is the hostname itself
+// (<slug>.<label>.jabalihosted.com, see models.EffectivePreviewBase): the
+// hostname service already publishes the wildcard record, and only the
+// certificate row is created here.
+//
 // Both ensures are cheap per-tick no-ops once in place. Nothing is torn
 // down when the last domain disables previews — the record and cert are
 // harmless, renewals are cheap, and re-enable stays instant.
@@ -106,12 +111,20 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	// domain whose DNS lives elsewhere — GH #836) already resolves
 	// externally; previews then serve HTTP-only and the fallback vhost
 	// still applies.
+	//
+	// A free jabalihosted.com hostname (JAB-213) is foreign too, but the
+	// hostname service publishes *.<label> at claim time and brokers the
+	// DNS-01 challenge for the box's token (the acme-hook routes it there),
+	// so it gets the certificate and never the local records. This wins
+	// over a local zone: a DNS-module box has one for its own hostname,
+	// and nobody queries it — Cloudflare answers for jabalihosted.com.
+	free := models.IsFreeHostnameBase(base)
 	zone := r.findZoneForPreviewBase(ctx, base)
 
 	// 1. Shared wildcard cert row (issued by reconcileAcmeSharedCerts).
 	// Skipped for foreign bases: DNS-01 places the challenge TXT through
 	// the local pdns, which cannot answer for a zone it does not host.
-	if zone != nil {
+	if zone != nil || free {
 		if certs, cerr := r.sharedCerts.ListAll(ctx); cerr == nil {
 			found := false
 			for i := range certs {
@@ -142,7 +155,9 @@ func (r *Reconciler) reconcilePreviewInfra(ctx context.Context, domains map[stri
 	}
 
 	// 2. Wildcard A/AAAA records in the base's zone (local zones only).
-	if zone == nil {
+	if free {
+		r.log.Debug("preview: free hostname base — the hostname service publishes the wildcard record and brokers the certificate challenge", "base", base)
+	} else if zone == nil {
 		r.log.Info("preview: base has no locally-hosted zone — DNS + cert are managed externally, previews serve via the external resolution", "base", base)
 	} else if rows, lerr := r.dnsRecords.ListByZoneID(ctx, zone.ID); lerr != nil {
 		r.log.Error("preview: list base zone records failed", "err", lerr)

@@ -35,6 +35,7 @@ The new hostname must resolve to one of the server's IPs before reissuance — L
 The installer, and Server Settings → General on an installed server, can give the panel a free name such as `203-0-113-7.jabalihosted.com`, built from the server's public IPv4 address. The server must reach the hostname service over IPv4; the installer and the panel always connect that way, also on dual-stack servers.
 
 - The certificate comes from the normal panel certificate pass (HTTP-01), like any other hostname.
+- Preview URLs sit one label under the hostname (`<slug>.203-0-113-7.jabalihosted.com`). They share one wildcard certificate, `*.203-0-113-7.jabalihosted.com`, requested when the first domain turns Preview URL on. The hostname service places its DNS-01 challenge with the server's credential. Until it is issued, previews answer over HTTP only.
 - The server sends its first heartbeat at the end of the install, or right after activation from Server Settings, then once a day.
 - Until that first heartbeat, a new claim from the same server and email gets the same name back. Re-running a failed install does not use up a new name.
 - In the installer, going Back after a claim offers to keep the claimed name. Picking your own domain instead removes the saved credential.

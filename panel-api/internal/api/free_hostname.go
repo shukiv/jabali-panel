@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/freehostname"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
@@ -34,18 +34,7 @@ var freeHostnameAPI = "https://api.jabalihosted.com"
 // address and refuses an IPv6 caller, and api.jabalihosted.com also answers
 // AAAA, so a dual-stack box would otherwise get its email code and then have
 // every claim refused.
-var freeHostnameHTTP = &http.Client{Timeout: 30 * time.Second, Transport: ipv4OnlyTransport()}
-
-// ipv4OnlyTransport is http.DefaultTransport (proxy, TLS and pool settings
-// kept) with every connection forced onto IPv4.
-func ipv4OnlyTransport() *http.Transport {
-	t := http.DefaultTransport.(*http.Transport).Clone()
-	d := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
-	t.DialContext = func(ctx context.Context, _, addr string) (net.Conn, error) {
-		return d.DialContext(ctx, "tcp4", addr)
-	}
-	return t
-}
+var freeHostnameHTTP = freehostname.HTTPClient()
 
 func (h *serverSettingsHandler) freeHostnamePost(ctx context.Context, path string, in any) (int, []byte, error) {
 	body, err := json.Marshal(in)

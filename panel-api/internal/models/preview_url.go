@@ -21,6 +21,14 @@ func PreviewSlug(domainName string) string {
 // + TLS from that service.
 const FreeHostnameBase = "jabalihosted.com"
 
+// IsFreeHostnameBase reports whether name is exactly one label under
+// FreeHostnameBase (<label>.jabalihosted.com) — the only shape the service
+// publishes a wildcard record and brokers the DNS-01 challenge for.
+func IsFreeHostnameBase(name string) bool {
+	label, ok := strings.CutSuffix(strings.ToLower(strings.TrimSuffix(name, ".")), "."+FreeHostnameBase)
+	return ok && label != "" && !strings.Contains(label, ".")
+}
+
 // EffectivePreviewBase resolves the base every preview host hangs off:
 // server_settings.preview_base when set (GH #836 — custom domain or
 // magic-DNS base like 203-0-113-7.sslip.io), else the derived default. Empty
