@@ -413,7 +413,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Hand install.sh a normal hostname; the credential file + slice step
-		// wire up the heartbeat + cert.
+		// wire up the heartbeat (the panel-cert reconciler issues the cert).
 		setHostnameField(m.fields, msg.fqdn)
 		m.screen = screenConfig
 		m.focus = 0
@@ -472,6 +472,27 @@ func (m Model) handleHostnameKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenModules
 		case "enter":
 			if m.fh.choice == 1 { // bring your own → normal config
+				if m.fh.fqdn != "" {
+					// Switching away from a hostname claimed earlier in
+					// this run: drop it, and clear the field if it still
+					// holds that name so the operator types their own.
+					claimed := m.fh.fqdn
+					if err := m.fh.dropClaim(); err != nil {
+						m.fh.errMsg = "could not remove the saved credential: " + err.Error()
+						return m, nil
+					}
+					clearHostnameFieldIf(m.fields, claimed)
+				}
+				m.screen = screenConfig
+				m.focus = 0
+				m.configErr = ""
+				return m, m.focusField(0)
+			}
+			if m.fh.fqdn != "" {
+				// Back here after a claim (Back from Config or Confirm):
+				// keep it. Claiming again would mean a second code email
+				// for the same hostname.
+				setHostnameField(m.fields, m.fh.fqdn)
 				m.screen = screenConfig
 				m.focus = 0
 				m.configErr = ""
@@ -535,6 +556,16 @@ func setHostnameField(fields []configField, fqdn string) {
 		}
 	}
 	applyDerived(fields, fqdn)
+}
+
+// clearHostnameFieldIf empties the hostname field when it still holds fqdn
+// (the operator has not typed over the claimed name).
+func clearHostnameFieldIf(fields []configField, fqdn string) {
+	for i := range fields {
+		if fields[i].env == "JABALI_HOSTNAME" && fields[i].input.Value() == fqdn {
+			fields[i].input.SetValue("")
+		}
+	}
 }
 
 // handleConfigKey drives the config screen: tab/↑↓ move between the visible
@@ -806,6 +837,9 @@ func (m Model) body() string {
 			opts := []string{
 				"Free Jabali hostname   (auto DNS + TLS, e.g. 203-0-113-7.jabalihosted.com)",
 				"Enter my own domain    (you point DNS at this server)",
+			}
+			if m.fh.fqdn != "" {
+				opts[0] = "Keep " + m.fh.fqdn + "   (claimed for this server)"
 			}
 			for i, o := range opts {
 				cursor := "  "

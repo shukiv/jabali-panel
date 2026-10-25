@@ -30,6 +30,15 @@ The installer prompts for the hostname at install time. The default is the curre
 
 The new hostname must resolve to one of the server's IPs before reissuance — Let's Encrypt's HTTP-01 challenge requires it. The page warns when the configured hostname does not resolve to a known panel IP, and refuses to start the change until the warning is acknowledged.
 
+## Free jabalihosted.com hostname
+
+The installer, and Server Settings → General on an installed server, can give the panel a free name such as `203-0-113-7.jabalihosted.com`, built from the server's public IPv4 address. The server must reach the hostname service over IPv4; the installer and the panel always connect that way, also on dual-stack servers.
+
+- The certificate comes from the normal panel certificate pass (HTTP-01), like any other hostname.
+- The server sends its first heartbeat at the end of the install, or right after activation from Server Settings, then once a day.
+- Until that first heartbeat, a new claim from the same server and email gets the same name back. Re-running a failed install does not use up a new name.
+- In the installer, going Back after a claim offers to keep the claimed name. Picking your own domain instead removes the saved credential.
+
 ## RFC 6761 reserved TLD guard
 
 Hostnames under reserved TLDs (`.local`, `.localhost`, `.test`, `.example`, `.invalid`, etc.) are accepted for development but skip Let's Encrypt issuance. The panel falls back to a self-signed certificate, and Stalwart is configured to refuse outbound mail under a reserved-TLD hostname (RFC 6761 compliance; prevents accidental leakage during testing). This guard was added after a Stalwart `Domain/set` crash-loop on `.local` test hostnames.
