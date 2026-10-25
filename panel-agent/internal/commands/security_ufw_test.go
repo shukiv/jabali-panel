@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -117,5 +118,42 @@ To                         Action      From
 	}
 	if resp.Rules[0].Num != 1 || resp.Rules[0].Port != "22" || resp.Rules[0].Proto != "tcp" {
 		t.Errorf("rule[0] parsed wrong: %+v", resp.Rules[0])
+	}
+}
+
+// GH #2271: a disabled firewall was reported as active, so the page offered
+// only "Disable firewall" and the firewall could be enabled again only with
+// `ufw enable`. ufw prints "Status: inactive" for both status calls when it is
+// off, and "inactive" contains "active".
+func TestUfwStatusHandler_ReportsWhetherTheFirewallIsOn(t *testing.T) {
+	active := "Status: active\nLogging: on (low)\nDefault: deny (incoming), allow (outgoing), deny (routed)\nNew profiles: skip\n\n" +
+		"     To                         Action      From\n     --                         ------      ----\n" +
+		"[ 1] 22/tcp                     ALLOW IN    Anywhere\n"
+	for _, tc := range []struct {
+		name   string
+		out    string
+		active bool
+	}{
+		{"disabled", "Status: inactive\n", false},
+		{"enabled", active, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := execCommandContext
+			execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+				if name != "ufw" || len(args) == 0 || args[0] != "status" {
+					t.Fatalf("unexpected command %s %v", name, args)
+				}
+				return exec.CommandContext(ctx, "printf", "%s", tc.out)
+			}
+			t.Cleanup(func() { execCommandContext = prev })
+
+			got, err := ufwStatusHandler(context.Background(), nil)
+			if err != nil {
+				t.Fatalf("status: %v", err)
+			}
+			if resp := got.(ufwStatusResponse); resp.Active != tc.active {
+				t.Fatalf("active = %v, want %v", resp.Active, tc.active)
+			}
+		})
 	}
 }
