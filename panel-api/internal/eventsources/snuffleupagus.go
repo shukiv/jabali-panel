@@ -36,7 +36,7 @@ func runSnuffleupagusIngest(ctx context.Context, d Deps) {
 	}
 	d.Log.Info("eventsources: snuffleupagus.ingest started", "tick", snuffleupagusTick.String())
 
-	since := time.Now().UTC().Add(-snuffleupagusTick)
+	since := snuffleupagusIngestStart(ctx, d, time.Now().UTC())
 	tick := time.NewTicker(snuffleupagusTick)
 	defer tick.Stop()
 	for {
@@ -53,12 +53,31 @@ func runSnuffleupagusIngest(ctx context.Context, d Deps) {
 	}
 }
 
+// snuffleupagusIngestStart is where the first pass reads from: the last
+// minute, or just after the newest stored incident when that is more
+// recent, so a panel restart does not store the last minute twice.
+func snuffleupagusIngestStart(ctx context.Context, d Deps, now time.Time) time.Time {
+	since := now.Add(-snuffleupagusTick)
+	latest, err := d.Snuffleupagus.LatestIncidentTs(ctx)
+	if err != nil {
+		d.Log.Warn("eventsources: snuffleupagus latest incident lookup failed", "err", err)
+		return since
+	}
+	if latest != nil && latest.After(since) {
+		return latest.Add(time.Microsecond)
+	}
+	return since
+}
+
 func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time.Time, int) {
 	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := d.Agent.Call(callCtx, "snuffleupagus.fetch_incidents", map[string]any{
-		"since": since.Format(time.RFC3339),
-		"limit": 500,
+		// journalctl reads whole seconds; since_us lets the agent skip what
+		// the previous pass already returned from that second (GH #2262).
+		"since":    since.Format(time.RFC3339),
+		"since_us": since.UnixMicro(),
+		"limit":    500,
 	})
 	if err != nil {
 		d.Log.Debug("eventsources: snuffleupagus.fetch_incidents call failed", "err", err)
@@ -102,9 +121,7 @@ func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time
 			PhpVersion: stringPtr(ph),
 			Raw:        stringPtr(raw),
 		}
-		if in.SourceIP != "" {
-			row.SourceIP = []byte(in.SourceIP) // stored verbatim; pretty-print in UI
-		}
+		row.SourceIP = models.SnuffleupagusSourceIP(in.SourceIP)
 		if err := d.Snuffleupagus.InsertIncident(ctx, row); err != nil {
 			d.Log.Warn("eventsources: snuffleupagus.InsertIncident failed", "err", err)
 			continue

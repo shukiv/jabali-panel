@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -27,7 +28,11 @@ import (
 
 type snuffleupagusFetchParams struct {
 	Since string `json:"since"` // RFC3339; empty == last 1m
-	Limit int    `json:"limit"` // 0 → 500
+	// SinceUS (microseconds since the epoch) skips entries before it.
+	// journalctl --since reads whole seconds, so without it each pass
+	// returned the previous pass's last second again (GH #2262).
+	SinceUS int64 `json:"since_us"`
+	Limit   int   `json:"limit"` // 0 → 500
 }
 
 type snuffleupagusIncidentDTO struct {
@@ -119,6 +124,8 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 		var entry struct {
 			RealtimeUS string `json:"__REALTIME_TIMESTAMP"`
 			Message    string `json:"MESSAGE"`
+			Exe        string `json:"_EXE"`
+			Comm       string `json:"_COMM"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
@@ -127,6 +134,10 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 		if !ok {
 			continue
 		}
+		if p.SinceUS > 0 && inc.Ts.UnixMicro() < p.SinceUS {
+			continue
+		}
+		inc.PhpVersion = snuffleupagusPHPVersion(entry.Exe, entry.Comm)
 		resp.Incidents = append(resp.Incidents, inc)
 	}
 	_ = cmd.Wait()
@@ -196,6 +207,23 @@ func parseSnuffleupagusLine(realtimeUS, msg string) (snuffleupagusIncidentDTO, b
 		RequestURI: uri,
 		Raw:        msg,
 	}, true
+}
+
+// snufPHPBinaryRe matches the PHP binaries that log: php8.4 (CLI) and
+// php-fpm8.4 (FPM).
+var snufPHPBinaryRe = regexp.MustCompile(`^php(?:-fpm)?([0-9]+\.[0-9]+)$`)
+
+// snuffleupagusPHPVersion is the PHP version that logged the incident, from
+// the journal's _EXE (/usr/sbin/php-fpm8.4), else _COMM. journald sets both
+// from the process, so the script can't choose them. Empty when neither is
+// a versioned PHP binary.
+func snuffleupagusPHPVersion(exe, comm string) string {
+	for _, name := range []string{filepath.Base(exe), comm} {
+		if m := snufPHPBinaryRe.FindStringSubmatch(name); m != nil {
+			return m[1]
+		}
+	}
+	return ""
 }
 
 func parseRealtime(realtimeUS string) time.Time {
