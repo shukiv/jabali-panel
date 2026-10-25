@@ -42,9 +42,11 @@ func acmeDNSHooks(certName string) (auth, cleanup string) {
 // CertName pins the certbot lineage (must be a plain FQDN-ish label —
 // no `*`). SANs is the full name list; each entry may carry a single
 // leading "*." (that is the point of DNS-01: LE only grants wildcards
-// over it). The DNS zones for every SAN must be served by this panel's
-// PowerDNS — the hook refuses foreign zones, which fails the challenge
-// with a clear error instead of a timeout.
+// over it). Every SAN's zone must be one the hook can write: this panel's
+// PowerDNS, Cloudflare through a stored token, or the box's own free
+// jabalihosted.com hostname through the hostname service. The hook
+// refuses any other zone, which fails the challenge with a clear error
+// instead of a timeout.
 type sslIssueDNS01Params struct {
 	CertName string   `json:"cert_name"`
 	SANs     []string `json:"sans"`
