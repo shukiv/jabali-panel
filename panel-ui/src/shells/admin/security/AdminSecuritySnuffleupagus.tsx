@@ -225,6 +225,13 @@ export function AdminSecuritySnuffleupagus() {
                   v && v !== "0.0.0.0" ? v : <Text type="secondary">CLI</Text>,
               },
               {
+                // GH #2262: the site whose script the rule stopped.
+                title: "Site",
+                dataIndex: "domain",
+                ellipsis: true,
+                render: (v?: string) => v || <Text type="secondary">-</Text>,
+              },
+              {
                 title: "URI",
                 dataIndex: "request_uri",
                 ellipsis: true,

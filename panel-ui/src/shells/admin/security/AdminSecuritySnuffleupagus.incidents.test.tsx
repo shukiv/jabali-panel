@@ -72,6 +72,13 @@ describe("PHP Defense recent incidents (GH #2262)", () => {
     });
   });
 
+  it("shows each incident's site in the list", async () => {
+    renderPage();
+    await screen.findByText("sp.disabled_function:rule1");
+    expect(screen.getByRole("columnheader", { name: "Site" })).toBeTruthy();
+    expect(screen.getAllByText("shop.example.com").length).toBe(50);
+  });
+
   it("asks the server for the page you open", async () => {
     renderPage();
     expect(await screen.findByText("sp.disabled_function:rule1")).toBeTruthy();
