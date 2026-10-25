@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -55,6 +58,9 @@ func TestDrupalComposerInstallRunsThePharOnTheDomainPHP(t *testing.T) {
 		t.Errorf("composer argv %q has no --working-dir=%s", prog, installPath)
 	}
 	assertComposerHomeOutsideSite(t, vars["COMPOSER_HOME"], installPath)
+	if want := filepath.Join(vars["COMPOSER_HOME"], "cache"); vars["COMPOSER_CACHE_DIR"] != want {
+		t.Errorf("COMPOSER_CACHE_DIR = %q, want %q", vars["COMPOSER_CACHE_DIR"], want)
+	}
 }
 
 func TestDrushRunsOnTheSamePHPAsComposer(t *testing.T) {
@@ -173,4 +179,65 @@ func TestDrupalInstallNeedsTheDomainToRunPHP(t *testing.T) {
 	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition || !strings.Contains(ae.Message, "does not run PHP") {
 		t.Fatalf("drupalInstallHandler = %v, want failed_precondition: example.com does not run PHP", err)
 	}
+}
+
+// ensureComposerHome runs as root in a home the tenant may own, so it makes
+// only ~/.composer, refuses anything there that is not a directory, and
+// never follows a link.
+func TestEnsureComposerHome(t *testing.T) {
+	me, err := user.Current()
+	if err != nil || !osUserSafeRE.MatchString(me.Username) {
+		t.Skipf("needs a current user with a POSIX name (%v)", err)
+	}
+	setup := func(t *testing.T) string {
+		t.Helper()
+		homes := t.TempDir()
+		prev := homesRoot
+		homesRoot = homes
+		t.Cleanup(func() { homesRoot = prev })
+		home := filepath.Join(homes, me.Username)
+		if err := os.Mkdir(home, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return home
+	}
+
+	t.Run("creates it owned by the user", func(t *testing.T) {
+		home := setup(t)
+		if err := ensureComposerHome(me.Username); err != nil {
+			t.Fatalf("ensureComposerHome: %v", err)
+		}
+		fi, err := os.Lstat(filepath.Join(home, ".composer"))
+		if err != nil || !fi.IsDir() {
+			t.Fatalf("~/.composer is not a directory: %v", err)
+		}
+		if st := fi.Sys().(*syscall.Stat_t); strconv.Itoa(int(st.Uid)) != me.Uid {
+			t.Errorf("~/.composer owned by uid %d, want %s", st.Uid, me.Uid)
+		}
+		if err := ensureComposerHome(me.Username); err != nil {
+			t.Errorf("second ensureComposerHome: %v", err)
+		}
+	})
+	t.Run("refuses a symlink", func(t *testing.T) {
+		home := setup(t)
+		target := t.TempDir()
+		if err := os.Symlink(target, filepath.Join(home, ".composer")); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureComposerHome(me.Username); err == nil {
+			t.Fatal("ensureComposerHome accepted a symlinked ~/.composer")
+		}
+		if entries, _ := os.ReadDir(target); len(entries) != 0 {
+			t.Errorf("wrote through the link: %v", entries)
+		}
+	})
+	t.Run("refuses a file", func(t *testing.T) {
+		home := setup(t)
+		if err := os.WriteFile(filepath.Join(home, ".composer"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := ensureComposerHome(me.Username); err == nil {
+			t.Fatal("ensureComposerHome accepted a file at ~/.composer")
+		}
+	})
 }

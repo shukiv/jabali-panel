@@ -187,6 +187,9 @@ func installDrushViaComposer(ctx context.Context, osUser, php, composerPhar, ins
 			return fmt.Errorf("chown pinned %s: %w", name, err)
 		}
 	}
+	if err := ensureComposerHome(osUser); err != nil {
+		return fmt.Errorf("composer home: %w", err)
+	}
 	cmd := buildSystemdRunCmd(ctx, osUser, drupalComposerInstallArgv(osUser, php, composerPhar, installPath)...)
 	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
@@ -196,23 +199,21 @@ func installDrushViaComposer(ctx context.Context, osUser, php, composerPhar, ins
 }
 
 // drupalComposerInstallArgv is the command installDrushViaComposer runs as
-// osUser: the pinned `composer install` on php, with COMPOSER_HOME in the
-// user's home rather than the site.
+// osUser: the pinned `composer install` on php, with Composer's home and
+// cache in the user's home rather than the site.
 func drupalComposerInstallArgv(osUser, php, composerPhar, installPath string) []string {
-	return []string{
-		"env",
-		"COMPOSER_HOME=" + composerHomeFor(osUser),
-		"COMPOSER_NO_INTERACTION=1",
+	argv := append([]string{"env"}, composerEnv(osUser)...)
+	return append(argv,
 		php,
 		composerPhar,
 		"install",
-		"--working-dir=" + installPath,
+		"--working-dir="+installPath,
 		"--no-dev",
 		"--no-interaction",
 		"--no-progress",
 		"--prefer-dist",
 		"--optimize-autoloader",
-	}
+	)
 }
 
 // runDrushSiteInstall drives drush's site:install command. --db-url and
