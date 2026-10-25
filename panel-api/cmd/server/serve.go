@@ -44,6 +44,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -211,6 +212,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	if sharedDB != nil {
 		deps.DB = sharedDB
+		if sharedAgent != nil {
+			deps.SendAs = sendasops.New(repository.NewMailboxSendDelegationRepository(sharedDB), sharedAgent)
+		}
 		userRepo := repository.NewUserRepository(sharedDB)
 		packageRepo := repository.NewPackageRepository(sharedDB)
 		domainRepo := repository.NewDomainRepository(sharedDB)
@@ -563,25 +567,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 				log.Warn("snuffleupagus boot-reconcile failed", "err", err)
 			}
 		}(deps.SnuffleupagusReconciler)
-		// GH #347: boot-time send-as reconcile. panel-api reconciles on every
-		// delegation change, but a fresh install / DB restore / stalwart reset can
-		// leave Stalwart's mustMatchSender expression out of sync with the
-		// mailbox_send_delegations table. Re-derive it once at startup so the
-		// expression always matches the DB (0 pairs -> stock "true"; this is the
-		// install/update-safe path — it runs on every boot, install_sh_is_truth).
+		// GH #347: the boot-time send-as push is deps.SendAs.Run's first check
+		// (started with the other tickers below).
 		if sharedDB != nil && sharedAgent != nil {
-			go func() {
-				rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
-				defer rcancel()
-				pairs, err := repository.NewMailboxSendDelegationRepository(sharedDB).ListAllPairs(rctx)
-				if err != nil {
-					log.Warn("sendas boot-reconcile: list pairs failed", "err", err)
-					return
-				}
-				if _, err := sharedAgent.Call(rctx, "mail.sendas.reconcile", map[string]any{"pairs": pairs}); err != nil {
-					log.Warn("sendas boot-reconcile: agent push failed", "err", err)
-				}
-			}()
 			// GH #1650, Discussion #1032: drop the managed WAF exclusions of any
 			// Flarum or Nextcloud install that is gone. A domain or account delete
 			// cascades the install row away with no app event, so the exclusions
@@ -1085,6 +1073,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if sharedAgent != nil && deps.Mailboxes != nil {
 		go reconciler.StartMailboxUsageTicker(ctx, sharedAgent, deps.Mailboxes, log)
 	}
+
+	// GH #347, GH #2267: push the send-as grants at start, then again whenever
+	// the set changes with no grant change (a mailbox enabled, disabled or
+	// deleted, a domain renamed) or the last push failed. A fresh install, a
+	// restored DB or a reset Stalwart gets the current set (0 pairs -> "true").
+	go deps.SendAs.Run(ctx, log)
 
 	// GH #1993: remove kept uploaded backups whose retention ended, and
 	// archive files no row owns.

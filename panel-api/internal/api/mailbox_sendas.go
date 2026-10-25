@@ -15,7 +15,6 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -28,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 )
 
 type MailboxSendAsHandlerConfig struct {
@@ -35,6 +35,9 @@ type MailboxSendAsHandlerConfig struct {
 	Domains         repository.DomainRepository
 	SendDelegations repository.MailboxSendDelegationRepository
 	Agent           agent.AgentInterface
+	// Sync is the panel-wide syncer, shared with its background check so
+	// pushes never overlap. Nil builds one from SendDelegations and Agent.
+	Sync *sendasops.Syncer
 }
 
 type sendAsHandler struct {
@@ -58,6 +61,9 @@ type sendAsCreateRequest struct {
 func RegisterMailboxSendAsRoutes(g *gin.RouterGroup, cfg MailboxSendAsHandlerConfig) {
 	if cfg.SendDelegations == nil {
 		return
+	}
+	if cfg.Sync == nil {
+		cfg.Sync = sendasops.New(cfg.SendDelegations, cfg.Agent)
 	}
 	h := &sendAsHandler{cfg: cfg}
 	g.GET("/mailboxes/:mbid/send-as", h.list)
@@ -249,19 +255,9 @@ func (h *sendAsHandler) del(c *gin.Context) {
 
 // reconcile recomputes the full delegation set and pushes it to the agent, which
 // rebuilds Stalwart's mustMatchSender expression. Full-replace, so the next
-// change or panel start also heals a push that was missed.
+// push (sendasops checks every minute) also heals one that was missed.
 func (h *sendAsHandler) reconcile(ctx context.Context) error {
-	if h.cfg.Agent == nil {
-		return nil
-	}
-	pairs, err := h.cfg.SendDelegations.ListAllPairs(ctx)
-	if err != nil {
-		return fmt.Errorf("list pairs: %w", err)
-	}
-	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	_, err = h.cfg.Agent.Call(cctx, "mail.sendas.reconcile", map[string]any{"pairs": pairs})
-	return err
+	return h.cfg.Sync.Push(ctx)
 }
 
 // writeNotApplied answers a change the mail server did not take. The reason

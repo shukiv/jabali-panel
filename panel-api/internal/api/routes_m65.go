@@ -3,6 +3,7 @@ package api
 import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,6 +20,7 @@ type M65RouteDeps struct {
 	MailboxShares   repository.MailboxShareRepository
 	SharedResources repository.SharedResourceRepository
 	SendDelegations repository.MailboxSendDelegationRepository
+	SendAs          *sendasops.Syncer
 	TrustedSenders  repository.MailboxTrustedSenderRepository
 	// Addresses: see MailboxForwarderHandlerConfig.Addresses.
 	Addresses MailAddressReleaser
@@ -46,6 +48,7 @@ func registerSendAsRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 		Domains:         deps.Domains,
 		SendDelegations: deps.SendDelegations,
 		Agent:           deps.Agent,
+		Sync:            deps.SendAs,
 	})
 }
 

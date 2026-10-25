@@ -162,6 +162,7 @@ var fullDepsNilOK = map[string]string{
 	"MailAddresses":         "interface used at request time only; gates no route",
 	"MailCredentials":       "interface used at request time only; gates no route",
 	"AuditRecorder":         "interface used at request time only; gates no route",
+	"SendAs":                "used at request time only; gates no route (nil builds one from SendDelegations and Agent)",
 }
 
 // TestFullDepsWiresEveryDep fails when Deps gains a field that fullDeps leaves
