@@ -105,6 +105,8 @@ jabali repair --all --yes      # destructive (wipes nginx tmp, regen pool socket
 
 `jabali repair` covers 7 detectors (M33-era), grouped by destructiveness. ADR-0077.
 
+**Updates → Repair Center → Auto-Repair safe issues** runs `jabali repair --auto`. That includes `docroot-www-data-group`, which puts docroot files back in group www-data and sets setgid on their directories, so nginx can serve newly uploaded media. A broken row that Auto-Repair leaves says why. A destructive one shows its `jabali repair --<id> --yes` command. One with no fix (`dirty-migration`, `fpm-masters-down`) needs your decision. In `--diagnose` output these carry `[destructive]` and `[manual]` after the label.
+
 ## Migration cleanup
 
 After a successful cPanel / DA / Hestia restore: `jabali domain prune-orphans` lists sites in nginx `sites-enabled` that have no panel row; `jabali domain prune-orphans --apply` deletes them.
