@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -36,7 +37,7 @@ func runSnuffleupagusIngest(ctx context.Context, d Deps) {
 	}
 	d.Log.Info("eventsources: snuffleupagus.ingest started", "tick", snuffleupagusTick.String())
 
-	since := time.Now().UTC().Add(-snuffleupagusTick)
+	since := snuffleupagusIngestStart(ctx, d, time.Now().UTC())
 	tick := time.NewTicker(snuffleupagusTick)
 	defer tick.Stop()
 	for {
@@ -53,12 +54,31 @@ func runSnuffleupagusIngest(ctx context.Context, d Deps) {
 	}
 }
 
+// snuffleupagusIngestStart is where the first pass reads from: the last
+// minute, or just after the newest stored incident when that is more
+// recent, so a panel restart does not store the last minute twice.
+func snuffleupagusIngestStart(ctx context.Context, d Deps, now time.Time) time.Time {
+	since := now.Add(-snuffleupagusTick)
+	latest, err := d.Snuffleupagus.LatestIncidentTs(ctx)
+	if err != nil {
+		d.Log.Warn("eventsources: snuffleupagus latest incident lookup failed", "err", err)
+		return since
+	}
+	if latest != nil && latest.After(since) {
+		return latest.Add(time.Microsecond)
+	}
+	return since
+}
+
 func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time.Time, int) {
 	callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	raw, err := d.Agent.Call(callCtx, "snuffleupagus.fetch_incidents", map[string]any{
-		"since": since.Format(time.RFC3339),
-		"limit": 500,
+		// journalctl reads whole seconds; since_us lets the agent skip what
+		// the previous pass already returned from that second (GH #2262).
+		"since":    since.Format(time.RFC3339),
+		"since_us": since.UnixMicro(),
+		"limit":    500,
 	})
 	if err != nil {
 		d.Log.Debug("eventsources: snuffleupagus.fetch_incidents call failed", "err", err)
@@ -72,6 +92,8 @@ func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time
 			SourceIP   string    `json:"source_ip"`
 			RequestURI string    `json:"request_uri"`
 			PhpVersion string    `json:"php_version"`
+			Domain     string    `json:"domain"`
+			Owner      string    `json:"owner"`
 			Raw        string    `json:"raw"`
 		} `json:"incidents"`
 		NextSince time.Time `json:"next_since"`
@@ -90,21 +112,29 @@ func snuffleupagusIngestPass(ctx context.Context, d Deps, since time.Time) (time
 
 	// Persist + bucket by action for the dispatch envelope.
 	var blockCount, simCount, logCount int
+	sites := map[string][2]*string{}
 	for _, in := range fetched.Incidents {
 		ph := in.PhpVersion
-		uri := in.RequestURI
-		raw := in.Raw
+		// GH #2262: a field longer than its column failed the insert, and
+		// the incident went unrecorded.
+		uri := snufFit(in.RequestURI, 2048)
+		raw := snufFit(in.Raw, 16000)
 		row := &models.SnuffleupagusIncident{
 			Ts:         in.Ts,
-			RuleName:   in.RuleName,
+			RuleName:   snufFit(in.RuleName, 128),
 			Action:     models.SnuffleupagusAction(in.Action),
 			RequestURI: stringPtr(uri),
 			PhpVersion: stringPtr(ph),
 			Raw:        stringPtr(raw),
 		}
-		if in.SourceIP != "" {
-			row.SourceIP = []byte(in.SourceIP) // stored verbatim; pretty-print in UI
+		key := in.Owner + "/" + in.Domain
+		site, ok := sites[key]
+		if !ok {
+			site[0], site[1] = snuffleupagusSite(ctx, d, in.Owner, in.Domain)
+			sites[key] = site
 		}
+		row.DomainID, row.Domain = site[0], site[1]
+		row.SourceIP = models.SnuffleupagusSourceIP(in.SourceIP)
 		if err := d.Snuffleupagus.InsertIncident(ctx, row); err != nil {
 			d.Log.Warn("eventsources: snuffleupagus.InsertIncident failed", "err", err)
 			continue
@@ -156,6 +186,8 @@ func snuffleupagusBatchBody(items []struct {
 	SourceIP   string    `json:"source_ip"`
 	RequestURI string    `json:"request_uri"`
 	PhpVersion string    `json:"php_version"`
+	Domain     string    `json:"domain"`
+	Owner      string    `json:"owner"`
 	Raw        string    `json:"raw"`
 }) string {
 	const max = 10
@@ -169,6 +201,35 @@ func snuffleupagusBatchBody(items []struct {
 			it.Ts.Format("15:04:05"), it.Action, it.RuleName, it.SourceIP)
 	}
 	return out
+}
+
+// snuffleupagusSite is the site an incident ran on, as its domain ID and
+// name (GH #2262). The agent names the domain only when the account that
+// logged the line owns /home/<owner>, but a directory under its domains/
+// is still that account's choice, so the name counts only when the
+// panel's domain of that name belongs to <owner>. Nil otherwise.
+func snuffleupagusSite(ctx context.Context, d Deps, owner, name string) (domainID, domain *string) {
+	if owner == "" || name == "" || d.Domains == nil || d.Users == nil {
+		return nil, nil
+	}
+	dom, err := d.Domains.FindByName(ctx, name)
+	if err != nil || dom == nil {
+		return nil, nil
+	}
+	u, err := d.Users.FindByID(ctx, dom.UserID)
+	if err != nil || u == nil || u.Username == nil || *u.Username != owner {
+		return nil, nil
+	}
+	id, n := dom.ID, dom.Name
+	return &id, &n
+}
+
+// snufFit cuts s to at most n characters.
+func snufFit(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
 }
 
 func stringPtr(s string) *string {

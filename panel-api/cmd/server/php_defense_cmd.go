@@ -31,6 +31,7 @@ func newPhpDefenseCmd() *cobra.Command {
 		newPhpDefenseRulesCmd(),
 		newPhpDefenseRuleToggleCmd(),
 		newPhpDefenseIncidentsCmd(),
+		newPhpDefenseIncidentsClearCmd(),
 	)
 	return cmd
 }
@@ -165,5 +166,33 @@ func newPhpDefenseIncidentsCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&rule, "rule", "", "filter by rule name")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max rows")
+	return cmd
+}
+
+// newPhpDefenseIncidentsClearCmd mirrors Clear history on the admin page
+// (DELETE /admin/security/snuffleupagus/incidents, GH #2262).
+func newPhpDefenseIncidentsClearCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:     "incidents-clear",
+		Short:   "Delete every recorded Snuffleupagus incident",
+		Args:    cobra.NoArgs,
+		PreRunE: requireDB,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !yes {
+				return fmt.Errorf("this deletes the whole incident history; pass --yes to confirm")
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+			defer cancel()
+			n, err := repository.NewSnuffleupagusRepository(sharedDB).DeleteAllIncidents(ctx)
+			if err != nil {
+				return fmt.Errorf("clear incidents: %w", err)
+			}
+			cliAuditOK(ctx, "php_defense.incidents_clear", "snuffleupagus_incidents", "all", nil)
+			fmt.Fprintf(cmd.OutOrStdout(), "deleted %d incidents\n", n)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "confirm deleting the whole incident history")
 	return cmd
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -233,6 +234,22 @@ func RegisterSecuritySnuffleupagusRoutes(rg *gin.RouterGroup, cfg SecuritySnuffl
 			"page":      page,
 			"page_size": size,
 		})
+	})
+
+	// GH #2262: Clear history on the Recent incidents list. The audit
+	// middleware records who cleared it; the log line adds how many.
+	g.DELETE("/incidents", func(c *gin.Context) {
+		n, err := cfg.Repo.DeleteAllIncidents(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal", "detail": err.Error()})
+			return
+		}
+		by := ""
+		if claims := ginctx.Claims(c); claims != nil {
+			by = claims.UserID
+		}
+		slog.InfoContext(c.Request.Context(), "php defense: incident history cleared", "deleted", n, "by", by)
+		c.JSON(http.StatusOK, gin.H{"deleted": n})
 	})
 }
 

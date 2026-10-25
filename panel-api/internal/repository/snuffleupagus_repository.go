@@ -4,6 +4,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -18,6 +19,12 @@ type SnuffleupagusRepository interface {
 	UpsertOverride(ctx context.Context, ov *models.SnuffleupagusRuleOverride) error
 	InsertIncident(ctx context.Context, in *models.SnuffleupagusIncident) error
 	ListIncidents(ctx context.Context, opts IncidentListOptions) ([]models.SnuffleupagusIncident, int64, error)
+	// LatestIncidentTs is the newest stored incident's time, nil when there
+	// is none. The ingest resumes after it on panel start (GH #2262).
+	LatestIncidentTs(ctx context.Context) (*time.Time, error)
+	// DeleteAllIncidents clears the incident history (GH #2262) and returns
+	// how many rows it deleted.
+	DeleteAllIncidents(ctx context.Context) (int64, error)
 }
 
 type IncidentListOptions struct {
@@ -100,4 +107,22 @@ func (r *snuffleupagusRepo) ListIncidents(ctx context.Context, opts IncidentList
 		return nil, 0, err
 	}
 	return out, total, nil
+}
+
+func (r *snuffleupagusRepo) LatestIncidentTs(ctx context.Context) (*time.Time, error) {
+	var latest sql.NullTime
+	if err := r.db.WithContext(ctx).Model(&models.SnuffleupagusIncident{}).
+		Select("MAX(ts)").Scan(&latest).Error; err != nil {
+		return nil, err
+	}
+	if !latest.Valid {
+		return nil, nil
+	}
+	t := latest.Time.UTC()
+	return &t, nil
+}
+
+func (r *snuffleupagusRepo) DeleteAllIncidents(ctx context.Context) (int64, error) {
+	res := r.db.WithContext(ctx).Exec("DELETE FROM snuffleupagus_incidents")
+	return res.RowsAffected, res.Error
 }

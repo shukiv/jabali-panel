@@ -18,6 +18,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/user"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -27,7 +29,11 @@ import (
 
 type snuffleupagusFetchParams struct {
 	Since string `json:"since"` // RFC3339; empty == last 1m
-	Limit int    `json:"limit"` // 0 → 500
+	// SinceUS (microseconds since the epoch) skips entries before it.
+	// journalctl --since reads whole seconds, so without it each pass
+	// returned the previous pass's last second again (GH #2262).
+	SinceUS int64 `json:"since_us"`
+	Limit   int   `json:"limit"` // 0 → 500
 }
 
 type snuffleupagusIncidentDTO struct {
@@ -37,6 +43,8 @@ type snuffleupagusIncidentDTO struct {
 	SourceIP   string    `json:"source_ip,omitempty"`
 	RequestURI string    `json:"request_uri,omitempty"`
 	PhpVersion string    `json:"php_version,omitempty"`
+	Domain     string    `json:"domain,omitempty"`
+	Owner      string    `json:"owner,omitempty"` // the account Domain is under; the panel checks it owns Domain
 	Raw        string    `json:"raw"`
 }
 
@@ -119,6 +127,9 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 		var entry struct {
 			RealtimeUS string `json:"__REALTIME_TIMESTAMP"`
 			Message    string `json:"MESSAGE"`
+			Exe        string `json:"_EXE"`
+			Comm       string `json:"_COMM"`
+			UID        string `json:"_UID"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
 			continue
@@ -127,6 +138,11 @@ func snuffleupagusFetchHandler(ctx context.Context, params json.RawMessage) (any
 		if !ok {
 			continue
 		}
+		if p.SinceUS > 0 && inc.Ts.UnixMicro() < p.SinceUS {
+			continue
+		}
+		inc.PhpVersion = snuffleupagusPHPVersion(entry.Exe, entry.Comm)
+		inc.Owner, inc.Domain = snuffleupagusDomain(entry.Message, entry.UID)
 		resp.Incidents = append(resp.Incidents, inc)
 	}
 	_ = cmd.Wait()
@@ -196,6 +212,80 @@ func parseSnuffleupagusLine(realtimeUS, msg string) (snuffleupagusIncidentDTO, b
 		RequestURI: uri,
 		Raw:        msg,
 	}, true
+}
+
+// snufPHPBinaryRe matches the PHP binaries that log: php8.4 (CLI) and
+// php-fpm8.4 (FPM).
+var snufPHPBinaryRe = regexp.MustCompile(`^php(?:-fpm)?([0-9]{1,2}\.[0-9]{1,2})$`)
+
+// snuffleupagusPHPVersion is the PHP version that logged the incident, from
+// the journal's _EXE (/usr/sbin/php-fpm8.4), which journald reads from the
+// process. Only the system's PHP binaries in /usr/bin and /usr/sbin count:
+// a copy elsewhere can carry any name. _COMM is the fallback only when
+// journald recorded no _EXE. Empty otherwise.
+func snuffleupagusPHPVersion(exe, comm string) string {
+	name := comm
+	if exe != "" {
+		if dir := filepath.Dir(exe); dir != "/usr/bin" && dir != "/usr/sbin" {
+			return ""
+		}
+		name = filepath.Base(exe)
+	}
+	if m := snufPHPBinaryRe.FindStringSubmatch(name); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// snufScriptPathRe matches the script Snuffleupagus names at the end of its
+// line: "... in /home/<user>/domains/<domain>/... on line <n>".
+var snufScriptPathRe = regexp.MustCompile(` in /home/([^/ ]+)/domains/([A-Za-z0-9.-]+)/[^ ]* on line `)
+
+// snufLookupUser maps a journal _UID to its user name. A var for tests.
+var snufLookupUser = func(uid string) (string, error) {
+	u, err := user.LookupId(uid)
+	if err != nil {
+		return "", err
+	}
+	return u.Username, nil
+}
+
+// snuffleupagusDomain is the site whose script the rule stopped and the
+// account it is under, from the last script path in the line (GH #2262).
+// Any local process can write a line tagged snuffleupagus, so the pair
+// counts only when the journal's _UID, which journald takes from the
+// sending socket, is root or the owner of that /home/<user>. A directory
+// name is still the account's choice; the panel keeps the domain only if
+// that account owns it.
+func snuffleupagusDomain(msg, uid string) (owner, domain string) {
+	m := snufScriptPathRe.FindAllStringSubmatch(msg, -1)
+	if len(m) == 0 || uid == "" {
+		return "", ""
+	}
+	owner, domain = m[len(m)-1][1], m[len(m)-1][2]
+	if !snufValidHostname(domain) {
+		return "", ""
+	}
+	if uid == "0" {
+		return owner, domain
+	}
+	if name, err := snufLookupUser(uid); err != nil || name != owner {
+		return "", ""
+	}
+	return owner, domain
+}
+
+// snufValidHostname: at most 253 characters, labels of 1 to 63.
+func snufValidHostname(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(s, ".") {
+		if label == "" || len(label) > 63 {
+			return false
+		}
+	}
+	return true
 }
 
 func parseRealtime(realtimeUS string) time.Time {

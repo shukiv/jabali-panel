@@ -4689,6 +4689,18 @@ jabali php-defense incidents [flags]
 - `--limit` — max rows (default `50`)
 - `--rule` — filter by rule name
 
+#### `jabali php-defense incidents-clear`
+
+Delete every recorded Snuffleupagus incident
+
+```
+jabali php-defense incidents-clear [flags]
+```
+
+**Flags:**
+
+- `--yes` — confirm deleting the whole incident history
+
 #### `jabali php-defense mode`
 
 Set the Snuffleupagus mode (renders + applies active.rules)

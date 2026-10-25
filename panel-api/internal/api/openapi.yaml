@@ -6091,6 +6091,12 @@ paths:
       summary: List incidents
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
+    delete:
+      tags: [Security Snuffleupagus]
+      summary: Clear the incident history
+      description: Deletes every recorded PHP Defense incident and returns `deleted`, the number of rows removed (GH #2262).
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: OK } }
 
   /admin/security/snuffleupagus/mode:
     post:
