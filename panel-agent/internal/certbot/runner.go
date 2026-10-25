@@ -123,6 +123,7 @@ func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnam
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	before := r.leafDER(domain)
 	err := cmd.Run()
 	stderrText := stderr.String()
 	// certbot may print the actionable failure block ("Domain:/Type:/Detail:")
@@ -158,9 +159,12 @@ func (r *Runner) Issue(domain, webroot, email string, staging bool, extraHostnam
 	}
 
 	// Try to read the cert regardless of error — certbot may partially succeed
+	// (a new cert saved, then a later step failing). Only a NEW leaf counts:
+	// an unchanged one is the old cert --keep-until-expiring left in place,
+	// and returning it as issued would hide a failing renewal until it expires.
 	cert, certErr := r.readCert(domain)
-	if err != nil && certErr != nil {
-		// Both issue and read failed
+	if err != nil && (certErr != nil || bytes.Equal(r.leafDER(domain), before)) {
+		// Issue failed, and there is no new cert to show for it
 		stderrTail := truncateStderr(combinedOutput, 4096)
 		return &Result{
 			Reason: reason,
@@ -253,6 +257,7 @@ func (r *Runner) IssueDNS01(certName string, sans []string, email string, stagin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
+	before := r.leafDER(certName)
 	err := cmd.Run()
 	combinedOutput := stdout.String() + "\n" + stderr.String()
 	noop := func(out string) bool {
@@ -273,8 +278,11 @@ func (r *Runner) IssueDNS01(certName string, sans []string, email string, stagin
 		reason = classifyStderr([]byte(combinedOutput))
 	}
 
+	// As in Issue: a failed run counts as issued only with a NEW leaf on disk.
+	// This is the renewal path for shared wildcards (*.preview.<hostname>), so
+	// an old leaf reported as issued kept a failing renewal silent until expiry.
 	cert, certErr := r.readCert(certName)
-	if err != nil && certErr != nil {
+	if err != nil && (certErr != nil || bytes.Equal(r.leafDER(certName), before)) {
 		return &Result{
 			Reason: reason,
 			Stderr: truncateStderr(combinedOutput, 4096),
@@ -460,6 +468,16 @@ func ReadLineageCert(leRoot, certName string) (*x509.Certificate, error) {
 		return nil, fmt.Errorf("read cert %s: %w", certPath, err)
 	}
 	return parsePEM(pemBytes)
+}
+
+// leafDER returns the DER of the lineage's current leaf certificate, nil when
+// there is none. Issue and IssueDNS01 compare it across a failed certbot run.
+func (r *Runner) leafDER(certName string) []byte {
+	cert, err := ReadLineageCert(r.LERoot, certName)
+	if err != nil {
+		return nil
+	}
+	return cert.Raw
 }
 
 // parsePEM extracts the first certificate from a PEM block.
