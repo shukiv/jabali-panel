@@ -89,6 +89,18 @@ export function useToggleSnuffleupagusRule() {
   });
 }
 
+// GH #2262: Clear history deletes every recorded incident.
+export function useClearSnuffleupagusIncidents() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await apiClient.delete<{ deleted: number }>(`${BASE}/incidents`);
+      return data;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["security", "snuffleupagus"] }),
+  });
+}
+
 export interface IncidentsQuery {
   since?: string;
   limit?: number;

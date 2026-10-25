@@ -11,6 +11,7 @@ import {
   type SnuffleupagusIncident,
   type SnuffleupagusMode,
   type SnuffleupagusRule,
+  useClearSnuffleupagusIncidents,
   useSetSnuffleupagusMode,
   useSnuffleupagusIncidents,
   useSnuffleupagusRules,
@@ -33,11 +34,17 @@ const ACTION_COLOR: Record<string, string> = {
   log: "default",
 };
 
+const INCIDENT_PAGE_SIZE = 50;
+
 export function AdminSecuritySnuffleupagus() {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const status = useSnuffleupagusStatus();
-  const incidents = useSnuffleupagusIncidents({ limit: 50 });
+  // GH #2262: the server pages the incidents. The table used to get one page
+  // of rows with the full total, so every page showed the same 50.
+  const [incidentPage, setIncidentPage] = useState(1);
+  const incidents = useSnuffleupagusIncidents({ limit: INCIDENT_PAGE_SIZE, page: incidentPage });
+  const clearIncidents = useClearSnuffleupagusIncidents();
   const rules = useSnuffleupagusRules();
   const [detailIncident, setDetailIncident] = useState<SnuffleupagusIncident | null>(null); // GH #717
   const [disabling, setDisabling] = useState<{ name: string; reason: string } | null>(null); // GH #717 disable-reason
@@ -149,16 +156,47 @@ export function AdminSecuritySnuffleupagus() {
         )}
 
         <div>
-          <Text strong>Recent incidents</Text>
+          <Space style={{ width: "100%", justifyContent: "space-between" }}>
+            <Text strong>Recent incidents</Text>
+            <Button
+              danger
+              size="small"
+              disabled={!incidents.data?.total}
+              loading={clearIncidents.isPending}
+              onClick={() => {
+                const total = incidents.data?.total ?? 0;
+                feedback.modal.confirm({
+                  title: "Clear the incident history?",
+                  content: `This deletes all ${total} recorded incident${total === 1 ? "" : "s"}. It can't be undone.`,
+                  okText: "Clear history",
+                  okType: "danger",
+                  onOk: () =>
+                    clearIncidents.mutateAsync().then((res) => {
+                      setIncidentPage(1);
+                      void feedback.message.success(
+                        `Cleared ${res.deleted} incident${res.deleted === 1 ? "" : "s"}`,
+                      );
+                    }),
+                });
+              }}
+            >
+              Clear history
+            </Button>
+          </Space>
           <Table<SnuffleupagusIncident>
             size="small"
             rowKey="id"
             loading={incidents.isLoading}
             dataSource={incidents.data?.data ?? []}
             pagination={{
+              current: incidentPage,
+              pageSize: INCIDENT_PAGE_SIZE,
               total: incidents.data?.total ?? 0,
-              defaultPageSize: 50,
+              showSizeChanger: false,
+              onChange: setIncidentPage,
             }}
+            // GH #717's triage drawer: a row opens it.
+            onRow={(row) => ({ onClick: () => setDetailIncident(row), style: { cursor: "pointer" } })}
             columns={[
               {
                 title: "When",
