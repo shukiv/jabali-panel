@@ -80,7 +80,9 @@ func parseUfwStatus(out string) ufwStatusResponse {
 		l := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(l, "Status:"):
-			resp.Active = strings.Contains(l, "active")
+			// "Status: active" or "Status: inactive" (GH #2271: a substring
+			// test read the second as active too).
+			resp.Active = strings.TrimSpace(strings.TrimPrefix(l, "Status:")) == "active"
 		case strings.HasPrefix(l, "Default:"):
 			if m := ufwDefaultRe.FindStringSubmatch(l); m != nil {
 				resp.DefaultIn = m[1]
