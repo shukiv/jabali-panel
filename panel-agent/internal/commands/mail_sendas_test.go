@@ -76,3 +76,19 @@ func TestBuildMustMatchSenderExpr_RejectsInjection(t *testing.T) {
 		}
 	}
 }
+
+// GH #2267: mailbox domains are stored in punycode (internal/mailaddr), so a
+// domain under an internationalised TLD ends in "xn--...". One such pair made
+// the whole set unsafe, and no send-as grant on the server reached Stalwart.
+func TestBuildMustMatchSenderExpr_AcceptsPunycodeTLD(t *testing.T) {
+	got, err := buildMustMatchSenderExpr([]sendAsPair{
+		{DelegateEmail: "info@xn--e1afmkfd.xn--p1ai", GrantorEmail: "billing@xn--e1afmkfd.xn--p1ai"},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	want := "!((authenticated_as == 'info@xn--e1afmkfd.xn--p1ai' && sender == 'billing@xn--e1afmkfd.xn--p1ai'))"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

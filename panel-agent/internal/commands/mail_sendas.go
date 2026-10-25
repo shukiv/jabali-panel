@@ -42,7 +42,9 @@ type mailSendAsReconcileParams struct {
 // into Stalwart's sender check, so we reject anything outside a conservative
 // address charset (no quotes, backslashes, whitespace, or control chars) rather
 // than trying to escape it. Real mailbox email_cached values never contain these.
-var safeEmail = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,63}$`)
+// Domains are stored in punycode (internal/mailaddr), so an internationalised
+// TLD arrives as "xn--..." (GH #2267: one such pair used to fail the whole set).
+var safeEmail = regexp.MustCompile(`^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.(?:[A-Za-z]{2,63}|xn--[A-Za-z0-9\-]{1,59})$`)
 
 // buildMustMatchSenderExpr renders the mustMatchSender expression for a set of
 // delegation pairs. Empty set -> the literal "true" (byte-identical to the stock
