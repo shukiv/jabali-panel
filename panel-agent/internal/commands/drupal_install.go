@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -167,18 +168,9 @@ func extractDrupalTarball(ctx context.Context, osUser, tarballPath, installPath 
 // the per-domain user via systemd-run so the resulting vendor/ tree
 // lands with the right uid.
 //
-// COMPOSER_HOME is forced to a writable per-user path — composer's
-// default ~/.composer needs to exist + be writable, and per-domain
-// users on this host don't have a HOME prepopulated.
-func installDrushViaComposer(ctx context.Context, osUser, installPath string) error {
-	composerHome := filepath.Join(installPath, ".composer")
-	if err := os.MkdirAll(composerHome, 0o755); err != nil {
-		return fmt.Errorf("mkdir composer home: %w", err)
-	}
-	if err := execCommandContext(ctx, "chown", "-R", osUser+":"+osUser, composerHome).Run(); err != nil {
-		return fmt.Errorf("chown composer home: %w", err)
-	}
-
+// Composer runs on php, the domain's PHP binary, so vendor/ is resolved
+// for the PHP that serves the site (composer_run.go).
+func installDrushViaComposer(ctx context.Context, osUser, php, composerPhar, installPath string) error {
 	// Reproducible install (GH #459): write the reviewed, pinned composer.json
 	// + composer.lock over the extracted tree, then `composer install` — never
 	// an open-ended `composer require`, which would re-resolve Drush and its
@@ -195,19 +187,7 @@ func installDrushViaComposer(ctx context.Context, osUser, installPath string) er
 			return fmt.Errorf("chown pinned %s: %w", name, err)
 		}
 	}
-	cmd := buildSystemdRunCmd(ctx, osUser,
-		"env",
-		"COMPOSER_HOME="+composerHome,
-		"COMPOSER_NO_INTERACTION=1",
-		"composer",
-		"install",
-		"--working-dir="+installPath,
-		"--no-dev",
-		"--no-interaction",
-		"--no-progress",
-		"--prefer-dist",
-		"--optimize-autoloader",
-	)
+	cmd := buildSystemdRunCmd(ctx, osUser, drupalComposerInstallArgv(osUser, php, composerPhar, installPath)...)
 	out, err := runBoundedOutput(cmd, 0)
 	if err != nil {
 		return fmt.Errorf("composer install (pinned drush): %w (output: %s)", err, truncateStr(string(out), 1024))
@@ -215,21 +195,40 @@ func installDrushViaComposer(ctx context.Context, osUser, installPath string) er
 	return nil
 }
 
+// drupalComposerInstallArgv is the command installDrushViaComposer runs as
+// osUser: the pinned `composer install` on php, with COMPOSER_HOME in the
+// user's home rather than the site.
+func drupalComposerInstallArgv(osUser, php, composerPhar, installPath string) []string {
+	return []string{
+		"env",
+		"COMPOSER_HOME=" + composerHomeFor(osUser),
+		"COMPOSER_NO_INTERACTION=1",
+		php,
+		composerPhar,
+		"install",
+		"--working-dir=" + installPath,
+		"--no-dev",
+		"--no-interaction",
+		"--no-progress",
+		"--prefer-dist",
+		"--optimize-autoloader",
+	}
+}
+
 // runDrushSiteInstall drives drush's site:install command. --db-url and
 // --account-pass both carry secrets, so they reach drush through the PHP
 // runner on stdin, never on a command line (php_script_run.go).
-func runDrushSiteInstall(ctx context.Context, req drupalInstallReq, installPath string) error {
-	out, err := drushSiteInstallRun(req, installPath).run(ctx)
+func runDrushSiteInstall(ctx context.Context, req drupalInstallReq, php, installPath string) error {
+	out, err := drushSiteInstallRun(req, php, installPath).run(ctx)
 	if err != nil {
 		return fmt.Errorf("drush site:install: %w (output: %s)", err, truncateStr(string(out), 1024))
 	}
 	return nil
 }
 
-// drushSiteInstallRun is the drush site:install run for req. drush ran as
-// `env COMPOSER_HOME=… vendor/bin/drush`, whose #!/usr/bin/env php picked the
-// PHP on PATH, so the runner uses that same `php`.
-func drushSiteInstallRun(req drupalInstallReq, installPath string) phpScriptRun {
+// drushSiteInstallRun is the drush site:install run for req, on php: the
+// domain's PHP binary, which Composer resolved vendor/ for.
+func drushSiteInstallRun(req drupalInstallReq, php, installPath string) phpScriptRun {
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"
@@ -252,7 +251,7 @@ func drushSiteInstallRun(req drupalInstallReq, installPath string) phpScriptRun 
 
 	return phpScriptRun{
 		OSUser: req.OSUser,
-		PHP:    "php",
+		PHP:    php,
 		Script: filepath.Join(installPath, "vendor", "bin", "drush"),
 		Args: []string{
 			"site:install",
@@ -265,7 +264,7 @@ func drushSiteInstallRun(req drupalInstallReq, installPath string) phpScriptRun 
 			"--site-mail=" + siteMail,
 			"--yes",
 		},
-		Env: map[string]string{"COMPOSER_HOME": filepath.Join(installPath, ".composer")},
+		Env: map[string]string{"COMPOSER_HOME": composerHomeFor(req.OSUser)},
 		Dir: installPath,
 	}
 }
@@ -274,21 +273,9 @@ func drushSiteInstallRun(req drupalInstallReq, installPath string) phpScriptRun 
 // so the site doesn't reference /sites/default/files/{css,js}/<hash>
 // URLs that only work with Apache's .htaccess-based on-demand regen.
 // See the caller for the rationale.
-func runDrushDisableAssetAggregation(ctx context.Context, req drupalInstallReq, installPath string) error {
-	composerHome := filepath.Join(installPath, ".composer")
-	drush := filepath.Join(installPath, "vendor", "bin", "drush")
+func runDrushDisableAssetAggregation(ctx context.Context, req drupalInstallReq, php, installPath string) error {
 	for _, key := range []string{"css.preprocess", "js.preprocess"} {
-		args := []string{
-			"env",
-			"COMPOSER_HOME=" + composerHome,
-			drush,
-			"config:set",
-			"system.performance",
-			key,
-			"0",
-			"--yes",
-		}
-		cmd := buildSystemdRunCmd(ctx, req.OSUser, args...)
+		cmd := buildSystemdRunCmd(ctx, req.OSUser, drushConfigSetArgv(req.OSUser, php, installPath, key)...)
 		cmd.Dir = installPath
 		if out, err := runBoundedOutput(cmd, 0); err != nil {
 			return fmt.Errorf("drush config:set system.performance %s 0: %w (output: %s)",
@@ -296,6 +283,22 @@ func runDrushDisableAssetAggregation(ctx context.Context, req drupalInstallReq, 
 		}
 	}
 	return nil
+}
+
+// drushConfigSetArgv is the `drush config:set system.performance <key> 0`
+// command, on php rather than drush's #!/usr/bin/env php.
+func drushConfigSetArgv(osUser, php, installPath, key string) []string {
+	return []string{
+		"env",
+		"COMPOSER_HOME=" + composerHomeFor(osUser),
+		php,
+		filepath.Join(installPath, "vendor", "bin", "drush"),
+		"config:set",
+		"system.performance",
+		key,
+		"0",
+		"--yes",
+	}
 }
 
 // urlEscape percent-encodes characters that would break the db-url
@@ -355,6 +358,26 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 	if err := validateDocrootPath(req.OSUser, req.Docroot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
+	domain, err := DomainFromSiteURL(req.SiteURL)
+	if err != nil || !domainRegex.MatchString(domain) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("site_url %q does not name a valid domain", req.SiteURL)}
+	}
+
+	// Composer and drush run on the PHP the domain is served by: vendor/ is
+	// resolved for that PHP, and its extensions are the pool's. Check before
+	// the download.
+	pool, err := domainFPMPool(domain, req.OSUser)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: err.Error()}
+	}
+	php, err := exec.LookPath("php" + pool.PHPVersion)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: fmt.Sprintf("php%s CLI is not installed", pool.PHPVersion)}
+	}
+	composerPhar, err := composerPharFor(req.OSUser)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: err.Error()}
+	}
 
 	installPath := computeDrupalInstallPath(req.Docroot, req.Subdirectory)
 
@@ -400,11 +423,11 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 	// cold cache `composer require drush/drush` can pull 60+ packages.
 	composerCtx, composerCancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer composerCancel()
-	if err := installDrushViaComposer(composerCtx, req.OSUser, installPath); err != nil {
+	if err := installDrushViaComposer(composerCtx, req.OSUser, php, composerPhar, installPath); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
-	if err := runDrushSiteInstall(ctx, req, installPath); err != nil {
+	if err := runDrushSiteInstall(ctx, req, php, installPath); err != nil {
 		// Best-effort cleanup of half-written settings.php so a
 		// re-install attempt isn't blocked.
 		settingsPath := filepath.Join(installPath, "sites", "default", "settings.php")
@@ -421,7 +444,7 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 	// individual, never-aggregated source files (core/themes/.../css/*.css)
 	// which are real files on disk — nginx serves them directly.
 	// Trade-off: more HTTP requests per page. Acceptable for small sites.
-	if err := runDrushDisableAssetAggregation(ctx, req, installPath); err != nil {
+	if err := runDrushDisableAssetAggregation(ctx, req, php, installPath); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
@@ -436,10 +459,6 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 	// No-op for docroot installs.
 	subdir := strings.Trim(req.Subdirectory, "/")
 	if subdir != "" {
-		domain, err := DomainFromSiteURL(req.SiteURL)
-		if err != nil {
-			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("extract domain: %v", err)}
-		}
 		if err := writeAppRewrite(ctx, "drupal", domain, req.OSUser, subdir); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("write nginx rewrite: %v", err)}
 		}
