@@ -1,0 +1,24 @@
+[Unit]
+Description=Reclaim moved-away jabalihosted.com labels (JAB-213)
+After=network-online.target jabalihosted-svc.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Same user and env as the service: a reap run as root would leave root-owned
+# files beside svc.db and the service would then fail with "readonly database".
+User=jabalihosted
+Group=jabalihosted
+EnvironmentFile=/etc/jabalihosted/svc.env
+ExecStart=/usr/local/bin/jabalihosted-svc reap
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/jabalihosted
+CapabilityBoundingSet=
+AmbientCapabilities=

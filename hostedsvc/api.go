@@ -155,7 +155,7 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 	// inside it, so every claim fleet-wide serialised behind the slowest
 	// Cloudflare round-trip (two 15s-timeout calls), capping throughput at a
 	// few claims a second and stalling all of them on a slow CF day.
-	label, raw, herr := a.reserveLabel(base, ip.String(), email)
+	label, raw, reused, herr := a.reserveLabel(base, ip.String(), email)
 	if herr != nil {
 		writeErr(w, herr.status, herr.code, herr.msg)
 		return
@@ -171,8 +171,14 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 		// the claimer's per-email cap. Sustained DNS errors would then
 		// permanently exhaust an IP's label space and silently eat the
 		// user's quota, needing manual DB cleanup.
-		if derr := a.Store.DeleteLabel(label); derr != nil {
-			a.Log.Error("claim: rollback failed — orphaned label row", "label", label, "err", derr)
+		//
+		// A reissued label keeps its row: it predates this claim and may
+		// already have records published, and the next claim from the same
+		// email and address picks it up again.
+		if !reused {
+			if derr := a.Store.DeleteLabel(label); derr != nil {
+				a.Log.Error("claim: rollback failed — orphaned label row", "label", label, "err", derr)
+			}
 		}
 		a.Log.Error("claim: dns", "label", label, "err", err)
 		writeErr(w, http.StatusInternalServerError, "dns_failed", "could not publish the record — try again")
@@ -185,7 +191,11 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 	if err := a.DNS.EnsureWildcardA(ctx, label, ip.String()); err != nil {
 		a.Log.Warn("claim: wildcard dns (non-fatal)", "label", label, "err", err)
 	}
-	a.Log.Info("label claimed", "label", label, "ip", ip.String())
+	if reused {
+		a.Log.Info("label reissued", "label", label, "ip", ip.String())
+	} else {
+		a.Log.Info("label claimed", "label", label, "ip", ip.String())
+	}
 	writeJSON(w, http.StatusOK, ClaimResponse{Label: label, FQDN: FQDN(label), Token: raw})
 }
 
@@ -209,38 +219,60 @@ type httpErr struct {
 // ipMu, which is what the check-then-act (LabelExists → CreateLabel) needs;
 // remote DNS publishing happens afterwards, outside the lock.
 //
+// When this email already holds a label at this address that its box never
+// put into use (Store.ReusableLabel), that label is reissued with a new token
+// instead (reused = true): a claim retried after an unfinished setup gets the
+// same name back rather than burning a collision suffix and a cap slot.
+//
 // On any failure nothing is left behind, so a caller can retry cleanly.
-func (a *API) reserveLabel(base, ipv4, email string) (label, rawToken string, herr *httpErr) {
+func (a *API) reserveLabel(base, ipv4, email string) (label, rawToken string, reused bool, herr *httpErr) {
 	a.ipMu.Lock()
 	defer a.ipMu.Unlock()
+
+	raw, hash, err := NewToken()
+	if err != nil {
+		return "", "", false, &httpErr{http.StatusInternalServerError, "internal", "token generation failed"}
+	}
+
+	prev, err := a.Store.ReusableLabel(email, ipv4)
+	switch {
+	case err == nil:
+		if err := a.Store.ReissueToken(prev, email, hash); err == nil {
+			return prev, raw, true, nil
+		} else if !errors.Is(err, ErrNotFound) {
+			a.Log.Error("claim: reissue", "label", prev, "err", err)
+			return "", "", false, &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+		}
+		// Checked in between the lookup and the update: it is in use now,
+		// so fall through to a fresh label.
+	case !errors.Is(err, ErrNotFound):
+		a.Log.Error("claim: reusable lookup", "err", err)
+		return "", "", false, &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+	}
 
 	label = base
 	for n := 1; ; n++ {
 		exists, err := a.Store.LabelExists(label)
 		if err != nil {
-			return "", "", &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+			return "", "", false, &httpErr{http.StatusInternalServerError, "internal", "try again later"}
 		}
 		if !exists {
 			break
 		}
 		if n > 26 {
-			return "", "", &httpErr{http.StatusConflict, "label_space_exhausted", "too many hosts behind this IP"}
+			return "", "", false, &httpErr{http.StatusConflict, "label_space_exhausted", "too many hosts behind this IP"}
 		}
 		label = CollisionLabel(base, n)
 	}
 
-	raw, hash, err := NewToken()
-	if err != nil {
-		return "", "", &httpErr{http.StatusInternalServerError, "internal", "token generation failed"}
-	}
 	if err := a.Store.CreateLabel(label, ipv4, email, hash); err != nil {
 		if errors.Is(err, ErrEmailCap) {
-			return "", "", &httpErr{http.StatusForbidden, "email_cap", "this email already holds the maximum number of hostnames"}
+			return "", "", false, &httpErr{http.StatusForbidden, "email_cap", "this email already holds the maximum number of hostnames"}
 		}
 		a.Log.Error("claim: create", "err", err)
-		return "", "", &httpErr{http.StatusInternalServerError, "internal", "try again later"}
+		return "", "", false, &httpErr{http.StatusInternalServerError, "internal", "try again later"}
 	}
-	return label, raw, nil
+	return label, raw, false, nil
 }
 
 // byToken resolves the caller's label from the bearer token — the ONLY
@@ -321,6 +353,9 @@ func (a *API) acmePresent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "dns_failed", "could not publish the challenge")
 		return
 	}
+	// A box issuing its cert is a box in use: mark it checked in so a later
+	// claim never reissues this label away from it.
+	_ = a.Store.TouchLabel(l.Label)
 	writeJSON(w, http.StatusOK, OkResponse{Ok: true})
 }
 
