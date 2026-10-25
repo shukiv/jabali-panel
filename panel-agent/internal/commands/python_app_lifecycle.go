@@ -78,7 +78,11 @@ func pythonAppRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	_ = execCommandContext(ctx, "systemctl", "stop", unit).Run()
 	_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", unit).Run()
 	_ = os.Remove(filepath.Join(pythonAppUnitDir, unit))
-	_ = os.Remove(filepath.Join(pythonAppEnvDir, p.AppID+".env"))
+	// The env file and every runtime's build markers (pip: .reqsha/.reqfail,
+	// npm: .npmsha/.npmfail), so a later app with the same id rebuilds.
+	for _, ext := range []string{".env", ".reqsha", ".reqfail", ".npmsha", ".npmfail"} {
+		_ = os.Remove(filepath.Join(pythonAppEnvDir, p.AppID+ext))
+	}
 	_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 	return map[string]any{"removed": true}, nil
 }

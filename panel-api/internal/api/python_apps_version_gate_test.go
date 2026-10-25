@@ -32,7 +32,7 @@ func createCtx(t *testing.T, body map[string]any) (*gin.Context, *httptest.Respo
 func TestCreate_RejectsUninstalledPythonVersion(t *testing.T) {
 	ag := agent.NewMockClient()
 	ag.On("app.python.versions", map[string]any{"versions": []string{"3.13"}, "default": "3.13"})
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Agent: ag}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Agent: ag}}
 
 	c, w := createCtx(t, map[string]any{
 		"domain_id":      "dom1",
@@ -67,7 +67,7 @@ func TestCreate_RejectsUninstalledPythonVersion(t *testing.T) {
 func TestCreate_VersionGateFailsOpen(t *testing.T) {
 	// Agent that errors on the probe → gate skipped (fail-open).
 	ag := agent.NewMockClient() // no On() → returns unknown_command error
-	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Agent: ag}}
+	h := &pythonAppHandler{cfg: PythonAppHandlerConfig{Settings: appsOn(), Agent: ag}}
 
 	c, w := createCtx(t, map[string]any{
 		"domain_id":      "dom1",

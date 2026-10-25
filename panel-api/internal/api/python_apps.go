@@ -13,6 +13,7 @@ import (
 	"github.com/oklog/ulid/v2"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -38,7 +39,9 @@ type PythonAppHandlerConfig struct {
 type pythonAppHandler struct{ cfg PythonAppHandlerConfig }
 
 // RegisterPythonAppRoutes mounts /python-apps (authenticated; owner-scoped).
-// Every route is gated on the python_apps_enabled server setting.
+// The Application Manager runs Python apps and, as runtime "node", Node.js apps
+// (ADR-0175). Every route needs python_apps_enabled or node_apps_enabled;
+// creating an app needs its runtime's own setting.
 func RegisterPythonAppRoutes(g *gin.RouterGroup, cfg PythonAppHandlerConfig) {
 	h := &pythonAppHandler{cfg: cfg}
 	grp := g.Group("/python-apps")
@@ -56,19 +59,35 @@ func RegisterPythonAppRoutes(g *gin.RouterGroup, cfg PythonAppHandlerConfig) {
 }
 
 func (h *pythonAppHandler) requireEnabled(c *gin.Context) {
-	if h.cfg.Settings != nil {
-		if s, err := h.cfg.Settings.Get(c.Request.Context()); err == nil && s != nil && s.PythonAppsEnabled {
-			c.Next()
-			return
-		}
+	if python, node := h.runtimesEnabled(c.Request.Context()); python || node {
+		c.Next()
+		return
 	}
 	c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "python_apps_disabled"})
+}
+
+// runtimesEnabled reads the two opt-in settings. Both are off when the
+// settings can't be read.
+func (h *pythonAppHandler) runtimesEnabled(ctx context.Context) (python, node bool) {
+	if h.cfg.Settings == nil {
+		return false, false
+	}
+	s, err := h.cfg.Settings.Get(ctx)
+	if err != nil || s == nil {
+		return false, false
+	}
+	return s.PythonAppsEnabled, s.NodeAppsEnabled
 }
 
 var (
 	baseURIRe    = regexp.MustCompile(`^/[A-Za-z0-9._/-]*$`)
 	pyVersionRe  = regexp.MustCompile(`^3\.(?:[0-9]|1[0-9])$`)
 	entrypointRe = regexp.MustCompile(`^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$`)
+	// Node.js apps (ADR-0175), the same rules as the agent's: a .js/.mjs/.cjs
+	// script under the app root with no "." or ".." segment (app type node),
+	// or the name of a package.json script (app type npm).
+	nodeEntrypointRe = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*\.(js|mjs|cjs)$`)
+	npmScriptRe      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_.-]{0,63}$`)
 	// GH #878 static split. staticURLRe is a URL path under the mount
 	// ("/static", "/static/"); staticRootRe a relative dir under app_root
 	// ("public", "app/static"). Whitelists exclude spaces and nginx
@@ -165,15 +184,29 @@ func (h *pythonAppHandler) get(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"app": app, "env": env})
 }
 
+// Runtimes of the Application Manager and the one Node.js version apps run on:
+// the host's NodeSource Node.js 22 (ADR-0175).
+const (
+	appRuntimePython = "python"
+	appRuntimeNode   = "node"
+	nodeAppVersion   = "22"
+)
+
 type createPythonAppRequest struct {
-	DomainID      string            `json:"domain_id" binding:"required"`
-	Name          string            `json:"name" binding:"required"`
-	PythonVersion string            `json:"python_version" binding:"required"`
-	AppRoot       string            `json:"app_root" binding:"required"`
-	AppType       string            `json:"app_type"`
-	Entrypoint    string            `json:"entrypoint"` // required unless Framework is set
-	BaseURI       string            `json:"base_uri"`
-	Env           map[string]string `json:"env,omitempty"`
+	DomainID string `json:"domain_id" binding:"required"`
+	Name     string `json:"name" binding:"required"`
+	// Runtime is "python" (the default) or "node" (ADR-0175).
+	Runtime string `json:"runtime,omitempty"`
+	// PythonVersion is required for runtime python.
+	PythonVersion string `json:"python_version,omitempty"`
+	// NodeVersion is the Node.js major for runtime node: "22", the default and
+	// the only one. Stored in python_version.
+	NodeVersion string            `json:"node_version,omitempty"`
+	AppRoot     string            `json:"app_root" binding:"required"`
+	AppType     string            `json:"app_type"`
+	Entrypoint  string            `json:"entrypoint"` // required unless Framework is set
+	BaseURI     string            `json:"base_uri"`
+	Env         map[string]string `json:"env,omitempty"`
 	// Framework, when set, is a marketplace slug (JAB-164). It derives
 	// app_type + entrypoint from the catalog and drives the one-shot scaffold.
 	Framework string `json:"framework,omitempty"`
@@ -197,6 +230,27 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
+	}
+	if req.Runtime == "" {
+		req.Runtime = appRuntimePython
+	}
+	python, node := h.runtimesEnabled(c.Request.Context())
+	switch {
+	case req.Runtime == appRuntimePython && !python:
+		c.JSON(http.StatusForbidden, gin.H{"error": "python_apps_disabled"})
+		return
+	case req.Runtime == appRuntimeNode && !node:
+		c.JSON(http.StatusForbidden, gin.H{"error": "node_apps_disabled"})
+		return
+	case req.Runtime != appRuntimePython && req.Runtime != appRuntimeNode:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_runtime", "detail": "runtime must be python or node"})
+		return
+	}
+	if req.Runtime == appRuntimeNode {
+		if code, detail := normalizeNodeCreate(&req); code != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": code, "detail": detail})
+			return
+		}
 	}
 	// JAB-164: a framework install derives app_type + entrypoint from the
 	// catalog entry and carries the static split for the nginx alias.
@@ -236,44 +290,107 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 	if req.BaseURI == "" {
 		req.BaseURI = "/"
 	}
-	if !pyVersionRe.MatchString(req.PythonVersion) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_python_version"})
-		return
-	}
-	// GH #357: reject a version whose interpreter isn't installed on this
-	// host, echoing the installed list — instead of accepting it and letting
-	// the app die pending→failed at the venv step (which shells out to
-	// python<ver>) with a cryptic "Unit not found" on the next Restart.
-	if avail, derr := h.installedPythonVersions(c.Request.Context()); derr == nil && len(avail) > 0 && !containsStr(avail, req.PythonVersion) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":     "python_version_not_available",
-			"detail":    "Python " + req.PythonVersion + " is not installed on this server",
-			"available": avail,
-		})
-		return
-	}
-	// GH #2156: the framework's pinned deps need at least python_min (sic's
-	// Django 6 needs 3.12); refuse here rather than fail later inside pip.
-	if fw != nil && !fw.RunsOn(req.PythonVersion) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "python_version_too_old",
-			"detail": fw.Name + " needs Python " + fw.PythonMin + " or newer",
-		})
-		return
-	}
-	if req.AppType != "wsgi" && req.AppType != "asgi" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_app_type"})
-		return
-	}
-	if !entrypointRe.MatchString(req.Entrypoint) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_entrypoint", "detail": "expected module:callable"})
-		return
+	if req.Runtime == appRuntimePython {
+		if code, detail, extra := h.validatePythonCreate(c.Request.Context(), &req, fw); code != "" {
+			body := gin.H{"error": code}
+			if detail != "" {
+				body["detail"] = detail
+			}
+			for k, v := range extra {
+				body[k] = v
+			}
+			c.JSON(http.StatusBadRequest, body)
+			return
+		}
 	}
 	if !baseURIRe.MatchString(req.BaseURI) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_base_uri"})
 		return
 	}
+	if code := reservedNodeEnv(req.Runtime, req.Env); code != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": code, "detail": "PORT and HOST are set by the panel for a Node.js app"})
+		return
+	}
+	h.createApp(c, claims, &req, fw)
+}
 
+// validatePythonCreate checks a runtime python create: the version is
+// installed (and new enough for a framework), app_type and entrypoint.
+func (h *pythonAppHandler) validatePythonCreate(ctx context.Context, req *createPythonAppRequest, fw *pyframeworks.Entry) (code, detail string, extra gin.H) {
+	if !pyVersionRe.MatchString(req.PythonVersion) {
+		return "invalid_python_version", "", nil
+	}
+	// GH #357: reject a version whose interpreter isn't installed on this
+	// host, echoing the installed list — instead of accepting it and letting
+	// the app die pending→failed at the venv step (which shells out to
+	// python<ver>) with a cryptic "Unit not found" on the next Restart.
+	if avail, derr := h.installedPythonVersions(ctx); derr == nil && len(avail) > 0 && !containsStr(avail, req.PythonVersion) {
+		return "python_version_not_available", "Python " + req.PythonVersion + " is not installed on this server", gin.H{"available": avail}
+	}
+	// GH #2156: the framework's pinned deps need at least python_min (sic's
+	// Django 6 needs 3.12); refuse here rather than fail later inside pip.
+	if fw != nil && !fw.RunsOn(req.PythonVersion) {
+		return "python_version_too_old", fw.Name + " needs Python " + fw.PythonMin + " or newer", nil
+	}
+	if req.AppType != "wsgi" && req.AppType != "asgi" {
+		return "invalid_app_type", "", nil
+	}
+	if !entrypointRe.MatchString(req.Entrypoint) {
+		return "invalid_entrypoint", "expected module:callable", nil
+	}
+	return "", "", nil
+}
+
+// normalizeNodeCreate fills a runtime node create's defaults and checks it:
+// Node.js 22 (kept in python_version), app type node (a script) or npm (a
+// package.json script, "start" by default). The framework catalog is Python's.
+func normalizeNodeCreate(req *createPythonAppRequest) (code, detail string) {
+	if req.Framework != "" {
+		return "invalid_framework", "the framework catalog has Python apps only"
+	}
+	if req.NodeVersion == "" {
+		req.NodeVersion = nodeAppVersion
+	}
+	if req.NodeVersion != nodeAppVersion {
+		return "invalid_node_version", "Node.js apps run on Node.js " + nodeAppVersion
+	}
+	req.PythonVersion = req.NodeVersion
+	switch req.AppType {
+	case "", "node":
+		req.AppType = "node"
+		if !nodeEntrypointRe.MatchString(req.Entrypoint) {
+			return "invalid_entrypoint", "expected a .js, .mjs or .cjs file under the app directory, like server.js"
+		}
+	case "npm":
+		if req.Entrypoint == "" {
+			req.Entrypoint = "start"
+		}
+		if !npmScriptRe.MatchString(req.Entrypoint) {
+			return "invalid_entrypoint", "expected the name of a package.json script, like start"
+		}
+	default:
+		return "invalid_app_type", "app_type must be node or npm"
+	}
+	return "", ""
+}
+
+// reservedNodeEnv rejects PORT and HOST in a Node.js app's environment: the
+// panel sets them to the app's loopback port.
+func reservedNodeEnv(runtime string, env map[string]string) string {
+	if runtime != appRuntimeNode {
+		return ""
+	}
+	for k := range env {
+		if k == "PORT" || k == "HOST" {
+			return "reserved_env"
+		}
+	}
+	return ""
+}
+
+// createApp does the owner, quota and port work of a create and stores the
+// app. Python and Node.js apps share the package's app quota.
+func (h *pythonAppHandler) createApp(c *gin.Context, claims *auth.AccessClaims, req *createPythonAppRequest, fw *pyframeworks.Entry) {
 	ctx := c.Request.Context()
 	domain, err := h.cfg.Domains.FindByID(ctx, req.DomainID)
 	if err != nil {
@@ -327,7 +444,11 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 				return
 			}
 			if pkg.MaxPythonApps == 0 {
-				c.JSON(http.StatusForbidden, gin.H{"error": "python_apps_not_in_package", "detail": "your hosting package does not include Python apps"})
+				detail := "your hosting package does not include Python apps"
+				if req.Runtime == appRuntimeNode {
+					detail = "your hosting package does not include Node.js apps"
+				}
+				c.JSON(http.StatusForbidden, gin.H{"error": "python_apps_not_in_package", "detail": detail})
 				return
 			}
 			existing, lerr := h.cfg.Apps.ListByUser(ctx, claims.UserID)
@@ -336,7 +457,11 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 				return
 			}
 			if int64(len(existing)) >= int64(pkg.MaxPythonApps) {
-				c.JSON(http.StatusForbidden, gin.H{"error": "quota_exceeded", "detail": "Python app limit reached for your hosting package"})
+				detail := "Python app limit reached for your hosting package"
+				if req.Runtime == appRuntimeNode {
+					detail = "app limit reached for your hosting package (Python and Node.js apps count together)"
+				}
+				c.JSON(http.StatusForbidden, gin.H{"error": "quota_exceeded", "detail": detail})
 				return
 			}
 		}
@@ -353,7 +478,7 @@ func (h *pythonAppHandler) create(c *gin.Context) {
 		UserID:        domain.UserID,
 		DomainID:      domain.ID,
 		Name:          req.Name,
-		Runtime:       "python",
+		Runtime:       req.Runtime,
 		PythonVersion: req.PythonVersion,
 		AppRoot:       req.AppRoot,
 		AppType:       req.AppType,
@@ -453,6 +578,10 @@ func (h *pythonAppHandler) putEnv(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
+		return
+	}
+	if code := reservedNodeEnv(app.Runtime, req.Env); code != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": code, "detail": "PORT and HOST are set by the panel for a Node.js app"})
 		return
 	}
 	if err := h.cfg.Apps.ReplaceEnv(c.Request.Context(), app.ID, envMapToRows(req.Env)); err != nil {
