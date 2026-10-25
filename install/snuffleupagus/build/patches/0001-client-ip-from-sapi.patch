@@ -1,0 +1,39 @@
+Read the client IP from the SAPI, so PHP-FPM incidents carry it (GH #2262)
+
+get_ipaddr() reads REMOTE_ADDR with getenv(). Under PHP-FPM the request's
+REMOTE_ADDR is a FastCGI parameter, not part of the process environment,
+so every web request read as 0.0.0.0: in log lines, and for .cidr() rule
+matching. Ask the SAPI first; the old lookups stay as the fallback (CLI,
+and FPM before it starts serving).
+
+Applied at build time by ../apply-patches.sh (all patches or none).
+Upstream: https://github.com/jvoisin/snuffleupagus
+
+--- a/src/sp_utils.c
++++ b/src/sp_utils.c
+@@ -10,6 +10,25 @@
+ 
+ static char const* const default_ipaddr = "0.0.0.0";
+ const char* get_ipaddr() {
++  // Jabali (GH #2262): under PHP-FPM, REMOTE_ADDR is a FastCGI parameter,
++  // not part of the process environment, so the getenv() below never finds
++  // it and every web request read as 0.0.0.0. Ask the SAPI first, for
++  // REMOTE_ADDR only: the web server sets it, while X-Forwarded-For is
++  // whatever the client sent. sapi_getenv() returns a copy to free.
++  ZEND_TLS char sapi_ip[64];
++  char* const sapi_val = sapi_getenv("REMOTE_ADDR", sizeof("REMOTE_ADDR") - 1);
++  if (sapi_val) {
++    const size_t len = strlen(sapi_val);
++    const bool fits = len > 0 && len < sizeof(sapi_ip);
++    if (fits) {
++      memcpy(sapi_ip, sapi_val, len + 1);
++    }
++    efree(sapi_val);
++    if (fits) {
++      return sapi_ip;
++    }
++  }
++
+   const char* client_ip = getenv("REMOTE_ADDR");
+   if (client_ip) {
+     return client_ip;

@@ -16165,10 +16165,11 @@ install_snuffleupagus() {
   # Build deps. snuffleupagus needs the same toolchain as any phpize-built
   # extension. The phpX.Y-dev metapackage ships phpize + php-config + the
   # Zend headers we link against. install_base_packages does NOT pull it
-  # because nothing else needs it; we must install per-minor here.
-  if ! dpkg -s build-essential libpcre2-dev >/dev/null 2>&1; then
-    _spin "apt install build-essential + libpcre2-dev" \
-      apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev
+  # because nothing else needs it; we must install per-minor here. patch
+  # applies install/snuffleupagus/build/patches (GH #2262).
+  if ! dpkg -s build-essential libpcre2-dev patch >/dev/null 2>&1; then
+    _spin "apt install build-essential + libpcre2-dev + patch" \
+      apt-get install -y -qq --no-install-recommends build-essential libpcre2-dev patch
   fi
   # Build for every PHP minor that has an FPM binary on disk — not just
   # JABALI_PHP_VERSIONS. The PHP Manager UI lets the operator install
@@ -16253,15 +16254,18 @@ EOF_CLI
   # the next install.sh / `jabali update --force` run without manual
   # JABALI_PHP_VERSIONS edits.
   local php_versions="$_php_versions"
-  local minor
+  local minor _snuf_stamp _snuf_before _snuf_rebuilt=0
   for minor in $php_versions; do
     [[ -d "/etc/php/$minor/fpm" ]] || continue
+    _snuf_stamp="/usr/lib/php/jabali-snuffleupagus/$minor/.jabali-version"
+    _snuf_before="$(cat "$_snuf_stamp" 2>/dev/null || true)"
     SNUFFLEUPAGUS_VERSION="$snuf_version" \
     SNUFFLEUPAGUS_SHA256="$snuf_sha256" \
       "$build" "$minor" || {
         _warn "snuffleupagus build failed for PHP $minor (continuing other minors)"
         continue
       }
+    [[ "$(cat "$_snuf_stamp" 2>/dev/null || true)" == "$_snuf_before" ]] || _snuf_rebuilt=1
     # mods-available + conf.d wiring (FPM + CLI both load sp.so).
     cat > "/etc/php/$minor/mods-available/jabali-snuffleupagus.ini" <<EOF_MOD
 ; Jabali Snuffleupagus extension load + config-file pin.
@@ -16280,6 +16284,12 @@ EOF_MOD
     ln -sf "../../mods-available/jabali-snuffleupagus.ini" \
       "/etc/php/$minor/cli/conf.d/30-jabali-snuffleupagus.ini"
   done
+  # A running FPM master keeps the .so it loaded at start. A reload re-execs
+  # it, so a rebuilt extension (new version or patch set) serves requests
+  # now rather than after the next restart (GH #2262).
+  if (( _snuf_rebuilt )); then
+    systemctl reload 'jabali-fpm@*.service' 2>/dev/null || true
+  fi
 
   # Wave C: PHP-CLI bypass detection. Watch direct execve of every Sury
   # /usr/bin/phpX.Y plus /usr/bin/php so SFTP-shell users running php

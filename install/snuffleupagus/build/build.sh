@@ -5,12 +5,14 @@
 #   build.sh 8.3
 #
 # Idempotent: if /usr/lib/php/jabali-snuffleupagus/<minor>/snuffleupagus.so
-# already exists and the source SHA256 hasn't changed, skips rebuild.
+# already exists and neither the source SHA256 nor the patch set
+# (apply-patches.sh) has changed, skips rebuild.
 #
 # Caller (install.sh) supplies SNUFFLEUPAGUS_VERSION + SNUFFLEUPAGUS_SHA256.
 
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PHP_MINOR="${1:?php minor required, e.g. 8.3}"
 SNUF_VERSION="${SNUFFLEUPAGUS_VERSION:?SNUFFLEUPAGUS_VERSION not set}"
 SNUF_SHA256="${SNUFFLEUPAGUS_SHA256:?SNUFFLEUPAGUS_SHA256 not set}"
@@ -30,12 +32,24 @@ if [[ ! -x "$PHP_CONFIG" ]]; then
   exit 1
 fi
 
-# Idempotency: skip if .so present and the version-stamp matches.
+# Idempotency: skip if .so present and the version-stamp matches. The stamp
+# carries the patch set (GH #2262): a changed set rebuilds once, and a set
+# that did not apply to this version is not retried until it changes.
 STAMP_FILE="${OUT_DIR}/.jabali-version"
-if [[ -f "$OUT_SO" && -f "$STAMP_FILE" ]] && \
-   [[ "$(cat "$STAMP_FILE" 2>/dev/null)" == "${SNUF_VERSION}+${SNUF_SHA256}" ]]; then
-  echo "build.sh: ${PHP_MINOR} already at v${SNUF_VERSION}, skip"
-  exit 0
+STAMP_BASE="${SNUF_VERSION}+${SNUF_SHA256}"
+PATCH_ID="$(bash "$HERE/apply-patches.sh" --id)"
+STAMP_OK=("$STAMP_BASE")
+if [[ -n "$PATCH_ID" ]]; then
+  STAMP_OK=("${STAMP_BASE}+patch-${PATCH_ID}" "${STAMP_BASE}+patch-failed-${PATCH_ID}")
+fi
+if [[ -f "$OUT_SO" && -f "$STAMP_FILE" ]]; then
+  HAVE_STAMP="$(cat "$STAMP_FILE" 2>/dev/null || true)"
+  for s in "${STAMP_OK[@]}"; do
+    if [[ "$HAVE_STAMP" == "$s" ]]; then
+      echo "build.sh: ${PHP_MINOR} already at v${SNUF_VERSION}, skip"
+      exit 0
+    fi
+  done
 fi
 
 WORK="$(mktemp -d /tmp/jabali-snuffleupagus-build.XXXXXX)"
@@ -58,6 +72,7 @@ if [[ "$ACTUAL_SHA" != "$SNUF_SHA256" ]]; then
 fi
 
 tar -xzf "$TARBALL"
+PATCH_SUFFIX="$(bash "$HERE/apply-patches.sh" "snuffleupagus-${SNUF_VERSION}")"
 cd "snuffleupagus-${SNUF_VERSION}/src"
 
 # Build.
@@ -75,6 +90,6 @@ mkdir -p "$OUT_DIR"
 # a public compiled extension, no secrets.
 chmod 0755 /usr/lib/php/jabali-snuffleupagus "$OUT_DIR"
 install -m 0755 modules/snuffleupagus.so "$OUT_SO"
-echo "${SNUF_VERSION}+${SNUF_SHA256}" > "$STAMP_FILE"
+echo "${STAMP_BASE}${PATCH_SUFFIX}" > "$STAMP_FILE"
 
-echo "build.sh: ${PHP_MINOR} ✓ ${SNUF_VERSION}"
+echo "build.sh: ${PHP_MINOR} ✓ ${SNUF_VERSION}${PATCH_SUFFIX}"
