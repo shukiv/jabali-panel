@@ -17363,6 +17363,14 @@ EOF
     ensure_jabali_mailrelay
   fi
 
+  # JAB-214's server_names_hash bucket was written only by a fresh install
+  # (main), so a box installed before it rejects every server_name longer
+  # than ~46 characters ("could not build server_names_hash"): long tenant
+  # domains, and nearly every preview URL on a free jabalihosted.com hostname
+  # (<slug>.<label>.jabalihosted.com). Idempotent; reverts itself if nginx -t
+  # fails.
+  install_nginx_server_names_hash
+
   # JAB-213 — free-hostname helper scripts + heartbeat units live under
   # install_jabali_slices, which the trimmed update path does NOT call. Without
   # this, Server-Settings activation on an UPDATED (vs freshly-installed) box
