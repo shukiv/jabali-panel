@@ -1,10 +1,15 @@
 package commands
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
 
 const testDomainPHP = "/usr/bin/php8.4"
@@ -144,5 +149,28 @@ func TestComposerPharForRejectsAnUnsafeUser(t *testing.T) {
 	}
 	if got, err := composerPharFor("../etc"); err == nil {
 		t.Fatalf("composerPharFor accepted ../etc (returned %q)", got)
+	}
+}
+
+// The installer checks the domain's PHP before it downloads anything: a
+// domain whose vhost passes no PHP has no PHP for Composer to run on.
+func TestDrupalInstallNeedsTheDomainToRunPHP(t *testing.T) {
+	sites := t.TempDir()
+	prev := nginxSitesDir
+	nginxSitesDir = sites
+	t.Cleanup(func() { nginxSitesDir = prev })
+	vhost := "server {\n  server_name example.com;\n  root /home/alice/domains/example.com/public_html;\n}\n"
+	if err := os.WriteFile(filepath.Join(sites, "example.com.conf"), []byte(vhost), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	params, _ := json.Marshal(drupalInstallReq{
+		AppType: "drupal", OSUser: "alice", Docroot: "/home/alice/domains/example.com/public_html",
+		SiteURL: "https://example.com", DBName: "db", DBUser: "dbu", DBPassword: "pw",
+		SiteTitle: "Site", AdminUser: "admin", AdminPass: "pw", AdminEmail: "a@example.com",
+	})
+	_, err := drupalInstallHandler(context.Background(), params)
+	var ae *agentwire.AgentError
+	if !errors.As(err, &ae) || ae.Code != agentwire.CodeFailedPrecondition || !strings.Contains(ae.Message, "does not run PHP") {
+		t.Fatalf("drupalInstallHandler = %v, want failed_precondition: example.com does not run PHP", err)
 	}
 }
