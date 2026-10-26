@@ -320,6 +320,27 @@ func TestGitDeploy_TokenIsGoneBeforeTheRepositoryRuns(t *testing.T) {
 	}
 }
 
+// wp-cli runs on the domain's PHP, as php does, not on the account's
+// command-line PHP its #! line would pick.
+func TestGitDeploy_WPRunsOnTheDomainsPHP(t *testing.T) {
+	dt := newGitDeployTest(t)
+	bin := t.TempDir()
+	wp := filepath.Join(bin, "wp")
+	if err := os.WriteFile(wp, []byte("#!/usr/bin/env php\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	m := dt.manifest(testULID(10), "main")
+	m.Commands = "wp cache flush --path=public"
+	if out, err := dt.run(m); err != nil {
+		t.Fatalf("deploy: %v\n%s", err, out)
+	}
+	recs := dt.records()
+	if len(recs) != 1 || recs[0]["args"] != wp+" cache flush --path=public" {
+		t.Errorf("the fake php ran %v, want %s cache flush --path=public", recs, wp)
+	}
+}
+
 func TestGitDeploy_AFailedCommandLeavesTheSiteAlone(t *testing.T) {
 	dt := newGitDeployTest(t)
 	first := testULID(10)

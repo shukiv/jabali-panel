@@ -506,9 +506,21 @@ func (d *gitDeployer) commands(ctx context.Context, rel string) error {
 	}
 	for i, c := range cmds {
 		argv := append([]string(nil), c.Argv...)
-		if argv[0] == "php" {
+		switch argv[0] {
+		case "php", "wp":
 			if d.m.PHPBin == "" {
 				return fmt.Errorf("deploy command %d needs PHP: %s", i+1, d.m.PHPError)
+			}
+			if argv[0] == "wp" {
+				// wp-cli on the domain's PHP, as the site runs, not on the
+				// account's command-line PHP its #! line would pick.
+				wp, err := exec.LookPath("wp")
+				if err != nil {
+					return fmt.Errorf("deploy command %d needs wp-cli, which is not installed", i+1)
+				}
+				argv = append([]string{wp}, argv[1:]...)
+				argv = append([]string{d.m.PHPBin}, argv...)
+				break
 			}
 			argv[0] = d.m.PHPBin
 		}
