@@ -4106,6 +4106,7 @@ jabali package create [flags]
 - `--fpm-user-can-edit` — let tenants pick an FPM performance mode
 - `--fpm-version-defaults` — JSON map of per-version FPM defaults (empty={})
 - `--fpm-worker-mem-mb` — FPM advisory per-worker memory budget in MB (0=default 64) (default `0`)
+- `--git-deploy` — let users on this package deploy their domains from a Git repository; a deployment runs their own commands in their SSH sandbox, so grant it as you would SSH
 - `--io-read-mbps` — disk read bandwidth limit in MB/s (0=unlimited) (default `0`)
 - `--io-write-mbps` — disk write bandwidth limit in MB/s (0=unlimited) (default `0`)
 - `--max-backup-schedules` — max tenant scheduled backups (0=default 1) (default `0`)
@@ -4168,6 +4169,7 @@ jabali package edit <package-id> [flags]
 - `--fpm-user-can-edit` — tenant FPM performance mode (true/false)
 - `--fpm-version-defaults` — JSON map of per-version FPM defaults
 - `--fpm-worker-mem-mb` — FPM advisory per-worker memory budget MB (default `0`)
+- `--git-deploy` — let users on this package deploy their domains from a Git repository; a deployment runs their own commands in their SSH sandbox, so grant it as you would SSH (true/false)
 - `--io-read-mbps` — io read MB/s (default `0`)
 - `--io-write-mbps` — io write MB/s (default `0`)
 - `--max-backup-schedules` — max tenant scheduled backups (default `0`)

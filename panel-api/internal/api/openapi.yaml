@@ -6011,6 +6011,47 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK }, "409": { description: The run has already finished } }
 
+  /domains/{id}/git:
+    get:
+      tags: [Git deploy]
+      summary: Whether the domain's owner may use Git deploy, and the domain's repository settings, never the token (GH #2277)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    put:
+      tags: [Git deploy]
+      summary: Save the domain's repository (https URL, branch, username, token or clear_token). The server reads the repository's branches with the settings first and stores nothing if it can't. A token is kept only while the host stays the same. Needs a hosting package that includes Git deploy.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [repo_url]
+              properties:
+                repo_url: { type: string, description: "https:// URL with no username or token in it" }
+                branch: { type: string, description: "Empty picks the repository's default branch" }
+                username: { type: string, description: "Sent with the token; empty sends x-access-token" }
+                token: { type: string, writeOnly: true, description: "Read-only access token; absent keeps the stored one on the same host" }
+                clear_token: { type: boolean, description: "Remove the stored token (a public repository)" }
+      responses: { "200": { description: "Saved, with the repository's branches" }, "403": { description: The owner's package does not include Git deploy }, "422": { description: "Invalid settings, a host the server won't connect to, a token needed for a new host, a branch the repository lacks, or git could not read the repository" } }
+    delete:
+      tags: [Git deploy]
+      summary: Forget the domain's repository settings and token
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: Removed } }
+
+  /domains/{id}/git/branches:
+    get:
+      tags: [Git deploy]
+      summary: The repository's branches and default branch, read with the stored settings
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: No repository saved for the domain }, "422": { description: git could not read the repository } }
+
   /domains/{id}/env-vars:
     get:
       tags: [Php Settings]

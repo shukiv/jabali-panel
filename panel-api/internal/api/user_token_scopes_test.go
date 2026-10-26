@@ -125,6 +125,12 @@ func TestResolveUserScope(t *testing.T) {
 		{"POST", "/api/v1/domains/:id/composer/runs", "write:ssh", true},
 		{"GET", "/api/v1/domains/:id/composer/runs/:runId", "read:ssh", true},
 		{"POST", "/api/v1/domains/:id/composer/runs/:runId/cancel", "write:ssh", true},
+		// Git deploy (GH #2277) runs the user's commands in the sandbox and
+		// holds the repository's token: the ssh scope, never domains.
+		{"GET", "/api/v1/domains/:id/git", "read:ssh", true},
+		{"PUT", "/api/v1/domains/:id/git", "write:ssh", true},
+		{"DELETE", "/api/v1/domains/:id/git", "write:ssh", true},
+		{"GET", "/api/v1/domains/:id/git/branches", "read:ssh", true},
 		{"GET", "/api/v1/logs/access", "read:logs", true},
 		{"GET", "/api/v1/me/backups", "read:backups", true},
 		// fail-closed

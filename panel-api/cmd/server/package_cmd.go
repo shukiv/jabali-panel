@@ -99,6 +99,7 @@ type packageCreateFlags struct {
 	webmailEnabled                  bool // GH #1628; defaults ON
 	websiteSendsEmail               bool // GH #2056; defaults OFF
 	composerEnabled                 bool // GH #2276; defaults OFF
+	gitDeployEnabled                bool // GH #2277; defaults OFF
 	redisKeysPerCall                int  // GH #2165; defaults 500
 
 	// GH #1798: per-package egress allowances (default false = DENY).
@@ -155,6 +156,7 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		// GH #2056: a new package's sites can't send mail unless asked.
 		WebsiteSendsEmail: f.websiteSendsEmail,
 		ComposerEnabled:   f.composerEnabled,  // GH #2276: off unless asked
+		GitDeployEnabled:  f.gitDeployEnabled, // GH #2277: off unless asked
 		RedisKeysPerCall:  f.redisKeysPerCall, // GH #2165; Validate bounds it
 
 		EgressSSHOut:      f.egressSSHOut, // GH #1798
@@ -318,6 +320,8 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.websiteSendsEmail, "website-mail", false, "let the sites on this package send email with PHP mail()")
 	// GH #2276: off for a new package, like the REST create.
 	fl.BoolVar(&f.composerEnabled, "composer", false, composerFlagHelp)
+	// GH #2277: off for a new package, like the REST create.
+	fl.BoolVar(&f.gitDeployEnabled, "git-deploy", false, gitDeployFlagHelp)
 	// GH #2165: defaults to 500 like the REST create; 0 is not "unlimited".
 	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", models.RedisKeysPerCallDefault, redisKeysPerCallFlagHelp)
 	fl.Uint32Var(&f.fpmMaxChildren, "fpm-max-children", 0, "FPM pm.max_children cap (0=default 20)")
@@ -353,6 +357,7 @@ type packageEditFlags struct {
 	webmailEnabled                                string // GH #1628
 	websiteSendsEmail                             string // GH #2056
 	composerEnabled                               string // GH #2276
+	gitDeployEnabled                              string // GH #2277
 	redisKeysPerCall                              int    // GH #2165
 	scheduledBackups, fpmUserCanEdit, fpmAdvanced string
 	// GH #1798: per-package egress allowances. The two flags are tri-state
@@ -450,6 +455,7 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 	tri("webmail", &p.WebmailEnabled, f.webmailEnabled)            // GH #1628
 	tri("website-mail", &p.WebsiteSendsEmail, f.websiteSendsEmail) // GH #2056
 	tri("composer", &p.ComposerEnabled, f.composerEnabled)         // GH #2276
+	tri("git-deploy", &p.GitDeployEnabled, f.gitDeployEnabled)     // GH #2277
 	if changed("redis-keys-per-call") {                            // GH #2165; Validate bounds it
 		p.RedisKeysPerCall = f.redisKeysPerCall
 		dirty = true
@@ -638,6 +644,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.webmailEnabled, "webmail", "", "webmail Bulwark UI (true/false)")                           // GH #1628
 	fl.StringVar(&f.websiteSendsEmail, "website-mail", "", "sites may send email with PHP mail() (true/false)") // GH #2056
 	fl.StringVar(&f.composerEnabled, "composer", "", composerFlagHelp+" (true/false)")                          // GH #2276
+	fl.StringVar(&f.gitDeployEnabled, "git-deploy", "", gitDeployFlagHelp+" (true/false)")                      // GH #2277
 	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", 0, redisKeysPerCallEditFlagHelp)                      // GH #2165
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
@@ -811,3 +818,7 @@ func parseCLIDisabledFunctions(v string) (*string, error) {
 // user's composer.json scripts, which can run any command in their SSH
 // sandbox.
 const composerFlagHelp = "let users on this package run Composer for their domains; their composer.json scripts can run commands in their SSH sandbox, so grant it as you would SSH"
+
+// gitDeployFlagHelp (GH #2277, ADR-0178): a deployment runs the user's
+// composer.json scripts and deploy hooks in their SSH sandbox.
+const gitDeployFlagHelp = "let users on this package deploy their domains from a Git repository; a deployment runs their own commands in their SSH sandbox, so grant it as you would SSH"

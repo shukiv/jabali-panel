@@ -1,0 +1,5 @@
+{
+  "default_branch": "main",
+  "branches": ["dev", "main", "release/1.x"],
+  "truncated": true
+}

@@ -116,6 +116,13 @@ type HostingPackage struct {
 	// a privileged feature).
 	ComposerEnabled bool `gorm:"column:composer_enabled;type:tinyint(1);not null;default:0" json:"composer_enabled"`
 
+	// GitDeployEnabled (GH #2277, ADR-0178) lets users on this package deploy
+	// their domains from a Git repository. A deployment runs the user's own
+	// commands (composer.json scripts, deploy hooks) in their SSH sandbox, so
+	// grant it as you would SSH. Off by default, existing packages included;
+	// users with no package can't deploy (GH #282: a privileged feature).
+	GitDeployEnabled bool `gorm:"column:git_deploy_enabled;type:tinyint(1);not null;default:0" json:"git_deploy_enabled"`
+
 	// RedisKeysPerCall (GH #2165) is how many keys one call of the Redis key
 	// browser API may list (its `limit`) or delete, RedisKeysPerCallMin to
 	// RedisKeysPerCallMax. Unlike the other limits, 0 is not "unlimited": it

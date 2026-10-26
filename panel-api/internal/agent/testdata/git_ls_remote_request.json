@@ -1,0 +1,6 @@
+{
+  "os_user": "alice",
+  "repo_url": "https://bitbucket.org/acme/shop.git",
+  "username": "x-token-auth",
+  "token": "git-token-abc_DEF-123"
+}

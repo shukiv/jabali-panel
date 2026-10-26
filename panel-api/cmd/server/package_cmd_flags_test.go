@@ -48,6 +48,7 @@ var packageFieldFlag = map[string]string{
 	"webmail_enabled":                  "webmail",              // GH #1628
 	"website_sends_email":              "website-mail",         // GH #2056
 	"composer_enabled":                 "composer",             // GH #2276
+	"git_deploy_enabled":               "git-deploy",           // GH #2277
 	"redis_keys_per_call":              "redis-keys-per-call",  // GH #2165
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
@@ -459,4 +460,17 @@ func TestPackageCLI_ComposerCreateFlagDefaultsOff(t *testing.T) {
 	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true, composerEnabled: true})
 	require.NoError(t, err)
 	require.True(t, p.ComposerEnabled, "composerEnabled flows onto the built row")
+}
+
+// GH #2277: a new package can't deploy from Git unless the admin asks, like
+// the REST create.
+func TestPackageCLI_GitDeployCreateFlagDefaultsOff(t *testing.T) {
+	create := newPackageCreateCmd()
+	fl := create.Flags().Lookup("git-deploy")
+	require.NotNil(t, fl, "create --git-deploy flag must be registered")
+	require.Equal(t, "false", fl.DefValue, "create --git-deploy must default off (GH #2277)")
+
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true, gitDeployEnabled: true})
+	require.NoError(t, err)
+	require.True(t, p.GitDeployEnabled, "gitDeployEnabled flows onto the built row")
 }
