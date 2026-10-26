@@ -138,7 +138,7 @@ func TestInstallers_PasswordsReachTheInstallerOnlyOnStdin(t *testing.T) {
 			return runDrushSiteInstall(ctx, drupalInstallReq{
 				OSUser: user, SiteURL: "https://example.com", DBName: "db", DBUser: "dbu", DBPassword: testDBSecret,
 				SiteTitle: "Site", AdminUser: "admin", AdminPass: testAdminSecret, AdminEmail: "a@example.com",
-			}, installPath)
+			}, "/usr/bin/php8.4", installPath)
 		}},
 		{"prestashop", []string{testDBSecret, testAdminSecret}, func() error {
 			return runPrestaShopCLIInstaller(ctx, prestashopInstallReq{
