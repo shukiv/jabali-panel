@@ -307,6 +307,9 @@ func (f *gitExecFake) install(t *testing.T) {
 	t.Helper()
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if len(args) == 1 && args[0] == "--version" {
+			return exec.CommandContext(ctx, "echo", "git version 2.47.0")
+		}
 		f.argv = append([]string{name}, args...)
 		for _, a := range args {
 			if p, ok := strings.CutPrefix(a, "credential.helper=store --file="); ok {

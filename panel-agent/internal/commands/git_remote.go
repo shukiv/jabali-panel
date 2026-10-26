@@ -336,7 +336,7 @@ const gitMinMajor, gitMinMinor = 2, 37
 
 // gitVersionOutput runs `git --version`. A var so tests can name a version.
 var gitVersionOutput = func(ctx context.Context, gitBin string) (string, error) {
-	out, err := exec.CommandContext(ctx, gitBin, "--version").Output()
+	out, err := execCommandContext(ctx, gitBin, "--version").Output()
 	return string(out), err
 }
 
