@@ -1,6 +1,6 @@
 # ADR-0178: Deploying a domain from a Git repository
 
-**Status:** Accepted (2026-10-26). Part 1, the repository settings, is built; deployments, rollback and the webhook follow in later changes (see Next parts).
+**Status:** Accepted (2026-10-26). Built: the repository settings (part 1), deployments, releases and rollback (part 2). The webhook and the Git tab follow (see Next parts).
 **Driven by:** GH #2277 (a reporter asked to deploy PHP applications from GitHub, GitLab, Bitbucket or any Git host, private repositories included, with branch selection, manual and webhook deployments, deploy commands, releases with rollback, environment files kept out of the repository, and a deployment history, all under the hosting account; the maintainer approved building it on 2026-10-25).
 **Related:** ADR-0176 (Composer runs), ADR-0067 (SSH shell sandbox), GH #1458 (cron in the sandbox), GH #2032 (a tenant's sealed Cloudflare token), GH #282 (no-package policy), GH #658 (the sandbox never jails root).
 
@@ -82,19 +82,79 @@ way to make the server connect to an address of the user's choosing.
    git ignores them without a word, so the agent refuses a git older than
    2.37. Debian 13 ships 2.47 and Ubuntu 24.04 2.43.
 
+7. **A deployment is a transient unit, like a Composer run (ADR-0176).**
+   `jabali-gitdeploy-<run id>.service` runs in the user's slice, inside
+   `jabali-ssh-shell --exec`, as `jabali-agent git-deploy <settings>`: a
+   oneshot with a 30-minute limit, 2 GiB of memory and 256 tasks. A domain
+   has one run at a time (`domain_git_deployments`, migration 339). The agent
+   keeps the unit's result until the panel has stored it, from the API or a
+   reconciler pass. The settings travel in the unit's argv, written by root
+   and holding no secret (the token is in the credential file), never in a
+   file the user could change before the run reads it. The run checks every
+   setting again when it decodes them: the URL, the pin, the branch, the
+   paths and the commands.
+8. **The steps, in order.** The run clones the branch one commit deep
+   (`--depth=1 --single-branch --no-tags`), pinned as in 6, into
+   `domains/<domain>/releases/<run id>`, and logs the commit. It then removes
+   its credential file (`~/.jabali-git/deploy-<run id>/`) before any of the
+   repository's code runs; releasing the unit removes it too, so a run lost to
+   a restart doesn't leave it behind. It removes `.git` (submodules are not
+   fetched), links the shared paths, runs `composer install` and the deploy
+   commands, switches `domains/<domain>/current`, a relative link, to the new
+   release with a rename, and removes releases beyond the newest five, never
+   the live one. Any failure before the switch removes the new release: the
+   site keeps serving the one it served.
+9. **Composer needs the Composer entitlement too.** `composer install` runs
+   when the project has a `composer.json` and a `composer.lock` and no
+   `vendor/`, and only when the package also includes Composer runs. It runs
+   with the Composer runs' PHP Defense rules (ADR-0176), which apply to it
+   alone. A project that needs it on a package without Composer runs fails
+   before going live. Git deploy alone never lifts the exec functions.
+10. **Deploy commands are a closed list, like cron (GH #1458).** One per line,
+    at most 20: `php <file> [args]`, `php<X.Y> <file> [args]` or `wp [args]`,
+    with paths relative to the release. No PHP option may come before the
+    file: `-n`, `-c` and `-d` would skip PHP Defense, and `-r` runs inline
+    code. Shell metacharacters outside quotes are refused, control characters
+    everywhere. Each command runs as its argv in the release directory, never
+    through a shell, on the domain's PHP and its default PHP Defense rules.
+    The panel checks them when they are saved, the run again before running
+    them (`cronvalidate.ValidateDeployCommands`, shared by both).
+11. **Shared paths stay out of the served directory when hidden.** Up to 20
+    paths relative to the repository are kept across releases in
+    `domains/<domain>/shared`. A path missing there is taken from the first
+    release that has it; a path missing from both fails the run before going
+    live. `.git`, the served directory or a directory holding it, and
+    overlapping paths are refused. Tenant vhosts serve dotfiles, so a shared
+    path inside the served directory may not have a hidden segment: `.env`
+    must sit outside it, as Laravel's does next to `public`
+    (`cronvalidate.ValidateDeployLayout`, shared by the panel and the run).
+12. **The document root follows `current`.** Once a deployment has made its
+    release live, the panel points the domain's document root at
+    `/home/<user>/domains/<domain>/current[/<web_dir>]` and re-applies the
+    vhost. It writes that one column in one statement that also checks the
+    domain still belongs to the owner who started the run. Later deployments
+    find it there and only switch the link. The path stays inside the
+    domain's own tree, which is all a tenant's own document root change
+    (`tenant_docroot_editable`) may do; the Git deploy entitlement is what
+    allows this one. The agent's vhost setup resolves `current` beneath the
+    home (`RESOLVE_BENEATH`, which allows a relative link that stays inside),
+    and nginx hands PHP `$realpath_root`, the release's real path, so OPcache
+    doesn't serve the previous release's files after a switch.
+13. **Rollback switches `current` back, as its own run.** It runs as the user,
+    like a deployment, and only switches the link: no git, no commands. Only
+    the release of a deployment that succeeded may be made live again, never a
+    directory a lost run left half-built. A run whose log says its release
+    went live is recorded as a success even when it was cancelled or failed
+    after that point, and the document root follows it: the site serves that
+    release.
+14. **A run's history belongs to the domain's owner.** The API lists and shows
+    only the runs of the domain's current owner: a new owner doesn't see the
+    previous owner's logs.
+
 ## Next parts
 
 These follow the design above; each lands with its own change.
 
-- **Deployments.** A deployment is a transient unit like a Composer run
-  (ADR-0176), with a run row, a log and a result. It clones the branch into a
-  new release directory under the domain, links in files kept outside the
-  repository (`.env`, storage directories), runs Composer when the project has
-  a `composer.lock`, runs the user's deploy commands (checked as cron commands
-  are), and only then switches a relative `current` link to the new release.
-  A failure before the switch leaves the live release alone. The newest
-  releases are kept, so a rollback switches `current` back. The domain's
-  document root points into `current` once a first release exists.
 - **Webhook.** A per-domain secret checked against the Git host's signature,
   JSON bodies only, a size limit, its own rate limit, and delivery IDs
   remembered so a retried delivery deploys once.
@@ -111,3 +171,14 @@ These follow the design above; each lands with its own change.
   `ExecStart` while git runs.
 - A backup doesn't carry the repository settings or the token. After a
   restore, enter them again.
+- Releases take disk space in the user's quota: up to five, plus the one
+  being built.
+- What the site writes inside a release, outside its shared paths, is gone
+  after the next deployment. Uploads and caches that must persist need to be
+  shared paths.
+- A deploy command that PHP Defense stops is reported only when PHP writes it
+  to the command's output; the `/dev/log` opt-in of ADR-0177 shows the rest.
+- Removing the `current` link by hand leaves the site on a directory the
+  vhost setup recreates; the next deployment refuses to replace a directory
+  there until it is moved away.
+- Submodules are not fetched.

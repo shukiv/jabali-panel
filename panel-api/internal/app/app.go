@@ -20,6 +20,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ioncube"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
@@ -1699,6 +1700,12 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// GH #2277 (ADR-0178): the Git repository a domain deploys from.
 			// Saving it and listing its branches make the server connect to
 			// the Git host, so both take a per-user budget.
+			// A deployment or rollback starts a unit on the server, and takes
+			// the same budget.
+			var gitSched gitdeploy.Scheduler
+			if deps.Reconciler != nil {
+				gitSched = deps.Reconciler
+			}
 			api.RegisterDomainGitRoutes(v1, api.DomainGitHandlerConfig{
 				Domains:         deps.Domains,
 				Users:           deps.Users,
@@ -1707,6 +1714,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:           deps.Agent,
 				SSOKey:          deps.SSOKey,
 				RemoteRateLimit: rl.StrictPerActor(),
+				Deployments:     repository.NewDomainGitDeploymentRepository(deps.DB),
+				Reconciler:      gitSched,
 			})
 		}
 

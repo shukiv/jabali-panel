@@ -6036,6 +6036,9 @@ paths:
                 username: { type: string, description: "Sent with the token; empty sends x-access-token" }
                 token: { type: string, writeOnly: true, description: "Read-only access token; absent keeps the stored one on the same host" }
                 clear_token: { type: boolean, description: "Remove the stored token (a public repository)" }
+                web_dir: { type: string, description: "The directory the site serves, relative to the repository (public for Laravel); empty is the repository's root. Absent keeps the stored one." }
+                shared_paths: { type: array, items: { type: string }, description: "Paths kept across releases in domains/<domain>/shared (.env, storage), at most 20; a hidden one may not be inside the served directory. Absent keeps the stored ones." }
+                deploy_commands: { type: string, description: "Run in the new release before it goes live, one per line: php <file> [args], php<X.Y> <file> [args] or wp [args], paths relative to the release, at most 20. Absent keeps the stored ones." }
       responses: { "200": { description: "Saved, with the repository's branches" }, "403": { description: The owner's package does not include Git deploy }, "422": { description: "Invalid settings, a host the server won't connect to, a token needed for a new host, a branch the repository lacks, or git could not read the repository" } }
     delete:
       tags: [Git deploy]
@@ -6051,6 +6054,52 @@ paths:
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK }, "404": { description: No repository saved for the domain }, "422": { description: git could not read the repository } }
+
+  /domains/{id}/git/deployments:
+    get:
+      tags: [Git deploy]
+      summary: The domain's deployments and rollbacks, newest first
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Git deploy]
+      summary: Deploy the stored branch. The server fetches it into domains/<domain>/releases/<id> as the domain's owner, in their SSH sandbox, links the shared paths, runs composer install (when the package includes Composer runs) and the deploy commands, then switches domains/<domain>/current to the new release and points the domain's document root at current/<web_dir>. A failed step leaves the site as it was. Needs a hosting package that includes Git deploy.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Started }, "403": { description: The owner's package does not include Git deploy }, "404": { description: No repository saved for the domain }, "409": { description: A deployment is already in progress }, "422": { description: "A host the server won't connect to, or the domain lacks what the deployment needs" } }
+
+  /domains/{id}/git/deployments/{runId}:
+    get:
+      tags: [Git deploy]
+      summary: One deployment or rollback, with its log
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: No such run } }
+
+  /domains/{id}/git/deployments/{runId}/cancel:
+    post:
+      tags: [Git deploy]
+      summary: End a deployment in progress. A deployment stopped before its release went live leaves the site as it was.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "409": { description: The run has already finished } }
+
+  /domains/{id}/git/releases:
+    get:
+      tags: [Git deploy]
+      summary: The releases on the server, newest first, which one is live, and the deployment that made each
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "403": { description: The owner's package does not include Git deploy } }
+
+  /domains/{id}/git/releases/{release}/activate:
+    post:
+      tags: [Git deploy]
+      summary: Make an earlier release live again (a rollback). Only the release of a deployment that succeeded can be.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: release, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Started }, "403": { description: The owner's package does not include Git deploy }, "404": { description: No such release }, "409": { description: A deployment is already in progress }, "422": { description: The release is not one a deployment completed } }
 
   /domains/{id}/env-vars:
     get:
