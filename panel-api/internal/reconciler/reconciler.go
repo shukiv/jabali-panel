@@ -245,6 +245,8 @@ type Reconciler struct {
 	cronOrphanSweptAt atomic.Int64
 	// pythonApps holds the python_apps repository (ADR-0131).
 	pythonApps repository.PythonAppRepository
+	// composerRuns holds the composer_runs repository (GH #2276, ADR-0176).
+	composerRuns repository.ComposerRunRepository
 	// pyFrameworks is the loaded JAB-164 framework marketplace catalog. When a
 	// python_apps row carries a framework slug and hasn't been scaffolded, the
 	// reconciler resolves the entry here and dispatches app.python.scaffold
@@ -1066,6 +1068,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// GH #2056: website mail through the local mail server or the smarthost
 	// relay; in smarthost mode the relay's sender list follows the sites.
 	r.reconcileWebsiteMail(ctx)
+
+	// GH #2276: store the result of Composer runs that finished while nobody
+	// was reading them, so their units don't stay loaded on the server.
+	r.reconcileComposerRuns(ctx)
 
 	// GH #1795: every mailbox with an external forwarder or autoresponder is
 	// re-converged into its single active standard SieveScript (the store

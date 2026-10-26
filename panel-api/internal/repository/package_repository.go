@@ -117,6 +117,8 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"webmail_enabled",
 		// GH #2056: "Website sends email" entitlement — same silent-drop scar.
 		"website_sends_email",
+		// GH #2276: Composer entitlement — same silent-drop scar.
+		"composer_enabled",
 		// GH #2165: Redis keys per call — same silent-drop scar.
 		"redis_keys_per_call",
 		// GH #339: FPM performance-policy columns were missing from the Select

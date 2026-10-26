@@ -18,7 +18,7 @@ Change it on the page or with `jabali php-defense mode <off|simulation|enforce>`
 - Command execution: `system`, `exec`, `shell_exec`, `passthru`, `popen`, `proc_open`, `pcntl_exec`.
 - `assert` (evaluates a string as code), and the information leaks `show_source`, `highlight_file`, `phpinfo`.
 
-In enforce mode these also stop code that calls them for harmless reasons. Symfony Console reads the terminal size through `proc_open`, so Composer and the command-line installers that use it (Drupal, phpBB) stop with an error.
+In enforce mode these also stop code that calls them for harmless reasons. Symfony Console reads the terminal size through `proc_open`, so Composer and the command-line installers that use it (Drupal, phpBB) stop with an error. A Composer run started from the panel loads rules without these bans (see [Composer runs from the panel](#composer-runs-from-the-panel)).
 
 ## Rules not loaded yet
 
@@ -27,6 +27,16 @@ The shipped bundle also contains rules for `putenv`, writing `.php` files, `eval
 ## Packages that allow command execution
 
 A hosting package can allow some command-execution functions (**Disabled PHP functions** on the package, GH #1701). For the sites on that package, PHP Defense does not ban the functions the package allows: each of their PHP pools loads its own copy of the rules, `/etc/jabali/snuffleupagus/pools/<pool>.rules`, with only those bans commented out. Every other rule, including the `eval` blacklist, still applies, and the server-wide rules apply to every other site. The copies are rebuilt whenever the mode or a rule changes. A domain's PHP Settings page shows, read-only, which functions PHP Defense blocks or logs for that domain. Command-line PHP (cron, SSH) keeps the server-wide rules.
+
+## Composer runs from the panel
+
+A Composer run that a user starts from the panel (GH #2276, ADR-0176) loads its own copy of the rules, `/etc/jabali/snuffleupagus/composer.rules`.
+- **Lifted bans:** the copy comments out the seven command-execution bans and the `phpinfo` ban. Composer runs `git`, `unzip` and composer.json scripts through `proc_open`. Symfony Process calls `phpinfo()` before it starts any process.
+- **Logging:** the copy logs to PHP's error log instead of syslog, so a blocked call shows in the run's own log. The run is then marked failed.
+- **Selection:** an ini in `/etc/jabali/snuffleupagus/composer.d/` selects the copy. The run sets `PHP_INI_SCAN_DIR`, so the PHP processes that Composer starts load it too.
+- **Rebuilds:** the agent rebuilds both files from `active.rules` before every run.
+
+Every other rule still applies, and cron and SSH PHP keep the server-wide rules. Composer runs only for a user whose hosting package includes it (**Composer**, off by default). The run executes in that user's SSH sandbox, as their own user.
 
 ## Turning one rule off
 

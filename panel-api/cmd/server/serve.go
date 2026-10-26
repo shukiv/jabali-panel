@@ -381,6 +381,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithCronJobs(cronJobsRepo)
 		rec.WithDockerApps(dockerAppRepo)
 		rec.WithPythonApps(pythonAppRepo)
+		rec.WithComposerRuns(repository.NewComposerRunRepository(sharedDB)) // GH #2276
 		rec.WithPyFrameworks(pyCatalog)
 		rec.WithDockerCatalog(dockerCatalog)
 		// M18 wiring — packages + overrides + /home mount path so

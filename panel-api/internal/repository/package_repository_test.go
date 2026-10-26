@@ -134,6 +134,19 @@ func TestDefaultPackages_SitesCanSendMail(t *testing.T) {
 	}
 }
 
+// GH #2276: the Composer entitlement goes through the same Select-allowlist
+// Update; missing from it, the admin's toggle would save and revert on reload.
+func TestPackage_Update_PersistsComposerEnabled(t *testing.T) {
+	updatePersistsColumn(t, "composer_enabled")
+}
+
+// GH #2276: no starter plan runs Composer until the admin turns it on.
+func TestDefaultPackages_NoComposer(t *testing.T) {
+	for _, p := range defaultPackages(time.Now()) {
+		require.False(t, p.ComposerEnabled, "seeded package %s must not run Composer", p.Name)
+	}
+}
+
 // GH #2165: Redis keys per call goes through the same Select-allowlist Update;
 // missing from it, the admin's value would save and revert on reload.
 func TestPackage_Update_PersistsRedisKeysPerCall(t *testing.T) {

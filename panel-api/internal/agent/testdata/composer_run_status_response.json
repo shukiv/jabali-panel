@@ -1,0 +1,8 @@
+{
+  "state": "failed",
+  "result": "exit-code",
+  "exit_code": 255,
+  "log": "Installing dependencies from lock file\nPHP Fatal error:  [snuffleupagus][0.0.0.0][disabled_function][drop] Aborted execution on call of the function 'highlight_file'\n",
+  "log_truncated": true,
+  "php_defense_blocked": true
+}

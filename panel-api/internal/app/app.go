@@ -1685,6 +1685,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Catalog:    deps.PyFrameworks,
 			})
 		}
+		// GH #2276 (ADR-0176): Composer runs of a domain. Starting one takes a
+		// per-user budget: each is a Composer process on the server.
+		if deps.Agent != nil && deps.Domains != nil && deps.Users != nil && deps.Packages != nil && deps.DB != nil {
+			api.RegisterDomainComposerRoutes(v1, api.DomainComposerHandlerConfig{
+				Domains:        deps.Domains,
+				Users:          deps.Users,
+				Packages:       deps.Packages,
+				Runs:           repository.NewComposerRunRepository(deps.DB),
+				Agent:          deps.Agent,
+				StartRateLimit: rl.StrictPerActor(),
+			})
+		}
 
 		// File manager routes (M11)
 		if deps.Users != nil && deps.Agent != nil {
