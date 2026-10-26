@@ -32,12 +32,13 @@ box a blocked `system()` in cron PHP left no trace.
 ## Consequences
 
 - With it on, any program in the sandbox can write to the system log, under any
-  tag. A tenant's website PHP can already do that through `syslog()`, so the
-  sandbox gains nothing a tenant didn't have. journald stamps each line with
-  the sender's uid, and the incident reader attributes a line to a site only
-  when that uid is root or the site's owner (GH #2262), so a forged line can't
-  put an incident on another account. A tenant can still add noise to the
-  journal and to their own incidents; journald's rate limits apply.
+  tag. The journal readers that act on a line check the sender's uid, which
+  journald takes from the kernel, and not the tag alone: the incident reader
+  attributes a line to a site only when that uid is root or the site's owner
+  (GH #2262), and CrowdSec's SSH source counts only lines with `_UID=0`
+  (#2287). So a line from the sandbox can't put an incident on another
+  account or feed CrowdSec's SSH scenarios. A tenant can still add noise to
+  the journal and to their own incidents; journald's rate limits apply.
 - Composer runs (ADR-0176) log PHP Defense blocks to the run's own log and are
   not affected.
 - nspawn mode is not wired yet (it refuses logins); it would need the same bind
