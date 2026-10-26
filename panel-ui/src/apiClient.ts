@@ -196,6 +196,11 @@ function humanizeErrorCode(code: string): string {
     upload_unreachable:
       "The server could not reach the report upload service (enclosed.jabali-panel.com) — check outbound HTTPS/DNS from the server, then retry",
     agent_timeout: "The operation timed out on the server — try again shortly",
+    // GH #2276: Composer runs.
+    composer_requires_package: "Composer runs come with a hosting package, and this account has none",
+    composer_not_in_package: "Your hosting package doesn't include Composer runs",
+    composer_run_finished: "That Composer run has already finished",
+    run_not_found: "That Composer run no longer exists",
   };
   return messages[code] ?? code.replace(/_/g, " ");
 }

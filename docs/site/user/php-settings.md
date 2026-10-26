@@ -101,3 +101,7 @@ pinned PHP version (and its enabled extensions), not the server default
 runs through that same `php`. If `php -m` is missing an extension, enable
 it for your PHP version (an admin manages extensions in PHP Manager), then
 re-check.
+
+When your hosting package includes Composer, a domain's **Composer** tab runs
+Composer for that domain from the panel, with its log (see
+[Domains](domains.md#composer)).

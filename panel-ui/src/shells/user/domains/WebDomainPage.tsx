@@ -8,7 +8,8 @@
 // Statistics, SSL, PHP Settings, Redirects, Index Files, Caching
 // and Directory Privacy, plus three tabs gated on the same caps as the old row
 // menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
-// Document root (tenant_docroot_editable). The tenant row menu is now just
+// Document root (tenant_docroot_editable) — and Composer when the package
+// includes it (composer_enabled, GH #2276). The tenant row menu is now just
 // Enable/Delete. There is no DNS tab: records are managed under DNS > Zones
 // (GH #1920).
 //
@@ -43,6 +44,7 @@ import { RenameDomainButton } from "../../../components/domains/RenameDomainButt
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
+import { ComposerTab } from "./tabs/ComposerTab";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { SSLTab } from "./tabs/SSLTab";
 
@@ -108,6 +110,8 @@ export const WebDomainPage = () => {
   // sees neither the menu item nor the tab (never a disabled stub).
   const optionsOn = caps?.tenant_domain_options_enabled === true;
   const docrootOn = caps?.tenant_docroot_editable === true;
+  // GH #2276: Composer runs come with the hosting package.
+  const composerOn = caps?.composer_enabled === true;
   // GH #1624: with the cap off the two gated tabs are hidden (never a disabled
   // stub — see below), so a tenant has no way to learn the feature exists. Show
   // a small note on the Overview pane inviting them to ask the admin to enable
@@ -161,6 +165,9 @@ export const WebDomainPage = () => {
         </Space>
       ),
     },
+    // Composer — install, update, add and remove the project's packages and
+    // follow each run's log (GH #2276). Only when the package includes it.
+    ...(composerOn ? [{ key: "composer", label: "Composer", node: <ComposerTab domain={domain} /> }] : []),
     { key: "redirects", label: "Redirects", node: <DomainRedirectsPanel domain={domain} /> },
     { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
     { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },
