@@ -278,6 +278,32 @@ describe("PackageEditor website mail (GH #2056)", () => {
   });
 });
 
+// GH #2276: Composer runs amount to shell access in the SSH sandbox, so a new
+// package starts without them; a stored package loads its value.
+describe("PackageEditor Composer (GH #2276)", () => {
+  it("renders the switch defaulting OFF for a new package", () => {
+    renderEditor();
+    const sw = screen.getByRole("switch", { name: "Composer" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("loads a stored package's value (edit mode)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", composer_enabled: true }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const sw = await screen.findByRole("switch", { name: "Composer" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+});
+
 describe("PackageEditor Redis keys per call (GH #2165)", () => {
   it("starts a new package at 500", () => {
     renderEditor();

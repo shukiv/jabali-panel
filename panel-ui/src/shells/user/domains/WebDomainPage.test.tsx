@@ -63,6 +63,9 @@ vi.mock("../../../components/logs/DomainLogsPanel", () => ({
 vi.mock("./tabs/SSLTab", () => ({
   SSLTab: ({ domain }: { domain: { id: string } }) => <div>ssl-pane:{domain.id}</div>,
 }));
+vi.mock("./tabs/ComposerTab", () => ({
+  ComposerTab: ({ domain }: { domain: { id: string } }) => <div>composer-pane:{domain.id}</div>,
+}));
 vi.mock("../../../components/domains/DomainPHPSettingsPanel", () => ({
   DomainPHPSettingsPanel: ({
     domainId,
@@ -251,6 +254,21 @@ describe("WebDomainPage (GH #1543)", () => {
     expect(screen.getByText("Rewrite rules")).toBeInTheDocument();
     expect(screen.getByText("Advanced directives")).toBeInTheDocument();
     expect(screen.getByText("Document root")).toBeInTheDocument();
+  });
+
+  // GH #2276: the Composer tab comes with the package (composer_enabled).
+  it("hides the Composer tab when the package has no Composer", async () => {
+    renderAt("/jabali-panel/domains/d1/composer");
+    await screen.findByText("Preview URL"); // unknown tab -> Overview
+    expect(screen.queryByText("Composer")).not.toBeInTheDocument();
+    expect(screen.queryByText("composer-pane:d1")).not.toBeInTheDocument();
+  });
+
+  it("shows the Composer tab and renders its pane when the package has Composer", async () => {
+    caps.value = { composer_enabled: true };
+    renderAt("/jabali-panel/domains/d1/composer");
+    expect(await screen.findByText("composer-pane:d1")).toBeInTheDocument();
+    expect(screen.getByText("Composer")).toBeInTheDocument();
   });
 
   it("renders the advanced-directives pane when the caps are on (GH #1624 Phase 4)", async () => {

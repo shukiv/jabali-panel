@@ -226,6 +226,19 @@ func TestComposerRunArgv_PackagesLast(t *testing.T) {
 	}
 }
 
+// validate skips the checks that only matter for publishing a package: a
+// hosted app with no description or license is fine to install (GH #2276).
+func TestComposerRunArgv_ValidateSkipsPublishChecks(t *testing.T) {
+	p := composerRunStartParams{RunID: testRunID, OSUser: "alice", Domain: "example.com", Command: "validate"}
+	argv := composerRunArgv(p, composerCommands["validate"], "/usr/bin/php8.4", "/usr/local/bin/composer-latest", "")
+	tail := argv[len(argv)-5:]
+	want := []string{"validate", "--no-check-publish", "--no-interaction", "--no-ansi",
+		"--working-dir=" + filepath.Join(homesRoot, "alice", "domains", "example.com")}
+	if !reflect.DeepEqual(tail, want) {
+		t.Fatalf("argv tail = %q, want %q", tail, want)
+	}
+}
+
 func TestComposerRunStart_RefusesWhatItCannotRun(t *testing.T) {
 	h := newComposerRunHost(t)
 	f := &composerExecFake{}

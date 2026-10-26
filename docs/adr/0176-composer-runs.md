@@ -77,7 +77,9 @@ Two things found on a test server shaped the design:
    may start with `-`, or contain `$` or `%` (systemd expands those in
    `ExecStart`). The app directory is a path relative to
    `/home/<user>/domains/<domain>/` with no `..`, and it must be a real
-   directory, not a link.
+   directory, not a link. `validate` runs with `--no-check-publish`: a hosted
+   app rarely has the description and license a published package needs, and
+   without the option those alone fail the run (exit 2).
 6. **It is a package entitlement, off by default.** The flag is
    `hosting_packages.composer_enabled`, default 0. It lifts the exec bans for
    the tenant's own code, so like tenant Docker a user with no package is
@@ -90,6 +92,11 @@ Two things found on a test server shaped the design:
 
    The agent runs a run only as a hosting user (uid 1000–59999), never as root
    or a system account, because the sandbox never jails uid 0 (GH #658).
+
+   An API token limited to scopes uses the `ssh` scope for the Composer
+   routes: `read:ssh` to read runs, `write:ssh` to start or cancel one. A
+   `write:ssh` token can already add an SSH key and open a shell, so it gains
+   nothing new.
 7. **The panel collects results.** A read of a running run asks the agent, and
    a reconciler pass collects runs nobody reads, so no unit stays loaded. A run
    whose unit is gone before the panel saw it finish is marked failed.

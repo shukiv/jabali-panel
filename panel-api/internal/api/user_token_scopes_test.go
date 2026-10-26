@@ -106,8 +106,8 @@ func TestResolveUserScope(t *testing.T) {
 		{"PATCH", "/api/v1/mailboxes/:mbid", "write:mail", true},
 		{"GET", "/api/v1/mail/forwarders", "read:mail", true},
 		{"GET", "/api/v1/mail/mailbox-group-memberships", "read:mail", true}, // JAB-370 owner-scoped bulk
-		{"GET", "/api/v1/mail/autoresponders", "read:mail", true},           // JAB-370 owner-scoped bulk
-		{"GET", "/api/v1/domains/:id/mail-certificate", "read:mail", true}, // not domains
+		{"GET", "/api/v1/mail/autoresponders", "read:mail", true},            // JAB-370 owner-scoped bulk
+		{"GET", "/api/v1/domains/:id/mail-certificate", "read:mail", true},   // not domains
 		{"GET", "/api/v1/domains/:id/php-settings", "read:php", true},
 		{"PATCH", "/api/v1/domains/:id/php", "write:php", true},
 		{"DELETE", "/api/v1/domains/:id/ssl", "write:ssl", true},
@@ -118,6 +118,13 @@ func TestResolveUserScope(t *testing.T) {
 		{"GET", "/api/v1/applications", "read:apps", true},
 		{"POST", "/api/v1/cron", "write:cron", true},
 		{"GET", "/api/v1/ssh-keys", "read:ssh", true},
+		// Composer runs execute the project's scripts in the SSH sandbox
+		// (GH #2276), so they take the ssh scope, never domains.
+		{"GET", "/api/v1/domains/:id/composer", "read:ssh", true},
+		{"GET", "/api/v1/domains/:id/composer/runs", "read:ssh", true},
+		{"POST", "/api/v1/domains/:id/composer/runs", "write:ssh", true},
+		{"GET", "/api/v1/domains/:id/composer/runs/:runId", "read:ssh", true},
+		{"POST", "/api/v1/domains/:id/composer/runs/:runId/cancel", "write:ssh", true},
 		{"GET", "/api/v1/logs/access", "read:logs", true},
 		{"GET", "/api/v1/me/backups", "read:backups", true},
 		// fail-closed

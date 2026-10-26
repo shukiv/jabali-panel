@@ -69,14 +69,16 @@ type composerCommand struct {
 }
 
 var composerCommands = map[string]composerCommand{
-	"install":       {noDev: true, noProgress: true},
-	"update":        {packages: "names", noDev: true, noProgress: true},
-	"require":       {packages: "require", minPackages: 1, noProgress: true},
-	"remove":        {packages: "names", minPackages: 1, noProgress: true},
-	"audit":         {noDev: true},
-	"outdated":      {noDev: true},
-	"show":          {noDev: true},
-	"validate":      {},
+	"install":  {noDev: true, noProgress: true},
+	"update":   {packages: "names", noDev: true, noProgress: true},
+	"require":  {packages: "require", minPackages: 1, noProgress: true},
+	"remove":   {packages: "names", minPackages: 1, noProgress: true},
+	"audit":    {noDev: true},
+	"outdated": {noDev: true},
+	"show":     {noDev: true},
+	// A hosted app is rarely published: a missing description or license
+	// would otherwise fail the run (exit 2).
+	"validate":      {extra: []string{"--no-check-publish"}},
 	"dump-autoload": {noDev: true, extra: []string{"--optimize"}},
 	"diagnose":      {},
 }

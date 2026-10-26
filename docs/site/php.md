@@ -167,7 +167,7 @@ app benefits, plus a one-click **OPcache reset**.
 
 ## Composer runs (GH #2276)
 
-A user whose hosting package includes Composer (`composer_enabled`, off by default) can run Composer for a domain from the panel (ADR-0176). The commands are install, update, require, remove, audit, outdated, show, validate, dump-autoload and diagnose. The API is `/api/v1/domains/{id}/composer`.
+A user whose hosting package includes Composer (`composer_enabled`, off by default) can run Composer for a domain from the panel (ADR-0176). The commands are install, update, require, remove, audit, outdated, show, validate, dump-autoload and diagnose. `validate` skips the checks that only matter for publishing a package (`--no-check-publish`). The API is `/api/v1/domains/{id}/composer`; an API token limited to scopes needs `read:ssh` to read runs and `write:ssh` to start or cancel them.
 
 - **Where it runs:** each run is a transient unit, `jabali-composer-<run id>.service`, in the user's slice, as the user. It runs in their SSH sandbox, on the PHP version the domain is served by, with the Composer version their channel selects. `COMPOSER_HOME` is `~/.composer`.
 - **Limits:** a run stops after 30 minutes, at 2 GB of memory, or at 256 tasks, on top of the package's limits. Only one run per domain is in progress at a time.

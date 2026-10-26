@@ -85,6 +85,22 @@ A domain's **Statistics** tab shows its web traffic for the last 7, 30 or 90 day
 
 The panel counts each day once, on the day after, from that day's access log, so today is not in the statistics yet. For today's traffic, open the **Logs** tab. The statistics are kept as long as the server's bandwidth ledger (90 days unless your administrator changed it).
 
+## Composer
+
+When your hosting package includes Composer, a domain has a **Composer** tab (GH #2276). It finds the domain's `composer.json` (in the document root or a folder above it, up to `domains/<domain>/`) and runs Composer there:
+
+- **Install** puts in exactly the versions `composer.lock` lists. With no `composer.lock` yet, it picks the newest versions `composer.json` allows and writes one.
+- **Update** moves packages to newer versions that `composer.json` allows and rewrites `composer.lock`. Leave the package list empty to update everything, or name the packages to update.
+- **Add package** and **Remove package** add or take out a package (`vendor/name`, with an optional version such as `^3.0`).
+- **More** has checks that don't change anything: audit for security advisories, outdated packages, installed packages, validate `composer.json`, rebuild the autoloader, and diagnose.
+- **Production only** leaves out the dev packages (`--no-dev`).
+
+Composer runs as you, in your SSH environment, on the PHP version the domain uses, and the project's `composer.json` scripts run too. One run at a time per domain; a run stops after 30 minutes. The tab shows the run's log as it goes, and keeps a list of past runs with their logs.
+
+Take a backup before **Update** or **Remove**: they change the packages your site runs. **Cancel** stops a run but doesn't undo what Composer has already written to `composer.json`, `composer.lock` or `vendor/`; run **Install** afterwards to bring `vendor/` back in line with `composer.lock`.
+
+Without the tab, ask your administrator: Composer runs are a package setting, off unless they turn it on.
+
 ## What you can change vs. what the admin controls
 
 You may change PHP version (from the subset your package allows), SSL on/off, DNSSEC on/off, redirects, aliases, mail enable/disable.

@@ -298,6 +298,21 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>SSH Enabled</Typography.Text>
         </div>
 
+        {/* GH #2276 (ADR-0176): Composer runs from the domain page. A run
+            executes the project's composer.json scripts in the user's SSH
+            sandbox, so it is granted like SSH. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Form.Item
+            name="composer_enabled"
+            valuePropName="checked"
+            tooltip="Lets users on this package run Composer (install, update, require, …) for their domains from the panel. Composer runs the project's composer.json scripts, which can run any command in the user's SSH sandbox: grant it as you would SSH."
+            noStyle
+          >
+            <Switch aria-label="Composer" checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Composer</Typography.Text>
+        </div>
+
         {/* GH #1798: per-package openings in the M34 per-user outbound firewall.
             Both default OFF and only change anything for users whose outbound
             firewall is enforced or learning. */}
