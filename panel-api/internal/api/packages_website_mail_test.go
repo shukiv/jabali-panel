@@ -33,3 +33,16 @@ func TestPackageCreate_ComposerOffUnlessAsked(t *testing.T) {
 	got = createPackageForTest(t, h, `{"name":"on","composer_enabled":true}`)
 	require.Equal(t, true, got["composer_enabled"])
 }
+
+// GH #2277: a Git deployment runs the user's commands in their sandbox, so a
+// new package can't deploy from Git unless the admin asks.
+func TestPackageCreate_GitDeployOffUnlessAsked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &packageHandler{cfg: PackageHandlerConfig{Repo: &mockPackageRepo{}}}
+
+	got := createPackageForTest(t, h, `{"name":"omit"}`)
+	require.Equal(t, false, got["git_deploy_enabled"], "a new package can't deploy from Git unless asked")
+
+	got = createPackageForTest(t, h, `{"name":"on","git_deploy_enabled":true}`)
+	require.Equal(t, true, got["git_deploy_enabled"])
+}

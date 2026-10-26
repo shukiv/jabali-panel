@@ -69,7 +69,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	settings, err := h.cfg.ServerSettings.Get(ctx)
 	if errors.Is(err, repository.ErrNotFound) {
 		// Pre-seed install — every flag defaults to false.
-		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "admin_file_manager_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false, "support_chat_admin": false, "support_chat_clients": false, "composer_enabled": false})
+		c.JSON(http.StatusOK, gin.H{"postgres_enabled": false, "docker_marketplace_enabled": false, "docker_apps_user_enabled": false, "python_apps_enabled": false, "tenant_domain_options_enabled": false, "tenant_docroot_editable": false, "dns_enabled": true, "mail_enabled": true, "security_enabled": true, "quota_enabled": true, "api_enabled": true, "root_terminal_enabled": false, "admin_file_manager_enabled": false, "public_ipv4": "", "public_ipv6": "", "is_standby": false, "dr_peer_label": "", "ftp_accounts_enabled": false, "ftp_server_enabled": false, "ftp_isolation_available": false, "support_chat_admin": false, "support_chat_clients": false, "composer_enabled": false, "git_deploy_enabled": false})
 		return
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -87,6 +87,8 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 	// GH #2276: Composer runs are package-gated like tenant Docker: only a
 	// package that includes them shows the domain's Composer tab.
 	composerEnabled := false
+	// GH #2277: Git deploy is package-gated the same way.
+	gitDeployEnabled := false
 	if h.cfg.Users != nil && h.cfg.Packages != nil {
 		if claims := ginctx.Claims(c); claims != nil {
 			if u, uerr := h.cfg.Users.FindByID(ctx, claims.UserID); uerr == nil && u != nil {
@@ -104,6 +106,7 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 				}
 				ftpAccounts = pkg != nil && pkg.MaxFTPAccounts > 0 && u.Username != nil && *u.Username != ""
 				composerEnabled = pkg != nil && pkg.ComposerEnabled && u.Username != nil && *u.Username != ""
+				gitDeployEnabled = pkg != nil && pkg.GitDeployEnabled && u.Username != nil && *u.Username != ""
 			}
 		}
 	}
@@ -142,7 +145,8 @@ func (h *meExtHandler) serverCapabilities(c *gin.Context) {
 		// mirrors the server-level opt-in so the UI can say "SFTP only"
 		// versus "FTPS + SFTP" in connection info.
 		"ftp_accounts_enabled": ftpAccounts,
-		"composer_enabled":     composerEnabled, // GH #2276
+		"composer_enabled":     composerEnabled,  // GH #2276
+		"git_deploy_enabled":   gitDeployEnabled, // GH #2277
 		"ftp_server_enabled":   settings.FTPEnabled,
 		// GH #1171: whether isolated (separate-uid, quota-capped) FTP accounts
 		// can actually be provisioned here (filesystem disk quota enabled). The

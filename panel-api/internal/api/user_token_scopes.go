@@ -166,6 +166,9 @@ var userScopePrefixes = []areaRule{
 	// SSH sandbox, so it takes the ssh scope. A write:ssh token can already
 	// add a key and open a shell.
 	{"/api/v1/domains/:id/composer", "ssh"},
+	// GH #2277: a Git deployment runs the user's commands in their SSH
+	// sandbox too, and the settings hold the repository's token.
+	{"/api/v1/domains/:id/git", "ssh"},
 
 	{"/api/v1/domains/:id/whois", "domains"},
 	{"/api/v1/domains/:id/acls", "domains"},

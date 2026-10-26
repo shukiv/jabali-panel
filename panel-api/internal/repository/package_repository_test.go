@@ -241,3 +241,16 @@ func TestPackage_Update_PersistsMaxFTPAccounts(t *testing.T) {
 func TestPackage_Update_PersistsMaxDatabaseUsers(t *testing.T) {
 	updatePersistsColumn(t, "max_database_users")
 }
+
+// GH #2277: the Git deploy entitlement goes through the same Select-allowlist
+// Update; missing from it, the admin's toggle would save and revert on reload.
+func TestPackage_Update_PersistsGitDeployEnabled(t *testing.T) {
+	updatePersistsColumn(t, "git_deploy_enabled")
+}
+
+// GH #2277: no starter plan deploys from Git until the admin turns it on.
+func TestDefaultPackages_NoGitDeploy(t *testing.T) {
+	for _, p := range defaultPackages(time.Now()) {
+		require.False(t, p.GitDeployEnabled, "seeded package %s must not deploy from Git", p.Name)
+	}
+}

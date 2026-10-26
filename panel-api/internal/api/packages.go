@@ -118,6 +118,8 @@ type createPackageRequest struct {
 	WebsiteSendsEmail bool `json:"website_sends_email"`
 	// ComposerEnabled (GH #2276): off unless asked, like WebsiteSendsEmail.
 	ComposerEnabled bool `json:"composer_enabled"`
+	// GitDeployEnabled (GH #2277): off unless asked, like ComposerEnabled.
+	GitDeployEnabled bool `json:"git_deploy_enabled"`
 	// RedisKeysPerCall (GH #2165) is a pointer so an omitted field gets the
 	// default (500) while an explicit 0 is refused, not taken as "unlimited".
 	RedisKeysPerCall   *int   `json:"redis_keys_per_call"`
@@ -170,6 +172,7 @@ type updatePackageRequest struct {
 	WebmailEnabled     *bool   `json:"webmail_enabled"`     // GH #1628
 	WebsiteSendsEmail  *bool   `json:"website_sends_email"` // GH #2056
 	ComposerEnabled    *bool   `json:"composer_enabled"`    // GH #2276
+	GitDeployEnabled   *bool   `json:"git_deploy_enabled"`  // GH #2277
 	RedisKeysPerCall   *int    `json:"redis_keys_per_call"` // GH #2165
 	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
@@ -300,6 +303,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
 		WebsiteSendsEmail:  req.WebsiteSendsEmail, // GH #2056: off unless asked
 		ComposerEnabled:    req.ComposerEnabled,   // GH #2276: off unless asked
+		GitDeployEnabled:   req.GitDeployEnabled,  // GH #2277: off unless asked
 		RedisKeysPerCall:   models.RedisKeysPerCallDefault,
 		FpmMaxChildrenCap:  req.FpmMaxChildrenCap,
 		FpmWorkerMemMb:     req.FpmWorkerMemMb,
@@ -470,6 +474,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.ComposerEnabled != nil { // GH #2276
 		pkg.ComposerEnabled = *req.ComposerEnabled
+	}
+	if req.GitDeployEnabled != nil { // GH #2277
+		pkg.GitDeployEnabled = *req.GitDeployEnabled
 	}
 	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
 		pkg.RedisKeysPerCall = *req.RedisKeysPerCall

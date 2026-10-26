@@ -1696,6 +1696,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Agent:          deps.Agent,
 				StartRateLimit: rl.StrictPerActor(),
 			})
+			// GH #2277 (ADR-0178): the Git repository a domain deploys from.
+			// Saving it and listing its branches make the server connect to
+			// the Git host, so both take a per-user budget.
+			api.RegisterDomainGitRoutes(v1, api.DomainGitHandlerConfig{
+				Domains:         deps.Domains,
+				Users:           deps.Users,
+				Packages:        deps.Packages,
+				Repos:           repository.NewDomainGitRepoRepository(deps.DB),
+				Agent:           deps.Agent,
+				SSOKey:          deps.SSOKey,
+				RemoteRateLimit: rl.StrictPerActor(),
+			})
 		}
 
 		// File manager routes (M11)
