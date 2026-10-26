@@ -170,6 +170,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0175](0175-nodejs-apps.md) | Node.js apps on the Application Manager (runtime `node`) | Accepted |
 | [0176](0176-composer-runs.md) | Composer runs from the panel (GH #2276) | Accepted |
 | [0177](0177-sandbox-log-socket.md) | An opt-in system log socket in the SSH sandbox | Accepted |
+| [0178](0178-git-deploy.md) | Deploying a domain from a Git repository (GH #2277) | Accepted |
 <!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 
