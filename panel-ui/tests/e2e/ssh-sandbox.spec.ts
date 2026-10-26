@@ -26,6 +26,7 @@ const baseSettings = {
   ssh_user_password_auth: false,
   ssh_sandbox_mode: "bubblewrap",
   default_nspawn_image_version: "",
+  ssh_sandbox_syslog: false,
   disk_quota_enabled: false,
   bandwidth_quota_enforce_enabled: false,
   upload_max_size_mb: 100,
@@ -122,6 +123,39 @@ test.describe("M13: SSH shell sandbox — Server Settings", () => {
   });
 
   // AntD 6.x Select dropdown has a fade/slide animation that races
+  // ADR-0177: the sandbox log socket is an opt-in, off until the admin
+  // turns it on; saving sends it with the rest of the SSH settings.
+  test("Sandbox log switch is off by default and saves when turned on", async ({ page }) => {
+    let patchBody: Record<string, unknown> | null = null;
+    await mockApi(page, { me: admin });
+    await setupSettingsMocks(page);
+    await page.route("**/admin/settings", async (route) => {
+      if (route.request().method() === "PATCH") {
+        patchBody = route.request().postDataJSON() as Record<string, unknown>;
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ...baseSettings, ...patchBody }),
+        });
+      }
+      return route.fallback();
+    });
+
+    await signIn(page, admin);
+    await page.goto("/jabali-admin/settings");
+    await page.waitForLoadState("networkidle");
+    await page.getByRole("tab", { name: "SSH" }).click();
+
+    const sw = page.getByRole("switch", { name: "Log PHP Defense blocks from the sandbox" });
+    await expect(sw).toBeVisible({ timeout: 15_000 });
+    await expect(sw).toHaveAttribute("aria-checked", "false");
+    await sw.click();
+    await expect(sw).toHaveAttribute("aria-checked", "true");
+
+    await page.getByRole("button", { name: /Save/ }).first().click();
+    await expect.poll(() => patchBody?.ssh_sandbox_syslog, { timeout: 10_000 }).toBe(true);
+  });
+
   // Playwright's stability gate — every variant of click/force/wait
   // either hits "not stable", "outside viewport", or the dropdown
   // re-closes before the option click lands. The underlying mode +

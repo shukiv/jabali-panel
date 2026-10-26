@@ -104,6 +104,7 @@ type ServerSettings = {
   ssh_user_password_auth: boolean;
   ssh_sandbox_mode: "bubblewrap" | "nspawn";
   default_nspawn_image_version: string;
+  ssh_sandbox_syslog: boolean; // ADR-0177
   root_terminal_enabled: boolean;
   disk_quota_enabled: boolean;
   bandwidth_quota_enforce_enabled: boolean;
@@ -845,6 +846,7 @@ const SSHSettingsTab = () => {
         ssh_password_auth: values.ssh_password_auth || false,
         ssh_user_password_auth: values.ssh_user_password_auth || false,
         ssh_sandbox_mode: values.ssh_sandbox_mode || "bubblewrap",
+        ssh_sandbox_syslog: !!values.ssh_sandbox_syslog,
         ...(values.default_nspawn_image_version
           ? { default_nspawn_image_version: values.default_nspawn_image_version }
           : {}),
@@ -972,6 +974,27 @@ const SSHSettingsTab = () => {
             </Form.Item>
           </Col>
         </Row>
+
+        {/* ADR-0177: the sandbox has no /dev/log, so PHP Defense blocks in SSH,
+            cron and Composer PHP never reach the journal. Opt-in, off by default. */}
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <Form.Item name="ssh_sandbox_syslog" valuePropName="checked" noStyle>
+              <Switch
+                aria-label="Log PHP Defense blocks from the sandbox"
+                checkedChildren={<CheckOutlined />}
+                unCheckedChildren={<CloseOutlined />}
+              />
+            </Form.Item>
+            <Typography.Text>Log PHP Defense blocks from the sandbox</Typography.Text>
+          </div>
+          <Typography.Text type="secondary">
+            Gives SSH sessions, cron jobs and Composer runs the system log socket, so PHP Defense blocks in their
+            PHP show under Incidents. Off, those blocks still happen but leave no log line. On, any program in the
+            sandbox can write to the system log, as the user&apos;s own website PHP already can; each line carries
+            the user&apos;s ID, and Incidents counts a site&apos;s lines only when they come from its owner.
+          </Typography.Text>
+        </div>
       </Card>
 
       <NspawnImagesCard />

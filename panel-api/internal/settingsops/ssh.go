@@ -26,7 +26,8 @@ type SSHTouched struct {
 //   - Config  → system.set_ssh_config (sshd port + password-auth). Touched-based
 //     re-sync; the agent runs `sshd -t` and reloads, rolling the file back on a
 //     bad config.
-//   - Sandbox → system.set_ssh_sandbox_mode (shell-sandbox mode + default image).
+//   - Sandbox → system.set_ssh_sandbox_mode (shell-sandbox mode + default image
+//   - the opt-in log socket, ADR-0177).
 //     Value-diff; the connect wrapper reads the files on every exec, so no reload.
 //
 // Both carry RevertOnFailure when the effect is a real value change (Kind ==
@@ -66,10 +67,11 @@ func sshConfigParams(s *models.ServerSettings) map[string]any {
 	}
 }
 
-// sshSandboxParams is the exact system.set_ssh_sandbox_mode wire (2 keys).
+// sshSandboxParams is the exact system.set_ssh_sandbox_mode wire (3 keys).
 func sshSandboxParams(s *models.ServerSettings) map[string]any {
 	return map[string]any{
 		"mode":          s.SSHSandboxMode,
 		"default_image": s.DefaultNspawnImageVersion,
+		"syslog":        s.SSHSandboxSyslog, // ADR-0177
 	}
 }

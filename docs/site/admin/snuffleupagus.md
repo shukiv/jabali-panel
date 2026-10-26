@@ -46,6 +46,8 @@ Open the rules list, choose **Disable** on a rule and give a reason. The panel c
 
 Stopped and simulated calls appear under **Recent incidents** within a minute, with the rule and the full log line. `jabali php-defense incidents` lists them on the command line.
 
+PHP in SSH sessions and cron jobs runs in the SSH sandbox, which has no system log socket, so its blocks leave no line by default. Turn on **Log PHP Defense blocks from the sandbox** (Server Settings → SSH → Shell Sandbox, ADR-0177) to list them too. With it on, any program in the sandbox can write to the system log. Each line carries the user's ID: an incident counts for a site only when it comes from that site's owner (or root), and CrowdSec's SSH detection counts only the SSH server's own lines. Composer runs keep their blocks in the run's own log either way.
+
 ## Related
 
 - [PHP Manager](./php-manager.md) for per-version PHP configuration.

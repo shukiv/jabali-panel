@@ -215,6 +215,7 @@ type updateServerSettingsRequest struct {
 	// M13 SSH shell sandbox.
 	SSHSandboxMode            *string `json:"ssh_sandbox_mode,omitempty"`
 	DefaultNspawnImageVersion *string `json:"default_nspawn_image_version,omitempty"`
+	SSHSandboxSyslog          *bool   `json:"ssh_sandbox_syslog,omitempty"` // ADR-0177
 
 	// M30.1 backup concurrency. Per-schedule retention is the source
 	// of truth — server-wide keep_* fields exist on the row but are
@@ -730,6 +731,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 			current.DefaultNspawnImageVersion = v
 		}
 	}
+	if req.SSHSandboxSyslog != nil {
+		current.SSHSandboxSyslog = *req.SSHSandboxSyslog
+	}
 	if req.BackupMaxConcurrentJobs != nil {
 		// 0 acts as "use default" in the dispatcher. Cap at 64 — even a
 		// single restic chain at 8 cores tops out the IO ceiling well
@@ -1036,6 +1040,7 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 				revert = func(cur *models.ServerSettings) {
 					cur.SSHSandboxMode = before.SSHSandboxMode
 					cur.DefaultNspawnImageVersion = before.DefaultNspawnImageVersion
+					cur.SSHSandboxSyslog = before.SSHSandboxSyslog
 				}
 			}
 			go h.dispatchReverting(*call, "agent set_ssh_sandbox_mode failed", revert)

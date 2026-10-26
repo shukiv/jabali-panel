@@ -42,7 +42,15 @@ const (
 
 	modeBubblewrap = "bubblewrap"
 	modeNspawn     = "nspawn"
+
+	// sandboxLogSocket is journald's syslog socket (/dev/log links to it).
+	sandboxLogSocket = "/run/systemd/journal/dev-log"
 )
+
+// syslogFlagFile, holding "on", puts the system log socket in the jail
+// (ADR-0177): the admin's opt-in, written by system.set_ssh_sandbox_mode.
+// A var for tests.
+var syslogFlagFile = "/etc/jabali/ssh-sandbox-syslog"
 
 func main() {
 	if err := run(); err != nil {
@@ -106,6 +114,18 @@ func execArgvDirect(argv []string) error {
 		bin = resolved
 	}
 	return syscall.Exec(bin, argv, os.Environ())
+}
+
+// sandboxSyslogOn reports whether the admin opted in to the log socket: the
+// flag file is a regular file holding "on". Anything else, a read error
+// included, is off.
+func sandboxSyslogOn() bool {
+	fi, err := os.Lstat(syslogFlagFile)
+	if err != nil || !fi.Mode().IsRegular() {
+		return false
+	}
+	raw, err := os.ReadFile(syslogFlagFile)
+	return err == nil && strings.TrimSpace(string(raw)) == "on"
 }
 
 // readMode pulls the single-line mode from /etc/jabali/ssh-sandbox-mode.
@@ -189,7 +209,7 @@ func dispatchBubblewrap(execArgv []string) error {
 	if inner == nil {
 		inner = interactiveInner(shell, os.Args[1:])
 	}
-	argv := buildBwrapArgv(name, home, passwdFD, groupFD, shell, inner)
+	argv := buildBwrapArgv(name, home, passwdFD, groupFD, shell, sandboxSyslogOn(), inner)
 
 	err = syscall.Exec(bwrap, argv, sandboxBwrapEnv())
 	// Exec only returns on failure. Reference keepAlive past the exec so
@@ -203,7 +223,8 @@ func dispatchBubblewrap(execArgv []string) error {
 // sshd-forwarded command (`<shell> -c "<cmd>"`), or — for a cron/run-now
 // invocation (GH #1458) — the validated cron argv run directly with no shell.
 // The caller computes `inner`; buildBwrapArgv only assembles the jail around it.
-func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, inner []string) []string {
+// syslog puts the system log socket at /dev/log (ADR-0177).
+func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, syslog bool, inner []string) []string {
 	argv := []string{
 		"bwrap",
 		"--ro-bind", "/usr", "/usr",
@@ -273,6 +294,16 @@ func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, 
 		// own ACL credential (t_<user>, GH #1016) and reaches only its keys.
 		// The socket's group ACL (jabali-redis-clients) still applies.
 		"--ro-bind-try", "/run/redis/redis.sock", "/run/redis/redis.sock",
+	}
+	if syslog {
+		// ADR-0177, the admin's opt-in: journald's syslog socket at /dev/log,
+		// so syslog() from jailed PHP (PHP Defense's incident lines) reaches
+		// the journal. Only the socket; journald stamps each line with the
+		// sender's uid, which the incident reader trusts (GH #2262), not the
+		// text. After --dev, or the fresh /dev would hide it.
+		argv = append(argv, "--ro-bind-try", sandboxLogSocket, "/dev/log")
+	}
+	argv = append(argv,
 		"--bind", home, home,
 		"--chdir", home,
 		// Isolate everything, then re-share only the network so egress
@@ -289,9 +320,9 @@ func buildBwrapArgv(name, home string, passwdFD, groupFD uintptr, shell string, 
 		"--setenv", "SHELL", shell,
 		// Per-user CLI php wrapper first so `php`/Composer/wp-cli use the
 		// user's pinned PHP version (GH #184), then the normal dirs.
-		"--setenv", "PATH", home + "/.jabali/bin:/usr/local/bin:/usr/bin:/bin",
+		"--setenv", "PATH", home+"/.jabali/bin:/usr/local/bin:/usr/bin:/bin",
 		"--setenv", "TERM", envOr("TERM", "xterm"),
-	}
+	)
 	if lang := os.Getenv("LANG"); lang != "" {
 		argv = append(argv, "--setenv", "LANG", lang)
 	}

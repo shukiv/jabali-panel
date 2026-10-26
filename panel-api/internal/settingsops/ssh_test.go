@@ -64,10 +64,27 @@ func TestSSHEffects_Sandbox_Wire(t *testing.T) {
 		Params: map[string]any{
 			"mode":          "nspawn",
 			"default_image": "debian-12",
+			"syslog":        false,
 		},
 		Timeout: 30 * time.Second,
 	}, plan.Sandbox.Call)
 	require.True(t, plan.Sandbox.RevertOnFailure, "a sandbox mode change must revert on failure (AC5)")
+}
+
+// ADR-0177: turning the sandbox log socket on is a sandbox change of its own,
+// sent with the rest of the sandbox wire and reverted on a failed apply.
+func TestSSHEffects_Sandbox_SyslogOnlyChangeFires(t *testing.T) {
+	before := &models.ServerSettings{SSHSandboxMode: "bubblewrap", DefaultNspawnImageVersion: "debian-13-v1"}
+	after := &models.ServerSettings{SSHSandboxMode: "bubblewrap", DefaultNspawnImageVersion: "debian-13-v1", SSHSandboxSyslog: true}
+	plan := SSHEffects(before, after, SSHTouched{})
+
+	require.Equal(t, Changed, plan.Sandbox.Kind)
+	require.Equal(t, map[string]any{
+		"mode":          "bubblewrap",
+		"default_image": "debian-13-v1",
+		"syslog":        true,
+	}, plan.Sandbox.Call.Params)
+	require.True(t, plan.Sandbox.RevertOnFailure)
 }
 
 func TestSSHEffects_Sandbox_ImageOnlyChangeFires(t *testing.T) {

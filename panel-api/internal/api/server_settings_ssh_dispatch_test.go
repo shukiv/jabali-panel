@@ -74,6 +74,7 @@ func TestServerSettingsPatch_SSHSandbox_Wire(t *testing.T) {
 		require.Equal(t, map[string]any{
 			"mode":          "nspawn",
 			"default_image": "debian-12",
+			"syslog":        false,
 		}, moduleCallParams(t, m, "system.set_ssh_sandbox_mode"))
 	})
 	t.Run("image change alone fires", func(t *testing.T) {
@@ -82,6 +83,17 @@ func TestServerSettingsPatch_SSHSandbox_Wire(t *testing.T) {
 		require.Equal(t, map[string]any{
 			"mode":          "nspawn",
 			"default_image": "debian-13",
+			"syslog":        false,
+		}, moduleCallParams(t, m, "system.set_ssh_sandbox_mode"))
+	})
+	// ADR-0177: the log-socket opt-in alone fires the sandbox verb with it on.
+	t.Run("syslog opt-in alone fires", func(t *testing.T) {
+		existing := &models.ServerSettings{ID: 1, SSHPort: 22, SSHSandboxMode: "bubblewrap", DefaultNspawnImageVersion: "debian-12"}
+		m := patchSettings(t, existing, map[string]any{"ssh_sandbox_syslog": true}, "system.set_ssh_sandbox_mode")
+		require.Equal(t, map[string]any{
+			"mode":          "bubblewrap",
+			"default_image": "debian-12",
+			"syslog":        true,
 		}, moduleCallParams(t, m, "system.set_ssh_sandbox_mode"))
 	})
 	// The value-diff semantic: re-submitting the same sandbox mode does NOT fire
