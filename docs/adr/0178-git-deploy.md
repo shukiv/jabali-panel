@@ -77,7 +77,9 @@ way to make the server connect to an address of the user's choosing.
    rebuilt from the checked host, so the pin is the entry git looks up. A name
    that changes its answer after the check, or a redirect, can't move the
    connection. Errors show git's own `fatal:` line, never what the remote
-   server printed.
+   server printed. Both settings are newer than some git releases, and an older
+   git ignores them without a word, so the agent refuses a git older than
+   2.37. Debian 13 ships 2.47 and Ubuntu 24.04 2.43.
 
 ## Next parts
 

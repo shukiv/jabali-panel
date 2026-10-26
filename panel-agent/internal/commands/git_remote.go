@@ -328,6 +328,35 @@ func gitPinHost(ctx context.Context, host string) (string, error) {
 	return hostname + ":" + port + ":" + addr, nil
 }
 
+// gitMinMajor and gitMinMinor are the oldest git the agent runs: 2.37 added
+// http.curloptResolve (2.32 GIT_CONFIG_GLOBAL). An older git ignores both
+// without a word, so it would neither pin the address nor skip the user's
+// config.
+const gitMinMajor, gitMinMinor = 2, 37
+
+// gitVersionOutput runs `git --version`. A var so tests can name a version.
+var gitVersionOutput = func(ctx context.Context, gitBin string) (string, error) {
+	out, err := exec.CommandContext(ctx, gitBin, "--version").Output()
+	return string(out), err
+}
+
+var gitVersionRE = regexp.MustCompile(`^git version (\d+)\.(\d+)`)
+
+// gitCheckVersion refuses a git older than gitMinMajor.gitMinMinor.
+func gitCheckVersion(ctx context.Context, gitBin string) error {
+	out, err := gitVersionOutput(ctx, gitBin)
+	m := gitVersionRE.FindStringSubmatch(strings.TrimSpace(out))
+	if err != nil || m == nil {
+		return errors.New("could not tell which git the server has")
+	}
+	major, _ := strconv.Atoi(m[1])
+	minor, _ := strconv.Atoi(m[2])
+	if major < gitMinMajor || (major == gitMinMajor && minor < gitMinMinor) {
+		return fmt.Errorf("git %d.%d on this server is too old for Git deploy: it needs %d.%d or newer", major, minor, gitMinMajor, gitMinMinor)
+	}
+	return nil
+}
+
 // gitNetArgs pin the connection to the checked address and keep git on it:
 // no redirects, which could lead to another host, and no proxy. A stalled
 // server fails the call instead of holding it to the unit's cap.
@@ -488,6 +517,9 @@ func gitLsRemoteHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	gitBin, err := exec.LookPath("git")
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "git is not installed on the server"}
+	}
+	if err := gitCheckVersion(ctx, gitBin); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: err.Error()}
 	}
 	resolve, err := gitPinHost(ctx, host)
 	if err != nil {

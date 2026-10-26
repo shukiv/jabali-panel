@@ -593,3 +593,47 @@ func TestGitRemote_PanelContract(t *testing.T) {
 		}
 	}
 }
+
+func TestGitCheckVersion(t *testing.T) {
+	prev := gitVersionOutput
+	t.Cleanup(func() { gitVersionOutput = prev })
+	for out, ok := range map[string]bool{
+		"git version 2.47.3\n":    true,
+		"git version 2.43.0\n":    true,
+		"git version 2.37.0\n":    true,
+		"git version 3.0.1\n":     true,
+		"git version 2.36.6\n":    false,
+		"git version 2.34.1\n":    false,
+		"git version 1.99.9\n":    false,
+		"something else entirely": false,
+	} {
+		gitVersionOutput = func(context.Context, string) (string, error) { return out, nil }
+		if err := gitCheckVersion(context.Background(), "git"); (err == nil) != ok {
+			t.Errorf("%q: err = %v, want ok=%v", out, err, ok)
+		}
+	}
+}
+
+// An old git ignores http.curloptResolve and GIT_CONFIG_GLOBAL without a
+// word, so the agent refuses it before any credential file or unit exists.
+func TestGitLsRemoteHandler_RefusesAnOldGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git on PATH")
+	}
+	osUser, home := newGitHost(t)
+	prev := gitVersionOutput
+	gitVersionOutput = func(context.Context, string) (string, error) { return "git version 2.34.1\n", nil }
+	t.Cleanup(func() { gitVersionOutput = prev })
+	f := &gitExecFake{}
+	f.install(t)
+	_, err := lsRemote(t, gitLsRemoteParams{OSUser: osUser, RepoURL: "https://github.com/a/b.git", Token: testGitToken})
+	if agentCode(t, err) != agentwire.CodeFailedPrecondition || !strings.Contains(err.Error(), "too old") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.argv != nil {
+		t.Errorf("ran %q", f.argv)
+	}
+	if _, serr := os.Lstat(filepath.Join(home, ".jabali-git")); !os.IsNotExist(serr) {
+		t.Errorf("wrote a credential directory (%v)", serr)
+	}
+}
