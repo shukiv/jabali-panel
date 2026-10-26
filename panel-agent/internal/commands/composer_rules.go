@@ -14,7 +14,8 @@ import (
 // Composer runs git, unzip and composer.json scripts through proc_open, which
 // 00-base.rules bans for every PHP, so in enforce mode a run stops at the first
 // download. A run loads its own copy of active.rules without the exec-family
-// bans, built like a GH #1701 pool copy. Every other rule stays.
+// bans and the phpinfo ban (composerPHPDefenseLifted), built like a GH #1701
+// pool copy. Every other rule stays.
 //
 // The copy also logs to PHP's error log instead of syslog. Runs execute in the
 // SSH sandbox, where /run is a fresh tmpfs and /dev/log leads nowhere, so a
@@ -36,15 +37,24 @@ const composerPHPDefenseIniName = "90-jabali-composer.ini"
 // phpDefenseLogMediaRE matches the log_media directive 00-base.rules sets.
 var phpDefenseLogMediaRE = regexp.MustCompile(`^sp\.log_media\("[a-z]+"\);\s*$`)
 
-// renderComposerPHPDefenseRules is active.rules without the exec-family bans,
-// logging to PHP's error log.
+// composerPHPDefenseLifted reports whether a Composer run's copy lifts the
+// ban on f: the exec family, which Composer runs git, unzip and scripts
+// through, and phpinfo, which Symfony Process calls before starting any
+// process to learn whether PHP was built with sigchild support (seen on a
+// test server: every run stopped there, before its first download).
+func composerPHPDefenseLifted(f string) bool {
+	return phpDefenseExecFunctions[f] || f == "phpinfo"
+}
+
+// renderComposerPHPDefenseRules is active.rules without the bans Composer
+// trips over, logging to PHP's error log.
 func renderComposerPHPDefenseRules(active []byte) []byte {
 	var b bytes.Buffer
 	b.WriteString("# Jabali PHP Defense rules for panel-started Composer runs -- RENDERED by the agent, do not edit.\n")
-	b.WriteString("# A copy of active.rules without the exec-family bans, logging to PHP's\n")
-	b.WriteString("# error log (ADR-0176). Rebuilt before every run.\n")
+	b.WriteString("# A copy of active.rules without the exec-family and phpinfo bans, logging to\n")
+	b.WriteString("# PHP's error log (ADR-0176). Rebuilt before every run.\n")
 	for _, line := range strings.Split(strings.TrimSuffix(string(active), "\n"), "\n") {
-		if m := phpDefenseDropLineRE.FindStringSubmatch(line); m != nil && phpDefenseExecFunctions[m[1]] {
+		if m := phpDefenseDropLineRE.FindStringSubmatch(line); m != nil && composerPHPDefenseLifted(m[1]) {
 			b.WriteString("# allowed for Composer runs: " + line + "\n")
 			continue
 		}

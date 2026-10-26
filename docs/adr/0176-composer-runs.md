@@ -56,7 +56,11 @@ Two things found on a test server shaped the design:
    bans.** Before each run the agent writes
    `/etc/jabali/snuffleupagus/composer.rules`: `active.rules` with the seven
    exec-family bans (system, exec, shell_exec, passthru, popen, proc_open,
-   pcntl_exec) commented out, as a GH #1701 pool copy does. It also switches
+   pcntl_exec) and the phpinfo ban commented out, as a GH #1701 pool copy does.
+   Symfony Process calls `phpinfo()` before it starts any process, to learn
+   whether PHP was built with sigchild support. On a test server in enforce
+   mode every run stopped there, before its first download, and Composer
+   exited 0 with no output. The copy also switches
    `sp.log_media` from syslog to php, so a block lands in the run's own log.
    Every other rule stays. An ini in `/etc/jabali/snuffleupagus/composer.d/`
    points `sp.configuration_file` at the copy. The run sets
@@ -78,6 +82,14 @@ Two things found on a test server shaped the design:
    `hosting_packages.composer_enabled`, default 0. It lifts the exec bans for
    the tenant's own code, so like tenant Docker a user with no package is
    denied (an exception to GH #282). One run at a time per domain.
+
+   A composer.json script can run any command, so the entitlement amounts to
+   running commands in the user's SSH sandbox. Grant it as you would SSH
+   access. It allows less than `php_exec_enabled`, which lifts the same bans
+   for the web pool, outside the sandbox.
+
+   The agent runs a run only as a hosting user (uid 1000–59999), never as root
+   or a system account, because the sandbox never jails uid 0 (GH #658).
 7. **The panel collects results.** A read of a running run asks the agent, and
    a reconciler pass collects runs nobody reads, so no unit stays loaded. A run
    whose unit is gone before the panel saw it finish is marked failed.
@@ -85,8 +97,8 @@ Two things found on a test server shaped the design:
 ## Consequences
 
 - A tenant can now run `exec` and its family from their own composer.json
-  scripts, but only inside the sandbox, as their own user, and only when
-  their package allows Composer.
+  scripts, and call `phpinfo()`, but only inside the sandbox, as their own
+  user, and only when their package allows Composer.
 - PHP Defense blocks in cron and SSH PHP still don't reach the incidents list,
   because of the sandbox's missing `/dev/log`. That is a separate change to
   the sandbox.

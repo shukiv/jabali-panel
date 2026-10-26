@@ -449,9 +449,12 @@ func TestRenderComposerPHPDefenseRules(t *testing.T) {
 			t.Errorf("%s is still banned", f)
 		}
 	}
+	// Symfony Process calls phpinfo() before it starts any process.
+	if !strings.Contains(got, `# allowed for Composer runs: sp.disable_function.function("phpinfo").drop().simulation();`) {
+		t.Error("phpinfo is still banned")
+	}
 	for _, keep := range []string{
 		`sp.disable_function.function("assert").drop();`,
-		`sp.disable_function.function("phpinfo").drop().simulation();`,
 		`sp.harden_random.enable();`,
 		`sp.log_media("php");`,
 	} {
