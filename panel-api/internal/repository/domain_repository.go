@@ -49,7 +49,9 @@ type DomainRepository interface {
 	RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix, newPrefix string) (int64, error)
 	// TransferOwner reassigns a domain to a new owner and repoints its docroot
 	// (GH #1238 owner-change). Dedicated method: the Update allowlist excludes
-	// user_id, so a full-model Update would silently drop the transfer.
+	// user_id, so a full-model Update would silently drop the transfer. It
+	// deletes the domain's Git repository settings in the same transaction:
+	// they hold the old owner's token (GH #2277).
 	TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error
 	// Rename changes a domain's name and doc_root together (GH #1579 domain
 	// rename). Dedicated setter: the generic Update allowlist includes name, but
@@ -460,10 +462,16 @@ func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix
 }
 
 func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error {
-	return r.db.WithContext(ctx).
-		Model(&models.Domain{}).
-		Where("id = ?", domainID).
-		Updates(map[string]any{"user_id": newUserID, "doc_root": newDocRoot}).Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Domain{}).
+			Where("id = ?", domainID).
+			Updates(map[string]any{"user_id": newUserID, "doc_root": newDocRoot}).Error; err != nil {
+			return err
+		}
+		// GH #2277: the domain's Git repository settings hold the old owner's
+		// access token; they don't pass to the new owner.
+		return tx.Where("domain_id = ?", domainID).Delete(&models.DomainGitRepo{}).Error
+	})
 }
 
 func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {

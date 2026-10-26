@@ -335,3 +335,43 @@ func TestDomainGit_BranchesUseTheStoredSettings(t *testing.T) {
 		t.Errorf("ls_remote request = %+v", got)
 	}
 }
+
+// A domain that changed owner (GH #1238) never hands the previous owner's
+// settings or token to the new owner: the row is forgotten, and saving the
+// same host again sends no token.
+func TestDomainGit_PreviousOwnersSettingsAreForgotten(t *testing.T) {
+	e := newGitTestEnv(t)
+	sealed, err := e.key.Seal([]byte(gitTestToken))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.repos.rows["d1"] = &models.DomainGitRepo{
+		DomainID: "d1", UserID: "u-previous", RepoURL: "https://gitlab.com/acme/shop.git", Branch: "main", TokenEnc: sealed,
+	}
+	if code, out, _ := e.do(t, http.MethodGet, "/domains/d1/git", ""); code != http.StatusOK || out["configured"] != false || out["has_token"] != false {
+		t.Fatalf("GET = %d %v", code, out)
+	}
+	if _, ok := e.repos.rows["d1"]; ok {
+		t.Fatal("the previous owner's settings are still stored")
+	}
+
+	e.repos.rows["d1"] = &models.DomainGitRepo{
+		DomainID: "d1", UserID: "u-previous", RepoURL: "https://gitlab.com/acme/shop.git", Branch: "main", TokenEnc: sealed,
+	}
+	if code, out, _ := e.do(t, http.MethodGet, "/domains/d1/git/branches", ""); code != http.StatusNotFound || out["error"] != "git_not_configured" {
+		t.Errorf("branches = %d %v", code, out)
+	}
+	e.repos.rows["d1"] = &models.DomainGitRepo{
+		DomainID: "d1", UserID: "u-previous", RepoURL: "https://gitlab.com/acme/shop.git", Branch: "main", TokenEnc: sealed,
+	}
+	code, out, raw := e.do(t, http.MethodPut, "/domains/d1/git", `{"repo_url":"https://gitlab.com/acme/shop.git"}`)
+	if code != http.StatusOK || out["has_token"] != false {
+		t.Fatalf("PUT = %d %s", code, raw)
+	}
+	if got := e.lastLsRemote(t); got.Token != "" {
+		t.Errorf("the previous owner's token went to the agent: %+v", got)
+	}
+	if row := e.repos.rows["d1"]; row.UserID != "u-alice" || row.TokenEnc != nil {
+		t.Errorf("stored = %+v", row)
+	}
+}

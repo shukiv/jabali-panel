@@ -164,14 +164,26 @@ func newDomainGitView(row *models.DomainGitRepo) domainGitView {
 
 // stored loads the domain's settings; nil when it has none.
 func (h *domainGitHandler) stored(c *gin.Context, o *gitOwner) (*models.DomainGitRepo, bool) {
-	row, err := h.cfg.Repos.Get(c.Request.Context(), o.domain.ID)
+	ctx := c.Request.Context()
+	row, err := h.cfg.Repos.Get(ctx, o.domain.ID)
 	if errors.Is(err, repository.ErrNotFound) {
 		return nil, true
 	}
 	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "git: load the settings", "domain", o.domain.ID, "error", err)
+		slog.ErrorContext(ctx, "git: load the settings", "domain", o.domain.ID, "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return nil, false
+	}
+	if row.UserID != o.domain.UserID {
+		// The domain changed owner (GH #1238) and the settings, token
+		// included, are the previous owner's. TransferOwner deletes them;
+		// this covers a row left behind any other way.
+		if derr := h.cfg.Repos.Delete(ctx, o.domain.ID); derr != nil && !errors.Is(derr, repository.ErrNotFound) {
+			slog.ErrorContext(ctx, "git: delete the previous owner's settings", "domain", o.domain.ID, "error", derr)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return nil, false
+		}
+		return nil, true
 	}
 	return row, true
 }
