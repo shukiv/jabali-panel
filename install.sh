@@ -10930,8 +10930,14 @@ install_crowdsec_appsec() {
   #    and misses ~95-98% of brute-force attempts. journalctl OR-combines
   #    repeated identifier filters at the same field, so listing both
   #    captures full coverage. type: syslog so crowdsecurity/sshd parser fires.
+  #    _UID=0 (ANDed with the identifiers, a different field): only lines
+  #    the SSH server itself writes count. Any process that can reach the
+  #    syslog socket can set SYSLOG_IDENTIFIER; journald takes _UID from the
+  #    kernel. OpenSSH logs every auth event from its root monitor, the
+  #    unprivileged pre-auth child (sshd-auth on OpenSSH 10) included.
+  #    The provision_new_software converger carries the same content.
   local sshd_acquis_file="$acquis_dir/jabali-sshd.yaml"
-  local desired_sshd_acquis=$'# Managed by jabali install.sh — M26 SSH brute-force detection.\n# Debian 13 OpenSSH split mode: listener = sshd, per-connection worker\n# = sshd-session (where Failed/Invalid/preauth events live). Repeated\n# SYSLOG_IDENTIFIER= entries are OR-combined by journalctl, so both\n# identifiers must be listed to catch every brute-force attempt.\nsource: journalctl\njournalctl_filter:\n  - "SYSLOG_IDENTIFIER=sshd"\n  - "SYSLOG_IDENTIFIER=sshd-session"\nlabels:\n  type: syslog\n'
+  local desired_sshd_acquis=$'# Managed by jabali install.sh — M26 SSH brute-force detection.\n# Debian 13 OpenSSH split mode: listener = sshd, per-connection worker\n# = sshd-session (where Failed/Invalid/preauth events live). Repeated\n# SYSLOG_IDENTIFIER= entries are OR-combined by journalctl, so both\n# identifiers must be listed to catch every brute-force attempt.\n# _UID=0 is ANDed with them: only lines the SSH server (root) writes\n# count, since any process can set SYSLOG_IDENTIFIER.\nsource: journalctl\njournalctl_filter:\n  - "_UID=0"\n  - "SYSLOG_IDENTIFIER=sshd"\n  - "SYSLOG_IDENTIFIER=sshd-session"\nlabels:\n  type: syslog\n'
   if [[ ! -f "$sshd_acquis_file" ]] || ! cmp -s <(printf '%s' "$desired_sshd_acquis") "$sshd_acquis_file"; then
     _log "writing $sshd_acquis_file"
     local tmp3
@@ -10939,6 +10945,8 @@ install_crowdsec_appsec() {
     printf '%s' "$desired_sshd_acquis" >"$tmp3"
     install -m 0644 -o root -g root "$tmp3" "$sshd_acquis_file"
     rm -f "$tmp3"
+    # CrowdSec reads acquis files only at start and reload.
+    _cs_dirty=1
   fi
 
   # Remove auto-generated setup.*.yaml acquis files — they duplicate jabali's
@@ -17121,14 +17129,17 @@ provision_new_software() {
   #   - legacy _SYSTEMD_UNIT=ssh filter (pre-M26 unit-name match), OR
   #   - sshd-only filter missing sshd-session (early-M26: Debian 13 OpenSSH
   #     split mode logs per-connection workers as sshd-session, so a
-  #     sshd-only filter misses ~95-98% of brute-force log lines).
+  #     sshd-only filter misses ~95-98% of brute-force log lines), OR
+  #   - no _UID=0 term (only lines the SSH server itself writes count; see
+  #     install_crowdsec_appsec step 6, which carries the same content).
   # The install_crowdsec_appsec call in main() writes the correct filter
   # on fresh installs; this block patches existing hosts on jabali update.
   local _sshd_acquis="/etc/crowdsec/acquis.d/jabali-sshd.yaml"
   if [[ -f "$_sshd_acquis" ]] && \
      { grep -q "_SYSTEMD_UNIT=ssh" "$_sshd_acquis" || \
-       ! grep -q "SYSLOG_IDENTIFIER=sshd-session" "$_sshd_acquis"; }; then
-    _log "crowdsec: updating sshd acquis filter (sshd + sshd-session)"
+       ! grep -q "SYSLOG_IDENTIFIER=sshd-session" "$_sshd_acquis" || \
+       ! grep -q '"_UID=0"' "$_sshd_acquis"; }; then
+    _log "crowdsec: updating sshd acquis filter (root sshd + sshd-session)"
     local _tmp_acquis
     _tmp_acquis="$(mktemp --tmpdir jabali-sshd-acquis.XXXXXX)"
     cat >"$_tmp_acquis" <<'EOF'
@@ -17137,8 +17148,11 @@ provision_new_software() {
 # = sshd-session (where Failed/Invalid/preauth events live). Repeated
 # SYSLOG_IDENTIFIER= entries are OR-combined by journalctl, so both
 # identifiers must be listed to catch every brute-force attempt.
+# _UID=0 is ANDed with them: only lines the SSH server (root) writes
+# count, since any process can set SYSLOG_IDENTIFIER.
 source: journalctl
 journalctl_filter:
+  - "_UID=0"
   - "SYSLOG_IDENTIFIER=sshd"
   - "SYSLOG_IDENTIFIER=sshd-session"
 labels:
@@ -17147,7 +17161,7 @@ EOF
     install -m 0644 -o root -g root "$_tmp_acquis" "$_sshd_acquis"
     rm -f "$_tmp_acquis"
     systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
-    _ok "crowdsec sshd acquis updated — SSH brute-force detection restored"
+    _ok "crowdsec sshd acquis updated — counts only the SSH server's own lines"
   fi
 
   # M33 malware stack — re-run on every update so drop-in conf changes
