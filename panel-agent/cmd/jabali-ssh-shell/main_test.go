@@ -73,7 +73,7 @@ func TestBindDataFD_DeliversContentThenEOF(t *testing.T) {
 
 func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 	// interactive
-	argv := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", interactiveInner("/bin/bash", nil))
+	argv := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", false, interactiveInner("/bin/bash", nil))
 	joined := strings.Join(argv, " ")
 	for _, must := range []string{
 		"--bind /home/alice /home/alice",
@@ -102,7 +102,7 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 		t.Errorf("interactive should end in `bash -l`, got %v", argv[len(argv)-2:])
 	}
 	// command mode (scp/git/ssh host cmd)
-	argv2 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", interactiveInner("/bin/bash", []string{"-c", "scp -t /home/alice"}))
+	argv2 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", false, interactiveInner("/bin/bash", []string{"-c", "scp -t /home/alice"}))
 	tail := argv2[len(argv2)-3:]
 	if tail[0] != "/bin/bash" || tail[1] != "-c" || tail[2] != "scp -t /home/alice" {
 		t.Errorf("command mode should forward `-c`, got %v", tail)
@@ -110,7 +110,7 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 	// GH #1458: --exec mode runs the cron argv DIRECTLY inside the jail — no
 	// shell, no `-c` — so the same isolation flags wrap a python/php/node cron.
 	execInner := []string{"python3", "/home/alice/site/manage.py", "migrate"}
-	argv3 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", execInner)
+	argv3 := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", false, execInner)
 	if !strings.Contains(strings.Join(argv3, " "), "--unshare-all") {
 		t.Error("exec mode must still carry the isolation flags")
 	}
@@ -120,6 +120,63 @@ func TestBuildBwrapArgv_ForwardsCommandAndIsolates(t *testing.T) {
 	}
 	if argv3[len(argv3)-4] != "--" {
 		t.Errorf("exec argv must sit directly after bwrap `--`, got %v", argv3[len(argv3)-4:])
+	}
+}
+
+// The system log socket is in the jail only when the admin opted in
+// (ADR-0177): then PHP Defense blocks in cron and SSH PHP reach the journal.
+// Only the socket is bound, after the fresh /dev, never the journal directory.
+func TestBuildBwrapArgv_SyslogOnlyWhenOptedIn(t *testing.T) {
+	off := strings.Join(buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", false, []string{"true"}), " ")
+	if strings.Contains(off, "/dev/log") || strings.Contains(off, "/run/systemd") {
+		t.Errorf("the log socket is in the jail without the opt-in: %s", off)
+	}
+	argv := buildBwrapArgv("alice", "/home/alice", 7, 8, "/bin/bash", true, []string{"true"})
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--ro-bind-try /run/systemd/journal/dev-log /dev/log") {
+		t.Fatalf("opted in, yet no log socket: %s", joined)
+	}
+	dev, sock := -1, -1
+	for i, a := range argv {
+		if a == "--dev" && dev < 0 {
+			dev = i
+		}
+		if a == "/run/systemd/journal/dev-log" {
+			sock = i
+		}
+		if a == "/run/systemd/journal" || a == "/run/systemd" {
+			t.Errorf("argv binds the directory %s: %s", a, joined)
+		}
+	}
+	if sock < dev {
+		t.Errorf("the socket bind must come after --dev /dev, or the fresh /dev hides it: %s", joined)
+	}
+}
+
+func TestSandboxSyslogOn(t *testing.T) {
+	dir := t.TempDir()
+	old := syslogFlagFile
+	t.Cleanup(func() { syslogFlagFile = old })
+
+	syslogFlagFile = dir + "/missing"
+	if sandboxSyslogOn() {
+		t.Error("no flag file, yet on")
+	}
+	syslogFlagFile = dir + "/flag"
+	for content, want := range map[string]bool{"on\n": true, "on": true, "": false, "off\n": false, "1\n": false} {
+		if err := os.WriteFile(syslogFlagFile, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := sandboxSyslogOn(); got != want {
+			t.Errorf("flag %q: on = %v, want %v", content, got, want)
+		}
+	}
+	syslogFlagFile = dir + "/adir"
+	if err := os.Mkdir(syslogFlagFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if sandboxSyslogOn() {
+		t.Error("a directory at the flag path counts as on")
 	}
 }
 

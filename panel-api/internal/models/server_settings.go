@@ -325,8 +325,8 @@ type ServerSettings struct {
 	// Secret is plaintext-at-rest (convention matches kratos_admin_secret,
 	// vapid_private_key, smtp_relay_password) but WRITE-ONLY at the API
 	// edge — GET responses NEVER include the secret.
-	CrowdSecCaptchaEnabled   bool   `gorm:"column:crowdsec_captcha_enabled;type:boolean;not null;default:false"       json:"crowdsec_captcha_enabled"`
-	CrowdSecCaptchaProvider  string `gorm:"column:crowdsec_captcha_provider;type:varchar(32);not null;default:''"     json:"crowdsec_captcha_provider"`
+	CrowdSecCaptchaEnabled  bool   `gorm:"column:crowdsec_captcha_enabled;type:boolean;not null;default:false"       json:"crowdsec_captcha_enabled"`
+	CrowdSecCaptchaProvider string `gorm:"column:crowdsec_captcha_provider;type:varchar(32);not null;default:''"     json:"crowdsec_captcha_provider"`
 	// site/secret keys are TEXT, not VARCHAR: migration 000301 widened them
 	// off-page to relieve the server_settings row-size ceiling (GH #1766).
 	CrowdSecCaptchaSiteKey   string `gorm:"column:crowdsec_captcha_site_key;type:text;not null;default:''"    json:"crowdsec_captcha_site_key"`
@@ -391,6 +391,11 @@ type ServerSettings struct {
 	// upgrades are an explicit admin action. Format: [a-z0-9-]+ matching
 	// the directory under /var/lib/jabali-nspawn/images/.
 	DefaultNspawnImageVersion string `gorm:"column:default_nspawn_image_version;type:varchar(64);not null;default:'debian-13-v1'" json:"default_nspawn_image_version"`
+	// SSHSandboxSyslog puts journald's syslog socket at /dev/log in the
+	// sandbox (ADR-0177), so PHP Defense blocks in SSH, cron and Composer
+	// PHP reach the incidents list. Off by default; the wrapper reads
+	// /etc/jabali/ssh-sandbox-syslog, written by system.set_ssh_sandbox_mode.
+	SSHSandboxSyslog bool `gorm:"column:ssh_sandbox_syslog;type:tinyint(1);not null;default:0" json:"ssh_sandbox_syslog"`
 
 	// M30 backup-restore retention knobs (migration 000085). Pruning runs
 	// daily via the jabali-backup-retention.timer drop-in; values mirror

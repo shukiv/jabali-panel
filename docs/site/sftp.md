@@ -65,6 +65,10 @@ every connect — no sshd reload needed to switch.
     account's Redis credential (Databases → **Redis access**), and reach only
     its own keys.
     Without a credential, Redis answers `NOAUTH`.
+- Only when the admin turns on **Log PHP Defense blocks from the sandbox**
+  (ADR-0177, off by default): the system log socket at `/dev/log`, so PHP
+  Defense blocks in shell and cron PHP reach the incidents list. The flag is
+  `/etc/jabali/ssh-sandbox-syslog`, read on every connect like the mode.
 
 ### What it hides
 
