@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssrfguard"
 )
 
 // ADR-0095 decision 8: SSRF protection for migration outbound dials.
@@ -19,15 +21,21 @@ import (
 // resolves to an allowed public IP at validation and to an internal IP
 // when Dial actually fires.
 //
+// Addresses are classified by ssrfguard.CheckIP, the same rules as every
+// other outbound connection a tenant can point somewhere.
+//
 // Default-deny ranges (always blocked regardless of operator override):
-//   - 127.0.0.0/8 loopback
-//   - 169.254.0.0/16 link-local + cloud metadata
-//   - ::1/128 IPv6 loopback
-//   - fe80::/10 IPv6 link-local
+//   - 127.0.0.0/8 loopback, ::1/128 IPv6 loopback
+//   - 169.254.0.0/16 link-local + cloud metadata, fe80::/10 IPv6 link-local
+//   - 0.0.0.0/8 "this network", ::/96 IPv4-compatible IPv6, multicast
 //
 // Soft-deny ranges (blocked unless AllowPrivate=true):
-//   - 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 RFC1918
-//   - fc00::/7 IPv6 ULA
+//   - 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 RFC1918, fc00::/7 IPv6 ULA
+//   - 100.64.0.0/10 CGNAT (Tailscale addresses among them)
+//   - 198.18.0.0/15, 240.0.0.0/4, fec0::/10, 64:ff9b:1::/48
+//
+// A NAT64 (64:ff9b::/96) or 6to4 (2002::/16) address is held to the rule of
+// the IPv4 address it carries.
 
 // HostValidator captures the AllowPrivate toggle and the resolved set
 // of IPs for one hostname. The dialer reuses these to assert peer-IP
@@ -132,24 +140,12 @@ func DialTCP(ctx context.Context, host string, port int, allowPrivate bool, time
 	return d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
 }
 
+// checkIP applies ssrfguard.CheckIP. An address the override would admit
+// says how to admit it.
 func checkIP(ip net.IP, allowPrivate bool) error {
-	if ip == nil {
-		return errors.New("nil IP")
+	err := ssrfguard.CheckIP(ip, allowPrivate)
+	if err != nil && !allowPrivate && ssrfguard.CheckIP(ip, true) == nil {
+		return fmt.Errorf("%w; flip migration_allow_private_hosts to override", err)
 	}
-	if ip.IsLoopback() {
-		return errors.New("loopback rejected")
-	}
-	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-		return errors.New("link-local rejected (cloud metadata blocked)")
-	}
-	if ip.IsUnspecified() {
-		return errors.New("0.0.0.0 / :: rejected")
-	}
-	if ip.IsMulticast() {
-		return errors.New("multicast rejected")
-	}
-	if !allowPrivate && ip.IsPrivate() {
-		return errors.New("private (RFC1918 / ULA) rejected; flip migration_allow_private_hosts to override")
-	}
-	return nil
+	return err
 }

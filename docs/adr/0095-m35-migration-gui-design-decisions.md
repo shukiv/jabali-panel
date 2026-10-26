@@ -264,6 +264,14 @@ operator-exposed in the admin UI. Cloud metadata service access
 via this path = critical sev. RFC1918 may be legit for
 internal-network migrations but the default must be safe.
 
+**Amended 2026-10-26.** The guard classifies addresses with
+`ssrfguard.CheckIP`, the panel's shared outbound check. Also always
+refused: 0.0.0.0/8, ::/96 and multicast. Also refused unless the
+override is on: 100.64.0.0/10 CGNAT (Tailscale addresses among
+them), 198.18.0.0/15, 240.0.0.0/4, fec0::/10 and 64:ff9b:1::/48. A
+NAT64 or 6to4 address is held to the rule of the IPv4 address it
+carries.
+
 **Cost.** ~1.5 days: helper, dialer integration in every
 outbound caller, setting toggle, runbook entry, tests covering
 each blocked range + rebinding.

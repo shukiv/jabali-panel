@@ -11,10 +11,9 @@
 // legitimately point at an internal host — so the guard is fail-closed per
 // channel, independent of the call site.
 //
-// The IP-classification + rebind-pin logic mirrors the migration SSRF guard
-// (internal/migrate/ssrf.go, ADR-0095 decision 8). It is duplicated here rather
-// than shared so this leaf stays dependency-free and the proven migration path
-// is untouched; the two should be unified into this package in a later cleanup.
+// The migration SSRF guard (internal/migrate/ssrf.go, ADR-0095 decision 8)
+// classifies addresses with CheckIP, so both guards refuse the same ranges.
+// Its resolve and rebind-pin code is still its own.
 package ssrfguard
 
 import (
@@ -164,6 +163,14 @@ func GuardedDialContext(ctx context.Context, network, addr string) (net.Conn, er
 		return nil, err
 	}
 	return v.Dialer().DialContext(ctx, network, v.DialAddr(port))
+}
+
+// CheckIP reports why ip is not a peer an outbound connection may reach, or
+// nil when it may. Loopback, link-local, unspecified, multicast and "this
+// network" addresses are always refused; private, CGNAT and other non-public
+// space only when allowPrivate is false.
+func CheckIP(ip net.IP, allowPrivate bool) error {
+	return checkIP(ip, allowPrivate)
 }
 
 func checkIP(ip net.IP, allowPrivate bool) error {

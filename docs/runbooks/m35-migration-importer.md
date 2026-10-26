@@ -85,18 +85,27 @@ GET /admin/migrations/discover-accounts/:host/:user/size   cache-only lookup (50
 
 Every outbound dial from `internal/migrate/` (discover, secrets push,
 pull-source, account-size probe) is gated by
-`migrate.ValidateHost` + `Dialer.Control`. Default-deny ranges:
+`migrate.ValidateHost` + `Dialer.Control`, which classify addresses
+with `ssrfguard.CheckIP`. Always refused, override or not:
 
-- 127.0.0.0/8 loopback
-- 169.254.0.0/16 link-local (AWS/GCP metadata)
-- 10.0.0.0/8 + 172.16.0.0/12 + 192.168.0.0/16 RFC1918
-- ::1, fc00::/7, fe80::/10 IPv6 equivalents
+- 127.0.0.0/8, ::1 loopback
+- 169.254.0.0/16, fe80::/10 link-local (AWS/GCP metadata)
+- 0.0.0.0/8, ::/96 (IPv4-compatible IPv6), multicast
+
+Refused unless the override is on:
+
+- 10.0.0.0/8 + 172.16.0.0/12 + 192.168.0.0/16 RFC1918, fc00::/7 ULA
+- 100.64.0.0/10 CGNAT, which includes Tailscale addresses
+- 198.18.0.0/15, 240.0.0.0/4, fec0::/10, 64:ff9b:1::/48
+
+A NAT64 (64:ff9b::/96) or 6to4 (2002::/16) address is held to the rule
+of the IPv4 address it carries.
 
 Override:
 ```
 mysql -e "UPDATE server_settings SET migration_allow_private_hosts=1"
 ```
-Restart panel-api after the flip. The DNS-rebinding-protection
+The setting is read on each request; no restart needed. The DNS-rebinding-protection
 peer-IP check still applies — connections to public hostnames whose
 record was swapped for an internal IP between resolve and dial still
 fail.
@@ -223,8 +232,9 @@ migration importer. If you're still seeing this on jabali ≥ 0.2.10,
 re-run the migration with **Retry from scratch** to force a fresh
 DB.
 
-### "ssrf: private (RFC1918 / ULA) rejected"
-Source server is on an internal network. Either:
+### "...rejected; flip migration_allow_private_hosts to override"
+Source server is on an internal network, a VPN such as Tailscale
+(CGNAT, 100.64.0.0/10) or other non-public space. Either:
 - Add a public DNS entry pointing at the source, or
 - Flip the **Allow private IPs** toggle in the Migrations admin
   page (writes `server_settings.migration_allow_private_hosts=1`).
