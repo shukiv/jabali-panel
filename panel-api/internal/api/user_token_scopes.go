@@ -162,6 +162,10 @@ var userScopePrefixes = []areaRule{
 
 	{"/api/v1/cron", "cron"},
 	{"/api/v1/ssh-keys", "ssh"},
+	// GH #2276: a Composer run executes the project's scripts in the user's
+	// SSH sandbox, so it takes the ssh scope. A write:ssh token can already
+	// add a key and open a shell.
+	{"/api/v1/domains/:id/composer", "ssh"},
 
 	{"/api/v1/domains/:id/whois", "domains"},
 	{"/api/v1/domains/:id/acls", "domains"},
