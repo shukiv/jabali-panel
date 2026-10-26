@@ -231,6 +231,15 @@ func TestRefresh_ALiveReleaseIsASuccess(t *testing.T) {
 	if run.State != models.GitDeploySucceeded || len(runs.docRoots) != 1 {
 		t.Errorf("run = %+v, document roots = %+v", run, runs.docRoots)
 	}
+	// A unit lost after its release went live: a success, with no error.
+	ag = &deployAgent{answers: status("gone", liveMarker+testRun+"\n")}
+	run = newTestRun(models.GitDeployKindDeploy)
+	if err := Refresh(context.Background(), ag, &deployRuns{changed: true}, &deploySched{}, run); err != nil {
+		t.Fatal(err)
+	}
+	if run.State != models.GitDeploySucceeded || run.Error != "" {
+		t.Errorf("a lost run whose release went live = %+v", run)
+	}
 	// Another release's line doesn't count.
 	ag = &deployAgent{answers: status("failed", liveMarker+testRelease+"\n")}
 	run = newTestRun(models.GitDeployKindDeploy)

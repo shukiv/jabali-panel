@@ -219,8 +219,8 @@ func Refresh(ctx context.Context, ag agent.AgentInterface, repo repository.Domai
 // its release went live is a success whatever else the unit reported: the
 // site serves that release now, and the document root must follow it.
 func complete(ctx context.Context, ag agent.AgentInterface, repo repository.DomainGitDeploymentRepository, sched Scheduler, run *models.DomainGitDeployment) error {
-	if wentLive(run.Log, run.ReleaseID) {
-		run.State = models.GitDeploySucceeded
+	if wentLive(run.Log, run.ReleaseID) && run.State != models.GitDeploySucceeded {
+		run.State, run.Error = models.GitDeploySucceeded, ""
 	}
 	if run.State == models.GitDeploySucceeded {
 		// Before the run is stored: if this fails, the run stays running and
