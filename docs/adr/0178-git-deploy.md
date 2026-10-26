@@ -68,10 +68,11 @@ way to make the server connect to an address of the user's choosing.
    personal or project token, the token's own username for a GitLab deploy
    token, `x-token-auth` for a Bitbucket repository token.
 6. **The connection goes only where it was checked.** The panel refuses a host
-   that resolves to a loopback, link-local, private or CGNAT address
-   (`ssrfguard`). The agent resolves the host again, once, refuses those
-   addresses and a few more (0.0.0.0/8, 198.18.0.0/15, 240.0.0.0/4, IPv6
-   site-local, and the IPv4 address inside a NAT64 or 6to4 address), and pins
+   that resolves to a loopback, link-local, private, CGNAT or other non-public
+   address (`ssrfguard`): 0.0.0.0/8, 198.18.0.0/15, 240.0.0.0/4, IPv6
+   site-local and IPv4-compatible space, the local-use NAT64 prefix, and a
+   NAT64 or 6to4 address that carries one of those IPv4 addresses. The agent
+   resolves the host again, once, refuses the same addresses, and pins
    git to the address it checked (`http.curloptResolve`) with redirects and
    proxies off (`http.followRedirects=false`, `http.proxy=`). git gets the URL
    rebuilt from the checked host, so the pin is the entry git looks up. A name

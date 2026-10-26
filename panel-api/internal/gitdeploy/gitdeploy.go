@@ -112,8 +112,8 @@ func ValidateBranch(s string) error {
 }
 
 // CheckHost refuses a repository host that resolves to a loopback,
-// link-local, private or CGNAT address (internal/ssrfguard): the server, not
-// the user, connects to it.
+// link-local, private, CGNAT or other non-public address
+// (internal/ssrfguard): the server, not the user, connects to it.
 func CheckHost(ctx context.Context, hostname string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

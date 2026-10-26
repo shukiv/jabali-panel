@@ -234,6 +234,7 @@ func TestGitPinHost(t *testing.T) {
 		"nat64p.example": {"64:ff9b::a00:5"},
 		"6to4p.example":  {"2002:a00:5::1"},
 		"nat64.example":  {"64:ff9b::8c52:7003"},
+		"nat64l.example": {"64:ff9b:1::1"},
 	}
 	prev := gitLookupIP
 	gitLookupIP = func(_ context.Context, _, host string) ([]net.IP, error) {
@@ -261,7 +262,7 @@ func TestGitPinHost(t *testing.T) {
 			t.Errorf("gitPinHost(%q) = %q, %v; want %q", host, got, err, want)
 		}
 	}
-	for _, host := range []string{"rebind.example", "meta.example", "cgnat.example", "local.example", "ula.example", "nope.example", "zero.example", "bench.example", "res.example", "site.example", "compat.example", "nat64p.example", "6to4p.example"} {
+	for _, host := range []string{"rebind.example", "meta.example", "cgnat.example", "local.example", "ula.example", "nope.example", "zero.example", "bench.example", "res.example", "site.example", "compat.example", "nat64p.example", "6to4p.example", "nat64l.example"} {
 		if got, err := gitPinHost(context.Background(), host); err == nil {
 			t.Errorf("gitPinHost(%q) = %q, want a refusal", host, got)
 		}

@@ -250,11 +250,11 @@ func gitAuthArgs(credFile string) []string {
 var gitLookupIP = net.DefaultResolver.LookupIP
 
 // gitBlockedNets are ranges net.IP's own tests leave out: "this network",
-// CGNAT, benchmarking, reserved, and deprecated IPv6 site-local and
-// IPv4-compatible space.
+// CGNAT, benchmarking, reserved, deprecated IPv6 site-local and
+// IPv4-compatible space, and the local-use NAT64 prefix (RFC 8215).
 var gitBlockedNets = func() []*net.IPNet {
 	var nets []*net.IPNet
-	for _, cidr := range []string{"0.0.0.0/8", "100.64.0.0/10", "198.18.0.0/15", "240.0.0.0/4", "fec0::/10", "::/96"} {
+	for _, cidr := range []string{"0.0.0.0/8", "100.64.0.0/10", "198.18.0.0/15", "240.0.0.0/4", "fec0::/10", "::/96", "64:ff9b:1::/48"} {
 		_, n, _ := net.ParseCIDR(cidr)
 		nets = append(nets, n)
 	}
@@ -269,9 +269,10 @@ var (
 	_, git6to4, _  = net.ParseCIDR("2002::/16")
 )
 
-// gitBlockedIP refuses what the panel's ssrfguard refuses, and more: the
-// server connects, so a user must not reach its loopback, link-local
-// (cloud metadata), private or otherwise non-public neighbours through it.
+// gitBlockedIP refuses what the panel's ssrfguard refuses with private hosts
+// not allowed: the server connects, so a user must not reach its loopback,
+// link-local (cloud metadata), private or otherwise non-public neighbours
+// through it.
 func gitBlockedIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsUnspecified() || ip.IsMulticast() || ip.IsPrivate() {
