@@ -1,0 +1,5 @@
+{
+  "os_user": "alice",
+  "domain": "example.com",
+  "docroot": "/home/alice/domains/example.com/app/public"
+}

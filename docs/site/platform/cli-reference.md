@@ -4091,6 +4091,7 @@ jabali package create [flags]
 - `--backup-retention` — retention policy at the cap: reject or prune (empty=reject)
 - `--bw-mb` — bandwidth quota in MB (0=unlimited) (default `0`)
 - `--cgi` — enable CGI
+- `--composer` — let users on this package run Composer for their domains; their composer.json scripts can run commands in their SSH sandbox, so grant it as you would SSH
 - `--cpu` — CPU quota percent across all cores (0=unlimited) (default `0`)
 - `--databases` — max databases (0=unlimited) (default `0`)
 - `--disk-mb` — disk quota in MB (0=unlimited) (default `0`)
@@ -4152,6 +4153,7 @@ jabali package edit <package-id> [flags]
 - `--backup-retention` — retention policy at the cap: reject or prune
 - `--bw-mb` — bandwidth MB (default `0`)
 - `--cgi` — CGI access (true/false)
+- `--composer` — let users on this package run Composer for their domains; their composer.json scripts can run commands in their SSH sandbox, so grant it as you would SSH (true/false)
 - `--cpu` — CPU quota percent (default `0`)
 - `--databases` — max databases (default `0`)
 - `--disk-mb` — disk quota MB (default `0`)

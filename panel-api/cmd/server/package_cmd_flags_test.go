@@ -47,6 +47,7 @@ var packageFieldFlag = map[string]string{
 	"egress_icmp":                      "egress-icmp",          // GH #1798
 	"webmail_enabled":                  "webmail",              // GH #1628
 	"website_sends_email":              "website-mail",         // GH #2056
+	"composer_enabled":                 "composer",             // GH #2276
 	"redis_keys_per_call":              "redis-keys-per-call",  // GH #2165
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",
@@ -445,4 +446,17 @@ func TestPackageCLI_RedisKeysPerCall(t *testing.T) {
 	_, err = applyPackageEditFlags(changedSet("redis-keys-per-call"), p, packageEditFlags{redisKeysPerCall: 50})
 	require.NoError(t, err)
 	require.ErrorIs(t, packageops.Validate(p), packageops.ErrInvalidRedisKeysPerCall)
+}
+
+// GH #2276: a Composer run executes the user's composer.json scripts, so a
+// new package can't run Composer unless the admin asks, like the REST create.
+func TestPackageCLI_ComposerCreateFlagDefaultsOff(t *testing.T) {
+	create := newPackageCreateCmd()
+	fl := create.Flags().Lookup("composer")
+	require.NotNil(t, fl, "create --composer flag must be registered")
+	require.Equal(t, "false", fl.DefValue, "create --composer must default off (GH #2276)")
+
+	p, err := buildPackageFromCreateFlags(packageCreateFlags{name: "x", webmailEnabled: true, composerEnabled: true})
+	require.NoError(t, err)
+	require.True(t, p.ComposerEnabled, "composerEnabled flows onto the built row")
 }

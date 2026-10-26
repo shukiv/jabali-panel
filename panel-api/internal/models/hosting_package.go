@@ -108,6 +108,14 @@ type HostingPackage struct {
 	// package send through the local mail server only (GH #282).
 	WebsiteSendsEmail bool `gorm:"column:website_sends_email;type:tinyint(1);not null;default:0" json:"website_sends_email"`
 
+	// ComposerEnabled (GH #2276, ADR-0176) lets users on this package run
+	// Composer for their domains from the panel. A run executes the
+	// composer.json's scripts with the exec functions allowed, in the user's
+	// SSH sandbox, so grant it as you would SSH. Off by default, existing
+	// packages included; users with no package can't run Composer (GH #282:
+	// a privileged feature).
+	ComposerEnabled bool `gorm:"column:composer_enabled;type:tinyint(1);not null;default:0" json:"composer_enabled"`
+
 	// RedisKeysPerCall (GH #2165) is how many keys one call of the Redis key
 	// browser API may list (its `limit`) or delete, RedisKeysPerCallMin to
 	// RedisKeysPerCallMax. Unlike the other limits, 0 is not "unlimited": it

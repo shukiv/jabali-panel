@@ -116,6 +116,8 @@ type createPackageRequest struct {
 	// WebsiteSendsEmail (GH #2056): a new package starts with it off, so an
 	// omitted field means off.
 	WebsiteSendsEmail bool `json:"website_sends_email"`
+	// ComposerEnabled (GH #2276): off unless asked, like WebsiteSendsEmail.
+	ComposerEnabled bool `json:"composer_enabled"`
 	// RedisKeysPerCall (GH #2165) is a pointer so an omitted field gets the
 	// default (500) while an explicit 0 is refused, not taken as "unlimited".
 	RedisKeysPerCall   *int   `json:"redis_keys_per_call"`
@@ -167,6 +169,7 @@ type updatePackageRequest struct {
 	EgressICMP         *bool   `json:"egress_icmp"`
 	WebmailEnabled     *bool   `json:"webmail_enabled"`     // GH #1628
 	WebsiteSendsEmail  *bool   `json:"website_sends_email"` // GH #2056
+	ComposerEnabled    *bool   `json:"composer_enabled"`    // GH #2276
 	RedisKeysPerCall   *int    `json:"redis_keys_per_call"` // GH #2165
 	FpmMaxChildrenCap  *uint32 `json:"fpm_max_children_cap"`
 	FpmWorkerMemMb     *uint32 `json:"fpm_worker_mem_mb"`
@@ -296,6 +299,7 @@ func (h *packageHandler) create(c *gin.Context) {
 		// only an explicit false turns it off.
 		WebmailEnabled:     req.WebmailEnabled == nil || *req.WebmailEnabled,
 		WebsiteSendsEmail:  req.WebsiteSendsEmail, // GH #2056: off unless asked
+		ComposerEnabled:    req.ComposerEnabled,   // GH #2276: off unless asked
 		RedisKeysPerCall:   models.RedisKeysPerCallDefault,
 		FpmMaxChildrenCap:  req.FpmMaxChildrenCap,
 		FpmWorkerMemMb:     req.FpmWorkerMemMb,
@@ -463,6 +467,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.WebsiteSendsEmail != nil { // GH #2056
 		pkg.WebsiteSendsEmail = *req.WebsiteSendsEmail
+	}
+	if req.ComposerEnabled != nil { // GH #2276
+		pkg.ComposerEnabled = *req.ComposerEnabled
 	}
 	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
 		pkg.RedisKeysPerCall = *req.RedisKeysPerCall

@@ -1,0 +1,9 @@
+{
+  "run_id": "01JCXMPSRRVN00000000000AB1",
+  "os_user": "alice",
+  "domain": "example.com",
+  "app_dir": "app",
+  "command": "require",
+  "packages": ["monolog/monolog:^3.0", "guzzlehttp/guzzle"],
+  "no_dev": true
+}

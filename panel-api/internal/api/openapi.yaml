@@ -5973,6 +5973,44 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
 
+  /domains/{id}/composer:
+    get:
+      tags: [Composer]
+      summary: Whether the domain's owner may run Composer, where the domain's composer.json files are, and the run in progress (GH #2276)
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/composer/runs:
+    get:
+      tags: [Composer]
+      summary: The domain's Composer runs, newest first, without their logs
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Composer]
+      summary: Start a Composer run (install, update, require, remove, audit, outdated, show, validate, dump-autoload or diagnose) as the domain's owner, on the domain's PHP, in their SSH sandbox. Needs a hosting package that includes Composer.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "202": { description: Started }, "403": { description: The owner's package does not include Composer }, "409": { description: A run is already in progress }, "422": { description: "The run asks for something the panel does not run, or the domain lacks what it needs" } }
+
+  /domains/{id}/composer/runs/{runId}:
+    get:
+      tags: [Composer]
+      summary: One Composer run, with its log
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+
+  /domains/{id}/composer/runs/{runId}/cancel:
+    post:
+      tags: [Composer]
+      summary: End a Composer run in progress
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: runId, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "409": { description: The run has already finished } }
+
   /domains/{id}/env-vars:
     get:
       tags: [Php Settings]

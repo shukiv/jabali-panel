@@ -587,3 +587,40 @@ func TestComposerRunStart_OnlyAsAHostingUser(t *testing.T) {
 		t.Fatalf("started as a system account: %q", runs)
 	}
 }
+
+// The panel's side of the composer.* contract (GH #2276): what the panel
+// sends decodes into these handlers' params with every field kept, and what
+// they answer decodes into what the panel expects. The panel decodes the
+// same fixtures (TestContract in panel-api/internal/composerrun).
+func TestComposerRuns_PanelContract(t *testing.T) {
+	dir := "../../../panel-api/internal/agent/testdata/"
+	for _, c := range []struct {
+		file string
+		into any
+	}{
+		{"composer_detect_request.json", &composerDetectParams{}},
+		{"composer_detect_response.json", &composerDetectResponse{}},
+		{"composer_run_start_request.json", &composerRunStartParams{}},
+		{"composer_run_start_response.json", &composerRunStartResponse{}},
+		{"composer_run_id_request.json", &composerRunIDParams{}},
+		{"composer_run_status_response.json", &composerRunStatusResponse{}},
+		{"composer_run_stop_response.json", &composerRunStopResponse{}},
+	} {
+		raw, err := os.ReadFile(dir + c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(c.into); err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		again, _ := json.Marshal(c.into)
+		var got, want any
+		_ = json.Unmarshal(again, &got)
+		_ = json.Unmarshal(raw, &want)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: the agent drops or renames fields:\nwant %s\ngot  %s", c.file, raw, again)
+		}
+	}
+}

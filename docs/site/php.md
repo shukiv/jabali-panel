@@ -165,6 +165,15 @@ app benefits, plus a one-click **OPcache reset**.
 - **Per-version opt-in extra extensions** — a tenant can opt a version into an
   allow-listed set of extra extensions beyond the server-wide defaults.
 
+## Composer runs (GH #2276)
+
+A user whose hosting package includes Composer (`composer_enabled`, off by default) can run Composer for a domain from the panel (ADR-0176). The commands are install, update, require, remove, audit, outdated, show, validate, dump-autoload and diagnose. The API is `/api/v1/domains/{id}/composer`.
+
+- **Where it runs:** each run is a transient unit, `jabali-composer-<run id>.service`, in the user's slice, as the user. It runs in their SSH sandbox, on the PHP version the domain is served by, with the Composer version their channel selects. `COMPOSER_HOME` is `~/.composer`.
+- **Limits:** a run stops after 30 minutes, at 2 GB of memory, or at 256 tasks, on top of the package's limits. Only one run per domain is in progress at a time.
+- **Rules:** PHP Defense lifts the command-execution and `phpinfo` bans for the run (see [Snuffleupagus](admin/snuffleupagus.md#composer-runs-from-the-panel)). A run that PHP Defense blocks anyway is marked failed.
+- **Results:** the panel keeps each run's state, exit code and the last 256 KiB of its log.
+
 ## FPM slow log (GH #1332)
 
 Each pool can emit a **per-pool FPM slow log** for requests over a threshold, so a

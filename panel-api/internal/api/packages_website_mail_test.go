@@ -20,3 +20,16 @@ func TestPackageCreate_WebsiteSendsEmailOffUnlessAsked(t *testing.T) {
 	got = createPackageForTest(t, h, `{"name":"on","website_sends_email":true}`)
 	require.Equal(t, true, got["website_sends_email"])
 }
+
+// GH #2276: a Composer run executes the user's composer.json scripts, so a
+// new package can't run Composer unless the admin asks.
+func TestPackageCreate_ComposerOffUnlessAsked(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &packageHandler{cfg: PackageHandlerConfig{Repo: &mockPackageRepo{}}}
+
+	got := createPackageForTest(t, h, `{"name":"omit"}`)
+	require.Equal(t, false, got["composer_enabled"], "a new package can't run Composer unless asked")
+
+	got = createPackageForTest(t, h, `{"name":"on","composer_enabled":true}`)
+	require.Equal(t, true, got["composer_enabled"])
+}
