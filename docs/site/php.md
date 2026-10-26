@@ -182,7 +182,7 @@ A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by d
 - **Repository:** an `https://` URL from GitHub, GitLab, Bitbucket or any Git host, with no username or token in it. SSH URLs (`git@…`) are not accepted.
 - **Private repositories:** give a read-only access token, and the username your Git host expects with it: for GitHub, your GitHub username; for a GitLab personal or project token, any name (GitLab ignores it); for a GitLab deploy token, the token's own username; for a Bitbucket repository access token, `x-token-auth`. Left empty, the panel sends `x-access-token`, the name GitHub App installation tokens use.
 - **Saving** reads the repository's branches with the settings first and stores nothing if that fails. An empty branch picks the repository's default branch.
-- **The token** is stored encrypted and is never shown again. To change the repository's host, enter the token again (or remove it for a public repository).
+- **The token** is stored encrypted and is never shown again. To change the repository's host, enter the token again (or remove it for a public repository). When the domain moves to another account, its repository settings and token are removed.
 - **Where git runs:** as the user, in their SSH sandbox, with no config of their own, over https only. The server won't connect to a host that resolves to a private or local address, and it doesn't follow redirects: a repository that has moved needs its new URL.
 - **Backups** don't carry the repository settings or the token; enter them again after a restore.
 

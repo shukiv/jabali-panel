@@ -42,7 +42,10 @@ way to make the server connect to an address of the user's choosing.
    so whoever can edit the settings, an admin acting for the user or a
    `write:ssh` token, can't send the stored token to a host of their choice.
    Removing the settings needs no entitlement, so a user whose package lost
-   Git deploy can still remove the token.
+   Git deploy can still remove the token. The settings belong to the owner
+   who saved them: changing the domain's owner deletes them in the same
+   transaction, and a row saved by anyone but the current owner is treated
+   as absent.
 4. **git runs as the user, in their SSH sandbox.** The agent runs git through
    `systemd-run` in the user's slice, inside `jabali-ssh-shell --exec` (as
    cron and Composer runs do), and only for a hosting user (uid 1000–59999),
