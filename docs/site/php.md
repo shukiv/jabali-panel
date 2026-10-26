@@ -173,6 +173,7 @@ A user whose hosting package includes Composer (`composer_enabled`, off by defau
 - **Limits:** a run stops after 30 minutes, at 2 GB of memory, or at 256 tasks, on top of the package's limits. Only one run per domain is in progress at a time.
 - **Rules:** PHP Defense lifts the command-execution and `phpinfo` bans for the run (see [Snuffleupagus](admin/snuffleupagus.md#composer-runs-from-the-panel)). A run that PHP Defense blocks anyway is marked failed.
 - **Results:** the panel keeps each run's state, exit code and the last 256 KiB of its log.
+- **Cancelling:** a run can be cancelled while it is in progress. Cancelling stops Composer but does not undo what it has already written: `composer.json`, `composer.lock` and `vendor/` may be partly changed.
 
 ## FPM slow log (GH #1332)
 

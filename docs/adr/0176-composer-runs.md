@@ -104,3 +104,8 @@ Two things found on a test server shaped the design:
   the sandbox.
 - Private repositories need credentials (`COMPOSER_AUTH` or `auth.json`). Not
   in this change.
+- Cancelling a run stops Composer; it does not undo what Composer has already
+  written. On the test box a `require` cancelled after one second had already
+  added the package to `composer.json` and `composer.lock`. A user who cancels
+  may need to run `install` (or restore the files) to bring `vendor/` back in
+  line.
