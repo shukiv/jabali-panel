@@ -697,7 +697,7 @@
   },
   "adminmigrationspage": {
     "account_migration_importer_m35": "Account migration importer (M35)",
-    "allow_ssh_to_rfc1918_loopback_link_local_sou": "Allow SSH to RFC1918 / loopback / link-local source hosts. Default off for production safety. Restart panel + agent after flipping to pick up the change.",
+    "allow_ssh_to_rfc1918_loopback_link_local_sou": "Allow migrating from a source on a private network: RFC1918, IPv6 ULA, CGNAT (Tailscale included) and other non-public addresses. Loopback and link-local addresses stay refused. Default off.",
     "batch": "Batch",
     "cancel_batch": "Cancel batch",
     "cancels_every_non_terminal_job_sharing_this": "Cancels every non-terminal job sharing this batch_id.",
