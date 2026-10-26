@@ -37,6 +37,46 @@ const DefaultDialTimeout = 10 * time.Second
 // migration_allow_private_hosts override keeps working for a CGNAT-hosted source.
 var cgnatNet = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 
+// thisNetworkNets are never a peer to connect to, whatever allowPrivate says:
+// "this network" (0.0.0.0/8) and IPv4-compatible IPv6 (::/96, deprecated).
+// net.IP.IsUnspecified covers only 0.0.0.0 and :: themselves.
+var thisNetworkNets = mustCIDRs("0.0.0.0/8", "::/96")
+
+// nonPublicNets are not public unicast space but escape net.IP's own tests:
+// benchmarking (198.18.0.0/15), reserved (240.0.0.0/4, broadcast included),
+// IPv6 site-local (fec0::/10, deprecated) and the local-use NAT64 prefix
+// (64:ff9b:1::/48, RFC 8215). Gated on allowPrivate, as CGNAT is.
+var nonPublicNets = mustCIDRs("198.18.0.0/15", "240.0.0.0/4", "fec0::/10", "64:ff9b:1::/48")
+
+// nat64Net (RFC 6052, the IPv4 address in the last 32 bits) and sixToFourNet
+// (2002::/16, the IPv4 address in bits 16-48) carry an IPv4 address that a
+// gateway connects to, so that address is checked as well.
+var (
+	nat64Net     = mustCIDRs("64:ff9b::/96")[0]
+	sixToFourNet = mustCIDRs("2002::/16")[0]
+)
+
+func mustCIDRs(cidrs ...string) []*net.IPNet {
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic(err)
+		}
+		nets = append(nets, n)
+	}
+	return nets
+}
+
+func inAny(nets []*net.IPNet, ip net.IP) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // Validator captures the AllowPrivate toggle and the resolved IPs for one host.
 type Validator struct {
 	Hostname     string
@@ -136,8 +176,8 @@ func checkIP(ip net.IP, allowPrivate bool) error {
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return errors.New("link-local rejected (cloud metadata blocked)")
 	}
-	if ip.IsUnspecified() {
-		return errors.New("0.0.0.0 / :: rejected")
+	if ip.IsUnspecified() || inAny(thisNetworkNets, ip) {
+		return errors.New("0.0.0.0/8 / ::/96 rejected")
 	}
 	if ip.IsMulticast() {
 		return errors.New("multicast rejected")
@@ -147,6 +187,23 @@ func checkIP(ip net.IP, allowPrivate bool) error {
 	}
 	if !allowPrivate && cgnatNet.Contains(ip) {
 		return errors.New("CGNAT (RFC 6598) address rejected")
+	}
+	if !allowPrivate && inAny(nonPublicNets, ip) {
+		return errors.New("non-public (benchmarking / reserved / site-local / local-use NAT64) address rejected")
+	}
+	if ip16 := ip.To16(); ip.To4() == nil && ip16 != nil {
+		var inner net.IP
+		switch {
+		case nat64Net.Contains(ip):
+			inner = net.IP(ip16[12:16])
+		case sixToFourNet.Contains(ip):
+			inner = net.IP(ip16[2:6])
+		}
+		if inner != nil {
+			if err := checkIP(inner, allowPrivate); err != nil {
+				return fmt.Errorf("IPv4 inside %s: %w", ip, err)
+			}
+		}
 	}
 	return nil
 }
