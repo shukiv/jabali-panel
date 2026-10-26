@@ -564,3 +564,23 @@ func TestComposerDetect(t *testing.T) {
 		}
 	}
 }
+
+// The SSH sandbox never jails root (GH #658), so a run as root or a system
+// account would run a composer.json's scripts outside it.
+func TestComposerRunStart_OnlyAsAHostingUser(t *testing.T) {
+	newComposerRunHost(t)
+	f := &composerExecFake{}
+	f.install(t)
+	for _, u := range []string{"root", "daemon", "nobody"} {
+		if _, err := user.Lookup(u); err != nil {
+			continue
+		}
+		_, err := startRun(t, composerRunStartParams{RunID: testRunID, OSUser: u, Domain: "example.com", Command: "install"})
+		if agentCode(t, err) != agentwire.CodeInvalidArgument || !strings.Contains(err.Error(), "not a hosting user") {
+			t.Errorf("run as %s = %v, want invalid_argument: not a hosting user", u, err)
+		}
+	}
+	if runs := f.called("systemd-run"); len(runs) != 0 {
+		t.Fatalf("started as a system account: %q", runs)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -170,6 +171,22 @@ func composerIsDir(osUser, rel string) bool {
 func composerIsFile(osUser, rel string) bool {
 	st, err := composerStatInHome(osUser, rel)
 	return err == nil && st.Mode&unix.S_IFMT == unix.S_IFREG
+}
+
+// composerRunAccount refuses a run for anyone but a hosting user. The SSH
+// sandbox never jails uid 0 (GH #658: jabali-ssh-shell runs a root command
+// directly), so a run as root, or as a system account, would run a
+// composer.json's scripts outside it.
+func composerRunAccount(osUser string) error {
+	u, err := user.Lookup(osUser)
+	if err != nil {
+		return fmt.Errorf("look up %s: %w", osUser, err)
+	}
+	uid, err := strconv.Atoi(u.Uid)
+	if err != nil || uid < minTenantUID || uid >= 60000 {
+		return fmt.Errorf("%s is not a hosting user: Composer runs only as one", osUser)
+	}
+	return nil
 }
 
 // composerDomainPHP is the PHP CLI binary of the version the domain's vhost
@@ -335,6 +352,9 @@ func composerRunStartHandler(ctx context.Context, raw json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 	if err := validateComposerAppDir(p.AppDir); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
+	if err := composerRunAccount(p.OSUser); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 	if !composerIsDir(p.OSUser, filepath.Join("domains", p.Domain, p.AppDir)) {
