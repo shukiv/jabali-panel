@@ -16,6 +16,8 @@ type DomainGitDeployment struct {
 	OSUser string `gorm:"column:os_user;type:varchar(32);not null" json:"-"`
 	// Kind is deploy or rollback.
 	Kind string `gorm:"type:varchar(16);not null" json:"kind"`
+	// Source is what started the run: manual (the API) or webhook (a push).
+	Source string `gorm:"type:varchar(16);not null" json:"source"`
 	// ReleaseID is the release the run makes live: the run's own ID for a
 	// deployment, an earlier deployment's for a rollback.
 	ReleaseID string `gorm:"column:release_id;type:char(26);not null" json:"release_id"`
@@ -51,6 +53,12 @@ type DomainGitDeployment struct {
 const (
 	GitDeployKindDeploy   = "deploy"
 	GitDeployKindRollback = "rollback"
+)
+
+// What started a Git deployment.
+const (
+	GitDeploySourceManual  = "manual"
+	GitDeploySourceWebhook = "webhook"
 )
 
 // Git deployment states.

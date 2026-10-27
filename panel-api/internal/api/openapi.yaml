@@ -6117,6 +6117,47 @@ paths:
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: release, required: true, schema: { type: string } } ]
       responses: { "202": { description: Started }, "403": { description: The owner's package does not include Git deploy }, "404": { description: No such release }, "409": { description: A deployment is already in progress }, "422": { description: The release is not one a deployment completed } }
+  /domains/{id}/git/webhook:
+    get:
+      tags: [Git deploy]
+      summary: The domain's deploy-on-push webhook, never its secret
+      description: |
+        The webhook's URL, whether a push waits for a running deployment (queued), and what the last delivery
+        with a valid signature led to (last_result: started, queued, ignored, duplicate, failed, or
+        refused:<error code>). configured is false when the domain has none.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Git deploy]
+      summary: Create the webhook, or give it a new secret
+      description: The URL stays the same when the secret changes, and the old secret stops working. Without a body the panel makes a 64-character secret and answers it this once (secret). Send secret to use one the Git host made instead (GitLab's whsec_ signing token, a Bitbucket generated secret), 16 to 255 printable ASCII characters with no spaces.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: false, content: { application/json: { schema: { type: object, properties: { secret: { type: string } } } } } }
+      responses: { "200": { description: New secret }, "201": { description: Created }, "403": { description: The owner's package does not include Git deploy }, "404": { description: The domain has no Git settings }, "422": { description: The secret can't be used } }
+    delete:
+      tags: [Git deploy]
+      summary: Remove the webhook
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "204": { description: Removed } }
+  /webhooks/git/{hookId}:
+    post:
+      tags: [Git deploy]
+      summary: Where a Git host posts pushes; a signed push to the domain's branch deploys it
+      description: |
+        No session: a delivery is believed only by its signature over the raw JSON body, with the webhook's secret.
+        Accepted: X-Hub-Signature-256 or X-Hub-Signature as sha256=<hex HMAC-SHA256> (GitHub, Gitea, Forgejo, Bitbucket);
+        GitLab's signing token (webhook-id, webhook-timestamp within 5 minutes, webhook-signature v1,<base64>);
+        GitLab's secret token (X-Gitlab-Token). sha1 signatures are refused.
+        A push to the domain's branch deploys it as the domain's owner. While a deployment runs, the push waits and
+        starts once it ends; pushes meanwhile collapse into one. A delivery ID seen in the last 24 hours deploys nothing.
+        Anything else signed (another branch, a tag, a ping) is answered 200 with result ignored.
+      security: []
+      parameters: [ { in: path, name: hookId, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses: { "200": { description: Ignored or a duplicate delivery }, "202": { description: "Started, or waiting for the running deployment (result queued)" }, "400": { description: A push whose body is not the host's JSON }, "401": { description: No valid signature }, "403": { description: The owner's package does not include Git deploy }, "404": { description: No such webhook }, "413": { description: The body is over 1 MiB }, "415": { description: Not application/json } }
 
   /domains/{id}/env-vars:
     get:

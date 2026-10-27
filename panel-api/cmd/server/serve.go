@@ -32,6 +32,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/drsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
@@ -383,7 +384,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithPythonApps(pythonAppRepo)
 		rec.WithComposerRuns(repository.NewComposerRunRepository(sharedDB)) // GH #2276
 		// GH #2277
-		rec.WithGitDeployments(repository.NewDomainGitDeploymentRepository(sharedDB))
+		gitDeployments := repository.NewDomainGitDeploymentRepository(sharedDB)
+		rec.WithGitDeployments(gitDeployments)
+		rec.WithGitWebhooks(repository.NewDomainGitWebhookRepository(sharedDB), &gitdeploy.Deployer{
+			Agent:       sharedAgent,
+			Packages:    packageRepo,
+			Repos:       repository.NewDomainGitRepoRepository(sharedDB),
+			Deployments: gitDeployments,
+			SSOKey:      ssoKeyPtr,
+		})
 		rec.WithPyFrameworks(pyCatalog)
 		rec.WithDockerCatalog(dockerCatalog)
 		// M18 wiring — packages + overrides + /home mount path so
