@@ -492,3 +492,23 @@ func TestGitWebhook_ABodyOver1MiBIsRefused(t *testing.T) {
 		t.Fatalf("push = %d, runs %d", code, len(e.webhookRuns()))
 	}
 }
+
+// The panel's Redis user may only touch keys under jabali: and automation:
+// (install.sh's ACL). A key outside them fails with NOPERM on a real server,
+// and every delivery sent again would deploy again.
+func TestGitWebhook_DeliveriesStayInThePanelsRedisKeys(t *testing.T) {
+	e := newGitTestEnv(t)
+	hookID, secret := e.hookUp(t)
+	if code, _, raw := e.push(t, hookID, secret, "main", "d-1"); code != http.StatusAccepted {
+		t.Fatalf("push = %d %s", code, raw)
+	}
+	keys := e.deliveries.Keys()
+	if len(keys) == 0 {
+		t.Fatal("the delivery wasn't remembered")
+	}
+	for _, key := range keys {
+		if !strings.HasPrefix(key, "jabali:") {
+			t.Errorf("key %q is outside the panel's Redis keys", key)
+		}
+	}
+}

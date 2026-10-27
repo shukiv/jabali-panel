@@ -425,10 +425,10 @@ func (h *gitWebhookHandler) claimDelivery(ctx context.Context, hookID, deliveryI
 		return nil, false
 	}
 	bodySum := sha256.Sum256(body)
-	keys := []string{"gitdeploy:body:" + hookID + ":" + hex.EncodeToString(bodySum[:16])}
+	keys := []string{"jabali:gitdeploy:body:" + hookID + ":" + hex.EncodeToString(bodySum[:16])}
 	if deliveryID != "" {
 		idSum := sha256.Sum256([]byte(deliveryID))
-		keys = append(keys, "gitdeploy:delivery:"+hookID+":"+hex.EncodeToString(idSum[:16]))
+		keys = append(keys, "jabali:gitdeploy:delivery:"+hookID+":"+hex.EncodeToString(idSum[:16]))
 	}
 	var taken []string
 	seen := false
