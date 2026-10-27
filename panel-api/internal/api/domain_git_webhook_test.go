@@ -444,3 +444,27 @@ func TestGitWebhook_ABurstOfPushesWaits(t *testing.T) {
 		t.Fatalf("runs = %d", n)
 	}
 }
+
+// Settings left by a domain's previous owner deploy nothing (GH #1238): a
+// change of owner removes them, and the webhook with them.
+func TestGitWebhook_APreviousOwnersSettingsDeployNothing(t *testing.T) {
+	e := newGitTestEnv(t)
+	hookID, secret := e.hookUp(t)
+	e.repos.rows["d1"].UserID = "u-bob"
+	if code, out, raw := e.push(t, hookID, secret, "main", "d-1"); code != http.StatusNotFound || out["error"] != "git_not_configured" {
+		t.Fatalf("push = %d %s", code, raw)
+	}
+	if len(e.webhookRuns()) != 0 {
+		t.Fatal("a run started")
+	}
+}
+
+func TestGitWebhook_ABodyOver1MiBIsRefused(t *testing.T) {
+	e := newGitTestEnv(t)
+	hookID, secret := e.hookUp(t)
+	body := `{"ref":"refs/heads/main","pad":"` + strings.Repeat("x", gitdeploy.WebhookMaxBody) + `"}`
+	code, _, _ := e.post(t, hookID, body, map[string]string{"X-GitHub-Event": "push", "X-Hub-Signature-256": gitTestSign(secret, body)})
+	if code != http.StatusRequestEntityTooLarge || len(e.webhookRuns()) != 0 {
+		t.Fatalf("push = %d, runs %d", code, len(e.webhookRuns()))
+	}
+}
