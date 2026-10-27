@@ -19,6 +19,7 @@
       "docker-apps_desc": "Catálogo de aplicativos Docker",
       "settings": "Configurações do servidor",
       "settings_desc": "Configurações globais do servidor e módulos opcionais",
+      "admin-files": "Gerenciador de Arquivos",
       "server-status": "Status do servidor",
       "server-status_desc": "Serviços, recursos e integridade em tempo real",
       "cache": "Cache",
