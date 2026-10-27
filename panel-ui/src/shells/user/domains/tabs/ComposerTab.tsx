@@ -318,11 +318,29 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
       {det?.composer_error && <Alert type="error" showIcon message={det.composer_error} />}
 
       <Space wrap align="center">
-        <Typography.Text strong>Composer project</Typography.Text>
+        <Typography.Text strong>Project folder</Typography.Text>
         {projectDir !== null ? (
           <Typography.Text code>{`${projectDir}/`}</Typography.Text>
+        ) : dir && dirs.length > 1 ? (
+          <Select
+            aria-label="Project folder"
+            value={dir.dir}
+            onChange={setPickedDir}
+            style={{ minWidth: 260 }}
+            options={dirs.map((d) => ({ value: d.dir, label: folderLabel(domain.name, d.dir) }))}
+          />
+        ) : dir ? (
+          <Typography.Text code>{folderLabel(domain.name, dir.dir)}</Typography.Text>
         ) : (
-          <Typography.Text type="secondary">Found from the document root up</Typography.Text>
+          <Typography.Text type="secondary">Automatic</Typography.Text>
+        )}
+        {dir && (
+          <>
+            <Tag color={dir.has_lock ? "green" : "default"}>
+              {dir.has_lock ? "composer.lock" : "no composer.lock"}
+            </Tag>
+            <Tag color={dir.has_vendor ? "green" : "default"}>{dir.has_vendor ? "vendor/" : "no vendor/"}</Tag>
+          </>
         )}
         <Button size="small" icon={<EditOutlined />} disabled={running} onClick={() => setFolderOpen(true)}>
           Change
@@ -348,27 +366,6 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
 
       {dir && (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
-          <Space wrap align="center">
-            <Typography.Text strong>Project folder</Typography.Text>
-            {projectDir !== null ? (
-              <Typography.Text code>{`${projectDir}/`}</Typography.Text>
-            ) : dirs.length > 1 ? (
-              <Select
-                aria-label="Project folder"
-                value={dir.dir}
-                onChange={setPickedDir}
-                style={{ minWidth: 260 }}
-                options={dirs.map((d) => ({ value: d.dir, label: folderLabel(domain.name, d.dir) }))}
-              />
-            ) : (
-              <Typography.Text code>{folderLabel(domain.name, dir.dir)}</Typography.Text>
-            )}
-            <Tag color={dir.has_lock ? "green" : "default"}>
-              {dir.has_lock ? "composer.lock" : "no composer.lock"}
-            </Tag>
-            <Tag color={dir.has_vendor ? "green" : "default"}>{dir.has_vendor ? "vendor/" : "no vendor/"}</Tag>
-          </Space>
-
           <Space wrap>
             <Button
               type="primary"
