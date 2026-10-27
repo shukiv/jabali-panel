@@ -33,6 +33,8 @@ func testULID(n int) string { return fmt.Sprintf("01JBX%021d", n) }
 //	composer  main + composer.json and composer.lock
 //	vendored  composer + vendor/autoload.php
 //	nopublic  main without public/
+//	linkpublic main with public/ a link to the repository's root
+//	filepublic main with public a file
 type gitDeployServer struct {
 	gitBin  string
 	repoURL string
@@ -97,8 +99,19 @@ func newGitDeployServer(t *testing.T) *gitDeployServer {
 	git("checkout", "-q", "-b", "nopublic")
 	git("rm", "-q", "-r", "public")
 	git("commit", "-q", "-m", "nopublic")
+	git("checkout", "-q", "-b", "linkpublic")
+	if err := os.Symlink("..", filepath.Join(work, "public")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "-A")
+	git("commit", "-q", "-m", "linkpublic")
+	git("checkout", "-q", "nopublic")
+	git("checkout", "-q", "-b", "filepublic")
+	write("public", "not a directory\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "filepublic")
 	commits := map[string]string{}
-	for _, b := range []string{"main", "composer", "vendored", "nopublic"} {
+	for _, b := range []string{"main", "composer", "vendored", "nopublic", "linkpublic", "filepublic"} {
 		commits[b] = git("rev-parse", b)
 	}
 	if out, err := exec.Command(gitBin, "clone", "-q", "--bare", work, filepath.Join(repos, "shop.git")).CombinedOutput(); err != nil {
@@ -466,12 +479,52 @@ func TestGitDeploy_VendorInTheRepositorySkipsComposer(t *testing.T) {
 	}
 }
 
-func TestGitDeploy_WebDirMustBeInTheRepository(t *testing.T) {
-	dt := newGitDeployTest(t)
-	m := dt.manifest(testULID(10), "nopublic")
-	m.WebDir = "public"
-	if _, err := dt.run(m); err == nil || !strings.Contains(err.Error(), "no directory public") {
-		t.Fatalf("err = %v", err)
+// GH #2277: a web directory the repository doesn't have is created, empty, in
+// the new release, and the deployment goes on.
+func TestGitDeploy_CreatesAMissingWebDir(t *testing.T) {
+	for _, webDir := range []string{"public", "web/public"} {
+		dt := newGitDeployTest(t)
+		run := testULID(10)
+		m := dt.manifest(run, "nopublic")
+		m.WebDir = webDir
+		out, err := dt.run(m)
+		if err != nil {
+			t.Fatalf("%s: err = %v\n%s", webDir, err, out)
+		}
+		if !gitDeployIsDir(filepath.Join(dt.domainDir, "releases", run, webDir)) {
+			t.Errorf("%s: not created in the release", webDir)
+		}
+		if got := dt.live(); got != "releases/"+run {
+			t.Errorf("%s: current -> %q, want the new release", webDir, got)
+		}
+		if !strings.Contains(out, "created") {
+			t.Errorf("%s: the log doesn't say the directory was created:\n%s", webDir, out)
+		}
+	}
+}
+
+// A link or a file where the web directory should be is never served or
+// replaced: the deployment fails, before any of the repository's code runs,
+// and the site stays as it was.
+func TestGitDeploy_WebDirThatIsNotADirectory(t *testing.T) {
+	for _, branch := range []string{"linkpublic", "filepublic"} {
+		dt := newGitDeployTest(t)
+		run := testULID(10)
+		m := dt.manifest(run, branch)
+		m.WebDir = "public"
+		m.Commands = "php artisan about"
+		if _, err := dt.run(m); err == nil || !strings.Contains(err.Error(), "is not a directory") {
+			t.Fatalf("%s: err = %v", branch, err)
+		}
+		if recs := dt.records(); len(recs) != 0 {
+			t.Errorf("%s: the deploy commands ran before the web directory was refused: %v", branch, recs)
+		}
+		if gitDeployExists(filepath.Join(dt.domainDir, "releases", run)) {
+			t.Errorf("%s: the failed release was left behind", branch)
+		}
+		if gitDeployExists(filepath.Join(dt.domainDir, "current")) {
+			t.Errorf("%s: current was set by a failed deployment", branch)
+		}
 	}
 }
 

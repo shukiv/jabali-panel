@@ -203,7 +203,7 @@ export function GitSettingsForm({
       <Form.Item
         name="web_dir"
         label="Web directory"
-        extra="The folder inside the repository that the site serves: public for Laravel. Leave empty to serve the repository's root."
+        extra="The folder inside the repository that the site serves: public for Laravel. Leave empty to serve the repository's root. A deployment creates it if the repository doesn't have it."
       >
         <Input placeholder="public" autoComplete="off" spellCheck={false} />
       </Form.Item>
