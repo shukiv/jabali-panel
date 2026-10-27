@@ -8,6 +8,10 @@
 // the lock, so Update (and Remove) ask first and say to take a backup.
 // Cancelling stops Composer but does not undo what it already wrote.
 //
+// A domain can name its own project folder (PUT /composer/settings): domains/
+// or a folder in it, which several of the user's domains may share. The tab
+// then looks only there and runs there; one run at a time per folder.
+//
 // The page shows this tab only when /me/server-capabilities says the package
 // includes Composer; the reasons below cover the rest (a suspended account).
 import { useEffect, useRef, useState } from "react";
@@ -21,6 +25,7 @@ import {
   Input,
   Modal,
   Popconfirm,
+  Radio,
   Select,
   Skeleton,
   Space,
@@ -34,6 +39,7 @@ import {
   DeleteOutlined,
   DownloadOutlined,
   DownOutlined,
+  EditOutlined,
   EyeOutlined,
   PlusOutlined,
   SyncOutlined,
@@ -50,8 +56,18 @@ import { feedback } from "../../../../lib/feedback";
 
 type ComposerDir = { dir: string; has_lock: boolean; has_vendor: boolean };
 
+// What the domain's project folder holds, when it has one.
+type ComposerProject = {
+  dir: string;
+  exists: boolean;
+  has_composer_json: boolean;
+  has_lock: boolean;
+  has_vendor: boolean;
+};
+
 type ComposerDetect = {
   dirs: ComposerDir[];
+  project?: ComposerProject;
   php_version?: string;
   php_error?: string;
   composer_error?: string;
@@ -60,6 +76,8 @@ type ComposerDetect = {
 export type ComposerRun = {
   id: string;
   app_dir: string;
+  // The folder the run ran in, relative to the home.
+  work_dir?: string;
   command: string;
   packages: string[];
   no_dev: boolean;
@@ -77,6 +95,8 @@ export type ComposerRun = {
 type ComposerState = {
   enabled: boolean;
   reason?: string;
+  // The domain's project folder, relative to the home; null: found on its own.
+  project_dir: string | null;
   detect?: ComposerDetect;
   active_run: ComposerRun | null;
 };
@@ -119,6 +139,20 @@ const STATE_TAG: Record<ComposerRun["state"], { color: string; label: string }> 
 
 const folderLabel = (domainName: string, dir: string) =>
   dir ? `domains/${domainName}/${dir}/` : `domains/${domainName}/`;
+
+const runFolder = (run: Pick<ComposerRun, "app_dir" | "work_dir">, domainName: string) =>
+  run.work_dir ? `${run.work_dir}/` : folderLabel(domainName, run.app_dir);
+
+// Same rules as the API (composerrun.ValidateProjectDir).
+const PROJECT_DIR_RE = /^domains(\/[A-Za-z0-9._-]+)*$/;
+const projectDirError = (dir: string) => {
+  if (!PROJECT_DIR_RE.test(dir)) return "Use domains/ or a folder inside it: letters, digits, '.', '_', '-' and '/'.";
+  if (dir.split("/").some((seg) => seg === "." || seg === "..")) return "The folder may not contain . or ..";
+  if (dir.length > 255) return "The folder path is too long.";
+  return null;
+};
+
+const trimFolder = (dir: string) => dir.trim().replace(/\/+$/, "");
 
 const commandLabel = (run: Pick<ComposerRun, "command" | "packages" | "no_dev">) =>
   [run.command, ...run.packages, run.no_dev ? "--no-dev" : ""].filter(Boolean).join(" ");
@@ -169,11 +203,33 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
     lastState.current = run?.state;
   }, [run, qc, domain.id]);
 
+  const projectDir = stateQ.data?.project_dir ?? null;
+  const project = stateQ.data?.detect?.project;
   const dirs = stateQ.data?.detect?.dirs ?? [];
   const [pickedDir, setPickedDir] = useState<string | null>(null);
-  const dir = dirs.find((d) => d.dir === pickedDir) ?? dirs[0];
+  // The folder runs use: the project folder when the domain has one and it
+  // holds a composer.json, else the detected folder picked.
+  const dir: ComposerDir | undefined =
+    projectDir !== null
+      ? project?.exists && project.has_composer_json
+        ? { dir: "", has_lock: project.has_lock, has_vendor: project.has_vendor }
+        : undefined
+      : (dirs.find((d) => d.dir === pickedDir) ?? dirs[0]);
   const [noDev, setNoDev] = useState(false);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
+  const [folderOpen, setFolderOpen] = useState(false);
+
+  const saveFolder = useMutation({
+    mutationFn: async (project_dir: string | null) =>
+      (await apiClient.put<{ project_dir: string | null }>(`${base}/settings`, { project_dir })).data,
+    onSuccess: () => {
+      setFolderOpen(false);
+      setPickedDir(null);
+      feedback.message.success("Project folder saved");
+      void qc.invalidateQueries({ queryKey: ["composer", domain.id] });
+    },
+    onError: (err: Error) => feedback.message.error(err.message),
+  });
 
   const start = useMutation({
     mutationFn: async (body: StartBody) => (await apiClient.post<ComposerRun>(`${base}/runs`, body)).data,
@@ -206,7 +262,7 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
   const startRun = (command: string, packages: string[] = []) =>
     start.mutate({
       command,
-      app_dir: dir?.dir ?? "",
+      app_dir: projectDir !== null ? "" : (dir?.dir ?? ""),
       packages,
       no_dev: noDev && NO_DEV.has(command),
     });
@@ -261,17 +317,42 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
       {det?.php_error && <Alert type="error" showIcon message={det.php_error} />}
       {det?.composer_error && <Alert type="error" showIcon message={det.composer_error} />}
 
-      {det && dirs.length === 0 && (
+      <Space wrap align="center">
+        <Typography.Text strong>Composer project</Typography.Text>
+        {projectDir !== null ? (
+          <Typography.Text code>{`${projectDir}/`}</Typography.Text>
+        ) : (
+          <Typography.Text type="secondary">Found from the document root up</Typography.Text>
+        )}
+        <Button size="small" icon={<EditOutlined />} disabled={running} onClick={() => setFolderOpen(true)}>
+          Change
+        </Button>
+      </Space>
+
+      {det && projectDir === null && dirs.length === 0 && (
         <Empty
-          description={`No composer.json in this domain's document root or the folders above it, up to ${folderLabel(domain.name, "")}. Upload your project with its composer.json first.`}
+          description={`No composer.json in this domain's document root or the folders above it, up to ${folderLabel(domain.name, "")}. Upload your project with its composer.json first, or set the folder it is in.`}
         />
+      )}
+      {det && projectDir !== null && project && !project.exists && (
+        <Alert
+          type="warning"
+          showIcon
+          message={`The folder ${projectDir}/ doesn't exist, or is a link.`}
+          description="Create it, or change the project folder."
+        />
+      )}
+      {det && projectDir !== null && project?.exists && !project.has_composer_json && (
+        <Empty description={`No composer.json in ${projectDir}/ yet. Upload your project with its composer.json first.`} />
       )}
 
       {dir && (
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Space wrap align="center">
             <Typography.Text strong>Project folder</Typography.Text>
-            {dirs.length > 1 ? (
+            {projectDir !== null ? (
+              <Typography.Text code>{`${projectDir}/`}</Typography.Text>
+            ) : dirs.length > 1 ? (
               <Select
                 aria-label="Project folder"
                 value={dir.dir}
@@ -366,11 +447,7 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
             title="Command"
             render={(_, r) => <Typography.Text code>{commandLabel(r)}</Typography.Text>}
           />
-          <Table.Column<ComposerRun>
-            title="Folder"
-            dataIndex="app_dir"
-            render={(v: string) => folderLabel(domain.name, v)}
-          />
+          <Table.Column<ComposerRun> title="Folder" render={(_, r) => runFolder(r, domain.name)} />
           <Table.Column<ComposerRun> title="Result" render={(_, r) => <RunStateTag run={r} />} />
           <Table.Column<ComposerRun>
             title="Actions"
@@ -389,6 +466,16 @@ export const ComposerTab = ({ domain }: { domain: Domain }) => {
         onCancel={() => setDialog(null)}
         onSubmit={(command, packages) => startRun(command, packages)}
       />
+
+      {folderOpen && (
+        <ProjectFolderDialog
+          domainName={domain.name}
+          current={projectDir}
+          saving={saveFolder.isPending}
+          onCancel={() => setFolderOpen(false)}
+          onSave={(folder) => saveFolder.mutate(folder)}
+        />
+      )}
     </Space>
   );
 };
@@ -430,7 +517,7 @@ function RunPanel({
         <Space wrap align="center" style={{ width: "100%", justifyContent: "space-between" }}>
           <Space wrap align="center">
             <Typography.Text code>{commandLabel(run)}</Typography.Text>
-            <Typography.Text type="secondary">in {folderLabel(domainName, run.app_dir)}</Typography.Text>
+            <Typography.Text type="secondary">in {runFolder(run, domainName)}</Typography.Text>
             <RunStateTag run={run} />
             {run.state === "running" && <Spin size="small" />}
           </Space>
@@ -617,6 +704,70 @@ function RunDialog({
             ]}
           >
             <Select mode="tags" tokenSeparators={[" ", ","]} placeholder="vendor/name" open={false} suffixIcon={null} />
+          </Form.Item>
+        )}
+      </Form>
+    </Modal>
+  );
+}
+
+type FolderValues = { mode: "auto" | "folder"; dir?: string };
+
+function ProjectFolderDialog({
+  domainName,
+  current,
+  saving,
+  onCancel,
+  onSave,
+}: {
+  domainName: string;
+  current: string | null;
+  saving: boolean;
+  onCancel: () => void;
+  onSave: (dir: string | null) => void;
+}) {
+  const [form] = Form.useForm<FolderValues>();
+  const mode = Form.useWatch("mode", form);
+  return (
+    <Modal
+      open
+      title="Composer project folder"
+      okText="Save"
+      okButtonProps={{ loading: saving }}
+      onOk={() => form.submit()}
+      onCancel={onCancel}
+      destroyOnHidden
+    >
+      <Form<FolderValues>
+        form={form}
+        layout="vertical"
+        initialValues={{ mode: current === null ? "auto" : "folder", dir: current ?? "domains" }}
+        onFinish={(v) => onSave(v.mode === "auto" ? null : trimFolder(v.dir ?? ""))}
+      >
+        <Form.Item name="mode">
+          <Radio.Group>
+            <Space orientation="vertical">
+              <Radio value="auto">Find composer.json from the document root up to {folderLabel(domainName, "")}</Radio>
+              <Radio value="folder">Use this folder</Radio>
+            </Space>
+          </Radio.Group>
+        </Form.Item>
+        {mode === "folder" && (
+          <Form.Item
+            name="dir"
+            label="Folder, from your home directory"
+            extra="domains/ or a folder inside it. Several of your domains can use the same folder, to share one composer.json and vendor/. A run uses the PHP version of the domain you start it from, and only one run at a time works in a folder."
+            rules={[
+              { required: true, message: "Enter a folder" },
+              {
+                validator: (_: unknown, value?: string) => {
+                  const err = projectDirError(trimFolder(value ?? ""));
+                  return err ? Promise.reject(new Error(err)) : Promise.resolve();
+                },
+              },
+            ]}
+          >
+            <Input addonBefore="~/" placeholder="domains" autoComplete="off" />
           </Form.Item>
         )}
       </Form>
