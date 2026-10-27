@@ -17,7 +17,7 @@ import (
 const (
 	testHookSecret = "webhook-secret-abc_DEF-123456"
 	// testSigningKey is the key under testSigningToken, as GitLab makes one.
-	testSigningKey = "0123456789abcdef0123456789abcdef"
+	testSigningKey = "0123456789abcdef0123456789abcdef" // gitleaks:allow (test value)
 )
 
 var testSigningToken = "whsec_" + base64.StdEncoding.EncodeToString([]byte(testSigningKey))
@@ -162,7 +162,7 @@ func TestDeliveryID(t *testing.T) {
 }
 
 func TestValidateWebhookSecret(t *testing.T) {
-	for _, ok := range []string{testHookSecret, testSigningToken, "BitbucketGenerated0123456789"} {
+	for _, ok := range []string{testHookSecret, testSigningToken, "BitbucketGenerated0123456789"} { // gitleaks:allow (test value)
 		if err := ValidateWebhookSecret(ok); err != nil {
 			t.Errorf("%q: %v", ok, err)
 		}
