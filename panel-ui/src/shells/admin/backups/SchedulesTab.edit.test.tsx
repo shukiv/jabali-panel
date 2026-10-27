@@ -137,9 +137,10 @@ describe("SchedulesTab, an account's own schedule (GH #2246)", () => {
     mockLists([TENANT_ROW]);
     const drawer = await openEdit("Every 6 hours");
 
-    // The account's own choices, not the cron form's "Daily 03:00".
-    expect(within(drawer).getByText("alice (alice@example.com)")).toBeTruthy();
-    expect(within(drawer).getByTitle("Databases only")).toBeTruthy();
+    // The account's own choices, not the cron form's "Daily 03:00". The
+    // drawer fills its fields in an effect, so wait for them.
+    expect(await within(drawer).findByText("alice (alice@example.com)")).toBeTruthy();
+    expect(await within(drawer).findByTitle("Databases only")).toBeTruthy();
     expect(within(drawer).getByTitle("Every 6 hours")).toBeTruthy();
     expect(within(drawer).queryByText("Frequency")).toBeNull();
     expect(within(drawer).queryByText("Time")).toBeNull();
@@ -284,7 +285,9 @@ describe("SchedulesTab, hourly admin schedules (GH #2246)", () => {
   it("opens an hourly schedule as hourly", async () => {
     mockLists([{ ...ADMIN_ROW, cron_expr: "15 */6 * * *", keep_daily: 7 }]);
     const drawer = await openEdit("15 */6 * * *");
-    expect(within(drawer).getByTitle("Every 6 hours")).toBeTruthy();
+    // The drawer fills its fields in an effect; on a slow runner they aren't
+    // there yet when it opens.
+    expect(await within(drawer).findByTitle("Every 6 hours")).toBeTruthy();
     expect((drawer.querySelector("#minute") as HTMLInputElement).value).toBe("15");
     expect((drawer.querySelector("#keep") as HTMLInputElement).value).toBe("7");
     expect(within(drawer).queryByRole("alert")).toBeNull();
