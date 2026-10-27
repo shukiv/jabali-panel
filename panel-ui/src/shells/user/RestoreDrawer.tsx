@@ -1,11 +1,10 @@
 // RestoreDrawer — GH #267 Wave 4. Tenant self-service restore UI.
 //
-// Restores databases and/or the home directory from one of the caller's own
-// backups (matches the backend). DB restore drops+reloads the chosen databases;
-// home restore is additive (overwrites from the backup, never deletes files
-// added since). Mail / DNS are not offered — see
-// plans/m267-tenant-selective-restore.md (mail is RocksDB-unsafe via file apply;
-// custom DNS records aren't captured).
+// Restores databases, mailboxes, custom DNS records, single domains' files
+// and/or the home directory from one of the caller's own backups (matches the
+// backend). DB restore drops+reloads the chosen databases; home restore is
+// additive (overwrites from the backup, never deletes files added since). A
+// domain's files can also be restored as an exact copy (GH #2303).
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
 
@@ -24,6 +23,8 @@ interface ManifestResponse {
   username: string;
   stages: ManifestStage[];
   dns_domains?: string[];
+  // Every domain of the backup the account still owns (GH #2303).
+  domains?: string[];
 }
 interface RestoreResult {
   applied?: string[] | null;
@@ -53,6 +54,10 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
   const [selectedMb, setSelectedMb] = useState<string[]>([]);
   const [dnsDomains, setDnsDomains] = useState<string[]>([]);
   const [selectedDns, setSelectedDns] = useState<string[]>([]);
+  // GH #2303: every domain of the backup, for its files and its DNS; DNS of a
+  // domain without custom records in the backup is listed greyed out.
+  const [domains, setDomains] = useState<string[]>([]);
+  const [deleteExtra, setDeleteExtra] = useState(false);
   // GH #1359: restore only specific domains' docroots (~/domains/<domain>)
   // instead of the whole home. Offered when the backup has a home stage.
   const [selectedDomainFiles, setSelectedDomainFiles] = useState<string[]>([]);
@@ -71,6 +76,8 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
     setSelectedMb([]);
     setDnsDomains([]);
     setSelectedDns([]);
+    setDomains([]);
+    setDeleteExtra(false);
     setSelectedDomainFiles([]);
     setResult(null);
     apiClient
@@ -85,6 +92,8 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
           .flatMap((st) => st.items ?? []);
         setMailboxes(mbs);
         setDnsDomains(resp.data.dns_domains ?? []);
+        // An older agent sends no domains: fall back to the DNS list.
+        setDomains(resp.data.domains ?? resp.data.dns_domains ?? []);
         setHasHome(
           (resp.data.stages ?? []).some(
             (st) => st.name === "home" && st.status === "ok",
@@ -125,6 +134,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
           mailboxes: selectedMb,
           dns_domains: selectedDns,
           domains: selectedDomainFiles,
+          delete_extra: deleteExtra && selectedDomainFiles.length > 0,
           overwrite: true,
         },
       );
@@ -181,8 +191,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             Choose what to restore from this backup. Restoring a database
             <strong> replaces its contents</strong> with the backed-up copy.
             Restoring the home directory <strong>overwrites</strong> files from
-            the backup but does not delete files you added since. Mail isn't
-            restorable here.
+            the backup but does not delete files you added since.
           </Typography.Paragraph>
 
           {/* GH #1363: one click to select every resource in the backup, so a
@@ -192,7 +201,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
           {(hasHome ||
             databases.length > 0 ||
             mailboxes.length > 0 ||
-            dnsDomains.length > 0) && (
+            domains.length > 0) && (
             <Space>
               <Button
                 size="small"
@@ -214,6 +223,7 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
                   setSelectedMb([]);
                   setSelectedDns([]);
                   setSelectedDomainFiles([]);
+                  setDeleteExtra(false);
                 }}
               >
                 Clear
@@ -267,39 +277,69 @@ export const RestoreDrawer = ({ backupId, open, onClose }: RestoreDrawerProps) =
             </>
           )}
 
-          {dnsDomains.length > 0 && (
-            <>
+          {domains.length > 0 && (
+            <div>
               <Typography.Text strong>DNS records</Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
                 Replaces the domain&apos;s custom DNS records with the backed-up set
                 (managed records are untouched).
-              </Typography.Text>
+              </Typography.Paragraph>
               <Checkbox.Group
                 value={selectedDns}
                 onChange={(v) => setSelectedDns(v as string[])}
                 style={{ display: "flex", flexDirection: "column", gap: 8 }}
-                options={dnsDomains.map((d) => ({ label: d, value: d }))}
+                options={domains.map((d) => {
+                  const has = dnsDomains.includes(d);
+                  return {
+                    value: d,
+                    disabled: !has,
+                    label: has ? (
+                      d
+                    ) : (
+                      <>
+                        {d}{" "}
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          (no custom DNS records in this backup)
+                        </Typography.Text>
+                      </>
+                    ),
+                  };
+                })}
               />
-            </>
+            </div>
           )}
 
-          {/* GH #1359: restore one site's document root instead of the whole home. */}
-          {hasHome && dnsDomains.length > 0 && (
-            <>
+          {/* GH #1359: restore one site's document root instead of the whole
+              home. GH #2303: offered for every domain of the backup. */}
+          {hasHome && domains.length > 0 && (
+            <div>
               <Typography.Text strong>Domain files</Typography.Text>
-              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 8 }}>
                 Restores just these domains&apos; files (
                 <code>~/domains/&lt;domain&gt;</code>) from the backup, over the
-                live files — nothing is deleted. Use this to recover one site&apos;s
-                document root without restoring the whole home directory.
-              </Typography.Text>
+                live files. Use this to recover one site without restoring the
+                whole home directory.
+              </Typography.Paragraph>
               <Checkbox.Group
                 value={selectedDomainFiles}
                 onChange={(v) => setSelectedDomainFiles(v as string[])}
                 style={{ display: "flex", flexDirection: "column", gap: 8 }}
-                options={dnsDomains.map((d) => ({ label: d, value: d }))}
+                options={domains.map((d) => ({ label: d, value: d }))}
               />
-            </>
+              {selectedDomainFiles.length > 0 && (
+                <Checkbox
+                  checked={deleteExtra}
+                  onChange={(e) => setDeleteExtra(e.target.checked)}
+                  style={{ marginTop: 8 }}
+                >
+                  Delete files added since the backup{" "}
+                  <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                    (each selected domain&apos;s folder ends up exactly as in the
+                    backup)
+                  </Typography.Text>
+                </Checkbox>
+              )}
+            </div>
           )}
 
           {(selected.length > 0 || restoreHome || selectedDns.length > 0 || selectedMb.length > 0 || selectedDomainFiles.length > 0) && (

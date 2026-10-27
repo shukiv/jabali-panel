@@ -2785,8 +2785,11 @@ type meRestoreSelectiveRequest struct {
 	DNSDomains []string `json:"dns_domains"`
 	// Domains restores only these domains' docroots (~/domains/<domain>) from the
 	// home stage — the per-domain alternative to a full home restore (GH #1359).
-	Domains   []string `json:"domains"`
-	Overwrite bool     `json:"overwrite"`
+	Domains []string `json:"domains"`
+	// DeleteExtra makes each restored domain folder hold exactly what the
+	// backup holds: files added since the backup are deleted (GH #2303).
+	DeleteExtra bool `json:"delete_extra"`
+	Overwrite   bool `json:"overwrite"`
 }
 
 // restoreSelective restores a chosen subset of the caller's OWN backup
@@ -2975,6 +2978,7 @@ func (h *meBackupHandler) runSelectiveRestoreJob(jobID, manifestSnap, username, 
 			"mailboxes":            req.Mailboxes,
 			"home":                 req.Home,
 			"domains":              req.Domains,
+			"delete_extra":         req.DeleteExtra,
 			"overwrite":            req.Overwrite,
 		}
 		// Point the agent at the repo the snapshot actually lives in, and
@@ -3179,8 +3183,55 @@ func (h *meBackupHandler) manifest(c *gin.Context) {
 		respondAgentErr(c, "manifest_read_failed", err)
 		return
 	}
-	// Pass the agent's {kind,user_id,username,stages[]} through verbatim.
-	c.Data(http.StatusOK, "application/json", raw)
+	// Pass the agent's {kind,user_id,username,stages[]} through, with its
+	// domain lists narrowed to the domains the caller owns now (GH #2303): a
+	// restore of a domain the account no longer has is refused.
+	owned := map[string]string{}
+	if h.cfg.Domains != nil {
+		doms, _, derr := h.cfg.Domains.ListByUserID(c.Request.Context(), claims.UserID, repository.ListOptions{Limit: 10000})
+		if derr != nil {
+			h.cfg.logErr("manifest: list owned domains", derr)
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "domain_list_failed"})
+			return
+		}
+		for _, d := range doms {
+			owned[d.Name] = d.ID
+		}
+	}
+	c.Data(http.StatusOK, "application/json", filterManifestDomains(raw, owned))
+}
+
+// filterManifestDomains keeps, in the manifest's "domains" and "dns_domains"
+// lists, only the names in owned, and passes everything else through. A reply
+// that isn't a JSON object goes back unchanged.
+func filterManifestDomains(raw json.RawMessage, owned map[string]string) json.RawMessage {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return raw
+	}
+	for _, key := range []string{"domains", "dns_domains"} {
+		v, ok := m[key]
+		if !ok {
+			continue
+		}
+		var names []string
+		if err := json.Unmarshal(v, &names); err != nil {
+			delete(m, key)
+			continue
+		}
+		kept := make([]string, 0, len(names))
+		for _, n := range names {
+			if _, ok := owned[n]; ok {
+				kept = append(kept, n)
+			}
+		}
+		m[key], _ = json.Marshal(kept)
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 func (h *meBackupHandler) download(c *gin.Context) {
