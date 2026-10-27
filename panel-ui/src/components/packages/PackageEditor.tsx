@@ -313,6 +313,21 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>Composer</Typography.Text>
         </div>
 
+        {/* GH #2277 (ADR-0178): Git deployment from the domain page. A
+            deployment runs the user's deploy commands (php, wp) in their SSH
+            sandbox, so it is granted like SSH. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Form.Item
+            name="git_deploy_enabled"
+            valuePropName="checked"
+            tooltip="Lets users on this package connect a domain to a Git repository and deploy it from the panel, by hand or on every push. A deployment runs the user's deploy commands (php, wp) in their SSH sandbox: grant it as you would SSH. A project with composer.lock and no vendor/ also needs Composer."
+            noStyle
+          >
+            <Switch aria-label="Git deploy" checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Git deploy</Typography.Text>
+        </div>
+
         {/* GH #1798: per-package openings in the M34 per-user outbound firewall.
             Both default OFF and only change anything for users whose outbound
             firewall is enforced or learning. */}

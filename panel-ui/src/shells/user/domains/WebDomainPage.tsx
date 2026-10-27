@@ -8,8 +8,9 @@
 // Statistics, SSL, PHP Settings, Redirects, Index Files, Caching
 // and Directory Privacy, plus three tabs gated on the same caps as the old row
 // menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
-// Document root (tenant_docroot_editable) — and Composer when the package
-// includes it (composer_enabled, GH #2276). The tenant row menu is now just
+// Document root (tenant_docroot_editable) — and Composer and Git when the
+// package includes them (composer_enabled, GH #2276; git_deploy_enabled, GH
+// #2277). The tenant row menu is now just
 // Enable/Delete. There is no DNS tab: records are managed under DNS > Zones
 // (GH #1920).
 //
@@ -45,6 +46,7 @@ import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 import { ComposerTab } from "./tabs/ComposerTab";
+import { GitTab } from "./tabs/GitTab";
 import { OverviewTab } from "./tabs/OverviewTab";
 import { SSLTab } from "./tabs/SSLTab";
 
@@ -112,6 +114,8 @@ export const WebDomainPage = () => {
   const docrootOn = caps?.tenant_docroot_editable === true;
   // GH #2276: Composer runs come with the hosting package.
   const composerOn = caps?.composer_enabled === true;
+  // GH #2277: so does Git deploy.
+  const gitOn = caps?.git_deploy_enabled === true;
   // GH #1624: with the cap off the two gated tabs are hidden (never a disabled
   // stub — see below), so a tenant has no way to learn the feature exists. Show
   // a small note on the Overview pane inviting them to ask the admin to enable
@@ -168,6 +172,10 @@ export const WebDomainPage = () => {
     // Composer — install, update, add and remove the project's packages and
     // follow each run's log (GH #2276). Only when the package includes it.
     ...(composerOn ? [{ key: "composer", label: "Composer", node: <ComposerTab domain={domain} /> }] : []),
+    // Git — connect the domain to a repository, deploy it by hand or on every
+    // push, and roll back to an earlier release (GH #2277). Only when the
+    // package includes Git deploy.
+    ...(gitOn ? [{ key: "git", label: "Git", node: <GitTab domain={domain} /> }] : []),
     { key: "redirects", label: "Redirects", node: <DomainRedirectsPanel domain={domain} /> },
     { key: "index", label: "Index Files", node: <DomainIndexPanel domain={domain} /> },
     { key: "caching", label: "Caching", node: <DomainCacheSection domainId={domain.id} /> },

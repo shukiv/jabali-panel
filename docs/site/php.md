@@ -177,7 +177,7 @@ A user whose hosting package includes Composer (`composer_enabled`, off by defau
 
 ## Git deployment (GH #2277)
 
-A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default) can connect a domain to a Git repository and deploy it (ADR-0178). The webhook and the Git tab in the domain's page come next. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
+A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default; the **Git deploy** switch in the package editor) can connect a domain to a Git repository and deploy it (ADR-0178), from the domain's **Git** tab ([Domains](user/domains.md#git)) or the API. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
 
 - **Repository:** an `https://` URL from GitHub, GitLab, Bitbucket or any Git host, with no username or token in it. SSH URLs (`git@…`) are not accepted.
 - **Private repositories:** give a read-only access token, and the username your Git host expects with it: for GitHub, your GitHub username; for a GitLab personal or project token, any name (GitLab ignores it); for a GitLab deploy token, the token's own username; for a Bitbucket repository access token, `x-token-auth`. Left empty, the panel sends `x-access-token`, the name GitHub App installation tokens use.

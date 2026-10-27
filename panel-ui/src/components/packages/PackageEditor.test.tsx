@@ -304,6 +304,32 @@ describe("PackageEditor Composer (GH #2276)", () => {
   });
 });
 
+// GH #2277: deploy commands run as the user in the SSH sandbox, so a new
+// package starts without Git deploy; a stored package loads its value.
+describe("PackageEditor Git deploy (GH #2277)", () => {
+  it("renders the switch defaulting OFF for a new package", () => {
+    renderEditor();
+    const sw = screen.getByRole("switch", { name: "Git deploy" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("loads a stored package's value (edit mode)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", git_deploy_enabled: true }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const sw = await screen.findByRole("switch", { name: "Git deploy" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+});
+
 describe("PackageEditor Redis keys per call (GH #2165)", () => {
   it("starts a new package at 500", () => {
     renderEditor();
