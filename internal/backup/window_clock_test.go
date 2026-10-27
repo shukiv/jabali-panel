@@ -124,6 +124,11 @@ func TestNextTenantRunAfter_HourlyKeepsTheMinute(t *testing.T) {
 	if want := mustTime(t, "2026-08-05T14:05:00Z"); !got.Equal(want) {
 		t.Errorf("got %s, want %s", got, want)
 	}
+	// A planned run still ahead: the first of its hourly times after now.
+	got = NextTenantRunAfter(mustTime(t, "2026-08-05T16:05:00Z"), mustTime(t, "2026-08-05T13:40:00Z"), CadenceHourly, w, "sched-A")
+	if want := mustTime(t, "2026-08-05T14:05:00Z"); !got.Equal(want) {
+		t.Errorf("planned ahead: got %s, want %s", got, want)
+	}
 	// 02:05 CEST → 02:05 CET, an hour later.
 	loc := berlinClock(t)
 	got = NextTenantRunAfter(mustTime(t, "2026-10-25T00:05:00Z"), mustTime(t, "2026-10-25T00:05:40Z"), CadenceHourly, TenantWindow{Loc: loc}, "sched-A")

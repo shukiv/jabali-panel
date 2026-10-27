@@ -289,7 +289,7 @@ func nextOnClock(planned, now time.Time, interval time.Duration, loc *time.Locat
 	weekly := interval >= 7*24*time.Hour
 	step := int(interval / time.Hour)
 	ln := now.In(loc)
-	for day := -1; day <= 8; day++ {
+	for day := 0; day <= 8; day++ {
 		noon := time.Date(ln.Year(), ln.Month(), ln.Day()+day, 12, 0, 0, 0, loc)
 		if weekly && noon.Weekday() != p.Weekday() {
 			continue
