@@ -197,13 +197,14 @@ func TestDomainOwnership_DeleteExpiredDomain_IsConditional(t *testing.T) {
 	mock.ExpectExec(del).
 		WithArgs("d1", models.OwnershipPending, cutoff, false, models.DomainManagedByDockerApp).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectCommit()
+	mock.ExpectRollback()
 	require.ErrorIs(t, repo.DeleteExpiredDomain(context.Background(), "d1", cutoff), ErrOwnershipChanged)
 
 	mock.ExpectBegin()
 	mock.ExpectExec(del).
 		WithArgs("d2", models.OwnershipPending, cutoff, false, models.DomainManagedByDockerApp).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectDomainPythonAppsDeleted(mock, "d2")
 	mock.ExpectCommit()
 	require.NoError(t, repo.DeleteExpiredDomain(context.Background(), "d2", cutoff))
 	require.NoError(t, mock.ExpectationsWereMet())
