@@ -41,6 +41,10 @@ func (s *statusCaptureRepo) ListEnv(context.Context, string) ([]*models.PythonAp
 	return nil, nil
 }
 
+func (s *statusCaptureRepo) FindByID(_ context.Context, id string) (*models.PythonApp, error) {
+	return &models.PythonApp{ID: id}, nil
+}
+
 func (s *statusCaptureRepo) UpdateStatus(_ context.Context, _, status string, lastErr *string) error {
 	s.status = status
 	if lastErr != nil {

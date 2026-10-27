@@ -3,6 +3,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/oklog/ulid/v2"
@@ -47,6 +48,7 @@ func (r *Reconciler) reconcilePythonApps(ctx context.Context) {
 	for _, app := range apps {
 		r.reconcileOnePythonApp(ctx, app)
 	}
+	r.sweepPythonAppUnits(ctx, apps)
 }
 
 func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.PythonApp) {
@@ -106,6 +108,15 @@ func (r *Reconciler) reconcileOnePythonApp(ctx context.Context, app *models.Pyth
 		}
 	}
 
+	// GH #2289: the pass reads the rows once, and the app may have been
+	// deleted, its unit removed, since. Applied now, the unit would come back
+	// with no row to own it, so make sure the row is still there.
+	if _, err := r.pythonApps.FindByID(ctx, app.ID); err != nil {
+		if !errors.Is(err, repository.ErrNotFound) {
+			r.log.Warn("pyapp: re-reading the app failed — apply skipped this pass", "id", app.ID, "err", err)
+		}
+		return
+	}
 	raw, err := r.agent.Call(ctx, "app.python.apply", params)
 	if err != nil {
 		r.failPythonApp(ctx, app.ID, err.Error())

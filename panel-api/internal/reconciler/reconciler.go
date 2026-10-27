@@ -87,6 +87,12 @@ type Reconciler struct {
 	dockerAppOrphanMu   sync.Mutex
 	dockerAppOrphanSeen map[string]*dockerAppOrphan
 
+	// pythonAppOrphanSeen holds the app units the sweep found with no app row,
+	// by app id (see python_app_orphan_sweep.go). Guarded by pythonAppOrphanMu
+	// for the same reason as dockerAppOrphanSeen.
+	pythonAppOrphanMu   sync.Mutex
+	pythonAppOrphanSeen map[string]*pythonAppOrphan
+
 	// sslIssueMu serialises certbot-touching work across the JAB-205
 	// domain worker pool AND the out-of-band ReconcileOne path: certbot
 	// holds a global /var/lib/letsencrypt lock, so two concurrent runs
