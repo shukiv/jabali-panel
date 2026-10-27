@@ -169,7 +169,7 @@ export const CreateCronModal = ({
           rules={[
             { required: true, message: "Please enter a command" },
           ]}
-          extra="One command per line (wp / php / python / node) — they run in order and stop at the first failure. Use absolute paths instead of cd/$HOME."
+          extra="One command per line — they run in order and stop at the first failure. Command help below lists what a line may run."
         >
           <Input.TextArea
             placeholder={

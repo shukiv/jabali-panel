@@ -92,10 +92,11 @@ describe("AdminCreateCronModal — target-aware help (GH #1686 items 3+4)", () =
   });
 
   it("shows the command restrictions near the command field", () => {
-    const { baseElement } = renderModal();
+    const { baseElement, getByText } = renderModal();
     // The shared CronCommandHelp names the reporter's rejected examples so the
-    // admin can see why a plain command fails.
-    expect(baseElement.textContent).toContain("Commands must start with");
+    // admin can see why a plain command fails. GH #2290 follow-up: it is a
+    // "Command help" section, opened on demand.
+    fireEvent.click(getByText(/Command help/));
     expect(baseElement.textContent).toContain("will not work");
     // GH #1838: how to run WP-CLI on a PHP version other than the CLI default.
     expect(baseElement.textContent).toContain("php7.4 /usr/local/bin/wp --path=");
