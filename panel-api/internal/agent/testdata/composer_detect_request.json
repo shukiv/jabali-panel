@@ -1,5 +1,6 @@
 {
   "os_user": "alice",
   "domain": "example.com",
-  "docroot": "/home/alice/domains/example.com/app/public"
+  "docroot": "/home/alice/domains/example.com/app/public",
+  "project_dir": "domains/shared"
 }

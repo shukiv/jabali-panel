@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -101,6 +102,31 @@ func Validate(command string, pkgs []string, noDev bool, appDir string) error {
 	return nil
 }
 
+// ValidateProjectDir checks a domain's Composer project folder: relative to
+// the user's home, "domains" or a folder under it. The home itself holds
+// .ssh, ~/.composer and other files no Composer project should write next
+// to.
+func ValidateProjectDir(dir string) error {
+	if dir != "domains" && !strings.HasPrefix(dir, "domains/") {
+		return fmt.Errorf("the project folder must be domains/ or a folder inside it")
+	}
+	if len(dir) > 255 || !appDirRE.MatchString(dir) {
+		return fmt.Errorf("the project folder may hold only letters, digits, '.', '_', '-' and '/'")
+	}
+	for _, seg := range strings.Split(dir, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("the project folder may not contain . or ..")
+		}
+	}
+	return nil
+}
+
+// DomainWorkDir is the folder a run of domain runs in when the domain has no
+// project folder: appDir inside domains/<domain>, relative to the home.
+func DomainWorkDir(domain, appDir string) string {
+	return path.Join("domains", domain, appDir)
+}
+
 // Wire types of the agent's composer.* commands. The fixtures in
 // internal/agent/testdata/composer_*.json are decoded by both sides.
 type (
@@ -108,23 +134,39 @@ type (
 		OSUser  string `json:"os_user"`
 		Domain  string `json:"domain"`
 		Docroot string `json:"docroot"`
+		// ProjectDir is the domain's project folder, relative to the home.
+		// When set, the agent looks only there.
+		ProjectDir *string `json:"project_dir,omitempty"`
 	}
 	DetectDir struct {
 		Dir       string `json:"dir"`
 		HasLock   bool   `json:"has_lock"`
 		HasVendor bool   `json:"has_vendor"`
 	}
+	// DetectProject is what the domain's project folder holds.
+	DetectProject struct {
+		Dir string `json:"dir"`
+		// Exists: the folder is there and is not a link.
+		Exists          bool `json:"exists"`
+		HasComposerJSON bool `json:"has_composer_json"`
+		HasLock         bool `json:"has_lock"`
+		HasVendor       bool `json:"has_vendor"`
+	}
 	DetectResponse struct {
-		Dirs          []DetectDir `json:"dirs"`
-		PHPVersion    string      `json:"php_version,omitempty"`
-		PHPError      string      `json:"php_error,omitempty"`
-		ComposerError string      `json:"composer_error,omitempty"`
+		Dirs          []DetectDir    `json:"dirs"`
+		Project       *DetectProject `json:"project,omitempty"`
+		PHPVersion    string         `json:"php_version,omitempty"`
+		PHPError      string         `json:"php_error,omitempty"`
+		ComposerError string         `json:"composer_error,omitempty"`
 	}
 	StartRequest struct {
-		RunID    string   `json:"run_id"`
-		OSUser   string   `json:"os_user"`
-		Domain   string   `json:"domain"`
-		AppDir   string   `json:"app_dir"`
+		RunID  string `json:"run_id"`
+		OSUser string `json:"os_user"`
+		Domain string `json:"domain"`
+		AppDir string `json:"app_dir"`
+		// WorkDir is the folder to run in, relative to the home; it replaces
+		// AppDir. An agent from before it runs in AppDir.
+		WorkDir  string   `json:"work_dir,omitempty"`
 		Command  string   `json:"command"`
 		Packages []string `json:"packages,omitempty"`
 		NoDev    bool     `json:"no_dev,omitempty"`
@@ -174,19 +216,23 @@ func Detect(ctx context.Context, ag agent.AgentInterface, req DetectRequest) (*D
 	return &resp, nil
 }
 
-// Start stores run as running and asks the agent to start it. When the
-// domain already has a run in progress it returns
-// repository.ErrComposerRunActive and stores nothing. A run the agent does
-// not start is stored as failed, with the agent's message, and the agent's
-// error is returned.
+// Start stores run as running and asks the agent to start it in
+// run.WorkDir. When the domain, or another domain in the same folder,
+// already has a run in progress it returns repository.ErrComposerRunActive
+// and stores nothing. A run the agent does not start is stored as failed,
+// with the agent's message, and the agent's error is returned.
 func Start(ctx context.Context, ag agent.AgentInterface, repo repository.ComposerRunRepository, run *models.ComposerRun, osUser, domain string) error {
+	if run.WorkDir == "" {
+		// The run would take no folder's lock.
+		return errors.New("composerrun: a run needs its folder (WorkDir)")
+	}
 	run.State = models.ComposerRunRunning
 	if err := repo.CreateUnlessRunning(ctx, run); err != nil {
 		return err
 	}
 	var resp StartResponse
 	err := call(ctx, ag, "composer.run_start", StartRequest{
-		RunID: run.ID, OSUser: osUser, Domain: domain, AppDir: run.AppDir,
+		RunID: run.ID, OSUser: osUser, Domain: domain, AppDir: run.AppDir, WorkDir: run.WorkDir,
 		Command: run.Command, Packages: run.PackageList(), NoDev: run.NoDev,
 	}, &resp)
 	if err != nil {

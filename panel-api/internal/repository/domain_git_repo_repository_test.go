@@ -61,6 +61,11 @@ func TestDomain_TransferOwnerDropsTheGitSettings(t *testing.T) {
 	mock.ExpectExec("DELETE FROM `domain_git_repos` WHERE domain_id = ").
 		WithArgs("01DOMAIN0000000000000000AB").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	// GH #2276: and its Composer project folder, a path in the old owner's
+	// home.
+	mock.ExpectExec("DELETE FROM `domain_composer_settings` WHERE domain_id = ").
+		WithArgs("01DOMAIN0000000000000000AB").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 	require.NoError(t, repo.TransferOwner(context.Background(), "01DOMAIN0000000000000000AB", "01NEWUSR0000000000000000AB", "/home/bob/domains/example.com/public_html"))
 	require.NoError(t, mock.ExpectationsWereMet())

@@ -5976,10 +5976,27 @@ paths:
   /domains/{id}/composer:
     get:
       tags: [Composer]
-      summary: Whether the domain's owner may run Composer, where the domain's composer.json files are, and the run in progress (GH #2276)
+      summary: "Whether the domain's owner may run Composer, the domain's project folder (project_dir, null when it finds composer.json on its own), where its composer.json files are or what its project folder holds, and the run in progress (GH #2276)"
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
+
+  /domains/{id}/composer/settings:
+    put:
+      tags: [Composer]
+      summary: "Set the domain's Composer project folder, or clear it with null so the domain finds composer.json from its document root up to domains/<domain>/ again. The folder is relative to the owner's home, domains or a folder inside it, and several of the owner's domains may share it. Runs then run there, one at a time per folder. Needs a hosting package that includes Composer."
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_dir]
+              properties:
+                project_dir: { type: string, nullable: true, description: "domains, or a folder in it such as domains/shared; null clears it" }
+      responses: { "200": { description: Saved }, "403": { description: The owner's package does not include Composer }, "422": { description: The folder is not domains/ or a folder inside it } }
 
   /domains/{id}/composer/runs:
     get:
@@ -5993,7 +6010,7 @@ paths:
       summary: Start a Composer run (install, update, require, remove, audit, outdated, show, validate, dump-autoload or diagnose) as the domain's owner, on the domain's PHP, in their SSH sandbox. Needs a hosting package that includes Composer.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "202": { description: Started }, "403": { description: The owner's package does not include Composer }, "409": { description: A run is already in progress }, "422": { description: "The run asks for something the panel does not run, or the domain lacks what it needs" } }
+      responses: { "202": { description: Started }, "403": { description: The owner's package does not include Composer }, "409": { description: "A run is already in progress for the domain, or in its project folder from another domain" }, "422": { description: "The run asks for something the panel does not run, or the domain lacks what it needs" } }
 
   /domains/{id}/composer/runs/{runId}:
     get:

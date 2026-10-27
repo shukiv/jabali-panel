@@ -3,6 +3,7 @@
   "os_user": "alice",
   "domain": "example.com",
   "app_dir": "app",
+  "work_dir": "domains/example.com/app",
   "command": "require",
   "packages": ["monolog/monolog:^3.0", "guzzlehttp/guzzle"],
   "no_dev": true

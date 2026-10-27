@@ -470,7 +470,12 @@ func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, new
 		}
 		// GH #2277: the domain's Git repository settings hold the old owner's
 		// access token; they don't pass to the new owner.
-		return tx.Where("domain_id = ?", domainID).Delete(&models.DomainGitRepo{}).Error
+		if err := tx.Where("domain_id = ?", domainID).Delete(&models.DomainGitRepo{}).Error; err != nil {
+			return err
+		}
+		// GH #2276: the Composer project folder is a path in the old owner's
+		// home; the new owner's domain finds composer.json on its own.
+		return tx.Where("domain_id = ?", domainID).Delete(&models.DomainComposerSettings{}).Error
 	})
 }
 
