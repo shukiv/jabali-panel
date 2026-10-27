@@ -147,15 +147,17 @@ func newPythonAppDeleteCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("app not found: %w", err)
 			}
-			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			if _, err := sharedAgent.Call(callCtx, "app.python.remove", map[string]any{"app_id": app.ID}); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: agent remove failed: %v\n", err)
-			}
-			detachPythonRulesCLI(ctx, app)
+			// GH #2289: the row goes first, as in the API's delete, so a
+			// reconciler apply can't write back the unit the remove takes down.
 			if err := repo.Delete(ctx, app.ID); err != nil {
 				return err
 			}
+			callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			if _, err := sharedAgent.Call(callCtx, "app.python.remove", map[string]any{"app_id": app.ID}); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: agent remove failed: %v (the reconciler removes the unit later)\n", err)
+			}
+			detachPythonRulesCLI(ctx, app)
 			cliAuditOK(ctx, "python_app.delete", "python_app", app.ID, &app.UserID)
 			fmt.Printf("deleted %s (%s)\n", app.Name, app.ID)
 			return nil
