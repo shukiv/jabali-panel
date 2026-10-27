@@ -16,6 +16,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -210,10 +211,30 @@ func (dt *gitDeployTest) run(m *gitDeployManifest) (string, error) {
 	if err := m.check(); err != nil {
 		dt.t.Fatalf("the test's manifest is invalid: %v", err)
 	}
-	var out bytes.Buffer
-	d := &gitDeployer{m: m, stdout: &out, stderr: &out}
+	out := &gitDeployOutput{}
+	d := &gitDeployer{m: m, stdout: out, stderr: out}
 	err := d.run(context.Background())
 	return out.String(), err
+}
+
+// gitDeployOutput is one log for a run's stdout and stderr. exec copies a
+// child's two streams on two goroutines, so it takes a lock; the agent's own
+// are files.
+type gitDeployOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (o *gitDeployOutput) Write(p []byte) (int, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.Write(p)
+}
+
+func (o *gitDeployOutput) String() string {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.buf.String()
 }
 
 func (dt *gitDeployTest) live() string {
