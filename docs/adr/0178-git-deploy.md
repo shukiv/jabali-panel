@@ -1,6 +1,6 @@
 # ADR-0178: Deploying a domain from a Git repository
 
-**Status:** Accepted (2026-10-26). Built: the repository settings (part 1), deployments, releases and rollback (part 2), the deploy-on-push webhook (part 3). The Git tab follows (see Next parts).
+**Status:** Accepted (2026-10-26). Built: the repository settings (part 1), deployments, releases and rollback (part 2), the deploy-on-push webhook (part 3), the Git tab in the domain's page (part 4).
 **Driven by:** GH #2277 (a reporter asked to deploy PHP applications from GitHub, GitLab, Bitbucket or any Git host, private repositories included, with branch selection, manual and webhook deployments, deploy commands, releases with rollback, environment files kept out of the repository, and a deployment history, all under the hosting account; the maintainer approved building it on 2026-10-25).
 **Related:** ADR-0176 (Composer runs), ADR-0067 (SSH shell sandbox), GH #1458 (cron in the sandbox), GH #2032 (a tenant's sealed Cloudflare token), GH #282 (no-package policy), GH #658 (the sandbox never jails root).
 
@@ -181,11 +181,23 @@ way to make the server connect to an address of the user's choosing.
     - The route has no session and sits outside the CSRF guard, like the
       automation API; a DR standby refuses it.
 
-## Next parts
+## The Git tab
 
-These follow the design above; each lands with its own change.
+Part 4 puts the API above in the tenant's domain page, as a **Git** tab shown
+when the package includes Git deploy (`git_deploy_enabled` in
+`/me/server-capabilities`), like the Composer tab. The package editor has the
+switch. The tab follows the API's own rules rather than adding any:
 
-- **The Git tab** in the domain's page.
+- Branches are only known once the settings are saved (a save reads them), so
+  connecting takes an optional branch and editing offers the saved
+  repository's branches.
+- The token never comes back. An empty field keeps it; "public repository"
+  sends `clear_token`. `token_required_for_new_host` asks for the token again
+  on its field.
+- Make live is offered only for an earlier release a deployment completed,
+  the rule the server enforces.
+- A secret the panel makes is shown once, in a dialog, and is not kept in the
+  page's data after it closes.
 
 ## Consequences
 

@@ -103,6 +103,30 @@ Take a backup before **Update** or **Remove**: they change the packages your sit
 
 Without the tab, ask your administrator: Composer runs are a package setting, off unless they turn it on.
 
+## Git
+
+When your hosting package includes Git deploy, a domain has a **Git** tab (GH #2277). It deploys the domain from a Git repository: GitHub, GitLab, Bitbucket or any Git host, over `https://`.
+
+**Connect a repository.** Enter the repository's `https://` URL (not an SSH `git@…` URL, and no username or token in it) and, optionally, a branch; empty uses the repository's default branch. For a private repository, add a read-only access token and the username your Git host expects with it (GitHub: your username; Bitbucket: `x-token-auth`; GitLab: any name). Saving checks the repository first and saves nothing if that fails. The token is never shown again: leave the field empty to keep it, or tick **Public repository** to remove it.
+
+The deployment settings, also under **Edit settings**:
+
+- **Web directory**: the folder inside the repository that the site serves, `public` for Laravel. Empty serves the repository's root.
+- **Shared paths**: files and folders kept across deployments in `domains/<domain>/shared`, such as `.env` or `storage`.
+- **Deploy commands**: run in the new release before it goes live, one per line: `php artisan migrate --force`, `php8.3 <file>`, or `wp …`. No shell runs them, so pipes, `&&` and variables don't work.
+
+**Deploy now** fetches the branch into a new release in `domains/<domain>/releases/`, links the shared paths, runs `composer install` when the project needs it and your package includes Composer, runs the deploy commands, and only then makes the release live. The tab shows the log as it goes. The site keeps serving the current release until then, and after a deployment that fails. **Cancel** stops a deployment before its release goes live. After the first deployment, the domain's document root becomes `domains/<domain>/current/<web directory>`.
+
+Anything the site writes inside a release, such as uploads or caches, is gone after the next deployment unless it is a shared path.
+
+**Releases** lists the five newest releases. **Make live** switches the site back to an earlier release a deployment completed, at once; deploy commands don't run again, so database changes stay as they are. **Deployments** lists past deployments, whether you or a push started them, with their logs.
+
+**Deploy on push.** **Turn on** gives a webhook URL and a secret, shown once: add them on your Git host as a webhook for push events (GitHub and Gitea/Forgejo: content type `application/json`). To use a secret your Git host made instead, such as GitLab's signing token, click **Use my Git host's secret**. Every push to the branch then deploys it; a push during a deployment waits for it and deploys once it ends. **New secret** replaces the secret at once. The tab shows when the last delivery came and what it did. The Git host has to reach the panel at the webhook's URL and accept its certificate. See [PHP → Deploying on push](../php.md#deploying-on-push) for the details.
+
+**Disconnect** removes the repository settings, the token and the webhook. The site keeps serving its current release, and the releases and shared files stay in `domains/<domain>/`.
+
+Without the tab, ask your administrator: Git deploy is a package setting, off unless they turn it on.
+
 ## What you can change vs. what the admin controls
 
 You may change PHP version (from the subset your package allows), SSL on/off, DNSSEC on/off, redirects, aliases, mail enable/disable.
