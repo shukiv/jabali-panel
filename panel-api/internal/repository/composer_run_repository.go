@@ -10,14 +10,17 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
-// ErrComposerRunActive: the domain already has a run in progress.
-var ErrComposerRunActive = errors.New("repository: a Composer run is already in progress for this domain")
+// ErrComposerRunActive: the domain, or the folder the run is for, already
+// has a run in progress.
+var ErrComposerRunActive = errors.New("repository: a Composer run is already in progress for this domain or its project folder")
 
 // ComposerRunRepository persists Composer runs (GH #2276, ADR-0176).
 type ComposerRunRepository interface {
-	// CreateUnlessRunning inserts run unless its domain already has a run in
-	// progress (ErrComposerRunActive). The domain's row is locked meanwhile,
-	// so two requests can't both start one.
+	// CreateUnlessRunning inserts run unless its domain, or another of the
+	// user's domains in the same folder (WorkDir), already has a run in
+	// progress (ErrComposerRunActive). The user's row is locked meanwhile:
+	// domains that share a project folder share their owner, so two requests
+	// can't both start a run in one folder.
 	CreateUnlessRunning(ctx context.Context, run *models.ComposerRun) error
 	Save(ctx context.Context, run *models.ComposerRun) error
 	FindByID(ctx context.Context, id string) (*models.ComposerRun, error)
@@ -35,9 +38,18 @@ func NewComposerRunRepository(db *gorm.DB) ComposerRunRepository {
 
 func (r *composerRunRepo) CreateUnlessRunning(ctx context.Context, run *models.ComposerRun) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var dom struct{ ID string }
+		var owner struct{ ID string }
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Table("domains").Select("id").Where("id = ?", run.DomainID).
+			Table("users").Select("id").Where("id = ?", run.UserID).
+			Take(&owner).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		var dom struct{ ID string }
+		if err := tx.Table("domains").Select("id").
+			Where("id = ? AND user_id = ?", run.DomainID, run.UserID).
 			Take(&dom).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrNotFound
@@ -46,7 +58,8 @@ func (r *composerRunRepo) CreateUnlessRunning(ctx context.Context, run *models.C
 		}
 		var n int64
 		if err := tx.Model(&models.ComposerRun{}).
-			Where("domain_id = ? AND state = ?", run.DomainID, models.ComposerRunRunning).
+			Where("user_id = ? AND state = ? AND (domain_id = ? OR work_dir = ?)",
+				run.UserID, models.ComposerRunRunning, run.DomainID, run.WorkDir).
 			Count(&n).Error; err != nil {
 			return err
 		}

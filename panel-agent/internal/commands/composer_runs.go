@@ -120,6 +120,25 @@ func validateComposerAppDir(dir string) error {
 	return nil
 }
 
+// validateComposerWorkDir checks a folder to run Composer in, relative to the
+// tenant's home: "domains" or a folder inside it, which several of the
+// tenant's domains may share. Never the home itself, where .ssh and
+// ~/.composer live.
+func validateComposerWorkDir(dir string) error {
+	if dir != "domains" && !strings.HasPrefix(dir, "domains/") {
+		return fmt.Errorf("the project folder must be domains/ or a folder inside it")
+	}
+	if len(dir) > 255 || !composerAppDirRE.MatchString(dir) {
+		return fmt.Errorf("the project folder must be a relative path of letters, digits, '.', '_', '-' and '/'")
+	}
+	for _, seg := range strings.Split(dir, "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("the project folder may not contain . or .. segments")
+		}
+	}
+	return nil
+}
+
 // validateComposerPackages checks a run's packages against its command.
 func validateComposerPackages(cmd composerCommand, pkgs []string) error {
 	if len(pkgs) > composerMaxPackages {
@@ -211,6 +230,9 @@ type composerDetectParams struct {
 	OSUser  string `json:"os_user"`
 	Domain  string `json:"domain"`
 	Docroot string `json:"docroot"`
+	// ProjectDir is the domain's project folder, relative to the home. When
+	// set, detect looks only there.
+	ProjectDir *string `json:"project_dir,omitempty"`
 }
 
 type composerDetectDir struct {
@@ -219,14 +241,26 @@ type composerDetectDir struct {
 	HasVendor bool   `json:"has_vendor"`
 }
 
+// composerDetectProject is what a domain's project folder holds.
+type composerDetectProject struct {
+	Dir string `json:"dir"`
+	// Exists: the folder is there and is not a link.
+	Exists          bool `json:"exists"`
+	HasComposerJSON bool `json:"has_composer_json"`
+	HasLock         bool `json:"has_lock"`
+	HasVendor       bool `json:"has_vendor"`
+}
+
 type composerDetectResponse struct {
 	// Dirs are the directories from the docroot up to the domain's directory
 	// that hold a composer.json, nearest the docroot first. Dir is relative to
-	// the domain's directory.
-	Dirs          []composerDetectDir `json:"dirs"`
-	PHPVersion    string              `json:"php_version,omitempty"`
-	PHPError      string              `json:"php_error,omitempty"`
-	ComposerError string              `json:"composer_error,omitempty"`
+	// the domain's directory. Empty when the domain has a project folder.
+	Dirs []composerDetectDir `json:"dirs"`
+	// Project is what the domain's project folder holds, when it has one.
+	Project       *composerDetectProject `json:"project,omitempty"`
+	PHPVersion    string                 `json:"php_version,omitempty"`
+	PHPError      string                 `json:"php_error,omitempty"`
+	ComposerError string                 `json:"composer_error,omitempty"`
 }
 
 func composerDetectHandler(_ context.Context, raw json.RawMessage) (any, error) {
@@ -250,7 +284,20 @@ func composerDetectHandler(_ context.Context, raw json.RawMessage) (any, error) 
 	}
 
 	resp := composerDetectResponse{Dirs: []composerDetectDir{}}
-	for dir := rel; ; dir = filepath.Dir(dir) {
+	if p.ProjectDir != nil {
+		dir := *p.ProjectDir
+		if err := validateComposerWorkDir(dir); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "project_dir: " + err.Error()}
+		}
+		resp.Project = &composerDetectProject{
+			Dir:             dir,
+			Exists:          composerIsDir(p.OSUser, dir),
+			HasComposerJSON: composerIsFile(p.OSUser, filepath.Join(dir, "composer.json")),
+			HasLock:         composerIsFile(p.OSUser, filepath.Join(dir, "composer.lock")),
+			HasVendor:       composerIsDir(p.OSUser, filepath.Join(dir, "vendor")),
+		}
+	}
+	for dir := rel; p.ProjectDir == nil; dir = filepath.Dir(dir) {
 		if dir == "." {
 			dir = ""
 		}
@@ -280,10 +327,13 @@ func composerDetectHandler(_ context.Context, raw json.RawMessage) (any, error) 
 // --- composer.run_start ---
 
 type composerRunStartParams struct {
-	RunID    string   `json:"run_id"`
-	OSUser   string   `json:"os_user"`
-	Domain   string   `json:"domain"`
-	AppDir   string   `json:"app_dir"`
+	RunID  string `json:"run_id"`
+	OSUser string `json:"os_user"`
+	Domain string `json:"domain"`
+	AppDir string `json:"app_dir"`
+	// WorkDir is the folder to run in, relative to the home; it replaces
+	// AppDir. A panel from before it sends only AppDir.
+	WorkDir  string   `json:"work_dir,omitempty"`
 	Command  string   `json:"command"`
 	Packages []string `json:"packages,omitempty"`
 	NoDev    bool     `json:"no_dev,omitempty"`
@@ -292,6 +342,14 @@ type composerRunStartParams struct {
 type composerRunStartResponse struct {
 	Unit       string `json:"unit"`
 	PHPVersion string `json:"php_version"`
+}
+
+// composerRunDir is the folder a run runs in, relative to the home.
+func composerRunDir(p composerRunStartParams) string {
+	if p.WorkDir != "" {
+		return p.WorkDir
+	}
+	return filepath.Join("domains", p.Domain, p.AppDir)
 }
 
 // composerRunArgv is the systemd-run argv of a run.
@@ -327,7 +385,7 @@ func composerRunArgv(p composerRunStartParams, cmd composerCommand, php, phar, s
 	args = append(args,
 		"--no-interaction",
 		"--no-ansi",
-		"--working-dir="+filepath.Join(composerDomainDir(p.OSUser, p.Domain), p.AppDir),
+		"--working-dir="+filepath.Join(tenantHomeDir(p.OSUser), composerRunDir(p)),
 	)
 	return append(args, p.Packages...)
 }
@@ -356,11 +414,16 @@ func composerRunStartHandler(ctx context.Context, raw json.RawMessage) (any, err
 	if err := validateComposerAppDir(p.AppDir); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
+	if p.WorkDir != "" {
+		if err := validateComposerWorkDir(p.WorkDir); err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "work_dir: " + err.Error()}
+		}
+	}
 	if err := composerRunAccount(p.OSUser); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
-	if !composerIsDir(p.OSUser, filepath.Join("domains", p.Domain, p.AppDir)) {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the app directory does not exist or is a link"}
+	if !composerIsDir(p.OSUser, composerRunDir(p)) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: "the project folder " + composerRunDir(p) + "/ does not exist or is a link"}
 	}
 	php, ver, err := composerDomainPHP(p.Domain, p.OSUser)
 	if err != nil {

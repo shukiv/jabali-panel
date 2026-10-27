@@ -2,7 +2,8 @@
 // why Composer is unavailable, starts runs with the body the API expects
 // (packages, --no-dev only where the command takes it), checks package names
 // before sending, asks before Update and Remove, and follows a run to its
-// result, including a cancel and a PHP Defense block.
+// result, including a cancel and a PHP Defense block. A domain can name its
+// own project folder, outside its directory too, and runs then run there.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -10,7 +11,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const get = vi.hoisted(() => vi.fn());
 const post = vi.hoisted(() => vi.fn());
-vi.mock("../../../../apiClient", () => ({ apiClient: { get, post } }));
+const put = vi.hoisted(() => vi.fn());
+vi.mock("../../../../apiClient", () => ({ apiClient: { get, post, put } }));
 const error = vi.hoisted(() => vi.fn());
 vi.mock("../../../../lib/feedback", () => ({
   feedback: { message: { success: vi.fn(), error, info: vi.fn() } },
@@ -43,6 +45,7 @@ const run = (over: Partial<ComposerRun> = {}): ComposerRun => ({
 type State = Record<string, unknown>;
 const enabled = (over: State = {}): State => ({
   enabled: true,
+  project_dir: null,
   detect: { dirs: [{ dir: "", has_lock: true, has_vendor: true }], php_version: "8.4" },
   active_run: null,
   ...over,
@@ -71,6 +74,7 @@ function renderTab() {
 beforeEach(() => {
   get.mockReset();
   post.mockReset();
+  put.mockReset();
   error.mockReset();
 });
 
@@ -207,5 +211,100 @@ describe("ComposerTab (GH #2276)", () => {
     renderTab();
     fireEvent.click(await screen.findByRole("button", { name: /Install/ }));
     await waitFor(() => expect(error).toHaveBeenCalledWith("a Composer run is already in progress for this domain"));
+  });
+
+  it("runs in the domain's project folder, outside its own directory", async () => {
+    serve(
+      enabled({
+        project_dir: "domains",
+        detect: {
+          dirs: [],
+          project: { dir: "domains", exists: true, has_composer_json: true, has_lock: true, has_vendor: false },
+          php_version: "8.4",
+        },
+      }),
+      [run({ work_dir: "domains" })],
+    );
+    post.mockResolvedValue({ data: run({ work_dir: "domains" }) });
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Install/ }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith(`${base}/runs`, {
+        command: "install",
+        app_dir: "",
+        packages: [],
+        no_dev: false,
+      }),
+    );
+    expect(screen.getAllByText("domains/").length).toBeGreaterThan(0);
+    expect(screen.getByText("no vendor/")).toBeInTheDocument();
+    expect(screen.queryByText(/No composer.json in this domain's document root/)).not.toBeInTheDocument();
+  });
+
+  it("says when the project folder is missing or has no composer.json", async () => {
+    serve(
+      enabled({
+        project_dir: "domains/shared",
+        detect: {
+          dirs: [],
+          project: { dir: "domains/shared", exists: false, has_composer_json: false, has_lock: false, has_vendor: false },
+        },
+      }),
+    );
+    const { unmount } = renderTab();
+    expect(await screen.findByText(/The folder domains\/shared\/ doesn't exist/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Install/ })).not.toBeInTheDocument();
+    unmount();
+
+    serve(
+      enabled({
+        project_dir: "domains/shared",
+        detect: {
+          dirs: [],
+          project: { dir: "domains/shared", exists: true, has_composer_json: false, has_lock: false, has_vendor: false },
+        },
+      }),
+    );
+    renderTab();
+    expect(await screen.findByText(/No composer.json in domains\/shared\/ yet/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Install/ })).not.toBeInTheDocument();
+  });
+
+  it("sets a project folder after checking it", async () => {
+    serve(enabled());
+    put.mockResolvedValue({ data: { project_dir: "domains/shared" } });
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Change/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText("Use this folder"));
+    const input = await within(dialog).findByLabelText(/Folder, from your home directory/);
+
+    fireEvent.change(input, { target: { value: ".ssh" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(await within(dialog).findByText(/Use domains\/ or a folder inside it/)).toBeInTheDocument();
+    expect(put).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "domains/shared/" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith(`${base}/settings`, { project_dir: "domains/shared" }));
+  });
+
+  it("goes back to finding composer.json on its own", async () => {
+    serve(
+      enabled({
+        project_dir: "domains",
+        detect: {
+          dirs: [],
+          project: { dir: "domains", exists: true, has_composer_json: true, has_lock: true, has_vendor: true },
+        },
+      }),
+    );
+    put.mockResolvedValue({ data: { project_dir: null } });
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Change/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByLabelText(/Find composer.json from the document root/));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(put).toHaveBeenCalledWith(`${base}/settings`, { project_dir: null }));
   });
 });

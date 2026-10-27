@@ -77,13 +77,14 @@ Two things found on a test server shaped the design:
    may start with `-`, or contain `$` or `%` (systemd expands those in
    `ExecStart`). The app directory is a path relative to
    `/home/<user>/domains/<domain>/` with no `..`, and it must be a real
-   directory, not a link. `validate` runs with `--no-check-publish`: a hosted
+   directory, not a link. A domain's own project folder (8) replaces it. `validate` runs with `--no-check-publish`: a hosted
    app rarely has the description and license a published package needs, and
    without the option those alone fail the run (exit 2).
 6. **It is a package entitlement, off by default.** The flag is
    `hosting_packages.composer_enabled`, default 0. It lifts the exec bans for
    the tenant's own code, so like tenant Docker a user with no package is
-   denied (an exception to GH #282). One run at a time per domain.
+   denied (an exception to GH #282). One run at a time per domain, and per
+   folder (8).
 
    A composer.json script can run any command, so the entitlement amounts to
    running commands in the user's SSH sandbox. Grant it as you would SSH
@@ -100,6 +101,27 @@ Two things found on a test server shaped the design:
 7. **The panel collects results.** A read of a running run asks the agent, and
    a reconciler pass collects runs nobody reads, so no unit stays loaded. A run
    whose unit is gone before the panel saw it finish is marked failed.
+8. **A domain may name its project folder.** Some users keep one
+   `composer.json`, `composer.lock` and `vendor/` for several domains and
+   subdomains, in `~/domains/` above all of them. The domain's
+   `domain_composer_settings` row holds the folder, relative to the home. It
+   must be `domains` or a folder inside it, never the home itself, which holds
+   `.ssh` and `~/.composer`. With a folder set, detection looks only there and
+   every run runs there; with none, the domain finds `composer.json` from its
+   document root up, as before.
+
+   Each run stores the folder it ran in (`composer_runs.work_dir`). The
+   one-run lock is the owner's row, not the domain's: a run is refused while
+   the same domain, or another of the owner's domains in the same folder, has
+   one in progress. Domains that share a folder always share an owner, since
+   it is a path in that owner's home. A domain that changes owner drops its
+   folder.
+
+   The agent checks the folder again. It must be a real directory, reached
+   without following a link. A run in a shared folder uses the PHP version of
+   the domain it was started from. The sandbox binds the whole home, and the
+   user's PHP-FPM pools allow it in `open_basedir`, so a site can load a
+   `vendor/` above its own directory.
 
 ## Consequences
 

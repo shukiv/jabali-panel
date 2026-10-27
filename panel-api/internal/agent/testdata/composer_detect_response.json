@@ -3,6 +3,7 @@
     {"dir": "app", "has_lock": true, "has_vendor": true},
     {"dir": "", "has_lock": false, "has_vendor": false}
   ],
+  "project": {"dir": "domains/shared", "exists": true, "has_composer_json": true, "has_lock": true, "has_vendor": false},
   "php_version": "8.4",
   "php_error": "example.com does not run PHP: enable PHP on the domain first",
   "composer_error": "Composer is not installed on this server (no Composer phar in /usr/local/bin)"

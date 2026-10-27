@@ -14,8 +14,14 @@ type ComposerRun struct {
 	UserID   string `gorm:"type:char(26);not null" json:"user_id"`
 	DomainID string `gorm:"type:char(26);not null;index:idx_composer_runs_domain_created,priority:1" json:"domain_id"`
 	// AppDir is the directory Composer ran in, relative to the domain's
-	// directory (/home/<user>/domains/<domain>); "" is that directory.
-	AppDir  string `gorm:"column:app_dir;type:varchar(255);not null" json:"app_dir"`
+	// directory (/home/<user>/domains/<domain>); "" is that directory, or
+	// the domain's own project folder (WorkDir) when it has one.
+	AppDir string `gorm:"column:app_dir;type:varchar(255);not null" json:"app_dir"`
+	// WorkDir is the folder Composer ran in, relative to the user's home:
+	// "domains/<domain>[/<app_dir>]", or the domain's project folder, which
+	// other domains of the user may share. Two runs in one folder never
+	// overlap.
+	WorkDir string `gorm:"column:work_dir;type:varchar(255);not null" json:"work_dir"`
 	Command string `gorm:"type:varchar(32);not null" json:"command"`
 	// Packages holds the run's packages one per line; see PackageList.
 	Packages   string `gorm:"type:text" json:"-"`

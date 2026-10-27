@@ -62,7 +62,7 @@ func (f *fakeRuns) Save(_ context.Context, run *models.ComposerRun) error {
 }
 
 func newRun() *models.ComposerRun {
-	return &models.ComposerRun{ID: "01JCXMPSRRVN00000000000AB1", DomainID: "dom", UserID: "usr", Command: "install"}
+	return &models.ComposerRun{ID: "01JCXMPSRRVN00000000000AB1", DomainID: "dom", UserID: "usr", WorkDir: "domains/example.com", Command: "install"}
 }
 
 func TestValidate(t *testing.T) {
@@ -120,17 +120,56 @@ func TestStart_SendsTheRunToTheAgent(t *testing.T) {
 	ag := &fakeAgent{answers: map[string]any{"composer.run_start": StartResponse{Unit: "u", PHPVersion: "8.5"}}}
 	runs := &fakeRuns{}
 	run := newRun()
-	run.Command, run.AppDir, run.NoDev = "require", "app", false
+	run.Command, run.AppDir, run.WorkDir, run.NoDev = "require", "app", "domains/example.com/app", false
 	run.SetPackageList([]string{"monolog/monolog:^3.0"})
 	if err := Start(context.Background(), ag, runs, run, "alice", "example.com"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	want := StartRequest{RunID: run.ID, OSUser: "alice", Domain: "example.com", AppDir: "app", Command: "require", Packages: []string{"monolog/monolog:^3.0"}}
+	want := StartRequest{RunID: run.ID, OSUser: "alice", Domain: "example.com", AppDir: "app", WorkDir: "domains/example.com/app", Command: "require", Packages: []string{"monolog/monolog:^3.0"}}
 	if got := ag.params["composer.run_start"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("run_start params = %+v, want %+v", got, want)
 	}
 	if got := runs.runs[run.ID]; got.State != models.ComposerRunRunning || got.PHPVersion != "8.5" {
 		t.Fatalf("stored run = %+v", got)
+	}
+}
+
+// GH #2276: a run without its folder would take no folder's lock, so it is
+// never stored or started.
+func TestStart_NeedsItsFolder(t *testing.T) {
+	ag := &fakeAgent{}
+	runs := &fakeRuns{}
+	run := newRun()
+	run.WorkDir = ""
+	if err := Start(context.Background(), ag, runs, run, "alice", "example.com"); err == nil {
+		t.Fatal("a run with no folder started")
+	}
+	if len(ag.calls) != 0 || len(runs.runs) != 0 {
+		t.Fatalf("calls = %q, stored = %v", ag.calls, runs.runs)
+	}
+}
+
+// A project folder is domains/ or a folder in it; never the home, where .ssh
+// and ~/.composer are, and never outside it.
+func TestValidateProjectDir(t *testing.T) {
+	for _, ok := range []string{"domains", "domains/shared", "domains/example.com/app", "domains/a_b-c.d"} {
+		if err := ValidateProjectDir(ok); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", ".", "..", ".ssh", ".composer", "public_html", "/etc", "/home/alice/domains", "domainsx", "domains/", "domains//x", "domains/..", "domains/../.ssh", "domains/./x", "domains/a b", "domains/$HOME", "domains/" + strings.Repeat("a", 250)} {
+		if err := ValidateProjectDir(bad); err == nil {
+			t.Errorf("%q: accepted", bad)
+		}
+	}
+}
+
+func TestDomainWorkDir(t *testing.T) {
+	if got := DomainWorkDir("example.com", ""); got != "domains/example.com" {
+		t.Errorf("no app dir = %q", got)
+	}
+	if got := DomainWorkDir("example.com", "app/sub"); got != "domains/example.com/app/sub" {
+		t.Errorf("app dir = %q", got)
 	}
 }
 

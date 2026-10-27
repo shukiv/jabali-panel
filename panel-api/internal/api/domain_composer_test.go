@@ -59,9 +59,12 @@ type composerTestRuns struct {
 	runs map[string]*models.ComposerRun
 }
 
+// CreateUnlessRunning follows the repository: one run in progress per domain,
+// and per folder among the user's domains.
 func (f *composerTestRuns) CreateUnlessRunning(_ context.Context, run *models.ComposerRun) error {
 	for _, r := range f.runs {
-		if r.DomainID == run.DomainID && r.State == models.ComposerRunRunning {
+		if r.UserID == run.UserID && r.State == models.ComposerRunRunning &&
+			(r.DomainID == run.DomainID || r.WorkDir == run.WorkDir) {
 			return repository.ErrComposerRunActive
 		}
 	}
@@ -94,6 +97,27 @@ func (f *composerTestRuns) ListByDomain(_ context.Context, domainID string, _, _
 	return out, int64(len(out)), nil
 }
 
+type composerTestProjectDirs struct {
+	byDomain map[string]string
+}
+
+func (f *composerTestProjectDirs) Get(_ context.Context, domainID string) (*models.DomainComposerSettings, error) {
+	if dir, ok := f.byDomain[domainID]; ok {
+		return &models.DomainComposerSettings{DomainID: domainID, ProjectDir: dir}, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (f *composerTestProjectDirs) Put(_ context.Context, row *models.DomainComposerSettings) error {
+	f.byDomain[row.DomainID] = row.ProjectDir
+	return nil
+}
+
+func (f *composerTestProjectDirs) Delete(_ context.Context, domainID string) error {
+	delete(f.byDomain, domainID)
+	return nil
+}
+
 type composerTestAgent struct {
 	calls   []string
 	params  []any
@@ -110,12 +134,13 @@ func (f *composerTestAgent) Call(_ context.Context, command string, params any) 
 	return json.Marshal(f.answers[command])
 }
 
-// composerTestEnv: alice owns example.com (on package "pkg"), bob owns
-// other.com (no package).
+// composerTestEnv: alice owns example.com and shop.com (on package "pkg"),
+// bob owns other.com (no package).
 type composerTestEnv struct {
 	router   *gin.Engine
 	agent    *composerTestAgent
 	runs     *composerTestRuns
+	settings *composerTestProjectDirs
 	pkg      *models.HostingPackage
 	alice    *models.User
 	callerID string
@@ -135,12 +160,14 @@ func newComposerTestEnv(t *testing.T) *composerTestEnv {
 			"composer.run_stop":   composerrun.StopResponse{},
 		}},
 		runs:     &composerTestRuns{runs: map[string]*models.ComposerRun{}},
+		settings: &composerTestProjectDirs{byDomain: map[string]string{}},
 		pkg:      &models.HostingPackage{ID: pkgID, ComposerEnabled: true},
 		alice:    &models.User{ID: "u-alice", Username: &alice, PackageID: &pkgID},
 		callerID: "u-alice",
 	}
 	domains := &composerTestDomains{byID: map[string]*models.Domain{
 		"d-example": {ID: "d-example", UserID: "u-alice", Name: "example.com", DocRoot: "/home/alice/domains/example.com/public_html"},
+		"d-shop":    {ID: "d-shop", UserID: "u-alice", Name: "shop.com", DocRoot: "/home/alice/domains/shop.com/public_html"},
 		"d-other":   {ID: "d-other", UserID: "u-bob", Name: "other.com", DocRoot: "/home/bob/domains/other.com/public_html"},
 	}}
 	users := &composerTestUsers{byID: map[string]*models.User{
@@ -155,7 +182,7 @@ func newComposerTestEnv(t *testing.T) *composerTestEnv {
 	RegisterDomainComposerRoutes(r.Group(""), DomainComposerHandlerConfig{
 		Domains: domains, Users: users,
 		Packages: &composerTestPackages{byID: map[string]*models.HostingPackage{pkgID: env.pkg}},
-		Runs:     env.runs, Agent: env.agent,
+		Runs:     env.runs, Settings: env.settings, Agent: env.agent,
 	})
 	env.router = r
 	return env
@@ -192,8 +219,9 @@ func TestComposerRoutes_StartARun(t *testing.T) {
 		t.Fatalf("agent calls = %q", env.agent.calls)
 	}
 	req := env.agent.params[0].(composerrun.StartRequest)
-	if req.OSUser != "alice" || req.Domain != "example.com" || !req.NoDev || req.RunID != body["id"] {
-		t.Fatalf("run_start params = %+v", req)
+	if req.OSUser != "alice" || req.Domain != "example.com" || !req.NoDev || req.RunID != body["id"] ||
+		req.WorkDir != "domains/example.com" || body["work_dir"] != "domains/example.com" {
+		t.Fatalf("run_start params = %+v, run = %v", req, body)
 	}
 
 	// One run at a time per domain.
@@ -343,5 +371,108 @@ func TestComposerRoutes_ReadAndCancelARun(t *testing.T) {
 	code, body = env.do(t, http.MethodGet, "/domains/d-example/composer/runs", "")
 	if code != http.StatusOK || body["total"] != float64(1) {
 		t.Fatalf("list = %d %v", code, body)
+	}
+}
+
+// GH #2276: a domain can name its own project folder, outside its directory
+// too, e.g. one composer.json and vendor/ in ~/domains/ shared by several
+// domains. Detection then looks only there, and runs run there.
+func TestComposerRoutes_ProjectFolder(t *testing.T) {
+	env := newComposerTestEnv(t)
+	if _, body := env.do(t, http.MethodGet, "/domains/d-example/composer", ""); body["project_dir"] != nil {
+		t.Fatalf("a new domain has a project folder: %v", body)
+	}
+	if req := env.agent.params[0].(composerrun.DetectRequest); req.ProjectDir != nil {
+		t.Fatalf("detect without a folder = %+v", req)
+	}
+
+	code, body := env.do(t, http.MethodPut, "/domains/d-example/composer/settings", `{"project_dir":"domains/"}`)
+	if code != http.StatusOK || body["project_dir"] != "domains" {
+		t.Fatalf("set = %d %v", code, body)
+	}
+	env.agent.calls, env.agent.params = nil, nil
+	if _, body = env.do(t, http.MethodGet, "/domains/d-example/composer", ""); body["project_dir"] != "domains" {
+		t.Fatalf("status = %v", body)
+	}
+	if req := env.agent.params[0].(composerrun.DetectRequest); req.ProjectDir == nil || *req.ProjectDir != "domains" {
+		t.Fatalf("detect = %+v, want the project folder", req)
+	}
+
+	code, body = env.do(t, http.MethodPost, "/domains/d-example/composer/runs", `{"command":"install"}`)
+	if code != http.StatusAccepted || body["work_dir"] != "domains" || body["app_dir"] != "" {
+		t.Fatalf("start = %d %v", code, body)
+	}
+	if req := env.agent.params[len(env.agent.params)-1].(composerrun.StartRequest); req.WorkDir != "domains" {
+		t.Fatalf("run_start = %+v, want work_dir domains", req)
+	}
+
+	// The folder is the domain's, not one picked per run.
+	if code, body = env.do(t, http.MethodPost, "/domains/d-shop/composer/settings", ""); code != http.StatusNotFound {
+		t.Fatalf("POST settings = %d", code)
+	}
+	env.settings.byDomain["d-shop"] = "domains/shared"
+	if code, body = env.do(t, http.MethodPost, "/domains/d-shop/composer/runs", `{"command":"install","app_dir":"app"}`); code != http.StatusUnprocessableEntity || body["error"] != "invalid_run" {
+		t.Fatalf("app_dir with a project folder = %d %v", code, body)
+	}
+
+	// Cleared, the domain finds composer.json on its own again.
+	code, body = env.do(t, http.MethodPut, "/domains/d-shop/composer/settings", `{"project_dir":null}`)
+	if code != http.StatusOK || body["project_dir"] != nil {
+		t.Fatalf("clear = %d %v", code, body)
+	}
+	if _, ok := env.settings.byDomain["d-shop"]; ok {
+		t.Fatal("the folder is still stored")
+	}
+	code, body = env.do(t, http.MethodPost, "/domains/d-shop/composer/runs", `{"command":"install","app_dir":"app"}`)
+	if code != http.StatusAccepted || body["work_dir"] != "domains/shop.com/app" {
+		t.Fatalf("start after clearing = %d %v", code, body)
+	}
+}
+
+// Two domains sharing a project folder can't run Composer in it at once;
+// domains in different folders still can.
+func TestComposerRoutes_OneRunPerProjectFolder(t *testing.T) {
+	env := newComposerTestEnv(t)
+	env.settings.byDomain["d-example"] = "domains"
+	env.settings.byDomain["d-shop"] = "domains"
+	if code, body := env.do(t, http.MethodPost, "/domains/d-example/composer/runs", `{"command":"install"}`); code != http.StatusAccepted {
+		t.Fatalf("first = %d %v", code, body)
+	}
+	code, body := env.do(t, http.MethodPost, "/domains/d-shop/composer/runs", `{"command":"update"}`)
+	if code != http.StatusConflict || body["error"] != "composer_run_active" || !strings.Contains(body["detail"].(string), "domains/") {
+		t.Fatalf("second domain, same folder = %d %v", code, body)
+	}
+	if env.started() != 1 {
+		t.Fatalf("a second run reached the agent: %q", env.agent.calls)
+	}
+
+	env.settings.byDomain["d-shop"] = "domains/shop"
+	if code, body = env.do(t, http.MethodPost, "/domains/d-shop/composer/runs", `{"command":"install"}`); code != http.StatusAccepted {
+		t.Fatalf("second domain, own folder = %d %v", code, body)
+	}
+}
+
+func TestComposerRoutes_RefusesABadProjectFolder(t *testing.T) {
+	env := newComposerTestEnv(t)
+	for _, dir := range []string{`""`, `"."`, `".ssh"`, `"/etc"`, `"/home/alice/domains"`, `"public_html"`, `"domains/../.ssh"`, `"domains/a b"`, `"domainsx"`, `"domains//x"`} {
+		code, body := env.do(t, http.MethodPut, "/domains/d-example/composer/settings", `{"project_dir":`+dir+`}`)
+		if code != http.StatusUnprocessableEntity || body["error"] != "invalid_project_dir" {
+			t.Errorf("%s = %d %v, want 422 invalid_project_dir", dir, code, body)
+		}
+	}
+	if len(env.settings.byDomain) != 0 {
+		t.Fatalf("stored = %v", env.settings.byDomain)
+	}
+
+	// Only the owner or an admin, and only with Composer in the package.
+	if code, _ := env.do(t, http.MethodPut, "/domains/d-other/composer/settings", `{"project_dir":"domains"}`); code != http.StatusForbidden {
+		t.Errorf("another user's domain = %d, want 403", code)
+	}
+	env.pkg.ComposerEnabled = false
+	if code, body := env.do(t, http.MethodPut, "/domains/d-example/composer/settings", `{"project_dir":"domains"}`); code != http.StatusForbidden || body["error"] != "composer_not_in_package" {
+		t.Errorf("package without Composer = %d %v", code, body)
+	}
+	if len(env.settings.byDomain) != 0 {
+		t.Fatalf("stored = %v", env.settings.byDomain)
 	}
 }

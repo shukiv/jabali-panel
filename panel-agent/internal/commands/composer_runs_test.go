@@ -637,3 +637,119 @@ func TestComposerRuns_PanelContract(t *testing.T) {
 		}
 	}
 }
+
+// GH #2276: a domain's project folder can be outside its own directory, e.g.
+// one composer.json and vendor/ in ~/domains/ shared by several domains. The
+// run's working directory is that folder.
+func TestComposerRunStart_RunsInTheProjectFolder(t *testing.T) {
+	h := newComposerRunHost(t)
+	if err := os.MkdirAll(filepath.Join(h.home, "domains", "shared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"domains", "domains/shared", "domains/example.com/app"} {
+		f := &composerExecFake{}
+		f.install(t)
+		if _, err := startRun(t, composerRunStartParams{
+			RunID: testRunID, OSUser: h.user, Domain: "example.com", WorkDir: dir, Command: "install",
+		}); err != nil {
+			t.Fatalf("work_dir %q: run_start: %v", dir, err)
+		}
+		runs := f.called("systemd-run ")
+		if len(runs) != 1 || !strings.HasSuffix(runs[0], " --working-dir="+filepath.Join(h.home, dir)) {
+			t.Fatalf("work_dir %q: systemd-run = %q", dir, runs)
+		}
+	}
+}
+
+// A project folder stays in domains/: the home holds .ssh and ~/.composer,
+// and nothing outside it is the tenant's to run Composer in.
+func TestComposerRunStart_RefusesAProjectFolderOutsideDomains(t *testing.T) {
+	h := newComposerRunHost(t)
+	f := &composerExecFake{}
+	f.install(t)
+	for _, dir := range []string{".", "..", ".ssh", "/etc", "/home/" + h.user + "/domains", "domainsx", "domains/", "domains//x", "domains/..", "domains/../.ssh", "domains/./x", "domains/a b", "domains/$HOME"} {
+		_, err := startRun(t, composerRunStartParams{RunID: testRunID, OSUser: h.user, Domain: "example.com", WorkDir: dir, Command: "install"})
+		if agentCode(t, err) != agentwire.CodeInvalidArgument {
+			t.Errorf("work_dir %q: run_start = %v, want invalid_argument", dir, err)
+		}
+	}
+	if runs := f.called("systemd-run"); len(runs) != 0 {
+		t.Fatalf("a refused run still started: %q", runs)
+	}
+}
+
+// The agent is root and the tenant owns domains/: a project folder that is a
+// link, or missing, is refused rather than followed.
+func TestComposerRunStart_RefusesALinkedProjectFolder(t *testing.T) {
+	h := newComposerRunHost(t)
+	f := &composerExecFake{}
+	f.install(t)
+	if err := os.Symlink(t.TempDir(), filepath.Join(h.home, "domains", "linked")); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"domains/linked", "domains/missing"} {
+		_, err := startRun(t, composerRunStartParams{RunID: testRunID, OSUser: h.user, Domain: "example.com", WorkDir: dir, Command: "install"})
+		if agentCode(t, err) != agentwire.CodeFailedPrecondition {
+			t.Errorf("work_dir %q: run_start = %v, want failed_precondition", dir, err)
+		}
+	}
+	if runs := f.called("systemd-run"); len(runs) != 0 {
+		t.Fatalf("started through a link: %q", runs)
+	}
+}
+
+func detectIn(t *testing.T, h composerRunHost, docroot, projectDir string) (composerDetectResponse, error) {
+	t.Helper()
+	raw, _ := json.Marshal(composerDetectParams{OSUser: h.user, Domain: "example.com", Docroot: docroot, ProjectDir: &projectDir})
+	res, err := composerDetectHandler(context.Background(), raw)
+	if err != nil {
+		return composerDetectResponse{}, err
+	}
+	return res.(composerDetectResponse), nil
+}
+
+// A domain with a project folder looks only there, not from its docroot up.
+func TestComposerDetect_ProjectFolder(t *testing.T) {
+	h := newComposerRunHost(t)
+	domains := filepath.Join(h.home, "domains")
+	for _, f := range []string{filepath.Join(domains, "composer.json"), filepath.Join(domains, "composer.lock"), filepath.Join(h.domainDir, "composer.json")} {
+		if err := os.WriteFile(f, []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(domains, "vendor"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := detectIn(t, h, h.domainDir, "domains")
+	if err != nil {
+		t.Fatalf("detect: %v", err)
+	}
+	want := &composerDetectProject{Dir: "domains", Exists: true, HasComposerJSON: true, HasLock: true, HasVendor: true}
+	if !reflect.DeepEqual(r.Project, want) || len(r.Dirs) != 0 {
+		t.Fatalf("project = %+v dirs = %+v, want %+v and no dirs", r.Project, r.Dirs, want)
+	}
+	if r.PHPVersion != "8.4" {
+		t.Fatalf("php = %q", r.PHPVersion)
+	}
+
+	// A folder that isn't there, or is a link, says so.
+	if err := os.Symlink(domains, filepath.Join(domains, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"domains/missing", "domains/linked"} {
+		r, err = detectIn(t, h, h.domainDir, dir)
+		if err != nil {
+			t.Fatalf("detect %s: %v", dir, err)
+		}
+		if r.Project == nil || r.Project.Exists || r.Project.HasComposerJSON {
+			t.Fatalf("detect %s: project = %+v, want a missing folder", dir, r.Project)
+		}
+	}
+
+	for _, dir := range []string{"", ".ssh", "domains/../.ssh", "/etc"} {
+		if _, err := detectIn(t, h, h.domainDir, dir); agentCode(t, err) != agentwire.CodeInvalidArgument {
+			t.Errorf("project_dir %q: detect = %v, want invalid_argument", dir, err)
+		}
+	}
+}

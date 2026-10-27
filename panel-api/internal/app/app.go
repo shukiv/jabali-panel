@@ -1694,6 +1694,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Users:          deps.Users,
 				Packages:       deps.Packages,
 				Runs:           repository.NewComposerRunRepository(deps.DB),
+				Settings:       repository.NewDomainComposerSettingsRepository(deps.DB),
 				Agent:          deps.Agent,
 				StartRateLimit: rl.StrictPerActor(),
 			})

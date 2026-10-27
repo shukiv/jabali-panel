@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,8 @@ type DomainComposerHandlerConfig struct {
 	Users    repository.UserRepository
 	Packages repository.PackageRepository
 	Runs     repository.ComposerRunRepository
+	// Settings holds each domain's Composer project folder.
+	Settings repository.DomainComposerSettingsRepository
 	Agent    agent.AgentInterface
 	// StartRateLimit bounds starting runs. Wire from rl.StrictPerActor(); nil
 	// disables it.
@@ -35,13 +38,14 @@ type DomainComposerHandlerConfig struct {
 //   - POST /domains/:id/composer/runs                 start a run
 //   - GET  /domains/:id/composer/runs/:runId          one run, with its log
 //   - POST /domains/:id/composer/runs/:runId/cancel   end a run in progress
+//   - PUT  /domains/:id/composer/settings             set or clear the domain's project folder
 //
 // The domain's owner and admins may use them. Starting a run needs the
 // owner's hosting package to allow Composer; a user with no package can't
 // (GH #282: a privileged feature).
 func RegisterDomainComposerRoutes(g *gin.RouterGroup, cfg DomainComposerHandlerConfig) {
-	if cfg.Domains == nil || cfg.Users == nil || cfg.Packages == nil || cfg.Runs == nil || cfg.Agent == nil {
-		panic("api.RegisterDomainComposerRoutes: Domains, Users, Packages, Runs and Agent are required")
+	if cfg.Domains == nil || cfg.Users == nil || cfg.Packages == nil || cfg.Runs == nil || cfg.Settings == nil || cfg.Agent == nil {
+		panic("api.RegisterDomainComposerRoutes: Domains, Users, Packages, Runs, Settings and Agent are required")
 	}
 	h := &domainComposerHandler{cfg: cfg}
 	startLimit := cfg.StartRateLimit
@@ -53,6 +57,7 @@ func RegisterDomainComposerRoutes(g *gin.RouterGroup, cfg DomainComposerHandlerC
 	g.POST("/domains/:id/composer/runs", startLimit, h.startRun)
 	g.GET("/domains/:id/composer/runs/:runId", h.getRun)
 	g.POST("/domains/:id/composer/runs/:runId/cancel", h.cancelRun)
+	g.PUT("/domains/:id/composer/settings", h.putSettings)
 }
 
 type domainComposerHandler struct {
@@ -135,6 +140,22 @@ func (h *domainComposerHandler) composerAllowed(c *gin.Context, o *composerOwner
 	return true, ""
 }
 
+// projectDir is the domain's Composer project folder, nil when it has none
+// and finds composer.json on its own. It answers the request itself when the
+// settings can't be read.
+func (h *domainComposerHandler) projectDir(c *gin.Context, o *composerOwner) (*string, bool) {
+	s, err := h.cfg.Settings.Get(c.Request.Context(), o.domain.ID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, true
+	}
+	if err != nil {
+		slog.ErrorContext(c.Request.Context(), "composer: load the domain's settings", "domain", o.domain.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return nil, false
+	}
+	return &s.ProjectDir, true
+}
+
 // refresh brings a running run up to date from the agent. When the agent
 // can't be asked, the run is answered as stored.
 func (h *domainComposerHandler) refresh(c *gin.Context, run *models.ComposerRun) {
@@ -149,9 +170,12 @@ type composerStatusResponse struct {
 	// Reason is why not: no_account, account_suspended,
 	// composer_requires_package or composer_not_in_package.
 	Reason string `json:"reason,omitempty"`
+	// ProjectDir is the domain's project folder, relative to the home; null
+	// when the domain finds composer.json on its own.
+	ProjectDir *string `json:"project_dir"`
 	// Detect is where the domain's composer.json files are, from the docroot
-	// up to the domain's directory; absent when Composer is not enabled or the
-	// server could not be asked.
+	// up to the domain's directory, or what its project folder holds; absent
+	// when Composer is not enabled or the server could not be asked.
 	Detect    *composerrun.DetectResponse `json:"detect,omitempty"`
 	ActiveRun *composerRunDTO             `json:"active_run"`
 }
@@ -163,10 +187,14 @@ func (h *domainComposerHandler) get(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	resp := composerStatusResponse{}
+	if resp.ProjectDir, ok = h.projectDir(c, o); !ok {
+		return
+	}
 	resp.Enabled, resp.Reason = h.composerAllowed(c, o)
 	if resp.Enabled {
 		det, err := composerrun.Detect(ctx, h.cfg.Agent, composerrun.DetectRequest{
 			OSUser: *o.user.Username, Domain: o.domain.Name, Docroot: o.domain.DocRoot,
+			ProjectDir: resp.ProjectDir,
 		})
 		if err != nil {
 			slog.WarnContext(ctx, "composer: detect", "domain", o.domain.ID, "error", err)
@@ -235,10 +263,22 @@ func (h *domainComposerHandler) startRun(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_run", "detail": err.Error()})
 		return
 	}
+	projectDir, ok := h.projectDir(c, o)
+	if !ok {
+		return
+	}
+	workDir := composerrun.DomainWorkDir(o.domain.Name, req.AppDir)
+	if projectDir != nil {
+		if req.AppDir != "" {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_run", "detail": "this domain runs Composer in its project folder " + *projectDir + "/: leave app_dir empty"})
+			return
+		}
+		workDir = *projectDir
+	}
 	now := time.Now().UTC()
 	run := &models.ComposerRun{
 		ID: ids.NewULID(), UserID: o.domain.UserID, DomainID: o.domain.ID,
-		AppDir: req.AppDir, Command: req.Command, NoDev: req.NoDev,
+		AppDir: req.AppDir, WorkDir: workDir, Command: req.Command, NoDev: req.NoDev,
 		StartedAt: now, CreatedAt: now, UpdatedAt: now,
 	}
 	run.SetPackageList(req.Packages)
@@ -248,7 +288,7 @@ func (h *domainComposerHandler) startRun(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusAccepted, newComposerRunDTO(run, false))
 	case errors.Is(err, repository.ErrComposerRunActive):
-		c.JSON(http.StatusConflict, gin.H{"error": "composer_run_active", "detail": "a Composer run is already in progress for this domain"})
+		c.JSON(http.StatusConflict, gin.H{"error": "composer_run_active", "detail": "a Composer run is already in progress for this domain or in " + workDir + "/"})
 	case errors.Is(err, repository.ErrNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "domain_not_found"})
 	default:
@@ -312,4 +352,50 @@ func (h *domainComposerHandler) cancelRun(c *gin.Context) {
 		logAgentError(c, "composer_cancel_failed", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "composer_cancel_failed", "detail": "the server could not stop the run"})
 	}
+}
+
+type putComposerSettingsRequest struct {
+	// ProjectDir is the folder to run Composer in, relative to the home:
+	// "domains" or a folder inside it. null clears it, so the domain finds
+	// composer.json on its own again.
+	ProjectDir *string `json:"project_dir"`
+}
+
+// putSettings sets or clears the domain's project folder. Runs already
+// started keep the folder they started in.
+func (h *domainComposerHandler) putSettings(c *gin.Context) {
+	o, ok := h.loadDomain(c)
+	if !ok {
+		return
+	}
+	if allowed, reason := h.composerAllowed(c, o); !allowed {
+		c.JSON(http.StatusForbidden, gin.H{"error": reason})
+		return
+	}
+	var req putComposerSettingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_json", "detail": err.Error()})
+		return
+	}
+	ctx := c.Request.Context()
+	if req.ProjectDir == nil {
+		if err := h.cfg.Settings.Delete(ctx, o.domain.ID); err != nil {
+			slog.ErrorContext(ctx, "composer: clear the domain's settings", "domain", o.domain.ID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"project_dir": nil})
+		return
+	}
+	dir := strings.TrimSuffix(*req.ProjectDir, "/")
+	if err := composerrun.ValidateProjectDir(dir); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_project_dir", "detail": err.Error()})
+		return
+	}
+	if err := h.cfg.Settings.Put(ctx, &models.DomainComposerSettings{DomainID: o.domain.ID, ProjectDir: dir}); err != nil {
+		slog.ErrorContext(ctx, "composer: store the domain's settings", "domain", o.domain.ID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"project_dir": dir})
 }
