@@ -253,7 +253,7 @@ export const GitTab = ({ domain }: { domain: Domain }) => {
     return (
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
         {intro}
-        <div>
+        <div style={{ maxWidth: 720 }}>
           <Typography.Title level={5}>Connect a repository</Typography.Title>
           <GitSettingsForm
             domain={domain}
@@ -311,7 +311,7 @@ export const GitTab = ({ domain }: { domain: Domain }) => {
       key: "commands",
       label: "Deploy commands",
       children: st.deploy_commands ? (
-        <Typography.Text code style={{ whiteSpace: "pre-wrap" }}>
+        <Typography.Text style={{ whiteSpace: "pre-wrap", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
           {st.deploy_commands}
         </Typography.Text>
       ) : (
@@ -491,7 +491,7 @@ export const GitTab = ({ domain }: { domain: Domain }) => {
         title="Git settings"
         open={editing}
         onClose={() => setEditing(false)}
-        width={isDesktop ? 560 : undefined}
+        size={isDesktop ? 560 : "100%"}
         placement="right"
         destroyOnHidden
       >

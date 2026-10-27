@@ -66,6 +66,14 @@ const lastResultLabel = (result: string, branch: string): { color: string; text:
 
 type Shown = { url: string; secret: string; replaced: boolean };
 
+// Monospace that wraps: a <code> doesn't, and a URL or secret would widen the
+// page at phone width.
+const MONO = {
+  wordBreak: "break-all",
+  fontFamily: "ui-monospace, SFMono-Regular, monospace",
+  marginBottom: 0,
+} as const;
+
 export function GitWebhookSection({ domainId, branch }: { domainId: string; branch: string }) {
   const qc = useQueryClient();
   const url = `/domains/${domainId}/git/webhook`;
@@ -141,7 +149,7 @@ export function GitWebhookSection({ domainId, branch }: { domainId: string; bran
               key: "url",
               label: "Webhook URL",
               children: (
-                <Typography.Text code copyable style={{ wordBreak: "break-all" }}>
+                <Typography.Text copyable style={MONO}>
                   {hook.url}
                 </Typography.Text>
               ),
@@ -152,7 +160,12 @@ export function GitWebhookSection({ domainId, branch }: { domainId: string; bran
               children: hook.last_delivery_at ? (
                 <Space size={[8, 4]} wrap>
                   <Timestamp value={hook.last_delivery_at} />
-                  {result && <Tag color={result.color}>{result.text}</Tag>}
+                  {/* A Tag doesn't wrap; a long refusal would widen the page at phone width. */}
+                  {result && (
+                    <Tag color={result.color} style={{ whiteSpace: "normal", marginInlineEnd: 0 }}>
+                      {result.text}
+                    </Tag>
+                  )}
                 </Space>
               ) : (
                 <Typography.Text type="secondary">None yet</Typography.Text>
@@ -244,13 +257,13 @@ export function GitWebhookSection({ domainId, branch }: { domainId: string; bran
             <Alert type="warning" showIcon message="Copy the secret now. It is not shown again." />
             <div>
               <Typography.Text strong>Webhook URL</Typography.Text>
-              <Typography.Paragraph code copyable style={{ wordBreak: "break-all", marginBottom: 0 }}>
+              <Typography.Paragraph copyable style={MONO}>
                 {shown.url}
               </Typography.Paragraph>
             </div>
             <div>
               <Typography.Text strong>Secret</Typography.Text>
-              <Typography.Paragraph code copyable style={{ wordBreak: "break-all", marginBottom: 0 }}>
+              <Typography.Paragraph copyable style={MONO}>
                 {shown.secret}
               </Typography.Paragraph>
             </div>
