@@ -98,7 +98,7 @@ func TestStopAppBuildScopes_EveryScopeOfTheApp(t *testing.T) {
 // Removing an app ends its build commands too, also one a previous agent
 // started.
 func TestPythonAppRemove_StopsTheBuildScopes(t *testing.T) {
-	calls := scopeExec(t, "true")
+	calls := removeExec(t, "inactive")
 	if _, err := pythonAppRemoveHandler(context.Background(), []byte(`{"app_id":"01APP"}`)); err != nil {
 		t.Fatal(err)
 	}

@@ -45,6 +45,9 @@ func (s *stubPyRepo) ReplaceEnv(_ context.Context, _ string, env []models.Python
 	return nil
 }
 func (s *stubPyRepo) MarkScaffolded(_ context.Context, id string) error { s.marked = id; return nil }
+func (s *stubPyRepo) FindByID(_ context.Context, id string) (*models.PythonApp, error) {
+	return &models.PythonApp{ID: id}, nil
+}
 
 // stubDomainRepo returns a fixed domain name for FindByID.
 type stubDomainRepo struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -393,8 +394,19 @@ func (h *pythonAppHandler) delete(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
+	// GH #2289: the row goes first. The reconciler applies every app that has
+	// a row, so with the row still there an apply could write back the unit
+	// the remove just took down, and then the row went: the deleted app kept
+	// running on its port with nothing left to remove it.
+	if err := h.cfg.Apps.Delete(ctx, app.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
 	if h.cfg.Agent != nil {
-		_, _ = h.cfg.Agent.Call(ctx, "app.python.remove", map[string]any{"app_id": app.ID})
+		if _, err := h.cfg.Agent.Call(ctx, "app.python.remove", map[string]any{"app_id": app.ID}); err != nil {
+			// The reconciler's sweep removes a unit with no app row.
+			slog.WarnContext(ctx, "python app: removing the unit failed — the reconciler removes it later", "app_id", app.ID, "err", err)
+		}
 	}
 	// Detach the proxy rule from the domain.
 	if domain, err := h.cfg.Domains.FindByID(ctx, app.DomainID); err == nil {
@@ -402,10 +414,6 @@ func (h *pythonAppHandler) delete(c *gin.Context) {
 		if h.cfg.Reconciler != nil {
 			h.cfg.Reconciler.Schedule(domain.ID)
 		}
-	}
-	if err := h.cfg.Apps.Delete(ctx, app.ID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
 	}
 	c.JSON(http.StatusOK, gin.H{"deleted": true})
 }

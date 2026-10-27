@@ -76,6 +76,13 @@ func pythonAppRemoveHandler(ctx context.Context, params json.RawMessage) (any, e
 	stopAppBuildScopes(p.AppID)
 	unit := pythonAppUnitName(p.AppID)
 	_ = execCommandContext(ctx, "systemctl", "stop", unit).Run()
+	// GH #2289: a unit still running after the stop keeps its port. Keep its
+	// files and fail, so the caller knows and the reconciler's sweep, which
+	// finds units by their files, tries again.
+	out, _ := execCommandContext(ctx, "systemctl", "is-active", unit).Output()
+	if st := strings.TrimSpace(string(out)); st != "inactive" && st != "failed" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("%s is still %q after systemctl stop", unit, st)}
+	}
 	_ = execCommandContext(ctx, "systemctl", "disable", "--quiet", unit).Run()
 	_ = os.Remove(filepath.Join(pythonAppUnitDir, unit))
 	_ = os.Remove(filepath.Join(pythonAppEnvDir, p.AppID+".env"))
