@@ -42,7 +42,7 @@ func newDRPromoteCmd() *cobra.Command {
 	var yes, force, skipRestore bool
 	cmd := &cobra.Command{
 		Use:   "promote",
-		Short: "Promote this DR standby to the live primary (GH #331)",
+		Short: "Promote this DR standby to the live primary",
 		Long: "Promote this standby: run a final account-inclusive restore from the DR " +
 			"destination, then flip the role to primary. The drsync loop stops, tenant " +
 			"writes are accepted again, and the reconciler builds every domain's serving " +

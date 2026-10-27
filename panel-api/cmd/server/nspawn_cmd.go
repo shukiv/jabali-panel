@@ -44,7 +44,7 @@ var (
 func newNspawnCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "nspawn",
-		Short: "Manage SSH sandbox nspawn images (M13)",
+		Short: "Manage SSH sandbox nspawn images",
 	}
 	cmd.AddCommand(newNspawnBuildCmd(), newNspawnListCmd(), newNspawnPruneCmd())
 	return cmd

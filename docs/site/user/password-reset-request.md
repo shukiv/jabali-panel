@@ -6,7 +6,7 @@ The `/auth/recovery` page reached from the login page's **Forgot password?** lin
 
 1. Enter the email address registered on your panel account.
 2. The panel sends a recovery email containing a single-use link valid for 60 minutes.
-3. Click the link to reach [Reset Password](./password-reset-reset.md).
+3. Click the link to reach [Reset Password](./password-reset-confirm.md).
 4. Set a new password and log in.
 
 ## Where the email comes from

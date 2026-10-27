@@ -16,12 +16,12 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 | **Listen IP** | Pick from the admin's managed IP pool. Default: server's primary IP. Apex DNS records auto-update. |
 | **Redirects** | HTTP → HTTPS (always emitted when SSL is on); per-path redirects (planned). |
 | **Aliases** | Additional `server_name` values that resolve to the same vhost + same docroot. |
-| **Cache** | Per-domain opt-in FastCGI micro-cache (ADR-0108), with a safe-bypass for cart / admin / authenticated cookies and a manual purge. Default off. |
-| **Document root** | Set the docroot when adding the domain, confined to the owner's home tree (GH #1413). |
-| **Environment variables** | Per-domain env vars passed to the FPM pool (GH #1332). |
-| **Web / Mail / DNS** | Each service is an **independent per-domain flag** (GH #1449) — a domain can run any combination. Turning **Mail** on adds DKIM keys + MX hint + Stalwart Domain entry; **DNS** on manages the zone in PowerDNS; **Web** on builds the nginx vhost. |
+| **Cache** | Per-domain opt-in FastCGI micro-cache, with a safe-bypass for cart / admin / authenticated cookies and a manual purge. Default off. |
+| **Document root** | Set the docroot when adding the domain, confined to the owner's home tree. |
+| **Environment variables** | Per-domain env vars passed to the FPM pool. |
+| **Web / Mail / DNS** | Each service is an **independent per-domain flag** — a domain can run any combination. Turning **Mail** on adds DKIM keys + MX hint + Stalwart Domain entry; **DNS** on manages the zone in PowerDNS; **Web** on builds the nginx vhost. |
 | **Statistics** | Requests and bandwidth per day and visitors by country for the last 7, 30 or 90 days, from the nightly access-log count (country only on hosts with CrowdSec's GeoLite2 database). Same tab for the admin (Edit Domain) and the tenant (Web Domain page); see [Domains (User) → Statistics](user/domains.md#statistics). |
-| **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check (GH #1175, #1401); ports come from a shared loopback-port allocator so two tenants can't collide. |
+| **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check; ports come from a shared loopback-port allocator so two tenants can't collide. |
 
 ## Domain lifecycle
 
@@ -39,10 +39,10 @@ the same way (see [Resource limits](resource-limits.md#bandwidth-limit)).
 The reconciler is the only thing that re-applies vhosts; never edit nginx site files by hand — they'll be overwritten on the next tick.
 
 **Delete also removes files (opt-in).** Domain delete keeps the document root by
-default; tick **also delete files** (default off, GH #1382) to remove the docroot
+default; tick **also delete files** (default off) to remove the docroot
 tree at the same time.
 
-**Change owner.** An admin can reassign a domain to a different user (GH #1238);
+**Change owner.** An admin can reassign a domain to a different user;
 the vhost, DNS, and mail follow the new owner on the next reconcile. The
 domain's Python apps, Git repository settings and Composer project folder
 setting belong to the old owner and are deleted; the new owner sets them up
@@ -67,7 +67,7 @@ jabali domain delete <name|id>
 ```
 
 `jabali domain create` takes `--web-enabled`, `--manage-dns`, and `--mail` to set
-the independent Web / Mail / DNS service flags at create time (GH #1449).
+the independent Web / Mail / DNS service flags at create time.
 
 See [platform/cli-reference.md](./platform/cli-reference.md) for the full,
 generated flag reference.

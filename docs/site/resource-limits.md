@@ -1,7 +1,5 @@
 # Resource Limits
 
-M18. ADR-0032.
-
 Three layers:
 
 ## 1. POSIX disk quota
@@ -85,7 +83,7 @@ A **Package** carries:
 - `cpu_quota_percent`
 - `io_read_mbps`, `io_write_mbps`
 - `max_tasks`
-- `max_domains`, `max_email_accounts`, `max_databases`, `max_database_users` (JAB-329)
+- `max_domains`, `max_email_accounts`, `max_databases`, `max_database_users`
 - `max_ftp_accounts` (FTP/SFTP subaccount cap, when the module is enabled)
 - PHP-INI overrides (`memory_limit`, `upload_max_filesize`, etc.)
 

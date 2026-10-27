@@ -1,6 +1,6 @@
 # Applications (User)
 
-`/jabali-panel/applications`. One-click installs for WordPress and 14 other popular apps (M10 / M19).
+`/jabali-panel/applications`. One-click installs for WordPress and 14 other popular apps.
 
 ## Available apps
 
@@ -25,7 +25,7 @@ The list shows every install: app, version, install path, last update, install s
 
 Per-row actions:
 
-- **Open Admin** — single-click sign-in to the app's admin panel via the self-deleting magic SSO file (M22 pattern; 60-second TTL).
+- **Open Admin** — single-click sign-in to the app's admin panel via the self-deleting magic SSO file (60-second TTL).
 - **Update** — manual update to the latest upstream version. Pause your traffic-sensitive work first; some updates run migrations that briefly degrade the site.
 - **Clone** — currently WordPress-only. Other apps support clone via manual file copy + DB dump + URL search-replace.
 - **Delete** — destructive. Removes the install directory, drops the DB and DB user, removes the install record. Asks twice.

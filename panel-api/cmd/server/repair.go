@@ -288,7 +288,7 @@ func repairSteps() []repairStep {
 			// rather than only reporting it (GH #1094 / #1103). Precisely gated —
 			// see detectBrokenFtp264.
 			id:     "dirty-ftp-264",
-			label:  "schema half-applied migration 264 (GH #1094 FTP row-size) — panel-api cannot start",
+			label:  "schema half-applied migration 264 (FTP row size) — panel-api cannot start",
 			detect: detectBrokenFtp264,
 			fix:    fixBrokenFtp264,
 		},
@@ -301,7 +301,7 @@ func repairSteps() []repairStep {
 			// fingerprint. Runs before the general detector for the same reason as
 			// 264. See detectBrokenMailHostname301.
 			id:     "dirty-mailhostname-301",
-			label:  "schema dirty at migration 301 (GH #1766 mail_hostname, interrupted update) — panel-api cannot start",
+			label:  "schema dirty at migration 301 (mail_hostname, interrupted update) — panel-api cannot start",
 			detect: detectBrokenMailHostname301,
 			fix:    fixBrokenMailHostname301,
 		},
@@ -417,7 +417,7 @@ func repairSteps() []repairStep {
 		},
 		{
 			id:     "nginx-missing-includes",
-			label:  "panel :8443 vhost includes a missing optional snippet (phpMyAdmin/Adminer) — nginx -t fails, nothing on 8443 (GH #217)",
+			label:  "panel :8443 vhost includes a missing optional snippet (phpMyAdmin/Adminer) — nginx -t fails, nothing on 8443",
 			detect: detectNginxMissingIncludes,
 			fix:    fixNginxMissingIncludes,
 		},
@@ -429,7 +429,7 @@ func repairSteps() []repairStep {
 		},
 		{
 			id:     "automation-443-include",
-			label:  "panel-hostname :443 vhost missing the GH #1161 automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)",
+			label:  "panel-hostname :443 vhost missing the automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)",
 			detect: detectAutomation443Include,
 			fix:    fixAutomation443Include,
 		},

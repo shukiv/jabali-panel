@@ -47,7 +47,7 @@ On the hostname row, the button is **Regenerate self-signed** instead of **Issue
 
 A Let's Encrypt certificate that is still valid when you turn Let's Encrypt off is kept until it expires. The panel then replaces it with a self-signed one.
 
-The Panel SSL tab then shows no Let's Encrypt state: no routability, no last error and no next retry. If the panel hostname doesn't resolve publicly to this server, the **Use Let's Encrypt for the panel** switch can't be turned on, and a line under it gives the reason. Before GH #2166 the tab showed "Let's Encrypt is unavailable for the panel" and "Not routable" in this mode, although the self-signed certificate was in use.
+The Panel SSL tab then shows no Let's Encrypt state: no routability, no last error and no next retry. If the panel hostname doesn't resolve publicly to this server, the **Use Let's Encrypt for the panel** switch can't be turned on, and a line under it gives the reason. In earlier releases the tab showed "Let's Encrypt is unavailable for the panel" and "Not routable" in this mode, although the self-signed certificate was in use.
 
 Behind a Cloudflare proxy, set Cloudflare's SSL/TLS mode to **Full**: Full (strict) doesn't accept a self-signed certificate.
 
@@ -59,7 +59,7 @@ The mail card's button is **Regenerate self-signed** too, with the same rules: i
 
 With email off on the panel hostname, nothing serves the mail name, and its certificate is left alone.
 
-A server without the mail module (Server Settings → Modules) runs no mail server, so it has no mail certificate. The Panel SSL tab shows only the panel hostname's card, and the panel neither requests nor generates a mail certificate. The API answers 409 `module_disabled` to `issue?kind=mail`. Before GH #2166, a self-signed mail certificate was pushed on such a server too, which started a mail server that isn't installed. Each failed start raised a "Stalwart is down" alert. To clear that state left over from before the fix, run `systemctl reset-failed jabali-stalwart`.
+A server without the mail module (Server Settings → Modules) runs no mail server, so it has no mail certificate. The Panel SSL tab shows only the panel hostname's card, and the panel neither requests nor generates a mail certificate. The API answers 409 `module_disabled` to `issue?kind=mail`. In earlier releases, a self-signed mail certificate was pushed on such a server too, which started a mail server that isn't installed. Each failed start raised a "Stalwart is down" alert. To clear that state left over from before the fix, run `systemctl reset-failed jabali-stalwart`.
 
 ## Operator notes
 

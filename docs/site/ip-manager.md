@@ -1,6 +1,6 @@
 # IP Manager
 
-M24. `/jabali-admin/ips`. ADR-0049.
+`/jabali-admin/ips`.
 
 ## What it does
 
@@ -37,7 +37,7 @@ When a domain's listen IP changes, the `@ A` record (and `@ AAAA` if IPv6 is con
 ## Caveats
 
 - **MariaDB 11.4+ reserved word `dual`**: an early migration used `dual` as a derived-table alias and broke fresh MariaDB 11.8 installs. Fixed in `7a8a1ff` — pinned MariaDB CI to 11.x specifically (not latest or 10.x).
-- **Seeding rule**: the M24 migration 000057 used to seed `server_settings` rows; migrations are now schema-only. Data seeds happen in `ManagedIPRepository.EnsureDefault` from `serve.go` on first boot.
+- **Seeding rule**: migration 000057 used to seed `server_settings` rows; migrations are now schema-only. Data seeds happen in `ManagedIPRepository.EnsureDefault` from `serve.go` on first boot.
 
 ## CLI
 

@@ -51,19 +51,19 @@ If issuance fails, the panel falls back to a self-signed cert so the UI stays re
 ## Custom certificates
 
 Besides Let's Encrypt, a domain can use an **uploaded custom certificate**
-(cert + key + chain). The **Domain Certificate Lifecycle** op (JAB-345) manages
+(cert + key + chain). The **Domain Certificate Lifecycle** op manages
 install / replace / removal with a forward-recovery finalize, and de-tracks the
 Let's Encrypt lineage first so a custom cert doesn't clobber it (or vice-versa on
 removal).
 
 ## Cross-user view (admin) — Certificate console
 
-`/jabali-admin/ssl` is the **Certificate console** (redesigned, GH #1355): every
+`/jabali-admin/ssl` is the **Certificate console**: every
 cert known to the panel with issuer, expiry (Issued + Last-check folded into the
-**Expires** column, GH #1271) and last issuance result. Per row:
+**Expires** column) and last issuance result. Per row:
 
 - **View Certificate** — inspect the certificate's subject, SANs, issuer, and
-  validity dates (GH #1355).
+  validity dates.
 - **Retry** — force a fresh issuance attempt.
 
 The panel's own certificates are on the **Panel SSL** tab; see [Panel Certificate](./admin/panel-certificate.md#the-panel-ssl-tab).
@@ -80,7 +80,7 @@ issuance retries run on their own, and the tab says so.
 | `urn:ietf:params:acme:error:rateLimited` | Hit LE rate limit | Wait the window (typically 1 hour). |
 | Cert issued but browser shows old cert | nginx not reloaded | `systemctl reload nginx` or trigger reconciler. |
 | Panel cert never issues | Bulwark serving on `:80` | Reconciler should fix; check `journalctl -u jabali-agent -f`. |
-| `invalid webroot ""` on the panel hostname, capped at 20 attempts | A per-domain certificate was requested for the panel hostname (GH #2126) | Nothing: the panel removes that row on its own. The hostname's certificate is under SSL Manager → Panel SSL (`jabali panel-cert status`). |
+| `invalid webroot ""` on the panel hostname, capped at 20 attempts | A per-domain certificate was requested for the panel hostname | Nothing: the panel removes that row on its own. The hostname's certificate is under SSL Manager → Panel SSL (`jabali panel-cert status`). |
 
 ## CLI
 

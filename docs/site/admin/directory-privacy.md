@@ -1,6 +1,6 @@
 # Directory Privacy (Admin)
 
-Admin-side view of the per-subdirectory Basic Auth feature (M50). User-facing copy lives at [user/directory-privacy](../user/directory-privacy.md); this page covers operator concerns.
+Admin-side view of the per-subdirectory Basic Auth feature. User-facing copy lives at [user/directory-privacy](../user/directory-privacy.md); this page covers operator concerns.
 
 ## Where it lives
 

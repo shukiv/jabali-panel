@@ -40,7 +40,7 @@ func newDNSPruneOrphanRecordsCmd() *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "prune-orphan-records",
-		Short: "Remove PowerDNS backend rows left behind by a pre-#1629 zone delete (GH #1620)",
+		Short: "Remove PowerDNS backend rows left behind by a zone delete in an earlier release",
 		Long: "Removes rows in the PowerDNS backend (records, domainmetadata, comments, cryptokeys)\n" +
 			"whose parent `domains` row no longer exists — orphans left behind when a domain was\n" +
 			"deleted BEFORE the #1629 teardown fix. They keep answering off the pdns caches and\n" +

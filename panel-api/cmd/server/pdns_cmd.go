@@ -30,7 +30,7 @@ func newPdnsCmd() *cobra.Command {
 func newPdnsDNSSECCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dnssec",
-		Short: "Per-domain DNSSEC management (ADR-0057)",
+		Short: "Per-domain DNSSEC management",
 	}
 	cmd.AddCommand(
 		newPdnsDNSSECEnableCmd(),

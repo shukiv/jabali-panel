@@ -33,7 +33,7 @@ Decisions are produced by CrowdSec **scenarios**, which match patterns in log st
 - `sshd` journal → SSH bruteforce.
 - `jabali-stalwart` journal → IMAP / SMTP authentication flood.
 - `jabali-panel` journal → panel login flood.
-- `crowdsec-appsec` log → WAF rule trips (M27).
+- `crowdsec-appsec` log → WAF rule trips.
 
 Each scenario has a configurable severity, leakspeed (decay rate), and capacity (threshold). Modify them under [Per-Scenario Override](./crowdsec-allowlists.md) — same page, scenario-override tab.
 
@@ -48,7 +48,7 @@ Decisions are enforced by per-service bouncers:
 
 Each decision has an origin: `crowdsec` (detected on this server), `cscli` (added by hand), `CAPI` (the CrowdSec community blocklist) or `cscli-import` (imported with `cscli decisions import`). The **Blocklists** tab counts active decisions per source. The extra blocklists the admin turns on (see [Firewall → Extra blocklists](../firewall.md#extra-blocklists)) are `cscli-import` decisions with the scenario `jabali-list:<list>`.
 
-The panel is not connected to the CrowdSec console; console enrolment was removed (ADR-0113), so no decisions are synced with it.
+The panel is not connected to the CrowdSec console; console enrolment was removed, so no decisions are synced with it.
 
 ## CLI
 

@@ -64,7 +64,7 @@ per-domain nginx rate/connection limits.`,
 func newLimitsCheckCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "check",
-		Short: "Probe host for M18 prerequisites (cgroups v2, /home fs, nginx modules)",
+		Short: "Probe host for resource-limit prerequisites (cgroups v2, /home fs, nginx modules)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 			ok := true

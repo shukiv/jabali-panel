@@ -138,14 +138,14 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	{
 		Kind:        "backup.retention.fail",
 		Label:       "Backup retention failed",
-		Description: "The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full (JAB-392).",
+		Description: "The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full.",
 		Severity:    "error",
 		DefaultOn:   true,
 	},
 	{
 		Kind:        "backup.limit.reached",
 		Label:       "Tenant backup limit reached",
-		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins (GH #454).",
+		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins.",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
@@ -180,7 +180,7 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	{
 		Kind:        "security.root_terminal.opened",
 		Label:       "Root web terminal opened",
-		Description: "An admin opened the in-panel root shell (M45). Highest-trust action; every byte is recorded to /var/log/jabali/terminal/<id>.cast.",
+		Description: "An admin opened the in-panel root shell. Highest-trust action; every byte is recorded to /var/log/jabali/terminal/<id>.cast.",
 		Severity:    "critical",
 		DefaultOn:   true,
 	},
@@ -244,7 +244,7 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	{
 		Kind:        "notifications.dlq.nonzero",
 		Label:       "Notifications DLQ non-empty",
-		Description: "The M14 dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel.",
+		Description: "The notifications dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel.",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},

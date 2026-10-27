@@ -53,7 +53,7 @@ func newDomainCmd() *cobra.Command {
 func newDomainListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List domains (direct DB — M20-safe)",
+		Short: "List domains (direct DB)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -105,7 +105,7 @@ func newDomainCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new domain (direct DB; bypasses HTTP auth — M20-safe)",
+		Short: "Create a new domain (direct DB; bypasses HTTP auth)",
 		Long: `Create a new domain row + auto-enable email when the agent is reachable.
 
 The owner must be a non-admin user with a POSIX username. Admin users
@@ -167,13 +167,13 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 	cmd.Flags().StringVar(&name, "name", "", "Domain name (required)")
 	cmd.Flags().StringVar(&userID, "user", "", "User email, username, or ULID (required)")
 	cmd.Flags().StringVar(&docRoot, "doc-root", "", "Document root (optional, auto-generated if not provided)")
-	cmd.Flags().BoolVar(&reverseProxy, "reverse-proxy", false, "Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)")
-	cmd.Flags().IntVar(&reverseProxyPort, "reverse-proxy-port", 0, "Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool")
+	cmd.Flags().BoolVar(&reverseProxy, "reverse-proxy", false, "Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it")
+	cmd.Flags().IntVar(&reverseProxyPort, "reverse-proxy-port", 0, "Reverse-proxy to this specific loopback port; 0 = auto-assign from the pool")
 	// GH #1449: independent Web / Mail / DNS services.
 	cmd.Flags().BoolVar(&webEnabled, "web-enabled", true, "Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain")
 	cmd.Flags().BoolVar(&manageDNS, "manage-dns", true, "Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS)")
 	cmd.Flags().StringVar(&mailProvider, "mail", "jabali", "Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain")
-	cmd.Flags().StringVar(&dnsTemplate, "dns-template", "", "Admin-defined custom DNS template ID (GH #1627): seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail")
+	cmd.Flags().StringVar(&dnsTemplate, "dns-template", "", "Admin-defined custom DNS template ID: seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail")
 	return cmd
 }
 
@@ -182,7 +182,7 @@ no IP literals). Bare hostnames like 'invalid' are rejected.`,
 func newDomainEnableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "enable <domain-name|domain-id>",
-		Short:   "Enable a domain (direct DB — M20-safe)",
+		Short:   "Enable a domain (direct DB)",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -208,7 +208,7 @@ func newDomainEnableCmd() *cobra.Command {
 func newDomainDisableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "disable <domain-name|domain-id>",
-		Short:   "Disable a domain (direct DB — M20-safe)",
+		Short:   "Disable a domain (direct DB)",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -235,7 +235,7 @@ func newDomainDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "delete <domain-name|domain-id>",
-		Short: "Delete a domain (direct DB; reconciler tears down nginx — M20-safe)",
+		Short: "Delete a domain (direct DB; reconciler tears down nginx)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)

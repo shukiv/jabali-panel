@@ -27,7 +27,7 @@ import (
 func newSSOReapCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "sso-reap",
-		Short:   "Sweep stranded jabali-sso-<nonce>.php files (M22 reaper)",
+		Short:   "Sweep stranded jabali-sso-<nonce>.php files",
 		Long:    `Enumerate WordPress install paths from the application_installs table and dispatch the agent's wordpress.reap_sso_files command. Invoked by jabali-sso-reaper.timer every 30s.`,
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {

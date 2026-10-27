@@ -36,7 +36,7 @@ Click a row to see:
 
 ## Quarantined messages
 
-Stalwart's quarantine is visible in a separate tab. The admin may release, delete, or download the EML for forensic review. Async post-delivery YARA hits (M33.2) appear here with the matched rule and severity.
+Stalwart's quarantine is visible in a separate tab. The admin may release, delete, or download the EML for forensic review. Async post-delivery YARA hits appear here with the matched rule and severity.
 
 ## Retention
 

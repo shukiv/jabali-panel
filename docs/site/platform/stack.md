@@ -17,7 +17,7 @@ The full inventory of moving parts.
 | `pdns.service` | C++ | `pdns` | public IPs `:53`, `127.0.0.1:5300` | Authoritative DNS for hosted zones, MariaDB backend. |
 | `pdns-recursor.service` | C++ | `pdns` | `127.0.0.1:53` | Local recursive resolver. |
 | `jabali-stalwart.service` | Rust | `jabali-mail` | `:25`, `:465`, `:587`, `:993`, `:995`, `:4190`; JMAP `127.0.0.1:8446`, internal `127.0.0.1:18181` | SMTP, submission, IMAP, POP3, ManageSieve, JMAP and the mailbox store. |
-| `jabali-mailhook.service` | Go | `jabali` | `127.0.0.1:8462` | Mail disclaimer hook Stalwart calls (ADR-0143). |
+| `jabali-mailhook.service` | Go | `jabali` | `127.0.0.1:8462` | Mail disclaimer hook Stalwart calls. |
 | `jabali-webdav-auth.service` | Go | `root` | unix `/run/jabali-webdav/auth.sock` | nginx `auth_request` check for WebDAV. |
 | `redis-server.service` | C | `redis` | unix `/run/redis/redis.sock` | Notifications dispatcher stream, panel cache. |
 | `crowdsec.service` + bouncers | Go | `root` | `127.0.0.1:8081` (LAPI), `127.0.0.1:7422` (AppSec), unix `/run/crowdsec/api.sock` | IP-trust source + AppSec WAF. |

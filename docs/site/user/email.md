@@ -11,12 +11,12 @@
 - [Disclaimer](./disclaimer.md) — append a server-side disclaimer to outbound mail.
 - **Settings** — per-domain mail options. Currently the webmail toggle (see below).
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
-- **Groups** — distribution lists (each member gets a copy) and shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups-gh-1818).
+- **Groups** — distribution lists (each member gets a copy) and shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups).
 - [Email Logs](./email-logs.md) — live tail of inbound and outbound mail for your domains.
 
 ## Webmail
 
-`https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file (M22 pattern; ADR-0040).
+`https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file.
 
 The **Settings** tab has a per-domain webmail switch. Turning it off removes webmail from `mail.<domain>` for that domain. IMAP, SMTP and mail delivery are unaffected, and mail apps still set themselves up and sync calendars and contacts through `mail.<domain>` (autoconfig/autodiscover, CalDAV/CardDAV, JMAP). Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
 

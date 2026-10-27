@@ -1,6 +1,6 @@
 # Firewall
 
-UFW + CrowdSec, with a strict division of labor since M43 (ADR-0089).
+UFW + CrowdSec, with a strict division of labor.
 
 ## Division of labor
 
@@ -10,7 +10,7 @@ UFW + CrowdSec, with a strict division of labor since M43 (ADR-0089).
 | Which IPs may reach an open port | **CrowdSec** decisions |
 | Which IPs are temporarily blocked because of bad behavior | **CrowdSec** scenarios + decisions |
 | WAF (request-content inspection) | **CrowdSec AppSec** |
-| Per-user outbound egress | **nftables + cgroup v2 vmap** (M34) |
+| Per-user outbound egress | **nftables + cgroup v2 vmap** |
 
 UFW is **demoted**: no `ufw deny from <ip>` rules. The CrowdSec bouncers consult decisions in real time and reject at the IP layer (nftables for the network bouncer, app-level for nginx/Stalwart bouncers).
 
@@ -30,7 +30,7 @@ ALLOW 587/tcp    # SMTP submission STARTTLS
 ALLOW 993/tcp    # IMAPS
 ALLOW 995/tcp    # POP3S (only if POP3 is enabled in Stalwart)
 DENY  IN ALL     # default deny
-ALLOW OUT ALL    # outbound left open by default (constrained per-user by nftables M34)
+ALLOW OUT ALL    # outbound left open by default (constrained per-user by nftables)
 ```
 
 Add / remove ports at `/jabali-admin/security` → UFW.
@@ -44,7 +44,7 @@ lists (see [Extra blocklists](#extra-blocklists)). Security → CrowdSec →
 
 The panel does not use the CrowdSec console (app.crowdsec.net): console
 enrolment was removed, and `jabali update` turns console alert forwarding off
-on hosts that had enrolled (ADR-0113). Blocklists that are subscribed through
+on hosts that had enrolled. Blocklists that are subscribed through
 the console are not received.
 
 IPs imported with `cscli decisions import` are enforced like any other
@@ -121,7 +121,7 @@ This walks `ufw status numbered`, lifts every `from <ip>` deny rule into a Crowd
 
 ## Per-user egress
 
-See [security.md](./security.md#per-user-egress-firewall-m34). The default policy is "outbound 443 + mail submission to localhost only, everything else dropped"; admin overrides per-user.
+See [security.md](./security.md#per-user-egress-firewall). The default policy is "outbound 443 + mail submission to localhost only, everything else dropped"; admin overrides per-user.
 
 ## What about IPv6?
 

@@ -29,7 +29,7 @@ import (
 func newAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "app",
-		Short: "Manage one-click app installs (direct DB — M20-safe)",
+		Short: "Manage one-click app installs (direct DB)",
 	}
 	cmd.AddCommand(
 		newAppRegistryCmd(),
@@ -122,7 +122,7 @@ func paramSummary(schema map[string]apps.ParamSpec) string {
 func newAppListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List installed apps (direct DB — M20-safe)",
+		Short: "List installed apps (direct DB)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -169,7 +169,7 @@ func newAppListCmd() *cobra.Command {
 func newAppGetCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <install-id|domain-name>",
-		Short: "Show one installed app (direct DB — M20-safe)",
+		Short: "Show one installed app (direct DB)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -231,7 +231,7 @@ func newAppInstallCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "install",
-		Short: "Install an app on a domain (direct service — M20-safe)",
+		Short: "Install an app on a domain (direct service)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			parsed, err := parseParamFlags(params)
 			if err != nil {
@@ -363,7 +363,7 @@ func newAppDeleteCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "delete <install-id|domain-name>",
-		Short: "Delete an installed app (direct DB + agent teardown — M20-safe)",
+		Short: "Delete an installed app (direct DB + agent teardown)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Wider timeout than read commands because the agent has to

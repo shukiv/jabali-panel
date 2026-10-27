@@ -1,6 +1,6 @@
 # Applications (Admin)
 
-`/jabali-admin/applications`. Server-wide controls for the 15-app one-click registry (M10 / M19, see [Applications](../applications.md)).
+`/jabali-admin/applications`. Server-wide controls for the 15-app one-click registry (see [Applications](../applications.md)).
 
 ## Per-app rows
 

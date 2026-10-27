@@ -45,7 +45,7 @@ func newUserCmd() *cobra.Command {
 func newUserListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List all users (direct DB — M20-safe)",
+		Short: "List all users (direct DB)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -104,7 +104,7 @@ func newUserCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create [username]",
-		Short: "Create a new user (direct DB + Kratos; bypasses HTTP auth — M20-safe)",
+		Short: "Create a new user (direct DB + Kratos; bypasses HTTP auth)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// A bare positional is the username, matching `user delete <…>`.

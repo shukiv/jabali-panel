@@ -1,6 +1,6 @@
 # Server Updates
 
-`/jabali-admin/updates`. M29. Run `jabali update` from the panel UI as a transient systemd unit (ADR-0064).
+`/jabali-admin/updates`. Run `jabali update` from the panel UI as a transient systemd unit.
 
 ## What an update does
 
@@ -95,7 +95,7 @@ auto-updating needs a deliberate deploy step after every merge that matters, and
 ### Release channels and signatures
 
 - **Stable** moves about once a month. A stable box installs a release only
-  when it carries the Jabali release signature (ADR-0162).
+  when it carries the Jabali release signature.
 - **Development** installs every main release as soon as CI publishes it,
   checked against its sha256, without the release signature.
 - **Security fixes** reach boxes on both channels within the hour, through a

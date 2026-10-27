@@ -1,6 +1,6 @@
 # Platform — DNSSEC
 
-M15. Per-domain, opt-in. ADR-0057.
+Per-domain, opt-in.
 
 ## Model
 

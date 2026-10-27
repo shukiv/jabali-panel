@@ -6,7 +6,7 @@
 
 1. Enter email address.
 2. Kratos emails a recovery link (uses the panel's own Stalwart for delivery).
-3. Click the link → land on [Reset Password](./password-reset-reset.md).
+3. Click the link → land on [Reset Password](./password-reset-confirm.md).
 4. Set new password → log in.
 
 ## Where the email comes from

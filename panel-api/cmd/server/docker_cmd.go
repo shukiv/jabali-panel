@@ -36,7 +36,7 @@ const (
 func newDockerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "docker",
-		Short: "Manage the docker engine + app-marketplace host (M48/M49)",
+		Short: "Manage the docker engine + app-marketplace host",
 	}
 	// Single `docker` tree. Previously `newDockerEngineCmd()` registered a
 	// SECOND root command with the same Use:"docker", so cobra dispatched only
@@ -55,7 +55,7 @@ func newDockerEnableTenantCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "enable-tenant",
-		Short: "Enable userns-remap + tenant docker apps on this host (M49, GH #170)",
+		Short: "Enable userns-remap + tenant docker apps on this host",
 		Long: `Enables tenant-level Docker apps on this host:
 
   1. enable daemon-wide userns-remap in ` + dockerDaemonJSON + `

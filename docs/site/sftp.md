@@ -1,6 +1,6 @@
 # SFTP, SSH Shell & Keys
 
-M12 (SFTP) + M13 (sandboxed SSH shell).
+SFTP and the sandboxed SSH shell.
 
 ## What's exposed
 
@@ -10,7 +10,7 @@ M12 (SFTP) + M13 (sandboxed SSH shell).
   (read-write inside, no escape). No interactive shell.
 - **SSH-shell users** (those on a hosting package with SSH enabled) get an
   interactive shell, but it always runs **inside a sandbox** — never a
-  bare shell on the host. See [SSH shell sandbox](#ssh-shell-sandbox-m13).
+  bare shell on the host. See [SSH shell sandbox](#ssh-shell-sandbox).
 
 ## SSH key management
 
@@ -22,7 +22,7 @@ Each user manages their own keys at `/jabali-panel/ssh-keys`:
 
 The agent writes `~/.ssh/authorized_keys` with `0600` permissions owned by the user. A reconciler tick re-syncs the file on demand and on schedule (15 min, hash-cached so a no-op tick is free).
 
-## SSH shell sandbox (M13)
+## SSH shell sandbox
 
 Every panel user's login shell is `/usr/local/bin/jabali-ssh-shell`, a
 small wrapper. SFTP-only users never reach it (`ForceCommand internal-sftp`
@@ -57,16 +57,16 @@ every connect — no sshd reload needed to switch.
 - `scp`, `rsync`, and `git-over-ssh` work (the wrapper forwards the SSH
   command into the sandbox).
 - Two host sockets, both gated by their own login:
-  - MariaDB, `/run/mysqld/mysqld.sock` (GH #285): `mysql -u <dbuser> -p <db>`
+  - MariaDB, `/run/mysqld/mysqld.sock`: `mysql -u <dbuser> -p <db>`
     and `.sql` imports work with the database user's password, and reach only
     the databases that user is granted.
-  - Redis, `/run/redis/redis.sock` (GH #2059): CLI and cron apps (queue
+  - Redis, `/run/redis/redis.sock`: CLI and cron apps (queue
     workers, `artisan`, `wp-cli` with the object cache) connect with the
     account's Redis credential (Databases → **Redis access**), and reach only
     its own keys.
     Without a credential, Redis answers `NOAUTH`.
 - Only when the admin turns on **Log PHP Defense blocks from the sandbox**
-  (ADR-0177, off by default): the system log socket at `/dev/log`, so PHP
+  (off by default): the system log socket at `/dev/log`, so PHP
   Defense blocks in shell and cron PHP reach the incidents list. The flag is
   `/etc/jabali/ssh-sandbox-syslog`, read on every connect like the mode.
 
@@ -88,7 +88,7 @@ not setuid, an unrecognised mode), the wrapper exits to
 `/usr/sbin/nologin` — it **never** falls through to an unsandboxed shell.
 The user can still SFTP.
 
-## FTP / SFTP subaccounts (GH #1053, #1145)
+## FTP / SFTP subaccounts
 
 Beyond the main account login, a tenant can create **FTP/SFTP subaccounts** —
 extra login users scoped to a subdirectory of the account. The whole surface is
@@ -96,16 +96,15 @@ extra login users scoped to a subdirectory of the account. The whole surface is
 see it:
 
 - **Tenant self-service** page to add / reset / delete subaccounts, with a
-  **password generator** on the create + reset forms (GH #1053).
+  **password generator** on the create + reset forms.
 - **Isolation modes**: a lighter **same-uid alias** (shares the account's uid),
   or **true separate-uid isolation** — a dedicated system user in its own jail
-  with its own quota and ACLs (GH #1145). Separate-uid is the default where a
+  with its own quota and ACLs. Separate-uid is the default where a
   filesystem quota exists; where quota is absent it falls back to off.
 - **vsftpd module**: plain FTP(S) is an **opt-in, PAM-gated** module that stays
-  masked while off (GH #1053). SFTP subaccounts work through the existing `sshd`.
-- **Operator-tunable server limits**: max sessions, per-IP limit, transfer rate
-  (GH #1053).
-- **WebDAV** access on a subaccount (GH #1146) — a per-subaccount `jabali-webdav`
+  masked while off. SFTP subaccounts work through the existing `sshd`.
+- **Operator-tunable server limits**: max sessions, per-IP limit, transfer rate.
+- **WebDAV** access on a subaccount — a per-subaccount `jabali-webdav`
   worker, so the same scoped directory is reachable over WebDAV as well as
   FTP/SFTP.
 
@@ -115,7 +114,7 @@ and the live system is visible rather than silent.
 ## SSH TCP forwarding (opt-in)
 
 SFTP/shell users get `AllowTcpForwarding no` by default. An admin can grant a
-**durable per-user opt-in for SSH TCP forwarding** (GH #1229) — e.g. for VS Code
+**durable per-user opt-in for SSH TCP forwarding** — e.g. for VS Code
 Remote-SSH — which is firewall-guarded and applied via the sshd `Match` block.
 It is off unless explicitly enabled.
 

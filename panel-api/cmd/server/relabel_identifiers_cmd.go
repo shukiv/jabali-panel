@@ -32,7 +32,7 @@ func newAdminRelabelIdentifiersCmd() *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "relabel-identifiers",
-		Short: "Re-key Kratos login identifiers email -> username (M54 Wave C)",
+		Short: "Re-key Kratos login identifiers email -> username",
 		Long: `Re-keys every Kratos identity's password login identifier from email to
 username, by PATCHing the username trait so Kratos re-derives the identifier
 under the deployed v2 schema. Run AFTER the v2 schema is live and AFTER

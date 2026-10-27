@@ -34,7 +34,7 @@ jabali admin
 
 #### `jabali admin backfill-usernames`
 
-Assign a unique username to every user missing one (M54 Wave A)
+Assign a unique username to every user missing one
 
 ```
 jabali admin backfill-usernames [flags]
@@ -59,7 +59,7 @@ jabali admin purge-orphan-identities [flags]
 
 #### `jabali admin rebuild-kratos`
 
-Recreate Kratos identities from panel users (DB-loss recovery, ADR-0034)
+Recreate Kratos identities from panel users (DB-loss recovery)
 
 ```
 jabali admin rebuild-kratos [flags]
@@ -74,7 +74,7 @@ jabali admin rebuild-kratos [flags]
 
 #### `jabali admin relabel-identifiers`
 
-Re-key Kratos login identifiers email -> username (M54 Wave C)
+Re-key Kratos login identifiers email -> username
 
 ```
 jabali admin relabel-identifiers [flags]
@@ -98,7 +98,7 @@ jabali admin slice-cutover [flags]
 
 ### `jabali aide`
 
-AIDE file integrity monitor (M42) operator commands
+AIDE file integrity monitor operator commands
 
 ```
 jabali aide
@@ -136,7 +136,7 @@ jabali aide status
 
 ### `jabali app`
 
-Manage one-click app installs (direct DB — M20-safe)
+Manage one-click app installs (direct DB)
 
 ```
 jabali app
@@ -166,7 +166,7 @@ jabali app cache-doctor [flags]
 **Flags:**
 
 - `--json` — emit a JSON report
-- `--migrate-acl` — JAB-62: re-provision every cache-enabled install to a per-install Redis ACL user, then reap orphaned legacy shared users (safe/idempotent)
+- `--migrate-acl` — re-provision every cache-enabled install to a per-install Redis ACL user, then reap orphaned legacy shared users (safe/idempotent)
 - `--repair` — re-provision drifted installs (re-stamp constants, re-provision ACL, re-verify)
 
 #### `jabali app cache-doctor-run`
@@ -195,7 +195,7 @@ jabali app clone <src-install-id> [flags]
 
 #### `jabali app delete`
 
-Delete an installed app (direct DB + agent teardown — M20-safe)
+Delete an installed app (direct DB + agent teardown)
 
 ```
 jabali app delete <install-id|domain-name> [flags]
@@ -225,7 +225,7 @@ jabali app e2e [flags]
 
 #### `jabali app get`
 
-Show one installed app (direct DB — M20-safe)
+Show one installed app (direct DB)
 
 ```
 jabali app get <install-id|domain-name>
@@ -233,7 +233,7 @@ jabali app get <install-id|domain-name>
 
 #### `jabali app install`
 
-Install an app on a domain (direct service — M20-safe)
+Install an app on a domain (direct service)
 
 ```
 jabali app install [flags]
@@ -252,7 +252,7 @@ jabali app install [flags]
 
 #### `jabali app list`
 
-List installed apps (direct DB — M20-safe)
+List installed apps (direct DB)
 
 ```
 jabali app list
@@ -297,7 +297,7 @@ jabali app scan [flags]
 
 ### `jabali apparmor`
 
-AppArmor profile management (M40) operator commands
+AppArmor profile management operator commands
 
 ```
 jabali apparmor
@@ -314,7 +314,7 @@ jabali apparmor flip-mature [flags]
 **Flags:**
 
 - `--dry-run` — show what would change without invoking aa-enforce
-- `--force` — flip even if recent violations exist (DANGEROUS — this is how #705 crash-looped mx)
+- `--force` — flip even if recent violations exist (DANGEROUS: a profile forced to enforce despite violations can crash-loop its service)
 - `--profile` — Flip a single profile only
 - `--soak-days` — violation-scan window in days; a profile with any AppArmor DENIED or complain-mode ALLOWED event in this window is not flipped (default `7`)
 
@@ -451,7 +451,7 @@ jabali appsec render-config [flags]
 
 ### `jabali audit`
 
-Query, verify, and prune the unified audit log (M49 / ADR-0106)
+Query, verify, and prune the unified audit log
 
 ```
 jabali audit
@@ -459,7 +459,7 @@ jabali audit
 
 #### `jabali audit prune`
 
-Delete audit rows older than --days (retention; ADR-0106)
+Delete audit rows older than --days (retention)
 
 ```
 jabali audit prune [flags]
@@ -528,7 +528,7 @@ jabali automation-token revoke <id-or-name>
 
 ### `jabali backup`
 
-Backup & restore subcommands (M30 — restic-backed; ADR-0075 / 0080)
+Backup & restore subcommands (restic-backed)
 
 ```
 jabali backup
@@ -556,7 +556,7 @@ jabali backup account-restore [flags]
 
 #### `jabali backup copy`
 
-[RETIRED] superseded by per-destination model (ADR-0080)
+[RETIRED] superseded by per-destination model
 
 ```
 jabali backup copy
@@ -1232,7 +1232,7 @@ jabali db backup <db-id|db-name>
 
 #### `jabali db chown`
 
-Reassign a database to a different owner (GH #1609)
+Reassign a database to a different owner
 
 ```
 jabali db chown <database> <new-owner> [flags]
@@ -1564,7 +1564,7 @@ jabali dns
 
 #### `jabali dns prune-orphan-records`
 
-Remove PowerDNS backend rows left behind by a pre-#1629 zone delete (GH #1620)
+Remove PowerDNS backend rows left behind by a zone delete in an earlier release
 
 ```
 jabali dns prune-orphan-records [flags]
@@ -1693,7 +1693,7 @@ jabali dns zone show <domain>
 
 ### `jabali docker`
 
-Manage the docker engine + app-marketplace host (M48/M49)
+Manage the docker engine + app-marketplace host
 
 ```
 jabali docker
@@ -1717,7 +1717,7 @@ jabali docker enable
 
 #### `jabali docker enable-tenant`
 
-Enable userns-remap + tenant docker apps on this host (M49, GH #170)
+Enable userns-remap + tenant docker apps on this host
 
 ```
 jabali docker enable-tenant [flags]
@@ -1737,7 +1737,7 @@ jabali docker status
 
 ### `jabali docker-app`
 
-Manage M48 docker-app catalog installs (admin-only)
+Manage Docker app catalog installs (admin-only)
 
 ```
 jabali docker-app
@@ -2048,7 +2048,7 @@ jabali domain catchall show <domain-name-or-id>
 
 #### `jabali domain chown`
 
-Reassign a domain to a different owner, moving its docroot (GH #1238)
+Reassign a domain to a different owner, moving its docroot
 
 ```
 jabali domain chown <domain> <new-owner> [flags]
@@ -2060,7 +2060,7 @@ jabali domain chown <domain> <new-owner> [flags]
 
 #### `jabali domain create`
 
-Create a new domain (direct DB; bypasses HTTP auth — M20-safe)
+Create a new domain (direct DB; bypasses HTTP auth)
 
 ```
 jabali domain create [flags]
@@ -2068,19 +2068,19 @@ jabali domain create [flags]
 
 **Flags:**
 
-- `--dns-template` — Admin-defined custom DNS template ID (GH #1627): seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail
+- `--dns-template` — Admin-defined custom DNS template ID: seeds the template's records into the fresh zone and sets an external mail posture. Requires --manage-dns; mutually exclusive with --mail
 - `--doc-root` — Document root (optional, auto-generated if not provided)
 - `--mail` — Mail provider: jabali | none | m365 | google. 'none' for a web/DNS-only domain (default `jabali`)
 - `--manage-dns` — Host this domain's DNS zone on this server. --manage-dns=false when DNS lives elsewhere (external DNS) (default `true`)
 - `--name` — Domain name (required)
-- `--reverse-proxy` — Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it (GH #1175)
-- `--reverse-proxy-port` — Reverse-proxy to this specific loopback port (GH #1401); 0 = auto-assign from the pool (default `0`)
+- `--reverse-proxy` — Make this a reverse-proxy domain: allocate a loopback port and proxy '/' to it
+- `--reverse-proxy-port` — Reverse-proxy to this specific loopback port; 0 = auto-assign from the pool (default `0`)
 - `--user` — User email, username, or ULID (required)
 - `--web-enabled` — Host a website for this domain (vhost + docroot). --web-enabled=false makes a docroot-less DNS-only zone or mail-only domain (default `true`)
 
 #### `jabali domain delete`
 
-Delete a domain (direct DB; reconciler tears down nginx — M20-safe)
+Delete a domain (direct DB; reconciler tears down nginx)
 
 ```
 jabali domain delete <domain-name|domain-id> [flags]
@@ -2092,7 +2092,7 @@ jabali domain delete <domain-name|domain-id> [flags]
 
 #### `jabali domain dir-privacy`
 
-Manage password-protected directories (auth_basic) (JAB-130)
+Manage password-protected directories (auth_basic)
 
 ```
 jabali domain dir-privacy
@@ -2159,7 +2159,7 @@ jabali domain dir-privacy remove <domain> <rule-id>
 
 #### `jabali domain disable`
 
-Disable a domain (direct DB — M20-safe)
+Disable a domain (direct DB)
 
 ```
 jabali domain disable <domain-name|domain-id>
@@ -2204,7 +2204,7 @@ jabali domain disclaimer show <domain-name-or-id>
 
 #### `jabali domain email-disable`
 
-Disable email for a domain (keeps DKIM key per ADR-0043)
+Disable email for a domain (keeps the DKIM key)
 
 ```
 jabali domain email-disable <domain-name-or-id>
@@ -2212,7 +2212,7 @@ jabali domain email-disable <domain-name-or-id>
 
 #### `jabali domain email-dkim-rotate`
 
-Rotate the domain's DKIM keypair (ADR-0043; operator-driven, not automatic)
+Rotate the domain's DKIM keypair (operator-driven, not automatic)
 
 ```
 jabali domain email-dkim-rotate <domain-name-or-id>
@@ -2228,7 +2228,7 @@ jabali domain email-enable <domain-name-or-id>
 
 #### `jabali domain enable`
 
-Enable a domain (direct DB — M20-safe)
+Enable a domain (direct DB)
 
 ```
 jabali domain enable <domain-name|domain-id>
@@ -2295,7 +2295,7 @@ jabali domain ip-acl list <domain>
 
 #### `jabali domain list`
 
-List domains (direct DB — M20-safe)
+List domains (direct DB)
 
 ```
 jabali domain list
@@ -2303,7 +2303,7 @@ jabali domain list
 
 #### `jabali domain mta-sts`
 
-Enable/disable MTA-STS for a mail domain (ADR-0109)
+Enable/disable MTA-STS for a mail domain
 
 ```
 jabali domain mta-sts <domain-name|domain-id> [flags]
@@ -2376,7 +2376,7 @@ jabali domain ownership verify <domain-name|domain-id>
 
 #### `jabali domain php-settings`
 
-Get/set a domain's php.ini directives (JAB-129)
+Get/set a domain's php.ini directives
 
 ```
 jabali domain php-settings
@@ -2409,7 +2409,7 @@ jabali domain php-settings set <domain-name-or-id> [flags]
 
 #### `jabali domain php-version`
 
-Manage a domain's PHP version (per-domain FPM pool, GH #329)
+Manage a domain's PHP version (per-domain FPM pool)
 
 ```
 jabali domain php-version
@@ -2474,7 +2474,7 @@ jabali domain show <domain-name|domain-id>
 
 #### `jabali domain skip-auto-san`
 
-Opt a domain in/out of the panel-cert auto-SAN (M50)
+Opt a domain in/out of the panel-cert auto-SAN
 
 ```
 jabali domain skip-auto-san <domain-name|domain-id> [flags]
@@ -2495,7 +2495,7 @@ jabali domain whois <domain-name|domain-id>
 
 ### `jabali dr`
 
-Disaster-recovery standby: pair, status, promote (GH #331)
+Disaster-recovery standby: pair, status, promote
 
 ```
 jabali dr
@@ -2529,7 +2529,7 @@ jabali dr pair [flags]
 
 #### `jabali dr promote`
 
-Promote this DR standby to the live primary (GH #331)
+Promote this DR standby to the live primary
 
 ```
 jabali dr promote [flags]
@@ -2869,7 +2869,7 @@ jabali limits apply <username>
 
 #### `jabali limits check`
 
-Probe host for M18 prerequisites (cgroups v2, /home fs, nginx modules)
+Probe host for resource-limit prerequisites (cgroups v2, /home fs, nginx modules)
 
 ```
 jabali limits check
@@ -3202,7 +3202,7 @@ jabali mail-group create <domain-name|domain-id> <local-part> [flags]
 
 - `--description` — description
 - `--display-name` — display name (the From name)
-- `--internal-only` — reject mail from senders outside the group's domain (GH #348)
+- `--internal-only` — reject mail from senders outside the group's domain
 - `--kind` — group kind: resource | distribution (default `resource`)
 
 #### `jabali mail-group delete`
@@ -3266,7 +3266,7 @@ jabali mail-group show <group-email|group-id>
 
 ### `jabali mailbox`
 
-Manage mailboxes (M6 Email via Stalwart)
+Manage mailboxes (email via Stalwart)
 
 ```
 jabali mailbox
@@ -3322,12 +3322,12 @@ jabali mailbox create [flags]
 
 **Flags:**
 
-- `--display-name` — Human-readable display name (GH #197)
+- `--display-name` — Human-readable display name
 - `--domain` — Domain name or ID (required)
 - `--local` — Local part, e.g. "alice" (required)
 - `--password` — Explicit password (omit to auto-generate)
 - `--quota-mb` — Disk quota in MiB (default 1024) (default `0`)
-- `--send-only` — SMTP-submission only — authenticates to send but never receives (GH #371)
+- `--send-only` — SMTP-submission only — authenticates to send but never receives
 
 #### `jabali mailbox delete`
 
@@ -3414,7 +3414,7 @@ jabali mailbox set-quota <email> <mb>
 
 #### `jabali mailbox shares`
 
-Manage shared mailbox folders (M6.5)
+Manage shared mailbox folders
 
 ```
 jabali mailbox shares
@@ -3639,7 +3639,7 @@ jabali malware yara upload <file.yar>
 
 ### `jabali malware-purge`
 
-Hard-delete terminated malware quarantine rows past retention (M33)
+Hard-delete terminated malware quarantine rows past retention
 
 ```
 jabali malware-purge
@@ -3663,7 +3663,7 @@ jabali migrate force <version>
 
 #### `jabali migrate imap`
 
-Migrate a remote IMAP mailbox into a jabali mailbox (GH #390/#374)
+Migrate a remote IMAP mailbox into a jabali mailbox
 
 ```
 jabali migrate imap [flags]
@@ -3695,7 +3695,7 @@ jabali migrate import [flags]
 - `--allow-degraded` — exit 0 even if the restore ends degraded (a core area — DB/mail/health — failed)
 - `--job-id` — migration_jobs.id (ULID) — required
 - `--keep-staging` — do NOT delete /var/lib/jabali-migrations/<job-id>/ after run (debug aid)
-- `--preserve-source-state` — keep imported source state ACTIVE (mail forwarders/catchalls/filters/autoresponders, and — as later PRs land — credentials/SSL/SSH). Default OFF: imported artifacts land inert and the operator re-activates trusted ones in the panel (JAB-46). Only use for trusted same-owner migrations.
+- `--preserve-source-state` — keep imported source state ACTIVE (mail forwarders/catchalls/filters/autoresponders, and — as later PRs land — credentials/SSL/SSH). Default OFF: imported artifacts land inert and the operator re-activates trusted ones in the panel. Only use for trusted same-owner migrations.
 - `--target-email` — destination user email (only used when auto-creating)
 - `--target-package-id` — hosting package ULID (only used when auto-creating)
 - `--target-password` — destination user password (only used when auto-creating; ≥10 chars)
@@ -3703,7 +3703,7 @@ jabali migrate import [flags]
 
 #### `jabali migrate import-wp`
 
-Import a staged wordpress_ssh migration into a destination (GH #647)
+Import a staged wordpress_ssh migration into a destination
 
 ```
 jabali migrate import-wp [flags]
@@ -3871,7 +3871,7 @@ jabali notification channels list
 
 ##### `jabali notification channels seal-secrets`
 
-Encrypt any plaintext channel secrets at rest (JAB-171 one-time backfill)
+Encrypt any plaintext channel secrets at rest (one-time backfill)
 
 ```
 jabali notification channels seal-secrets
@@ -4026,7 +4026,7 @@ jabali notification inbox read-all --user <user> [flags]
 
 ### `jabali nspawn`
 
-Manage SSH sandbox nspawn images (M13)
+Manage SSH sandbox nspawn images
 
 ```
 jabali nspawn
@@ -4079,7 +4079,7 @@ jabali package
 
 #### `jabali package create`
 
-Create a hosting package (direct DB — M20-safe)
+Create a hosting package (direct DB)
 
 ```
 jabali package create [flags]
@@ -4097,8 +4097,8 @@ jabali package create [flags]
 - `--disk-mb` — disk quota in MB (0=unlimited) (default `0`)
 - `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install (empty=server default)
 - `--domains` — max domains (0=unlimited) (default `0`)
-- `--egress-icmp` — allow outbound ICMP echo-request (ping) for enforced tenants on this package (GH #1798)
-- `--egress-ssh-out` — allow outbound SSH (:22) for enforced tenants on this package (GH #1798)
+- `--egress-icmp` — allow outbound ICMP echo-request (ping) for enforced tenants on this package
+- `--egress-ssh-out` — allow outbound SSH (:22) for enforced tenants on this package
 - `--egress-ssh-out-cidrs` — JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'
 - `--emails` — max email accounts (0=unlimited) (default `0`)
 - `--fpm-advanced` — unlock tenant advanced FPM knobs (implies --fpm-user-can-edit)
@@ -4119,9 +4119,9 @@ jabali package create [flags]
 - `--memory-mb` — memory limit in MB (0=unlimited) (default `0`)
 - `--name` — package name (required)
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty=server default)
-- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
+- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated. "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — opt out of the PHP command-exec lockdown (exec/proc_open work)
-- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
+- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--redis-keys-per-call` — most keys one Redis key browser API call may list or delete for users on this package (100 to 5000, default 500) (default `500`)
 - `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
@@ -4130,7 +4130,7 @@ jabali package create [flags]
 
 #### `jabali package delete`
 
-Delete a hosting package (direct DB — M20-safe)
+Delete a hosting package (direct DB)
 
 ```
 jabali package delete <package-id> [flags]
@@ -4142,7 +4142,7 @@ jabali package delete <package-id> [flags]
 
 #### `jabali package edit`
 
-Edit a hosting package (direct DB — M20-safe)
+Edit a hosting package (direct DB)
 
 ```
 jabali package edit <package-id> [flags]
@@ -4160,9 +4160,9 @@ jabali package edit <package-id> [flags]
 - `--disk-mb` — disk quota MB (default `0`)
 - `--docker-app-slugs` — CSV allowlist of catalog slugs tenants may install
 - `--domains` — max domains (default `0`)
-- `--egress-icmp` — allow outbound ICMP ping for enforced tenants (true/false) — GH #1798
-- `--egress-ssh-out` — allow outbound SSH :22 for enforced tenants (true/false) — GH #1798
-- `--egress-ssh-out-cidrs` — JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798
+- `--egress-icmp` — allow outbound ICMP ping for enforced tenants (true/false)
+- `--egress-ssh-out` — allow outbound SSH :22 for enforced tenants (true/false)
+- `--egress-ssh-out-cidrs` — JSON array of CIDRs scoping outbound SSH (empty=anywhere)
 - `--emails` — max emails (default `0`)
 - `--fpm-advanced` — tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)
 - `--fpm-max-children` — FPM pm.max_children cap (default `0`)
@@ -4182,9 +4182,9 @@ jabali package edit <package-id> [flags]
 - `--memory-mb` — memory limit MB (default `0`)
 - `--name` — package name
 - `--nspawn-image` — pin users to an nspawn rootfs version (empty clears the pin)
-- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
+- `--php-disabled-functions` — PHP functions disabled for this package's sites, comma-separated. "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.
 - `--php-exec` — PHP command-exec opt-out (true/false)
-- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
+- `--php-settings-policy` — JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'
 - `--redis-keys-per-call` — most keys one Redis key browser API call may list or delete for users on this package (100 to 5000); unchanged unless given (default `0`)
 - `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
@@ -4193,7 +4193,7 @@ jabali package edit <package-id> [flags]
 
 #### `jabali package list`
 
-List hosting packages (direct DB — M20-safe)
+List hosting packages (direct DB)
 
 ```
 jabali package list
@@ -4282,7 +4282,7 @@ jabali panel-cert toggle [hostname|mail] [flags]
 
 ### `jabali panel-primary`
 
-Manage the panel's primary mail domain row (ADR-0048)
+Manage the panel's primary mail domain row
 
 ```
 jabali panel-primary
@@ -4325,7 +4325,7 @@ jabali pdns backfill [flags]
 
 #### `jabali pdns dnssec`
 
-Per-domain DNSSEC management (ADR-0057)
+Per-domain DNSSEC management
 
 ```
 jabali pdns dnssec
@@ -4369,7 +4369,7 @@ jabali pdns dnssec status <domain>
 
 ### `jabali per-user-egress`
 
-Per-user PHP-FPM egress firewall (M34) operator commands
+Per-user PHP-FPM egress firewall operator commands
 
 ```
 jabali per-user-egress
@@ -4745,7 +4745,7 @@ jabali php-defense status
 
 ### `jabali python-app`
 
-Manage Python apps (ADR-0131; admin-only)
+Manage Python apps (admin-only)
 
 ```
 jabali python-app
@@ -4894,13 +4894,13 @@ jabali repair [flags]
 - `--apparmor-profiles-disabled` — Fix only: jabali AppArmor profiles exist but are disabled
 - `--apparmor-profiles-missing` — Fix only: jabali AppArmor profiles absent from /etc/apparmor.d/
 - `--auto` — Fix every non-destructive (safe) issue
-- `--automation-443-include` — Fix only: panel-hostname :443 vhost missing the GH #1161 automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)
+- `--automation-443-include` — Fix only: panel-hostname :443 vhost missing the automation-API include (admin can't opt into API-on-443 for firewalled billing hosts)
 - `--bulwark-jwt-secret` — Fix only: Bulwark webmail-SSO secret poisoned / out of sync with bulwark.env (mail impersonation 'Invalid signature')
 - `--crowdsec-bouncer-key` — Fix only: crowdsec-firewall-bouncer crash-loops with stale LAPI key
 - `--daemon-reload` — Fix only: systemd has unloaded unit-file changes on disk
 - `--diagnose` — Report broken conditions without fixing
-- `--dirty-ftp-264` — Fix only: schema half-applied migration 264 (GH #1094 FTP row-size) — panel-api cannot start
-- `--dirty-mailhostname-301` — Fix only: schema dirty at migration 301 (GH #1766 mail_hostname, interrupted update) — panel-api cannot start
+- `--dirty-ftp-264` — Fix only: schema half-applied migration 264 (FTP row size) — panel-api cannot start
+- `--dirty-mailhostname-301` — Fix only: schema dirty at migration 301 (mail_hostname, interrupted update) — panel-api cannot start
 - `--dirty-migration` — Fix only: database schema is dirty — panel-api cannot start
 - `--docroot-www-data-group` — Fix only: web docroot files not group www-data / dirs not setgid (nginx 403 on newly uploaded media)
 - `--etc-jabali-perms` — Fix only: /etc/jabali not traversable by hosting users (SSH/SFTP locked out — sandbox-mode unreadable)
@@ -4909,7 +4909,7 @@ jabali repair [flags]
 - `--git-pointer` — Fix only: /opt/jabali-panel/.git is a corrupted worktree pointer
 - `--git-stale-worktrees` — Fix only: /opt/jabali-panel/.git/worktrees has stale entries
 - `--nginx-config-invalid` — Fix only: jabali-default/jabali-panel.conf has `http2 on;` on nginx<1.25.1 (nginx -t fails, reloads rejected)
-- `--nginx-missing-includes` — Fix only: panel :8443 vhost includes a missing optional snippet (phpMyAdmin/Adminer) — nginx -t fails, nothing on 8443 (GH #217)
+- `--nginx-missing-includes` — Fix only: panel :8443 vhost includes a missing optional snippet (phpMyAdmin/Adminer) — nginx -t fails, nothing on 8443
 - `--node-modules` — Fix only: panel-ui/node_modules partial (missing .bin/tsc)
 - `--ondrej-nginx-ppa` — Fix only: stale ondrej/nginx PPA in apt sources (404 on noble)
 - `--orphan-migration-staging` — Fix only: /var/lib/jabali-migrations/* dirs for jobs already terminal in DB
@@ -4932,7 +4932,7 @@ jabali retention-sweep [flags]
 
 ### `jabali secrets`
 
-Rotate panel secrets after remediation (JAB-357; operator ceremony, run as root)
+Rotate panel secrets after remediation (operator ceremony, run as root)
 
 ```
 jabali secrets
@@ -4972,7 +4972,7 @@ jabali secrets rotate db-app-user [flags]
 
 ##### `jabali secrets rotate jwt`
 
-Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)
+Rotate JWT_SECRET in panel.env (vestigial since the move to Kratos; safe near-noop)
 
 ```
 jabali secrets rotate jwt [flags]
@@ -5155,7 +5155,7 @@ jabali settings set <key>=<value> [<key>=<value>...]
 
 ### `jabali shared-resource`
 
-Manage shared mail resources — calendars, contacts, files (M52)
+Manage shared mail resources — calendars, contacts, files
 
 ```
 jabali shared-resource
@@ -5366,7 +5366,7 @@ jabali ssl retry <domain>
 
 #### `jabali ssl set-custom`
 
-Install an operator-supplied SSL cert + key (JAB-128)
+Install an operator-supplied SSL cert + key
 
 ```
 jabali ssl set-custom [flags]
@@ -5476,7 +5476,7 @@ jabali sso rotate-key [flags]
 
 ### `jabali sso-reap`
 
-Sweep stranded jabali-sso-<nonce>.php files (M22 reaper)
+Sweep stranded jabali-sso-<nonce>.php files
 
 ```
 jabali sso-reap
@@ -5569,7 +5569,7 @@ jabali system resolver set [flags]
 
 #### `jabali system restore`
 
-Restore a system backup onto this host (CLI; ADR-0080)
+Restore a system backup onto this host (CLI)
 
 ```
 jabali system restore [flags]
@@ -5581,7 +5581,7 @@ jabali system restore [flags]
 - `--apply-stage` — restrict apply to named stages (repeatable). Empty = panel_db + panel_config + tls (the safe defaults) (default `[]`)
 - `--credentials-ref` — absolute path to env file with backend creds (root:root 0600)
 - `--force` — required — restore overwrites the running panel
-- `--from-tar` — restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo (GH #1408). Applies panel_db + panel_config + tls by default
+- `--from-tar` — restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo. Applies panel_db + panel_config + tls by default
 - `--include-accounts` — also restore each linked account
 - `--interactive` — force interactive prompts even when --remote-url is set
 - `--password` — restic password (literal; overrides --password-file). Avoid in shell history; prefer --interactive
@@ -5631,7 +5631,7 @@ jabali system ssh-keys list
 
 ### `jabali ufw`
 
-UFW utilities (M43 — port baseline only; IP decisions live in CrowdSec)
+UFW utilities (port baseline only; IP decisions live in CrowdSec)
 
 ```
 jabali ufw
@@ -5675,7 +5675,7 @@ jabali ufw enable [flags]
 
 #### `jabali ufw migrate-ip-bans`
 
-Migrate UFW `from <IP>` deny rules to CrowdSec decisions (M43 Step 4)
+Migrate UFW `from <IP>` deny rules to CrowdSec decisions
 
 ```
 jabali ufw migrate-ip-bans [flags]
@@ -5742,7 +5742,7 @@ jabali update [flags]
 
 #### `jabali update apt-refresh`
 
-Refresh the Updates Center OS-patch state now (used after an auto-apply) (GH #1224)
+Refresh the Updates Center OS-patch state now (used after an auto-apply)
 
 ```
 jabali update apt-refresh
@@ -5766,7 +5766,7 @@ jabali user 2fa-reset <email|username|user-id>
 
 #### `jabali user create`
 
-Create a new user (direct DB + Kratos; bypasses HTTP auth — M20-safe)
+Create a new user (direct DB + Kratos; bypasses HTTP auth)
 
 ```
 jabali user create [username] [flags]
@@ -5796,7 +5796,7 @@ jabali user delete <email|username|user-id> [flags]
 
 #### `jabali user list`
 
-List all users (direct DB — M20-safe)
+List all users (direct DB)
 
 ```
 jabali user list
@@ -5819,7 +5819,7 @@ jabali user password <email|username|user-id> [flags]
 
 #### `jabali user rename`
 
-Rename a tenant's Linux/login username in place (GH #1238)
+Rename a tenant's Linux/login username in place
 
 ```
 jabali user rename <email|username|user-id> <new-username> [flags]
@@ -5844,7 +5844,7 @@ jabali user reprovision <email|username|user-id> [flags]
 
 #### `jabali user ssh-forwarding`
 
-Opt a hosting user into/out of SSH TCP forwarding for VS Code Remote-SSH (GH #1229)
+Opt a hosting user into/out of SSH TCP forwarding for VS Code Remote-SSH
 
 ```
 jabali user ssh-forwarding <email|username|user-id> <on|off>

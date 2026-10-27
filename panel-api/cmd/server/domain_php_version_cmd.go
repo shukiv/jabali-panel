@@ -32,7 +32,7 @@ func domainPHPVersionSubcommands() []*cobra.Command {
 func newDomainPHPVersionCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "php-version",
-		Short: "Manage a domain's PHP version (per-domain FPM pool, GH #329)",
+		Short: "Manage a domain's PHP version (per-domain FPM pool)",
 	}
 	cmd.AddCommand(newDomainPHPVersionShowCmd(), newDomainPHPVersionSetCmd())
 	return cmd

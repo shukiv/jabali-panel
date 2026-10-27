@@ -1,6 +1,6 @@
 # Support
 
-`/jabali-admin/support`. M29.
+`/jabali-admin/support`.
 
 Uploads a redacted, encrypted diagnostic bundle for the Jabali maintainers, without leaking secrets or end-user data.
 

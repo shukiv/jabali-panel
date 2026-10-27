@@ -24,7 +24,7 @@ import (
 func newUpdateAptRefreshCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "apt-refresh",
-		Short: "Refresh the Updates Center OS-patch state now (used after an auto-apply) (GH #1224)",
+		Short: "Refresh the Updates Center OS-patch state now (used after an auto-apply)",
 		Args:  cobra.NoArgs,
 		// requireDBAndAgent, not requireDB: it calls the agent for system.apt_check.
 		PreRunE: requireDBAndAgent,

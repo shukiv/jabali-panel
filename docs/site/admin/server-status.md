@@ -1,6 +1,6 @@
 # Server Status
 
-`/jabali-admin/server-status`. M31. Live status of every watched service plus host vitals.
+`/jabali-admin/server-status`. Live status of every watched service plus host vitals.
 
 ## What is rendered
 
@@ -24,7 +24,7 @@ Each row shows:
 
 ### Queues card
 
-Placeholder pending M31.1. Will surface mail queue depth, backup queue depth, reconciler tick lag, and notification dispatch lag.
+Placeholder, not built yet. Will surface mail queue depth, backup queue depth, reconciler tick lag, and notification dispatch lag.
 
 ### Recent panel requests
 

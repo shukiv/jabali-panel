@@ -201,7 +201,7 @@ func newAppCacheDoctorCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&repair, "repair", false, "re-provision drifted installs (re-stamp constants, re-provision ACL, re-verify)")
-	cmd.Flags().BoolVar(&migrateACL, "migrate-acl", false, "JAB-62: re-provision every cache-enabled install to a per-install Redis ACL user, then reap orphaned legacy shared users (safe/idempotent)")
+	cmd.Flags().BoolVar(&migrateACL, "migrate-acl", false, "re-provision every cache-enabled install to a per-install Redis ACL user, then reap orphaned legacy shared users (safe/idempotent)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit a JSON report")
 	return cmd
 }

@@ -4,7 +4,7 @@
 
 ## List
 
-One list of zones (GH #1918). Columns: domain name, owner, zone status, record count, TTL, DNSSEC (Signed / Unsigned), registration expiry.
+One list of zones. Columns: domain name, owner, zone status, record count, TTL, DNSSEC (Signed / Unsigned), registration expiry.
 
 - **Domain name** — opens the zone's records: `A`, `AAAA`, `CNAME`, `MX`, `TXT`, `SRV`, `CAA`, `PTR`, `NS`, `SOA`. Inline edit / delete, paginated, searchable by name.
 - **⋯ menu** — per-zone actions:

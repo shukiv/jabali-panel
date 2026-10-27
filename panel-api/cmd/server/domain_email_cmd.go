@@ -99,7 +99,7 @@ Idempotent — calling it twice is harmless.`,
 func newDomainEmailDisableCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "email-disable <domain-name-or-id>",
-		Short: "Disable email for a domain (keeps DKIM key per ADR-0043)",
+		Short: "Disable email for a domain (keeps the DKIM key)",
 		Args:  cobra.ExactArgs(1),
 		Long: `Flips email_enabled off, reloads Stalwart, and removes the M6-managed
 DNS records. The DKIM private key is preserved so a later re-enable

@@ -16,11 +16,11 @@ Per-user pools mean:
 - Per-user `memory_limit`, `upload_max_filesize`, etc. (managed in the panel UI under PHP Settings).
 - Per-user worker counts (computed from the user's package).
 
-## Per-version extensions (M9.6)
+## Per-version extensions
 
 `/jabali-admin/php-pools` → Extensions tab. Server-wide enable/disable for each extension on each installed PHP version. The agent's `phpext` package handles install/remove via `phpenmod`/`phpdismod`, then issues a graceful FPM reload.
 
-`phpext` lives at `internal/phpext/` (repo root, Go internal rule, ADR-0031).
+`phpext` lives at `internal/phpext/` (repo root, Go internal rule).
 
 ## Per-domain version
 
@@ -41,20 +41,20 @@ Each Domain row has a `php_pool_id` foreign key into `php_pools`. The vhost `fas
 
 The package the user is on caps each of these to a maximum the admin chose. Attempts to exceed the cap are clamped on save with a UI warning.
 
-### Performance presets (GH #1332)
+### Performance presets
 
 PHP Settings offers **per-version Performance tuning presets** — pick a profile
 (e.g. balanced / high-traffic) and the Advanced view shows exactly what each
 preset applies plus a live preview before you save, so a preset is never a black
 box. Domain-scoped limits are labelled as such.
 
-### Per-domain overrides (GH #1332)
+### Per-domain overrides
 
 Some values are set **per domain** rather than per user, with an **override
 badge** on any domain that differs from the account default:
 
-- `display_errors`, `error_reporting`, and `date.timezone` per domain (GH #1332).
-- `log_errors`, `file_uploads`, and `short_open_tag` per domain (GH #1701). The
+- `display_errors`, `error_reporting`, and `date.timezone` per domain.
+- `log_errors`, `file_uploads`, and `short_open_tag` per domain. The
   agent sets all three on every request of every PHP domain: the domain's value,
   else the value it inherits (the pool's flag override, else the box's FPM
   `php.ini` for that PHP version). A value sent this way stays on the reused
@@ -73,7 +73,7 @@ badge** on any domain that differs from the account default:
   `date.timezone` is pinned as `UTC`, which is what PHP runs with. A value the
   agent cannot read with confidence is not pinned. The **(Default)** label next
   to each setting shows the same inherited value.
-- `open_basedir` and `allow_url_fopen` per domain (GH #1701 Slice 3). Both are
+- `open_basedir` and `allow_url_fopen` per domain. Both are
   `PHP_INI_SYSTEM`, so the agent sends them through `fastcgi_param
   PHP_ADMIN_VALUE`, which replaces the pool's value for that request. They are
   pinned on every PHP domain like the settings above: a domain that sets none
@@ -88,8 +88,8 @@ badge** on any domain that differs from the account default:
 - `disable_functions` stays per pool (per account and PHP version, set through
   the package): a function PHP disables stays disabled for the worker's
   lifetime, so it cannot differ between domains that share a pool. The
-  package's **Disabled PHP functions** list (`php_disabled_functions`, GH
-  #1701) is that list; by default it disables every command-execution
+  package's **Disabled PHP functions** list (`php_disabled_functions`)
+  is that list; by default it disables every command-execution
   function. When it leaves `system`, `exec`, `shell_exec`, `passthru`, `popen`,
   `proc_open` or `pcntl_exec` enabled, the agent gives the pool its own copy of
   the PHP Defense rules without the ban on those functions
@@ -105,7 +105,7 @@ badge** on any domain that differs from the account default:
   pool's ini overrides or `php.ini`. The agent reads these from the files the
   pool loads (`GET /domains/:id/php-settings/effective`).
   An allowed function that the version's PHP-FPM build does not provide shows
-  as **Allowed, not in this PHP build** (GH #1701). The agent lists the
+  as **Allowed, not in this PHP build**. The agent lists the
   modules PHP-FPM loads (`php-fpm<version> -m` with the pool's ini layering)
   and maps each function to its extension with the CLI. A function is missing
   when PHP-FPM does not load its extension (Debian builds `pcntl` into the
@@ -116,7 +116,7 @@ badge** on any domain that differs from the account default:
   When the `jabali-fpm-app` AppArmor profile is in enforce mode, each allowed
   function that starts a program (`exec`, `passthru`, `shell_exec`, `system`,
   `proc_open`, `popen`, `pcntl_exec`) also shows **Starts only the shell and
-  cat** (GH #2001). The profile lets PHP-FPM start `sh`/`bash`/`dash`, `cat`
+  cat**. The profile lets PHP-FPM start `sh`/`bash`/`dash`, `cat`
   and the `mail()` shim and nothing else, so `df`, `ls`, `grep`, `id` or
   `uname` fail with "Permission denied", and `cat` reads only the `/proc`
   files the base abstraction grants (`meminfo`, `cpuinfo`, `stat`; not
@@ -148,14 +148,14 @@ badge** on any domain that differs from the account default:
 - Per-domain environment variables passed to the FPM pool.
 - Per-domain log + cron shortcuts and an **OPcache reset** button.
 
-## OPcache + JIT (GH #1332)
+## OPcache + JIT
 
 Recent PHP versions (8.3+) ship JIT. Jabali leaves JIT off by default (silent CPU
 spikes on some shared workloads). PHP Settings gives **per-version OPcache / JIT
 controls** so you can enable JIT and tune OPcache only on the versions where your
 app benefits, plus a one-click **OPcache reset**.
 
-## Xdebug, Composer, extra extensions (GH #1332)
+## Xdebug, Composer, extra extensions
 
 - **Per-version Xdebug toggle** with safe modes — turn Xdebug on for a single PHP
   version without slowing every pool (Xdebug is a Zend extension loaded per-slug
@@ -165,9 +165,9 @@ app benefits, plus a one-click **OPcache reset**.
 - **Per-version opt-in extra extensions** — a tenant can opt a version into an
   allow-listed set of extra extensions beyond the server-wide defaults.
 
-## Composer runs (GH #2276)
+## Composer runs
 
-A user whose hosting package includes Composer (`composer_enabled`, off by default) can run Composer for a domain from the panel (ADR-0176). The commands are install, update, require, remove, audit, outdated, show, validate, dump-autoload and diagnose. `validate` skips the checks that only matter for publishing a package (`--no-check-publish`). The API is `/api/v1/domains/{id}/composer`; an API token limited to scopes needs `read:ssh` to read runs and `write:ssh` to start or cancel them.
+A user whose hosting package includes Composer (`composer_enabled`, off by default) can run Composer for a domain from the panel. The commands are install, update, require, remove, audit, outdated, show, validate, dump-autoload and diagnose. `validate` skips the checks that only matter for publishing a package (`--no-check-publish`). The API is `/api/v1/domains/{id}/composer`; an API token limited to scopes needs `read:ssh` to read runs and `write:ssh` to start or cancel them.
 
 - **Where it runs:** each run is a transient unit, `jabali-composer-<run id>.service`, in the user's slice, as the user. It runs in their SSH sandbox, on the PHP version the domain is served by, with the Composer version their channel selects. `COMPOSER_HOME` is `~/.composer`.
 - **Limits:** a run stops after 30 minutes, at 2 GB of memory, or at 256 tasks, on top of the package's limits. Only one run per domain is in progress at a time.
@@ -175,9 +175,9 @@ A user whose hosting package includes Composer (`composer_enabled`, off by defau
 - **Results:** the panel keeps each run's state, exit code and the last 256 KiB of its log.
 - **Cancelling:** a run can be cancelled while it is in progress. Cancelling stops Composer but does not undo what it has already written: `composer.json`, `composer.lock` and `vendor/` may be partly changed.
 
-## Git deployment (GH #2277)
+## Git deployment
 
-A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default; the **Git deploy** switch in the package editor) can connect a domain to a Git repository and deploy it (ADR-0178), from the domain's **Git** tab ([Domains](user/domains.md#git)) or the API. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
+A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default; the **Git deploy** switch in the package editor) can connect a domain to a Git repository and deploy it, from the domain's **Git** tab ([Domains](user/domains.md#git)) or the API. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
 
 - **Repository:** an `https://` URL from GitHub, GitLab, Bitbucket or any Git host, with no username or token in it. SSH URLs (`git@…`) are not accepted.
 - **Private repositories:** give a read-only access token, and the username your Git host expects with it: for GitHub, your GitHub username; for a GitLab personal or project token, any name (GitLab ignores it); for a GitLab deploy token, the token's own username; for a Bitbucket repository access token, `x-token-auth`. Left empty, the panel sends `x-access-token`, the name GitHub App installation tokens use.
@@ -226,7 +226,7 @@ What a delivery does:
 
 The Git host has to reach the panel at the webhook's URL and accept its TLS certificate: a panel that only admits certain addresses, or uses a self-signed certificate, receives nothing.
 
-## FPM slow log (GH #1332)
+## FPM slow log
 
 Each pool can emit a **per-pool FPM slow log** for requests over a threshold, so a
 slow endpoint is traceable per account without touching the global config.

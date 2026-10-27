@@ -23,7 +23,7 @@ This page groups the commands by area and shows the common tasks. The [CLI refer
 | `jabali migrate` | Database migration commands |
 | `jabali retention-sweep` | Prune expired rows from unbounded log/report tables |
 | `jabali active-tasks` | Show running/queued tasks (updates, backups, malware scans) |
-| `jabali secrets` | Rotate panel secrets after remediation (JAB-357; operator ceremony, run as root) |
+| `jabali secrets` | Rotate panel secrets after remediation (operator ceremony, run as root) |
 | `jabali settings` | Inspect and patch server settings (headless equivalent of /admin/settings) |
 
 ### Users and access
@@ -36,7 +36,7 @@ This page groups the commands by area and shows the common tasks. The [CLI refer
 | `jabali impersonation` | Manage admin act-as impersonation grants (list / create / end) |
 | `jabali automation-token` | Manage Automation API tokens (headless provisioning) |
 | `jabali sso` | SSO (Single Sign-On) management commands |
-| `jabali sso-reap` | Sweep stranded jabali-sso-<nonce>.php files (M22 reaper) |
+| `jabali sso-reap` | Sweep stranded jabali-sso-<nonce>.php files |
 | `jabali admin` | Operator-only administrative subcommands |
 
 ### Domains and web
@@ -66,12 +66,12 @@ This page groups the commands by area and shows the common tasks. The [CLI refer
 
 | Command | What it does |
 |---|---|
-| `jabali mailbox` | Manage mailboxes (M6 Email via Stalwart) |
+| `jabali mailbox` | Manage mailboxes (email via Stalwart) |
 | `jabali mail` | Admin mail queue + outbound throttle management |
 | `jabali mail-cert` | Manage a domain's mail TLS certificate (mail.<domain> SAN) |
 | `jabali mail-group` | Manage mail groups (distribution lists + shared-resource groups) and members |
-| `jabali shared-resource` | Manage shared mail resources — calendars, contacts, files (M52) |
-| `jabali panel-primary` | Manage the panel's primary mail domain row (ADR-0048) |
+| `jabali shared-resource` | Manage shared mail resources — calendars, contacts, files |
+| `jabali panel-primary` | Manage the panel's primary mail domain row |
 
 ### Databases, cron and SSH
 
@@ -80,23 +80,23 @@ This page groups the commands by area and shows the common tasks. The [CLI refer
 | `jabali db` | Manage user databases (mariadb / postgres) |
 | `jabali cron` | Manage user cron jobs (systemd-user timers) |
 | `jabali ssh-key` | Manage user SSH authorized keys |
-| `jabali nspawn` | Manage SSH sandbox nspawn images (M13) |
+| `jabali nspawn` | Manage SSH sandbox nspawn images |
 
 ### Apps
 
 | Command | What it does |
 |---|---|
-| `jabali app` | Manage one-click app installs (direct DB — M20-safe) |
-| `jabali docker` | Manage the docker engine + app-marketplace host (M48/M49) |
-| `jabali docker-app` | Manage M48 docker-app catalog installs (admin-only) |
-| `jabali python-app` | Manage Python apps (ADR-0131; admin-only) |
+| `jabali app` | Manage one-click app installs (direct DB) |
+| `jabali docker` | Manage the docker engine + app-marketplace host |
+| `jabali docker-app` | Manage Docker app catalog installs (admin-only) |
+| `jabali python-app` | Manage Python apps (admin-only) |
 
 ### Backups and recovery
 
 | Command | What it does |
 |---|---|
-| `jabali backup` | Backup & restore subcommands (M30 — restic-backed; ADR-0075 / 0080) |
-| `jabali dr` | Disaster-recovery standby: pair, status, promote (GH #331) |
+| `jabali backup` | Backup & restore subcommands (restic-backed) |
+| `jabali dr` | Disaster-recovery standby: pair, status, promote |
 
 ### Security
 
@@ -104,13 +104,13 @@ This page groups the commands by area and shows the common tasks. The [CLI refer
 |---|---|
 | `jabali crowdsec` | CrowdSec + AppSec operations (decisions, allowlists, hub, alerts, geoblock, captcha) |
 | `jabali appsec` | CrowdSec AppSec config operator subcommands |
-| `jabali apparmor` | AppArmor profile management (M40) operator commands |
-| `jabali aide` | AIDE file integrity monitor (M42) operator commands |
+| `jabali apparmor` | AppArmor profile management operator commands |
+| `jabali aide` | AIDE file integrity monitor operator commands |
 | `jabali malware` | Malware scan / quarantine / YARA / settings (incident response) |
-| `jabali malware-purge` | Hard-delete terminated malware quarantine rows past retention (M33) |
-| `jabali ufw` | UFW utilities (M43 — port baseline only; IP decisions live in CrowdSec) |
-| `jabali per-user-egress` | Per-user PHP-FPM egress firewall (M34) operator commands |
-| `jabali audit` | Query, verify, and prune the unified audit log (M49 / ADR-0106) |
+| `jabali malware-purge` | Hard-delete terminated malware quarantine rows past retention |
+| `jabali ufw` | UFW utilities (port baseline only; IP decisions live in CrowdSec) |
+| `jabali per-user-egress` | Per-user PHP-FPM egress firewall operator commands |
+| `jabali audit` | Query, verify, and prune the unified audit log |
 
 ### Server
 

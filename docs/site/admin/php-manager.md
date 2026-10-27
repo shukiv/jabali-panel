@@ -1,6 +1,6 @@
 # PHP Manager
 
-`/jabali-admin/php-pools`. The list of installed PHP versions on the host, with per-version FPM tuning and an extension manager (M9.6).
+`/jabali-admin/php-pools`. The list of installed PHP versions on the host, with per-version FPM tuning and an extension manager.
 
 ## Versions list
 
@@ -35,7 +35,7 @@ Forbidden if any user pool is using the version. Reassign affected domains first
 
 ## Extensions tab
 
-`/jabali-admin/php-pools` → Extensions. Server-wide enable / disable for each extension on each installed PHP version. Backed by the `internal/phpext/` Go package (M9.6, ADR-0031).
+`/jabali-admin/php-pools` → Extensions. Server-wide enable / disable for each extension on each installed PHP version. Backed by the `internal/phpext/` Go package.
 
 - Enable: runs `phpenmod <ext>` for the chosen version, then issues a graceful FPM reload (no in-flight request loss).
 - Disable: runs `phpdismod <ext>`, then reload.

@@ -30,7 +30,7 @@ Admin controls (and you cannot override): disk + bandwidth quota, max mailboxes 
 
 ## Mailbox login
 
-Webmail is **Bulwark** (Next.js JMAP) at `https://mail.<domain>/`. One-click SSO from a mailbox in `/jabali-panel/mail` → "Open Webmail" — uses the M22 self-deleting `jabali-sso-*.php` file (Installatron/Softaculous pattern; 60 s TTL, 256-bit nonce filename, `flock` + `unlink`).
+Webmail is **Bulwark** (Next.js JMAP) at `https://mail.<domain>/`. One-click SSO from a mailbox in `/jabali-panel/mail` → "Open Webmail" — uses the self-deleting `jabali-sso-*.php` file (Installatron/Softaculous pattern; 60 s TTL, 256-bit nonce filename, `flock` + `unlink`).
 
 ## App login
 

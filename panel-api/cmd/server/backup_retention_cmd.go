@@ -42,7 +42,7 @@ var resticPasswordFile = "/etc/jabali-panel/restic-repo.password"
 func newBackupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Backup & restore subcommands (M30 — restic-backed; ADR-0075 / 0080)",
+		Short: "Backup & restore subcommands (restic-backed)",
 	}
 	cmd.AddCommand(newBackupRetentionCmd())
 	cmd.AddCommand(newBackupAccountRestoreCmd())

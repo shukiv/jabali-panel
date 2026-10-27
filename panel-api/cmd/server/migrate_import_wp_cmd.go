@@ -30,7 +30,7 @@ func newMigrateImportWPCmd() *cobra.Command {
 	var jobID, destUser, destDomain string
 	cmd := &cobra.Command{
 		Use:     "import-wp",
-		Short:   "Import a staged wordpress_ssh migration into a destination (GH #647)",
+		Short:   "Import a staged wordpress_ssh migration into a destination",
 		PreRunE: requireDBAndAgent,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if jobID == "" || destUser == "" || destDomain == "" {

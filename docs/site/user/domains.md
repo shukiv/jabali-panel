@@ -26,7 +26,7 @@ The domain count is checked against the package limit; if you are at the limit, 
 
 ## Verifying a new domain
 
-A domain you add stays **Unverified** until you prove that you control the name (GH #1816). This stops anyone from claiming a name that belongs to someone else. Until the domain is verified:
+A domain you add stays **Unverified** until you prove that you control the name. This stops anyone from claiming a name that belongs to someone else. Until the domain is verified:
 
 - its DNS zone is not published and no mail is accepted for it;
 - it has no trusted certificate;
@@ -74,7 +74,7 @@ Disallow: /
 
 Subdomains are first-class domains in the panel. Add a subdomain by creating a new domain with the subdomain name (e.g. `blog.example.com`). The DNS zone for `blog.example.com` is created independently from `example.com` — you may need to delegate via `NS` records if both zones are hosted here.
 
-By default only you (and the administrator) can add a subdomain of a domain you own. If another account on the server needs one — for example a client who runs `shop.example.com` from their own account — open the domain, and on its **Overview** tab turn on **Allow subdomains by other accounts** (GH #1812). Any account on the server can then add subdomains of that domain without asking you. Turning it off stops new ones; subdomains already created by other accounts stay. Each parent domain needs its own consent: allowing it on `b.example.com` does not let another account create `c.b.example.com` if `example.com` belongs to a third account that has not allowed it.
+By default only you (and the administrator) can add a subdomain of a domain you own. If another account on the server needs one — for example a client who runs `shop.example.com` from their own account — open the domain, and on its **Overview** tab turn on **Allow subdomains by other accounts**. Any account on the server can then add subdomains of that domain without asking you. Turning it off stops new ones; subdomains already created by other accounts stay. Each parent domain needs its own consent: allowing it on `b.example.com` does not let another account create `c.b.example.com` if `example.com` belongs to a third account that has not allowed it.
 
 ## Statistics
 
@@ -87,7 +87,7 @@ The panel counts each day once, on the day after, from that day's access log, so
 
 ## Composer
 
-When your hosting package includes Composer, a domain has a **Composer** tab (GH #2276). It finds the domain's `composer.json` (in the document root or a folder above it, up to `domains/<domain>/`) and runs Composer there:
+When your hosting package includes Composer, a domain has a **Composer** tab. It finds the domain's `composer.json` (in the document root or a folder above it, up to `domains/<domain>/`) and runs Composer there:
 
 - **Install** puts in exactly the versions `composer.lock` lists. With no `composer.lock` yet, it picks the newest versions `composer.json` allows and writes one.
 - **Update** moves packages to newer versions that `composer.json` allows and rewrites `composer.lock`. Leave the package list empty to update everything, or name the packages to update.
@@ -105,7 +105,7 @@ Without the tab, ask your administrator: Composer runs are a package setting, of
 
 ## Git
 
-When your hosting package includes Git deploy, a domain has a **Git** tab (GH #2277). It deploys the domain from a Git repository: GitHub, GitLab, Bitbucket or any Git host, over `https://`.
+When your hosting package includes Git deploy, a domain has a **Git** tab. It deploys the domain from a Git repository: GitHub, GitLab, Bitbucket or any Git host, over `https://`.
 
 **Connect a repository.** Enter the repository's `https://` URL (not an SSH `git@…` URL, and no username or token in it) and, optionally, a branch; empty uses the repository's default branch. For a private repository, add a read-only access token and the username your Git host expects with it (GitHub: your username; Bitbucket: `x-token-auth`; GitLab: any name). Saving checks the repository first and saves nothing if that fails. The token is never shown again: leave the field empty to keep it, or tick **Public repository** to remove it.
 

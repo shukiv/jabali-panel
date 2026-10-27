@@ -35,7 +35,7 @@ func newUserRenameCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "rename <email|username|user-id> <new-username>",
-		Short: "Rename a tenant's Linux/login username in place (GH #1238)",
+		Short: "Rename a tenant's Linux/login username in place",
 		Long: `Rename a tenant's Linux account (and Kratos login identifier) in place.
 
 The uid is preserved, so file ownership is unchanged; the account name and the

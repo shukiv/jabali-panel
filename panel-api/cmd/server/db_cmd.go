@@ -181,7 +181,7 @@ func newDBReassignCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "chown <database> <new-owner>",
-		Short: "Reassign a database to a different owner (GH #1609)",
+		Short: "Reassign a database to a different owner",
 		Long: `Reassign a database — and the DB users bound exclusively to it — to a
 different tenant, renaming them onto the new owner's prefix and re-granting
 access. Mirrors POST /admin/databases/:id/chown; both call the same

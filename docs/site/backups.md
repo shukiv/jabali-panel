@@ -10,7 +10,7 @@ Both are restic-backed (deduplicated, encrypted at rest, multi-destination).
 Beyond the scheduled restic snapshots, Jabali also supports **portable container
 backups** (a single downloadable archive) and **restore-from-upload**, so an
 account — or a whole server — can be rebuilt on a host that has no restic
-destination in common with the source (GH #1408). See
+destination in common with the source. See
 [Full Server backup / restore](#full-server-backup--restore) and
 [Restore from an uploaded archive](#restore-from-an-uploaded-archive).
 
@@ -40,7 +40,7 @@ Multiple destinations per backup are supported — restic writes to each.
 Retention policies use restic's `--keep-daily`, `--keep-weekly` and `--keep-monthly` rules, applied once a day to whole backups: a backup's snapshots are kept or forgotten together, so a restore point is never partial. See [Backup Schedules](./admin/backup-schedules.md#retention-application).
 
 The dispatcher runs jobs with a **per-destination slot cap and a circuit
-breaker** (JAB-362): one dead or unreachable destination can no longer starve
+breaker**: one dead or unreachable destination can no longer starve
 the whole queue — its jobs are skipped-if-pending and retried on their own
 per-destination slots while other destinations keep draining, and a failing
 destination raises an alert instead of silently backing up.
@@ -48,7 +48,7 @@ destination raises an alert instead of silently backing up.
 ### Automatic daily local backups
 
 Admins can enable **opt-in automatic daily local backups for all users**
-(default **off**, GH #1240) under `/jabali-admin/backups`. When on, every account
+(default **off**) under `/jabali-admin/backups`. When on, every account
 is backed up daily to the local destination on a staggered window, giving a
 baseline safety net without configuring a per-user schedule.
 
@@ -72,7 +72,7 @@ baseline safety net without configuring a per-user schedule.
 
 - Pick a destination, browse snapshots, pick one.
 - For `account_full`: choose target user (overwrite or new). The restore drawer
-  has a **Select all** toggle (GH #1363) plus per-leg checkboxes, so you can
+  has a **Select all** toggle plus per-leg checkboxes, so you can
   restore only the home dir, only the databases, only mail, and so on.
 - For `system_backup`: typically restored on a fresh host — the panel is
   bootstrapped, then `jabali system restore` is run from the CLI.
@@ -80,21 +80,21 @@ baseline safety net without configuring a per-user schedule.
 An `account_full` restore rebuilds the account's databases (MariaDB **and**
 PostgreSQL), mail, DNS, cron, apps, and **FTP/SFTP subaccounts** — the last with
 their original login password preserved through a root-only one-shot staging
-file (GH #1361). MariaDB **database users** come back with their MariaDB account,
+file. MariaDB **database users** come back with their MariaDB account,
 grants and original password, so sites keep connecting to their databases
-(GH #1993; see [Database users and their passwords](./admin/backup-restore.md#database-users-and-their-passwords)).
+(see [Database users and their passwords](./admin/backup-restore.md#database-users-and-their-passwords)).
 The domains' custom DNS records are added once their zones exist, through the
-same checks as a record added under DNS (GH #1993; see
+same checks as a record added under DNS (see
 [Backup & restore](./admin/backup-restore.md#dns-records)).
 
 ### Tenant self-service restore-from-upload
 
 Tenants no longer need an admin for a restore. From the user Backups page a
 tenant can **upload a backup archive and restore selected legs** — files,
-databases, and mail — of their own account (GH #1408). A per-account download is
+databases, and mail — of their own account. A per-account download is
 prepared in the background with a live **"Preparing…"** indicator so a large
 account doesn't block the request. What the account already has is kept unless
-they check **Overwrite existing items with the backup** (GH #1993).
+they check **Overwrite existing items with the backup**.
 A downloaded backup holds the account's SSL certificates and their private
 keys, so keep it private; an administrator's restore can install them on
 another server (see [SSL certificates](./admin/backup-restore.md#ssl-certificates)).
@@ -102,7 +102,7 @@ another server (see [SSL certificates](./admin/backup-restore.md#ssl-certificate
 ### Restore a single domain's document root
 
 From a backup you can restore just **one domain's document root** without
-touching the rest of the account (GH #1359) — useful for reverting a single site
+touching the rest of the account — useful for reverting a single site
 after a bad deploy. Every domain of the backup is offered, and each domain's
 DNS is listed too; a domain whose backup holds no custom DNS records is shown
 greyed out. By default the backup's files are written over the live
@@ -116,10 +116,10 @@ Both engines support **Restore from file** on the per-database row (see
 [Databases](./databases.md)):
 
 - The upload is **chunked and async** so it beats Cloudflare's ~100 MB / 524
-  origin limits (GH #1323), with an upload-progress modal.
+  origin limits, with an upload-progress modal.
 - **MariaDB** and **PostgreSQL** are both covered. PostgreSQL accepts plain-SQL
   **and** pgAdmin's default custom / tar archive formats, and surfaces the real
-  loader error instead of a generic failure (GH #1045). The uploaded dump is
+  loader error instead of a generic failure. The uploaded dump is
   never loaded as a superuser — it runs through a per-database, non-superuser
   scoped role, built in a throwaway staging database and swapped onto the real
   name only on success, so a bad upload never wipes the live database.
@@ -129,11 +129,10 @@ Round-trip is live-verified on the test fleet.
 ## Full Server backup / restore
 
 A **Full Server backup** packages one backup run into a single downloadable
-**container archive** (GH #1408, #502) — everything needed to reconstruct the
+**container archive** — everything needed to reconstruct the
 host, in one file you can move anywhere.
 
-Restoring from an uploaded container (`jabali system restore --from-tar`, GH
-#1408):
+Restoring from an uploaded container (`jabali system restore --from-tar`):
 
 - Rebuilds the **system leg** and every hosted account.
 - **Creates missing OS users** and rebuilds per-user metadata, so the target
