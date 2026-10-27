@@ -13,15 +13,17 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
-// Saving again replaces every field, the token included: clearing the token
-// clears the column instead of keeping the old one.
+// Saving again replaces every field, the token and the deployment settings
+// included: clearing the token clears the column instead of keeping the old
+// one.
 func TestDomainGitRepo_PutReplacesTheToken(t *testing.T) {
 	gdb, mock, raw := newMockDB(t)
 	defer raw.Close()
 	repo := repository.NewDomainGitRepoRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectExec("INSERT INTO `domain_git_repos` .+ ON DUPLICATE KEY UPDATE .*`token_enc`=VALUES\\(`token_enc`\\)").
+	mock.ExpectExec("INSERT INTO `domain_git_repos` .+ ON DUPLICATE KEY UPDATE .*`token_enc`=VALUES\\(`token_enc`\\).*" +
+		"`web_dir`=VALUES\\(`web_dir`\\),`shared_paths`=VALUES\\(`shared_paths`\\),`deploy_commands`=VALUES\\(`deploy_commands`\\)").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	require.NoError(t, repo.Put(context.Background(), &models.DomainGitRepo{

@@ -177,7 +177,7 @@ A user whose hosting package includes Composer (`composer_enabled`, off by defau
 
 ## Git deployment (GH #2277)
 
-A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default) can connect a domain to a Git repository (ADR-0178). This first part stores the repository and lists its branches; deployments, rollback and the webhook come next. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
+A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by default) can connect a domain to a Git repository and deploy it (ADR-0178). The webhook and the Git tab in the domain's page come next. The API is `/api/v1/domains/{id}/git`; an API token limited to scopes needs `read:ssh` to read it and `write:ssh` to change it.
 
 - **Repository:** an `https://` URL from GitHub, GitLab, Bitbucket or any Git host, with no username or token in it. SSH URLs (`git@…`) are not accepted.
 - **Private repositories:** give a read-only access token, and the username your Git host expects with it: for GitHub, your GitHub username; for a GitLab personal or project token, any name (GitLab ignores it); for a GitLab deploy token, the token's own username; for a Bitbucket repository access token, `x-token-auth`. Left empty, the panel sends `x-access-token`, the name GitHub App installation tokens use.
@@ -185,6 +185,20 @@ A user whose hosting package includes Git deploy (`git_deploy_enabled`, off by d
 - **The token** is stored encrypted and is never shown again. To change the repository's host, enter the token again (or remove it for a public repository). When the domain moves to another account, its repository settings and token are removed.
 - **Where git runs:** as the user, in their SSH sandbox, with no config of their own, over https only. The server won't connect to a host that resolves to a private or local address, and it doesn't follow redirects: a repository that has moved needs its new URL.
 - **Backups** don't carry the repository settings or the token; enter them again after a restore.
+
+### Deploying
+
+`POST /api/v1/domains/{id}/git/deployments` deploys the saved branch. Each deployment builds a new release in `~/domains/<domain>/releases/<id>` and only then makes it live, so a deployment that fails leaves the site as it was:
+
+1. git fetches the branch (the latest commit only). The token is removed from the server before any of the repository's code runs.
+2. **Shared paths** are linked in from `~/domains/<domain>/shared`: files and directories that stay the same across releases, such as `.env` or `storage`. A shared path that isn't in `shared/` yet is taken from the release; one missing from both stops the deployment. A hidden path (`.env`) can't be inside the directory the site serves, where anyone could download it.
+3. `composer install` runs when the project has a `composer.lock` and no `vendor/`, if the hosting package also includes Composer runs. Without them, such a project can't be deployed: commit `vendor/`, or ask for Composer runs.
+4. The **deploy commands** run in the new release, one per line, at most 20: `php <file> [args]` (such as `php artisan migrate --force`), `php8.3 <file> [args]` for another installed PHP version, or `wp [args]`. Paths are relative to the release. No shell runs them, so pipes, `&&`, redirections and variables don't work, and no PHP option may come before the file.
+5. `~/domains/<domain>/current` switches to the new release. After the first deployment the domain's document root becomes `~/domains/<domain>/current/<web directory>` (the **web directory** is the folder the site serves from, `public` for Laravel; empty serves the repository's root).
+
+The five newest releases are kept. `POST /api/v1/domains/{id}/git/releases/{release}/activate` makes an earlier one live again (a rollback); `GET .../git/releases` lists them. A deployment in progress can be cancelled; until its release goes live, the site is unchanged.
+
+Anything the site writes inside a release, outside its shared paths, is gone after the next deployment: make uploads and caches shared paths. Submodules are not fetched.
 
 ## FPM slow log (GH #1332)
 

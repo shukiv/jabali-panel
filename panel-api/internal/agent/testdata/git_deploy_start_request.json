@@ -1,0 +1,15 @@
+{
+  "run_id": "01JBX000000000000000000005",
+  "kind": "deploy",
+  "os_user": "alice",
+  "domain": "shop.example.com",
+  "release": "01JBX000000000000000000003",
+  "repo_url": "https://bitbucket.org/acme/shop.git",
+  "branch": "main",
+  "username": "x-token-auth",
+  "token": "git-token-abc_DEF-123",
+  "web_dir": "public",
+  "shared_paths": [".env", "storage"],
+  "commands": "php artisan migrate --force\nphp artisan config:cache",
+  "composer": true
+}

@@ -1,0 +1,9 @@
+{
+  "state": "failed",
+  "result": "exit-code",
+  "exit_code": 1,
+  "log": "==> fetching https://bitbucket.org/acme/shop.git, branch main\njabali-git-deploy: commit 2f1d6a2c3b4e5f60718293a4b5c6d7e8f9a0b1c2\n==> composer install\n",
+  "log_truncated": true,
+  "php_defense_blocked": true,
+  "commit": "2f1d6a2c3b4e5f60718293a4b5c6d7e8f9a0b1c2"
+}

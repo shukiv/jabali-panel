@@ -146,6 +146,17 @@ type gitCredFile struct {
 // a link: ~/.jabali-git must be a real directory (O_NOFOLLOW), and the call's
 // directory and file are created through directory descriptors.
 func writeGitCredFile(osUser string, uid, gid int, host, username, token string) (*gitCredFile, error) {
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return nil, err
+	}
+	return writeGitCredFileIn(osUser, uid, gid, hex.EncodeToString(rnd[:]), host, username, token)
+}
+
+// writeGitCredFileIn is writeGitCredFile with the call's directory named
+// name, which must not exist yet: a deployment names it after its run, so
+// git.deploy_stop can remove it however the run ended.
+func writeGitCredFileIn(osUser string, uid, gid int, name, host, username, token string) (*gitCredFile, error) {
 	root := filepath.Join(tenantHomeDir(osUser), gitCredRootName)
 	if err := os.Mkdir(root, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return nil, fmt.Errorf("create %s: %w", root, err)
@@ -167,11 +178,6 @@ func writeGitCredFile(osUser string, uid, gid int, host, username, token string)
 		return nil, fmt.Errorf("chmod %s: %w", root, err)
 	}
 
-	var rnd [8]byte
-	if _, err := rand.Read(rnd[:]); err != nil {
-		return nil, err
-	}
-	name := hex.EncodeToString(rnd[:])
 	if err := unix.Mkdirat(rootFD, name, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s/%s: %w", root, name, err)
 	}
@@ -221,12 +227,53 @@ func (cf *gitCredFile) Remove() {
 	unix.Close(cf.rootFD)
 }
 
+// Close lets go of the file and leaves it in place, for a run that reads it
+// after this call returns.
+func (cf *gitCredFile) Close() {
+	unix.Close(cf.subFD)
+	unix.Close(cf.rootFD)
+}
+
+// removeGitCredDir removes ~/.jabali-git/<name> and the credential file in
+// it, following no link. Anything else the tenant put there keeps the
+// directory. A directory already gone is not an error.
+func removeGitCredDir(osUser, name string) error {
+	root := filepath.Join(tenantHomeDir(osUser), gitCredRootName)
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open %s: %w", root, err)
+	}
+	defer unix.Close(rootFD)
+	subFD, err := unix.Openat(rootFD, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open %s/%s: %w", root, name, err)
+	}
+	_ = unix.Unlinkat(subFD, "credentials", 0)
+	_ = unix.Unlinkat(subFD, "credentials.lock", 0)
+	unix.Close(subFD)
+	if err := unix.Unlinkat(rootFD, name, unix.AT_REMOVEDIR); err != nil && !errors.Is(err, unix.ENOENT) {
+		return fmt.Errorf("remove %s/%s: %w", root, name, err)
+	}
+	return nil
+}
+
 // gitEnv is git's environment in the sandbox, as `env` arguments: no system
 // or user config (a tenant's ~/.gitconfig could add a helper or rewrite the
 // URL), never prompting, https only (redirects and submodules included).
 func gitEnv(osUser string) []string {
+	return gitEnvHome(tenantHomeDir(osUser))
+}
+
+// gitEnvHome is gitEnv for the home directory home.
+func gitEnvHome(home string) []string {
 	return []string{
-		"HOME=" + tenantHomeDir(osUser),
+		"HOME=" + home,
 		"LC_ALL=C",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_GLOBAL=/dev/null",

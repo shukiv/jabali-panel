@@ -59,6 +59,11 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "mailrelay" {
 		os.Exit(runMailRelay(os.Args[2:]))
 	}
+	// GH #2277: a Git deployment runs from this binary as the site's user,
+	// in their SSH sandbox (git.deploy_start), never as root.
+	if len(os.Args) > 1 && os.Args[1] == "git-deploy" {
+		os.Exit(commands.RunGitDeploy(os.Args[2:]))
+	}
 
 	var (
 		socketPath = flag.String("socket", envOr("JABALI_AGENT_SOCKET", defaultSocketPath), "path to the unix socket to listen on")

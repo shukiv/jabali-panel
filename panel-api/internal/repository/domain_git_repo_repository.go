@@ -49,7 +49,10 @@ func (r *domainGitRepoRepo) Put(ctx context.Context, row *models.DomainGitRepo) 
 		Columns: []clause.Column{{Name: "domain_id"}},
 		// token_enc is assigned even when nil, so clearing the token clears
 		// the column.
-		DoUpdates: clause.AssignmentColumns([]string{"user_id", "repo_url", "branch", "username", "token_enc", "verified_at", "updated_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{
+			"user_id", "repo_url", "branch", "username", "token_enc",
+			"web_dir", "shared_paths", "deploy_commands", "verified_at", "updated_at",
+		}),
 	}).Create(row).Error)
 }
 

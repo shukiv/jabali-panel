@@ -64,6 +64,9 @@ type gitTestEnv struct {
 	hosts   []string
 	hostErr error
 	claims  *auth.AccessClaims
+	// deploys and sched back the deployment routes (domain_git_deploy_test.go).
+	deploys *gitTestDeployments
+	sched   *gitTestSched
 }
 
 func newGitTestEnv(t *testing.T) *gitTestEnv {
@@ -75,11 +78,13 @@ func newGitTestEnv(t *testing.T) *gitTestEnv {
 		agent: &composerTestAgent{answers: map[string]any{
 			"git.ls_remote": gitdeploy.LsRemoteResponse{DefaultBranch: "main", Branches: []string{"dev", "main"}},
 		}, errs: map[string]error{}},
-		repos:  &gitTestRepos{rows: map[string]*models.DomainGitRepo{}},
-		pkg:    &models.HostingPackage{ID: pkgID, GitDeployEnabled: true},
-		alice:  &models.User{ID: "u-alice", Username: &aliceName, PackageID: &pkgID},
-		key:    &key,
-		claims: &auth.AccessClaims{UserID: "u-alice"},
+		repos:   &gitTestRepos{rows: map[string]*models.DomainGitRepo{}},
+		pkg:     &models.HostingPackage{ID: pkgID, GitDeployEnabled: true},
+		alice:   &models.User{ID: "u-alice", Username: &aliceName, PackageID: &pkgID},
+		key:     &key,
+		claims:  &auth.AccessClaims{UserID: "u-alice"},
+		deploys: &gitTestDeployments{runs: map[string]*models.DomainGitDeployment{}},
+		sched:   &gitTestSched{},
 	}
 	bob := &models.User{ID: "u-bob", Username: &bobName}
 	r := gin.New()
@@ -98,6 +103,8 @@ func newGitTestEnv(t *testing.T) *gitTestEnv {
 			e.hosts = append(e.hosts, host)
 			return e.hostErr
 		},
+		Deployments: e.deploys,
+		Reconciler:  e.sched,
 	})
 	e.router = r
 	return e
