@@ -218,8 +218,13 @@ func isHTTPTriggerBinary(raw string) bool {
 // ValidateCommand (gated on ownedDocroots for wp/php, plus ownedHome for
 // python/node scripts).
 func ValidateAny(raw string, ownedDocroots, ownedDomains []string, ownedHome string) (*Command, error) {
+	return ValidateAnyPolicy(raw, ownedDocroots, ownedDomains, ownedHome, Policy{})
+}
+
+// ValidateAnyPolicy is ValidateAny under the account's package policy (GH #2290).
+func ValidateAnyPolicy(raw string, ownedDocroots, ownedDomains []string, ownedHome string, pol Policy) (*Command, error) {
 	if isHTTPTriggerBinary(raw) {
 		return ValidateHTTPTrigger(raw, ownedDomains)
 	}
-	return ValidateCommand(raw, ownedDocroots, ownedHome)
+	return ValidateCommandPolicy(raw, ownedDocroots, ownedHome, pol)
 }

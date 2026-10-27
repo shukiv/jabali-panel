@@ -27,11 +27,13 @@ import (
 	"golang.org/x/term"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
@@ -119,7 +121,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	// Provision systemd timers for restored cron jobs
 	if r.CronJobs > 0 && meta.User.ID != "" {
 		if username := getUsernameFromMeta(&meta); username != "" {
-			if timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps); timerErr != nil {
+			if timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps, repository.NewPackageRepository(sharedDB)); timerErr != nil {
 				fmt.Fprintf(w, "  WARNING: cron timer provisioning failed: %v\n", timerErr)
 			} else {
 				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs)
@@ -712,7 +714,9 @@ func getUsernameFromMeta(meta *internalbackup.AccountMetadata) string {
 
 // provisionRestoredCronTimers creates systemd timers for all enabled cron jobs
 // in the restored account. Follows the cronApplyOne pattern from reconciler.
-func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps) error {
+// A job that runs the account's shell script is left to the reconciler when
+// the account's package has no SSH (GH #2290); it applies none such.
+func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps, pkgs cronops.PackageFinder) error {
 	if deps.CronJobs == nil {
 		return fmt.Errorf("cron job repository not available")
 	}
@@ -752,18 +756,23 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 
 	// Create agent client for provisioning
 	ag := agent.NewClient(agent.Config{Timeout: 30 * time.Second})
+	pol := cronops.ShellPolicy(ctx, deps.Users, pkgs, userID, false)
 
 	// Provision each enabled cron job
 	for _, job := range enabledJobs {
+		if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+			continue
+		}
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		_, err := ag.Call(agentCtx, "cron.apply", map[string]any{
-			"user_id":        userID,
-			"username":       username,
-			"job_id":         job.ID,
-			"name":           job.Name,
-			"command":        job.Command,
-			"schedule":       job.Schedule,
-			"owned_docroots": docroots,
+			"user_id":             userID,
+			"username":            username,
+			"job_id":              job.ID,
+			"name":                job.Name,
+			"command":             job.Command,
+			"schedule":            job.Schedule,
+			"owned_docroots":      docroots,
+			"allow_shell_scripts": pol.ShellScripts,
 		})
 		cancel()
 		if err != nil {

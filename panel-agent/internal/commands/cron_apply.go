@@ -27,6 +27,16 @@ type cronApplyParams struct {
 	OwnedDocroots []string `json:"owned_docroots"`
 	OwnedDomains  []string `json:"owned_domains"`
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
+	// AllowShellScripts is set by the panel when the account's hosting package
+	// includes SSH (GH #2290): the command may then run a .sh script inside the
+	// account. Never honoured for a root job.
+	AllowShellScripts bool `json:"allow_shell_scripts,omitempty"`
+}
+
+// cronShellPolicy is the command policy for a job: shell scripts only for a
+// tenant job whose package includes SSH (GH #2290).
+func cronShellPolicy(allow, runAsRoot bool) cronvalidate.Policy {
+	return cronvalidate.Policy{ShellScripts: allow && !runAsRoot}
 }
 
 // cronSandboxWrapper runs a tenant cron command inside the same per-user
@@ -108,7 +118,7 @@ func cronApplyHandler(ctx context.Context, params json.RawMessage) (any, error) 
 	// ValidateAny routes curl/wget self-domain crons (GH #400 Part B) to the
 	// http-trigger validator (gated on OwnedDomains); everything else stays
 	// the wp/php closed set (gated on OwnedDocroots).
-	cmds, err := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username))
+	cmds, err := cronvalidate.ValidateAnyMultiPolicy(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username), cronShellPolicy(p.AllowShellScripts, p.RunAsRoot))
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

@@ -47,11 +47,26 @@ The allowlist:
   (`-e`, `--eval`, `-p`, `--print`) is not allowed.
 - **`curl`** / **`wget`** — a plain GET to one of **your own domains** (a
   self-domain HTTP trigger; the panel pins the target and hardens the request).
+- **`bash`** / **`sh`** — only when your **hosting plan includes SSH access**.
+  Runs an **absolute `.sh` file inside your account** (home or a docroot), with
+  optional arguments after it: `bash /home/USER/bin/backup.sh` or
+  `sh /home/USER/bin/backup.sh nightly`. The script's path alone
+  (`/home/USER/bin/backup.sh`) runs it with `bash`. No option may come before
+  the script (`bash -c …` is refused). Inside the script every shell feature
+  works, `cd`, pipes and `&&` included, because the job runs in the same
+  sandbox as your SSH shell. Without SSH access in your plan the panel refuses
+  the job ("Shell scripts need SSH access in the account's hosting plan").
 
 A job may hold **several commands, one per line** — they run in order and stop
 if one fails. Blank lines and `#` comments (including a `#!/bin/bash` shebang
 line) are ignored, so you can paste a script's body, but every executable line
 must still match the allowlist above.
+
+If your plan loses SSH access, a job that runs a shell script stops: its timer
+is removed within a minute, and the job can't be turned on, edited or run until
+SSH access is back. It stays in the list as it was, so it runs again on its
+schedule once your plan includes SSH again. The account's other jobs are not
+affected.
 
 ## Sandboxing
 

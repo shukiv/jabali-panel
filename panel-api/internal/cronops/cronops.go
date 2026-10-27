@@ -45,11 +45,55 @@ type CronStore interface {
 	Update(ctx context.Context, j *models.CronJob) error
 }
 
+// PackageFinder loads a hosting package: a tenant job may run the account's
+// own shell scripts when its package includes SSH (GH #2290).
+type PackageFinder interface {
+	FindByID(ctx context.Context, id string) (*models.HostingPackage, error)
+}
+
 type Deps struct {
 	Users    UserFinder
 	Domains  DomainLister
 	CronJobs CronStore
 	Agent    AgentCaller
+	// Packages is optional: nil keeps every job on the closed list (the app
+	// cron jobs, which never run shell scripts).
+	Packages PackageFinder
+}
+
+// ShellPolicy is the command policy for userID's jobs (GH #2290): the
+// account's own shell scripts when its hosting package includes SSH, since a
+// tenant job runs in the same SSH sandbox as its shell. A root job, an account
+// without a package, and any lookup that fails get the closed list.
+func ShellPolicy(ctx context.Context, users UserFinder, pkgs PackageFinder, userID string, runAsRoot bool) cronvalidate.Policy {
+	if runAsRoot || users == nil || pkgs == nil {
+		return cronvalidate.Policy{}
+	}
+	if v := reflect.ValueOf(pkgs); v.Kind() == reflect.Ptr && v.IsNil() {
+		return cronvalidate.Policy{}
+	}
+	u, err := users.FindByID(ctx, userID)
+	if err != nil || u == nil || u.PackageID == nil || *u.PackageID == "" {
+		return cronvalidate.Policy{}
+	}
+	pkg, err := pkgs.FindByID(ctx, *u.PackageID)
+	if err != nil || pkg == nil {
+		return cronvalidate.Policy{}
+	}
+	return cronvalidate.Policy{ShellScripts: pkg.SSHEnabled}
+}
+
+// shellOffErr refuses an enabled shell job whose account's package has no
+// SSH (GH #2290): the reconciler stops such a job's timer, so turning it on
+// or saving it waits until the package includes SSH again.
+func shellOffErr(job *models.CronJob, pol cronvalidate.Policy) error {
+	if !job.Enabled || pol.ShellScripts || !cronvalidate.UsesShell(job.Command) {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", ErrCommandInvalid, &cronvalidate.ValidationError{
+		Code:   cronvalidate.ErrCodeShellNeedsSSH,
+		Detail: "shell scripts need SSH access in your hosting plan",
+	})
 }
 
 // CreateInput / UpdatePatch — both adapters build these from their
@@ -105,6 +149,9 @@ type applyParams struct {
 	OwnedDocroots []string `json:"owned_docroots"`
 	OwnedDomains  []string `json:"owned_domains"`
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
+	// AllowShellScripts: the account's package includes SSH (GH #2290). The
+	// agent checks the command again with it.
+	AllowShellScripts bool `json:"allow_shell_scripts,omitempty"`
 }
 
 type removeParams struct {
@@ -203,15 +250,16 @@ func homeForUser(username string) string {
 	return "/home/" + username
 }
 
-func apply(ctx context.Context, d Deps, job *models.CronJob, username string, docroots, domains []string) error {
+func apply(ctx context.Context, d Deps, job *models.CronJob, username string, docroots, domains []string, pol cronvalidate.Policy) error {
 	actx, cancel := context.WithTimeout(ctx, agentTimeout)
 	defer cancel()
 	_, err := d.Agent.Call(actx, "cron.apply", applyParams{
 		UserID: job.UserID, Username: username, JobID: job.ID,
 		Name: job.Name, Command: job.Command, Schedule: job.Schedule,
-		OwnedDocroots: docroots,
-		OwnedDomains:  domains,
-		RunAsRoot:     job.RunAsRoot,
+		OwnedDocroots:     docroots,
+		OwnedDomains:      domains,
+		RunAsRoot:         job.RunAsRoot,
+		AllowShellScripts: pol.ShellScripts,
 	})
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrAgentFailed, err)
@@ -250,7 +298,8 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 	if err != nil {
 		return nil, err
 	}
-	if _, err := cronvalidate.ValidateAnyMulti(in.Command, docroots, domains, homeForUser(username)); err != nil {
+	pol := ShellPolicy(ctx, d.Users, d.Packages, in.UserID, in.RunAsRoot)
+	if _, err := cronvalidate.ValidateAnyMultiPolicy(in.Command, docroots, domains, homeForUser(username), pol); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCommandInvalid, err)
 	}
 
@@ -267,7 +316,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.CronJob, error
 		return nil, fmt.Errorf("%w: persist: %v", ErrInternal, err)
 	}
 	if job.Enabled {
-		if err := apply(ctx, d, job, username, docroots, domains); err != nil {
+		if err := apply(ctx, d, job, username, docroots, domains, pol); err != nil {
 			_ = d.CronJobs.Delete(ctx, job.ID) // roll back — REST contract
 			return nil, err
 		}
@@ -307,6 +356,7 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 			return nil, err
 		}
 	}
+	pol := ShellPolicy(ctx, d.Users, d.Packages, job.UserID, job.RunAsRoot)
 	if patch.Name != nil {
 		if err := cronvalidate.ValidateCronName(*patch.Name); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrNameInvalid, err)
@@ -314,7 +364,7 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 		job.Name = *patch.Name
 	}
 	if patch.Command != nil {
-		if _, err := cronvalidate.ValidateAnyMulti(*patch.Command, docroots, domains, homeForUser(username)); err != nil {
+		if _, err := cronvalidate.ValidateAnyMultiPolicy(*patch.Command, docroots, domains, homeForUser(username), pol); err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrCommandInvalid, err)
 		}
 		job.Command = cronvalidate.NormalizeMultiCommand(*patch.Command)
@@ -325,14 +375,19 @@ func Update(ctx context.Context, d Deps, jobID string, patch UpdatePatch) (*mode
 		}
 		job.Schedule = *patch.Schedule
 	}
+	enabled := job.Enabled
 	if patch.Enabled != nil {
-		job.Enabled = *patch.Enabled
+		enabled = *patch.Enabled
 	}
+	if err := shellOffErr(&models.CronJob{Enabled: enabled, Command: job.Command}, pol); err != nil {
+		return nil, err
+	}
+	job.Enabled = enabled
 	if err := d.CronJobs.Update(ctx, job); err != nil {
 		return nil, fmt.Errorf("%w: persist: %v", ErrInternal, err)
 	}
 	if job.Enabled {
-		if err := apply(ctx, d, job, username, docroots, domains); err != nil {
+		if err := apply(ctx, d, job, username, docroots, domains, pol); err != nil {
 			return nil, err
 		}
 	} else {

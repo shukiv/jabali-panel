@@ -26,5 +26,9 @@ export const CronCommandHelp = () => (
     to run WP-CLI on another version, start the line with that PHP and
     wp-cli&apos;s path, e.g.{" "}
     <code>php7.4 /usr/local/bin/wp --path=… cron event run --due-now</code>.
+    When the account&apos;s hosting plan includes SSH access, a job can also run
+    the account&apos;s own <code>.sh</code> script from a docroot or the home
+    directory: <code>bash /home/you/bin/task.sh</code> (or <code>sh</code>, or
+    the script&apos;s path alone). Root jobs never run shell scripts.
   </Typography.Text>
 );
