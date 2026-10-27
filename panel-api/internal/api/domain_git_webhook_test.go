@@ -132,10 +132,11 @@ func (e *gitTestEnv) post(t *testing.T, hookID, body string, h map[string]string
 	return w.Code, out, w.Body.String()
 }
 
-// push delivers a GitHub push of branch, signed with secret.
+// push delivers a GitHub push of branch, signed with secret. Each delivery
+// is another push: its body names the delivery.
 func (e *gitTestEnv) push(t *testing.T, hookID, secret, branch, delivery string) (int, map[string]any, string) {
 	t.Helper()
-	body := `{"ref":"refs/heads/` + branch + `","after":"2f1d6a2c3b4e5f60718293a4b5c6d7e8f9a0b1c2"}`
+	body := `{"ref":"refs/heads/` + branch + `","after":"2f1d6a2c3b4e5f60718293a4b5c6d7e8f9a0b1c2","delivery":"` + delivery + `"}`
 	return e.post(t, hookID, body, map[string]string{
 		"X-GitHub-Event": "push", "X-GitHub-Delivery": delivery, "X-Hub-Signature-256": gitTestSign(secret, body),
 	})
@@ -218,6 +219,7 @@ func TestGitWebhook_TakesTheHostsOwnSecret(t *testing.T) {
 		t.Fatalf("signing token = %d %s", code, raw)
 	}
 	e.finishRuns()
+	body = `{"ref":"refs/heads/main","after":"8e2a"}`
 	code, _, raw = e.post(t, hookID, body, map[string]string{"X-Gitlab-Event": "Push Hook", "Webhook-Id": "msg_2", "X-Gitlab-Token": token})
 	if code != http.StatusAccepted {
 		t.Fatalf("secret token = %d %s", code, raw)
@@ -335,6 +337,28 @@ func TestGitWebhook_ADeliverySentAgainDeploysOnce(t *testing.T) {
 	}
 	if code, _, raw := e.push(t, hookID, secret, "main", "8e2a1f00"); code != http.StatusAccepted {
 		t.Fatalf("another delivery = %d %s", code, raw)
+	}
+}
+
+// A GitHub signature covers the body alone, so a captured delivery replayed
+// under a new ID is the same delivery.
+func TestGitWebhook_AReplayedBodyDeploysOnce(t *testing.T) {
+	e := newGitTestEnv(t)
+	hookID, secret := e.hookUp(t)
+	body := `{"ref":"refs/heads/main","after":"2f1d6a2c3b4e5f60718293a4b5c6d7e8f9a0b1c2"}`
+	sig := gitTestSign(secret, body)
+	if code, _, raw := e.post(t, hookID, body, map[string]string{"X-GitHub-Event": "push", "X-GitHub-Delivery": "72d3162e", "X-Hub-Signature-256": sig}); code != http.StatusAccepted {
+		t.Fatalf("first = %d %s", code, raw)
+	}
+	e.finishRuns()
+	for _, id := range []string{"replayed-0001", ""} {
+		code, out, raw := e.post(t, hookID, body, map[string]string{"X-GitHub-Event": "push", "X-GitHub-Delivery": id, "X-Hub-Signature-256": sig})
+		if code != http.StatusOK || out["result"] != "duplicate" {
+			t.Fatalf("replay with id %q = %d %s", id, code, raw)
+		}
+	}
+	if n := len(e.webhookRuns()); n != 1 {
+		t.Fatalf("runs = %d", n)
 	}
 }
 

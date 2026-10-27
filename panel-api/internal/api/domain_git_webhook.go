@@ -208,17 +208,18 @@ type GitWebhookConfig struct {
 	// Reconciler re-applies a domain's vhost once a deployment has moved its
 	// document root. nil skips that (tests).
 	Reconciler gitdeploy.Scheduler
-	// Deliveries remembers delivery IDs, so a delivery the host sends again
-	// deploys once. nil (no Redis) leaves that out, said once in the log.
+	// Deliveries remembers deliveries, so one the host sends again, or
+	// someone replays, deploys once. nil (no Redis) leaves that out, said
+	// once in the log.
 	Deliveries gitDeliveryStore
 	// Now is the clock; nil uses time.Now (tests).
 	Now func() time.Time
 }
 
 const (
-	// gitDeliveryTTL covers GitLab's retries, which back off for up to a
-	// day.
-	gitDeliveryTTL = 24 * time.Hour
+	// gitDeliveryTTL is how long a delivery is remembered: well past
+	// GitLab's retries, which back off for up to a day.
+	gitDeliveryTTL = 7 * 24 * time.Hour
 	// A webhook starts at most this many deployments a minute; a push past
 	// that waits, as one during a run does.
 	gitWebhookStartsPerMinute = 6
@@ -309,8 +310,8 @@ func (h *gitWebhookHandler) deliver(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"result": models.GitWebhookIgnored, "detail": "not a push to the branch " + settings.Branch + " (" + push.Event + ")"})
 		return
 	}
-	claimed := h.claimDelivery(ctx, hookID, gitdeploy.DeliveryID(c.Request.Header))
-	if claimed == gitDeliverySeen {
+	claimed, seen := h.claimDelivery(ctx, hookID, gitdeploy.DeliveryID(c.Request.Header), body)
+	if seen {
 		h.record(ctx, dom.ID, now, models.GitWebhookDuplicate)
 		c.JSON(http.StatusOK, gin.H{"result": models.GitWebhookDuplicate, "detail": "this delivery was received before"})
 		return
@@ -379,7 +380,7 @@ func (h *gitWebhookHandler) load(c *gin.Context, domainID string) (*models.Domai
 }
 
 // queue keeps the push for when the domain's running deployment has ended.
-func (h *gitWebhookHandler) queue(c *gin.Context, domainID string, now time.Time, claimed string) {
+func (h *gitWebhookHandler) queue(c *gin.Context, domainID string, now time.Time, claimed []string) {
 	ctx := c.Request.Context()
 	if err := h.cfg.Webhooks.Queue(ctx, domainID, now); err != nil {
 		slog.ErrorContext(ctx, "git webhook: queue a push", "domain", domainID, "error", err)
@@ -410,43 +411,49 @@ func (h *gitWebhookHandler) record(ctx context.Context, domainID string, at time
 	}
 }
 
-// gitDeliverySeen: claimDelivery found the delivery's ID already taken.
-const gitDeliverySeen = "seen"
-
-// claimDelivery takes the delivery's ID. It returns gitDeliverySeen when a
-// delivery with that ID came before, the key it took (for forgetDelivery),
-// or "" when the delivery has no ID or IDs can't be remembered. A store that
-// fails doesn't stop the push: a delivery sent twice only deploys twice.
-func (h *gitWebhookHandler) claimDelivery(ctx context.Context, hookID, deliveryID string) string {
-	if deliveryID == "" {
-		return ""
-	}
+// claimDelivery remembers a delivery by its ID and by its signed body, and
+// reports whether either came before. The body counts because a GitHub or
+// Bitbucket signature covers the body alone: a captured delivery replayed
+// under a new ID is still the same body. It returns the keys it took, for
+// forgetDelivery. A store that fails doesn't stop the push: a delivery sent
+// twice only deploys twice.
+func (h *gitWebhookHandler) claimDelivery(ctx context.Context, hookID, deliveryID string, body []byte) ([]string, bool) {
 	if h.cfg.Deliveries == nil {
 		noDeliveryStoreOnce.Do(func() {
-			slog.Warn("git webhook: no Redis configured, so a delivery the Git host sends again deploys again")
+			slog.Warn("git webhook: no Redis configured, so a delivery sent again deploys again")
 		})
-		return ""
+		return nil, false
 	}
-	sum := sha256.Sum256([]byte(deliveryID))
-	key := "gitdeploy:delivery:" + hookID + ":" + hex.EncodeToString(sum[:16])
-	set, err := h.cfg.Deliveries.SetNX(ctx, key, 1, gitDeliveryTTL).Result()
-	if err != nil {
-		slog.WarnContext(ctx, "git webhook: remember a delivery", "error", err)
-		return ""
+	bodySum := sha256.Sum256(body)
+	keys := []string{"gitdeploy:body:" + hookID + ":" + hex.EncodeToString(bodySum[:16])}
+	if deliveryID != "" {
+		idSum := sha256.Sum256([]byte(deliveryID))
+		keys = append(keys, "gitdeploy:delivery:"+hookID+":"+hex.EncodeToString(idSum[:16]))
 	}
-	if !set {
-		return gitDeliverySeen
+	var taken []string
+	seen := false
+	for _, key := range keys {
+		set, err := h.cfg.Deliveries.SetNX(ctx, key, 1, gitDeliveryTTL).Result()
+		if err != nil {
+			slog.WarnContext(ctx, "git webhook: remember a delivery", "error", err)
+			continue
+		}
+		if set {
+			taken = append(taken, key)
+		} else {
+			seen = true
+		}
 	}
-	return key
+	return taken, seen
 }
 
 // forgetDelivery lets the host's next try of a delivery the panel could not
 // act on through.
-func (h *gitWebhookHandler) forgetDelivery(ctx context.Context, key string) {
-	if key == "" || key == gitDeliverySeen || h.cfg.Deliveries == nil {
+func (h *gitWebhookHandler) forgetDelivery(ctx context.Context, keys []string) {
+	if len(keys) == 0 || h.cfg.Deliveries == nil {
 		return
 	}
-	if err := h.cfg.Deliveries.Del(context.WithoutCancel(ctx), key).Err(); err != nil {
+	if err := h.cfg.Deliveries.Del(context.WithoutCancel(ctx), keys...).Err(); err != nil {
 		slog.WarnContext(ctx, "git webhook: forget a delivery", "error", err)
 	}
 }
