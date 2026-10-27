@@ -12,6 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -29,6 +30,7 @@ func cronopsCLIDeps() cronops.Deps {
 		Domains:  repository.NewDomainRepository(sharedDB),
 		CronJobs: cronJobRepoFromDB(),
 		Agent:    sharedAgent,
+		Packages: repository.NewPackageRepository(sharedDB),
 	}
 }
 
@@ -375,6 +377,12 @@ and is stopped when the command's 5-minute limit ends.`,
 				}
 				username = "root"
 			}
+			// GH #2290: the account's own shell script runs only while its
+			// package includes SSH.
+			pol := cronops.ShellPolicy(ctx, userRepo(), repository.NewPackageRepository(sharedDB), job.UserID, job.RunAsRoot)
+			if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+				return fmt.Errorf("cron job %s runs a shell script: shell scripts need SSH access in the account's hosting plan", job.ID)
+			}
 			raw, err := sharedAgent.Call(ctx, "cron.run_now", map[string]any{
 				"user_id":        u.ID,
 				"username":       username,
@@ -384,7 +392,8 @@ and is stopped when the command's 5-minute limit ends.`,
 				"owned_docroots": docroots,
 				// GH #2122: wait most of this command's 5 minutes; a run that
 				// is still going then carries on in the job's unit.
-				"wait_seconds": cronRunNowCLIWaitSeconds,
+				"wait_seconds":        cronRunNowCLIWaitSeconds,
+				"allow_shell_scripts": pol.ShellScripts,
 			})
 			if err != nil {
 				return fmt.Errorf("cron.run_now: %w", err)

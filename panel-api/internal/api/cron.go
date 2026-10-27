@@ -28,6 +28,10 @@ type CronHandlerConfig struct {
 	Domains  repository.DomainRepository
 	Agent    agent.AgentInterface
 	Log      *slog.Logger
+	// Packages decides whether a job may run the account's shell scripts:
+	// when its package includes SSH (GH #2290). Optional; nil keeps the
+	// closed list.
+	Packages repository.PackageRepository
 }
 
 // cronopsDeps adapts the handler config to the cronops seam.
@@ -37,6 +41,7 @@ func (h *cronHandler) cronopsDeps() cronops.Deps {
 		Domains:  h.cfg.Domains,
 		CronJobs: h.cfg.CronJobs,
 		Agent:    h.cfg.Agent,
+		Packages: h.cfg.Packages,
 	}
 }
 
@@ -172,6 +177,8 @@ type cronRunNowAgentParams struct {
 	OwnedDomains  []string `json:"owned_domains"`
 	WaitSeconds   int      `json:"wait_seconds,omitempty"`
 	RunAsRoot     bool     `json:"run_as_root,omitempty"`
+	// AllowShellScripts: the account's package includes SSH (GH #2290).
+	AllowShellScripts bool `json:"allow_shell_scripts,omitempty"`
 }
 
 type cronTailLogAgentParams struct {
@@ -502,6 +509,16 @@ func (h *cronHandler) runNow(c *gin.Context) {
 			}
 		}
 	}
+	// GH #2290: a job that runs the account's shell script needs SSH in its
+	// package; without it, say so here instead of the agent's refusal.
+	pol := cronops.ShellPolicy(ctx, h.cfg.Users, h.cfg.Packages, job.UserID, runAsRoot)
+	if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+		respondValidationErr(c, "command", &cronvalidate.ValidationError{
+			Code:   cronvalidate.ErrCodeShellNeedsSSH,
+			Detail: "shell scripts need SSH access in the account's hosting plan, and never run as root",
+		})
+		return
+	}
 	// GH #2122: the agent waits cronRunNowWaitSeconds for the run, then answers
 	// that it is still running and leaves it running. Bounding the call here
 	// keeps that answer inside the HTTP server's 30 s write timeout.
@@ -511,6 +528,7 @@ func (h *cronHandler) runNow(c *gin.Context) {
 		UserID: job.UserID, Username: username, JobID: job.ID,
 		Command: job.Command, OwnedDocroots: docroots, OwnedDomains: domains,
 		WaitSeconds: cronRunNowWaitSeconds, RunAsRoot: runAsRoot,
+		AllowShellScripts: pol.ShellScripts,
 	})
 	if err != nil {
 		respondAgentErr(c, "agent_run_now_failed", err)

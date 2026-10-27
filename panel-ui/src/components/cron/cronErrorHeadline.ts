@@ -35,6 +35,8 @@ export const CRON_ERROR_HEADLINES: Record<string, string> = {
   // Schedule (internal/cronvalidate/cron.go)
   bad_schedule_syntax: "Invalid schedule — use a 5-field cron expression",
   schedule_too_frequent: "Schedule is too frequent — the minimum interval is 1 minute",
+  // Shell scripts (internal/cronvalidate/shell.go, GH #2290)
+  shell_needs_ssh: "Shell scripts need SSH access in the account's hosting plan, and never run as root",
   // HTTP trigger, curl/wget (internal/cronvalidate/httptrigger.go)
   http_not_curl_wget: "HTTP triggers must start with curl or wget",
   http_no_url: "No http(s) URL found in the command",

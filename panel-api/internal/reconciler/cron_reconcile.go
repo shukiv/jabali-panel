@@ -6,6 +6,8 @@ import (
 	"errors"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -75,11 +77,23 @@ func (r *Reconciler) reconcileCronJobs(ctx context.Context) {
 			delete(onDisk, job.ID)
 		}
 
+		// GH #2290: the account's own shell scripts run only while its package
+		// includes SSH; without it such a job's timer comes off.
+		pol := cronops.ShellPolicy(ctx, r.users, r.packages, userID, false)
+
 		for _, job := range userJobs {
 			if !job.Enabled {
 				continue
 			}
-			if err := r.cronApplyOne(ctx, userID, username, job, docroots, domains, false); err != nil {
+			if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+				if err := r.cronRemoveOne(ctx, userID, username, job.ID, false); err != nil {
+					r.log.Warn("reconcile: agent cron.remove (shell job without SSH) failed", "job_id", job.ID, "err", err)
+					continue
+				}
+				removed++
+				continue
+			}
+			if err := r.cronApplyOne(ctx, userID, username, job, docroots, domains, pol.ShellScripts, false); err != nil {
 				r.log.Error("reconcile: agent cron.apply failed", "job_id", job.ID, "err", err)
 				continue
 			}
@@ -268,7 +282,9 @@ func (r *Reconciler) cronHarvestLastRun(ctx context.Context, userID, username st
 	}
 }
 
-func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, job *models.CronJob, docroots, domains []string, runAsRoot bool) error {
+// cronApplyOne installs job's unit. allowShell tells the agent the account's
+// package includes SSH (GH #2290); it is never set for a root job.
+func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, job *models.CronJob, docroots, domains []string, allowShell, runAsRoot bool) error {
 	agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	_, err := r.agent.Call(agentCtx, "cron.apply", map[string]any{
@@ -281,6 +297,8 @@ func (r *Reconciler) cronApplyOne(ctx context.Context, userID, username string, 
 		"owned_docroots": docroots,
 		"owned_domains":  domains,
 		"run_as_root":    runAsRoot,
+		// GH #2290
+		"allow_shell_scripts": allowShell && !runAsRoot,
 	})
 	return err
 }
@@ -322,7 +340,7 @@ func (r *Reconciler) reconcileRootCronJobs(ctx context.Context, userID string, j
 			removed++
 			continue
 		}
-		if err := r.cronApplyOne(ctx, userID, "root", job, docroots, domains, true); err != nil {
+		if err := r.cronApplyOne(ctx, userID, "root", job, docroots, domains, false, true); err != nil {
 			r.log.Error("reconcile: agent cron.apply (root job) failed", "job_id", job.ID, "err", err)
 			continue
 		}

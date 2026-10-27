@@ -1671,6 +1671,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:  deps.Domains,
 				Agent:    deps.Agent,
 				Log:      deps.Log,
+				Packages: deps.Packages, // GH #2290: shell scripts need SSH
 			})
 		}
 

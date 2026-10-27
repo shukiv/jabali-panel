@@ -28,6 +28,9 @@ type cronRunNowParams struct {
 	// one cron.apply installs under /etc/systemd/system, and Username must be
 	// "root".
 	RunAsRoot bool `json:"run_as_root,omitempty"`
+	// AllowShellScripts: the account's package includes SSH (GH #2290), as on
+	// cron.apply.
+	AllowShellScripts bool `json:"allow_shell_scripts,omitempty"`
 }
 
 // cronRunNowResponse is the output from cron.run_now.
@@ -84,7 +87,7 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 	// Defense-in-depth: re-validate the command against the user's owned
 	// docroots (same gate as cron.apply) before executing it. Never trust
 	// the stored command blindly. GH #1435: a job may hold several commands.
-	validatedCmds, vErr := cronvalidate.ValidateAnyMulti(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username))
+	validatedCmds, vErr := cronvalidate.ValidateAnyMultiPolicy(p.Command, p.OwnedDocroots, p.OwnedDomains, cronHomeForUser(p.Username), cronShellPolicy(p.AllowShellScripts, p.RunAsRoot))
 	if vErr != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,

@@ -33,6 +33,12 @@ const (
 // tolerated — but every executable line must still pass the closed allow-list.
 // A single-line command yields a one-element slice (back-compatible).
 func ValidateAnyMulti(raw string, ownedDocroots, ownedDomains []string, ownedHome string) ([]*Command, error) {
+	return ValidateAnyMultiPolicy(raw, ownedDocroots, ownedDomains, ownedHome, Policy{})
+}
+
+// ValidateAnyMultiPolicy is ValidateAnyMulti under the account's package
+// policy: each line is checked by ValidateAnyPolicy (GH #2290).
+func ValidateAnyMultiPolicy(raw string, ownedDocroots, ownedDomains []string, ownedHome string, pol Policy) ([]*Command, error) {
 	if len(raw) > maxMultiCommandBytes {
 		return nil, &ValidationError{
 			Code:   ErrCodeTooLong,
@@ -52,7 +58,7 @@ func ValidateAnyMulti(raw string, ownedDocroots, ownedDomains []string, ownedHom
 				Detail: fmt.Sprintf("too many commands (max %d)", maxCronCommands),
 			}
 		}
-		c, err := ValidateAny(trimmed, ownedDocroots, ownedDomains, ownedHome)
+		c, err := ValidateAnyPolicy(trimmed, ownedDocroots, ownedDomains, ownedHome, pol)
 		if err != nil {
 			// Prefix the failing line number so the operator can fix the right line.
 			if ve, ok := err.(*ValidationError); ok {

@@ -132,6 +132,13 @@ func hasUnquotedMetachar(s string) bool {
 // are still rejected in pre-shlex scan). Returns a Command with parsed argv
 // on success, or a ValidationError with a code suitable for API responses.
 func ValidateCommand(raw string, ownedDocroots []string, ownedHome string) (*Command, error) {
+	return ValidateCommandPolicy(raw, ownedDocroots, ownedHome, Policy{})
+}
+
+// ValidateCommandPolicy is ValidateCommand under the account's package policy:
+// with pol.ShellScripts, a .sh script inside the account is accepted too
+// (GH #2290).
+func ValidateCommandPolicy(raw string, ownedDocroots []string, ownedHome string, pol Policy) (*Command, error) {
 	// Empty or whitespace-only
 	if strings.TrimSpace(raw) == "" {
 		return nil, &ValidationError{
@@ -218,6 +225,16 @@ func ValidateCommand(raw string, ownedDocroots []string, ownedHome string) (*Com
 		// GH #1435: node / nodejs (bare) or an absolute path to one. Must run an
 		// absolute .js/.mjs/.cjs file the tenant owns — no `-e`/`-p` inline code.
 		return validateNodeCommand(argv, scriptRoots(ownedDocroots, ownedHome))
+	case isShellCommand(binary):
+		// GH #2290: a .sh script inside the account, when its package includes
+		// SSH. See shell.go.
+		if !pol.ShellScripts {
+			return nil, &ValidationError{
+				Code:   ErrCodeShellNeedsSSH,
+				Detail: "shell scripts need SSH access in the account's hosting plan, and never run as root",
+			}
+		}
+		return validateShellCommand(argv, scriptRoots(ownedDocroots, ownedHome))
 	default:
 		return nil, &ValidationError{
 			Code: ErrCodeBinaryNotAllowed,

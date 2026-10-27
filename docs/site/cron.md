@@ -34,7 +34,13 @@ A tenant job's unit also sets `SyslogIdentifier=jabali-cron-<id>`, and Run now a
 
 ## Command allowlist
 
-Only commands the admin has marked allowed can be scheduled. The default allowlist (`/internal/cronvalidate/`) is the shared validator used by both the REST API and the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md). Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437). Custom shell scripts are not allowed by default — admins can extend the allowlist.
+Only commands on a fixed allowlist can be scheduled. The allowlist lives in the shared validator (`/internal/cronvalidate/`) used by the REST API, the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md) and the agent, which checks every command again before it installs or runs it. There is no setting to extend it. Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437).
+
+**Shell scripts follow the hosting package's SSH access** (GH #2290). A tenant job may run the account's own `.sh` script (`bash <script.sh> [args]`, `sh <script.sh> [args]`, or the script's absolute path alone, which runs with `bash`) only when the account's package has SSH enabled. The script must be an absolute path in one of the account's docroots or under its home, and no option may come before it, so `bash -c`, `-s`, `--rcfile` and `--init-file` are refused. A tenant job runs inside the account's SSH sandbox (`jabali-ssh-shell --exec`, GH #1458), so a script can do nothing the account's SSH shell can't. Without SSH a script would be a way around the allowlist, so the panel refuses it with `400 validation_failed`, code `shell_needs_ssh`. An account with no package, or whose package can't be read, is treated as having no SSH.
+
+Root jobs keep the closed list: a root job never runs a shell script, whatever the admin's package allows. For an arbitrary command as root, use root's own crontab over SSH.
+
+The panel tells the agent on each `cron.apply` and `cron.run_now` whether the account's package includes SSH (`allow_shell_scripts`); the agent never honors it for a root job. When a package loses SSH, the reconciler removes the timer of each enabled job that runs a shell script within a minute, and keeps the job's row. Turning such a job on, editing it or running it is refused until the package includes SSH again; the reconciler then installs its timer again. A shell cron imported from a cPanel account still comes in disabled. Once the account's package includes SSH, the tenant can edit it to fit the rules above and turn it on.
 
 ## Admin view
 

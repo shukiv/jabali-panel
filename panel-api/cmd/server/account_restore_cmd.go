@@ -27,11 +27,13 @@ import (
 	"golang.org/x/term"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/cronvalidate"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupmetadata"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/backupwrapperhelpers"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/cronops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
@@ -119,10 +121,14 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	// Provision systemd timers for restored cron jobs
 	if r.CronJobs > 0 && meta.User.ID != "" {
 		if username := getUsernameFromMeta(&meta); username != "" {
-			if timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps); timerErr != nil {
+			skipped, timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps, repository.NewPackageRepository(sharedDB))
+			for _, id := range skipped {
+				fmt.Fprintf(w, "  WARNING: cron job %s runs a shell script and the account's package has no SSH; its timer starts once the package includes SSH\n", id)
+			}
+			if timerErr != nil {
 				fmt.Fprintf(w, "  WARNING: cron timer provisioning failed: %v\n", timerErr)
 			} else {
-				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs)
+				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs-len(skipped))
 			}
 		} else {
 			fmt.Fprintln(w, "  WARNING: skipping cron timer provisioning — no username available")
@@ -712,15 +718,18 @@ func getUsernameFromMeta(meta *internalbackup.AccountMetadata) string {
 
 // provisionRestoredCronTimers creates systemd timers for all enabled cron jobs
 // in the restored account. Follows the cronApplyOne pattern from reconciler.
-func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps) error {
+// A job that runs the account's shell script gets no timer while the
+// account's package has no SSH (GH #2290); its id is returned in skipped,
+// and the reconciler installs the timer once the package includes SSH.
+func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps, pkgs cronops.PackageFinder) (skipped []string, err error) {
 	if deps.CronJobs == nil {
-		return fmt.Errorf("cron job repository not available")
+		return nil, fmt.Errorf("cron job repository not available")
 	}
 
 	// Get all cron jobs for the restored user
 	jobs, err := deps.CronJobs.ListByUserID(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("list cron jobs: %w", err)
+		return nil, fmt.Errorf("list cron jobs: %w", err)
 	}
 
 	// Filter to enabled jobs only
@@ -732,7 +741,7 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 	}
 
 	if len(enabledJobs) == 0 {
-		return nil // No enabled jobs to provision
+		return nil, nil // No enabled jobs to provision
 	}
 
 	// Build owned docroots list for security context
@@ -740,7 +749,7 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 	if deps.Domains != nil {
 		domains, _, err := deps.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
 		if err != nil {
-			return fmt.Errorf("list domains for docroots: %w", err)
+			return nil, fmt.Errorf("list domains for docroots: %w", err)
 		}
 		docroots = make([]string, 0, len(domains))
 		for _, d := range domains {
@@ -752,24 +761,30 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 
 	// Create agent client for provisioning
 	ag := agent.NewClient(agent.Config{Timeout: 30 * time.Second})
+	pol := cronops.ShellPolicy(ctx, deps.Users, pkgs, userID, false)
 
 	// Provision each enabled cron job
 	for _, job := range enabledJobs {
+		if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+			skipped = append(skipped, job.ID)
+			continue
+		}
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		_, err := ag.Call(agentCtx, "cron.apply", map[string]any{
-			"user_id":        userID,
-			"username":       username,
-			"job_id":         job.ID,
-			"name":           job.Name,
-			"command":        job.Command,
-			"schedule":       job.Schedule,
-			"owned_docroots": docroots,
+			"user_id":             userID,
+			"username":            username,
+			"job_id":              job.ID,
+			"name":                job.Name,
+			"command":             job.Command,
+			"schedule":            job.Schedule,
+			"owned_docroots":      docroots,
+			"allow_shell_scripts": pol.ShellScripts,
 		})
 		cancel()
 		if err != nil {
-			return fmt.Errorf("provision cron timer %s (%s): %w", job.ID, job.Name, err)
+			return skipped, fmt.Errorf("provision cron timer %s (%s): %w", job.ID, job.Name, err)
 		}
 	}
 
-	return nil
+	return skipped, nil
 }

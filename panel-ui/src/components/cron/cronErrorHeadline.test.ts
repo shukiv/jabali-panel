@@ -16,6 +16,8 @@ const ALL_CODES = [
   "invalid_name",
   "bad_schedule_syntax",
   "schedule_too_frequent",
+  // shell.go (GH #2290)
+  "shell_needs_ssh",
   // httptrigger.go
   "http_not_curl_wget",
   "http_no_url",

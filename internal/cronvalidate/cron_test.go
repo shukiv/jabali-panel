@@ -91,8 +91,9 @@ func TestValidateCommand(t *testing.T) {
 			name:     "bash_binary",
 			raw:      "bash -c 'echo hello'",
 			docroots: ownedDocroots,
-			wantErr:  ErrCodeBinaryNotAllowed,
-			desc:     "Rejected binary: bash",
+			// GH #2290: still refused under the closed list, saying why.
+			wantErr: ErrCodeShellNeedsSSH,
+			desc:    "Rejected binary: bash",
 		},
 		{
 			name:     "sudo_binary",
