@@ -272,6 +272,20 @@ describe("GitTab (GH #2277)", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["one", "domains", "d1"] });
   });
 
+  it("shows the run a push started when Deploy finds one in progress", async () => {
+    const pushed = dep({ state: "running", exit_code: null, source: "webhook", log: "Cloning into…" });
+    serve({ state: saved(), one: () => pushed });
+    post.mockImplementation(async () => {
+      server.state = saved({ active_deployment: pushed });
+      throw apiError(409, { error: "git_deployment_active" }, "a deployment is already in progress for this domain");
+    });
+    renderTab();
+    fireEvent.click(await screen.findByRole("button", { name: /Deploy now/ }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("a deployment is already in progress for this domain"));
+    expect(await screen.findByRole("region", { name: "Git deployment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Deploy now/ })).toBeDisabled();
+  });
+
   it("a deployment in progress locks Deploy and can be cancelled", async () => {
     const active = dep({ state: "running", exit_code: null, log: "Cloning into…" });
     serve({ state: saved({ active_deployment: active }), runs: [active], one: () => active });

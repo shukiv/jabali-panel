@@ -184,6 +184,8 @@ export const GitTab = ({ domain }: { domain: Domain }) => {
     feedback.message.error(err.message);
     // A run the server refused is stored as failed; show it in the history.
     void qc.invalidateQueries({ queryKey: ["git-deployments", domain.id] });
+    // git_deployment_active: a push started a run since the last poll.
+    void qc.invalidateQueries({ queryKey: ["git", domain.id] });
   };
 
   const deploy = useMutation({
