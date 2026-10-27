@@ -213,14 +213,14 @@ Add the webhook on the Git host, for push events, with the URL and the secret:
 | Bitbucket | Repository settings → Webhooks, trigger *Repository push* | The panel's secret, or Bitbucket's generated one sent to the panel |
 | Gitea, Forgejo | Settings → Webhooks | POST, content type **application/json**, the secret in **Secret** |
 
-Any other sender can post `{"ref": "refs/heads/<branch>"}` as JSON with an `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body>` header.
+Any other sender can post `{"ref": "refs/heads/<branch>", "after": "<commit>"}` as JSON with an `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body>` header. The body must differ from one push to the next (the commit does that): a body the panel has seen before is a duplicate.
 
 What a delivery does:
 
 - A push to the saved branch, with a valid signature, deploys it exactly as `POST .../git/deployments` does. The deployment fetches the branch as it is then; nothing in the delivery is deployed.
 - A push during a deployment waits, and one more deployment starts within a minute of that one ending. Pushes meanwhile wait together, so the site ends on the newest commit. A webhook starts at most six deployments a minute; more pushes wait the same way.
 - Another branch, a tag, a deleted branch or the host's test ping changes nothing.
-- A delivery the panel has seen in the last seven days changes nothing, so a retry deploys once. That includes the host's **Redeliver**; use the Deploy button to deploy again.
+- A delivery the panel has seen in the last seven days changes nothing, so a retry deploys once. That includes the host's **Redeliver**, and a second press of GitLab's **Test → Push events**, which sends the same last push again; use the Deploy button to deploy again.
 
 `GET .../git/webhook` shows the URL, whether a push is waiting, and what the last delivery did: `started`, `queued`, `ignored`, `duplicate`, `failed`, or `refused:<reason>` (for example `refused:git_deploy_not_in_package`). `DELETE .../git/webhook` removes the webhook; removing the Git settings removes it too.
 
