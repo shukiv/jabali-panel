@@ -44,6 +44,8 @@ export interface ServerCapabilities {
   support_chat_clients: boolean;
   /** GH #2276: the caller's package includes Composer runs. Gates the domain's Composer tab. */
   composer_enabled: boolean;
+  /** GH #2277: the caller's package includes Git deploy. Gates the domain's Git tab. */
+  git_deploy_enabled: boolean;
 }
 
 export function useServerCapabilities() {
@@ -75,6 +77,7 @@ export function useServerCapabilities() {
         support_chat_admin: !!data.support_chat_admin,
         support_chat_clients: !!data.support_chat_clients,
         composer_enabled: !!data.composer_enabled,
+        git_deploy_enabled: !!data.git_deploy_enabled,
       };
     },
     staleTime: 60_000,

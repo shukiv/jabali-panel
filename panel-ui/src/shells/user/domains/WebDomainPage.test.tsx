@@ -66,6 +66,9 @@ vi.mock("./tabs/SSLTab", () => ({
 vi.mock("./tabs/ComposerTab", () => ({
   ComposerTab: ({ domain }: { domain: { id: string } }) => <div>composer-pane:{domain.id}</div>,
 }));
+vi.mock("./tabs/GitTab", () => ({
+  GitTab: ({ domain }: { domain: { id: string } }) => <div>git-pane:{domain.id}</div>,
+}));
 vi.mock("../../../components/domains/DomainPHPSettingsPanel", () => ({
   DomainPHPSettingsPanel: ({
     domainId,
@@ -269,6 +272,21 @@ describe("WebDomainPage (GH #1543)", () => {
     renderAt("/jabali-panel/domains/d1/composer");
     expect(await screen.findByText("composer-pane:d1")).toBeInTheDocument();
     expect(screen.getByText("Composer")).toBeInTheDocument();
+  });
+
+  // GH #2277: so does the Git tab (git_deploy_enabled).
+  it("hides the Git tab when the package has no Git deploy", async () => {
+    renderAt("/jabali-panel/domains/d1/git");
+    await screen.findByText("Preview URL"); // unknown tab -> Overview
+    expect(screen.queryByText("Git")).not.toBeInTheDocument();
+    expect(screen.queryByText("git-pane:d1")).not.toBeInTheDocument();
+  });
+
+  it("shows the Git tab and renders its pane when the package has Git deploy", async () => {
+    caps.value = { git_deploy_enabled: true };
+    renderAt("/jabali-panel/domains/d1/git");
+    expect(await screen.findByText("git-pane:d1")).toBeInTheDocument();
+    expect(screen.getByText("Git")).toBeInTheDocument();
   });
 
   it("renders the advanced-directives pane when the caps are on (GH #1624 Phase 4)", async () => {

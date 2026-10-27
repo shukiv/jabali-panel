@@ -64,6 +64,7 @@ export type PackageFormValues = {
   webmail_enabled: boolean; // GH #1628 — defaults ON
   website_sends_email: boolean; // GH #2056 — new packages start off
   composer_enabled: boolean; // GH #2276 — off unless the admin allows it
+  git_deploy_enabled: boolean; // GH #2277 — off unless the admin allows it
   fpm_user_can_edit: boolean;
   fpm_advanced_mode: boolean;
   fpm_max_children_cap: number;
@@ -321,6 +322,7 @@ export const PACKAGE_DEFAULTS: PackageFormValues = {
   webmail_enabled: true, // GH #1628 — webmail is included by default
   website_sends_email: false, // GH #2056 — a new package's sites can't send mail unless allowed
   composer_enabled: false, // GH #2276 — Composer runs amount to shell access
+  git_deploy_enabled: false, // GH #2277 — deploy commands run as the user, like SSH
   fpm_user_can_edit: false,
   fpm_advanced_mode: false,
   fpm_max_children_cap: 20,
@@ -424,6 +426,7 @@ export function decodePackageForm(record: PackageRecord): PackageFormValues {
     egress_ssh_out_cidrs: decodeCIDRList(rest.egress_ssh_out_cidrs),
     egress_icmp: !!rest.egress_icmp,
     composer_enabled: !!rest.composer_enabled,
+    git_deploy_enabled: !!rest.git_deploy_enabled,
     php_settings_policy: decodePHPSettingsPolicy(rest.php_settings_policy),
     php_disabled_functions: decodeDisabledFunctions(
       typeof rest.php_disabled_functions === "string" ? rest.php_disabled_functions : null,

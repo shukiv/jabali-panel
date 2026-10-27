@@ -36,8 +36,9 @@ const AREAS: { key: string; label: string; actions?: ScopeAction[] }[] = [
   { key: "ssl", label: "SSL" },
   { key: "php", label: "PHP" },
   { key: "cron", label: "Cron" },
-  // GH #2276: Composer runs take the ssh scope (they run in the SSH sandbox).
-  { key: "ssh", label: "SSH keys and Composer" },
+  // GH #2276, #2277: Composer runs and Git deploy take the ssh scope (they run
+  // in the SSH sandbox).
+  { key: "ssh", label: "SSH keys, Composer and Git deploy" },
   { key: "backups", label: "Backups" },
   { key: "logs", label: "Logs" },
   { key: "notifications", label: "Notifications" },
