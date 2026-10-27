@@ -13,7 +13,6 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
-	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -48,6 +47,8 @@ type DomainGitHandlerConfig struct {
 	// Reconciler re-applies a domain's vhost once a deployment has moved its
 	// document root. nil skips that (tests).
 	Reconciler gitdeploy.Scheduler
+	// Webhooks stores the domain's deploy-on-push webhook.
+	Webhooks repository.DomainGitWebhookRepository
 }
 
 // RegisterDomainGitRoutes adds the Git repository endpoints of a domain:
@@ -61,18 +62,24 @@ type DomainGitHandlerConfig struct {
 //   - POST   /domains/:id/git/deployments/:runId/cancel      end a run in progress
 //   - GET    /domains/:id/git/releases                       the releases on the server, and the live one
 //   - POST   /domains/:id/git/releases/:release/activate     roll back (or forward) to a release
+//   - GET    /domains/:id/git/webhook                        the deploy-on-push webhook: its URL and last delivery
+//   - POST   /domains/:id/git/webhook                        create the webhook, or give it a new secret
+//   - DELETE /domains/:id/git/webhook                        remove the webhook
 //
 // The domain's owner and admins may use them. Everything but reading and
 // removing the settings and reading the runs needs the owner's hosting
 // package to allow Git deploy (GH #282: a user with no package can't).
 func RegisterDomainGitRoutes(g *gin.RouterGroup, cfg DomainGitHandlerConfig) {
-	if cfg.Domains == nil || cfg.Users == nil || cfg.Packages == nil || cfg.Repos == nil || cfg.Agent == nil || cfg.Deployments == nil {
-		panic("api.RegisterDomainGitRoutes: Domains, Users, Packages, Repos, Agent and Deployments are required")
+	if cfg.Domains == nil || cfg.Users == nil || cfg.Packages == nil || cfg.Repos == nil || cfg.Agent == nil || cfg.Deployments == nil || cfg.Webhooks == nil {
+		panic("api.RegisterDomainGitRoutes: Domains, Users, Packages, Repos, Agent, Deployments and Webhooks are required")
 	}
 	if cfg.CheckHost == nil {
 		cfg.CheckHost = gitdeploy.CheckHost
 	}
-	h := &domainGitHandler{cfg: cfg}
+	h := &domainGitHandler{cfg: cfg, deployer: &gitdeploy.Deployer{
+		Agent: cfg.Agent, Packages: cfg.Packages, Repos: cfg.Repos, Deployments: cfg.Deployments,
+		SSOKey: cfg.SSOKey, CheckHost: cfg.CheckHost,
+	}}
 	limit := cfg.RemoteRateLimit
 	if limit == nil {
 		limit = func(c *gin.Context) { c.Next() }
@@ -87,10 +94,14 @@ func RegisterDomainGitRoutes(g *gin.RouterGroup, cfg DomainGitHandlerConfig) {
 	g.POST("/domains/:id/git/deployments/:runId/cancel", h.cancelDeployment)
 	g.GET("/domains/:id/git/releases", h.releases)
 	g.POST("/domains/:id/git/releases/:release/activate", limit, h.activate)
+	g.GET("/domains/:id/git/webhook", h.getWebhook)
+	g.POST("/domains/:id/git/webhook", h.putWebhook)
+	g.DELETE("/domains/:id/git/webhook", h.deleteWebhook)
 }
 
 type domainGitHandler struct {
-	cfg DomainGitHandlerConfig
+	cfg      DomainGitHandlerConfig
+	deployer *gitdeploy.Deployer
 }
 
 // gitOwner is the domain a request is about and the user who owns it.
@@ -133,23 +144,7 @@ func (h *domainGitHandler) loadDomain(c *gin.Context) (*gitOwner, bool) {
 // allowed returns the owner's hosting package when it allows Git deploy, and
 // if it does not, why: the error code the API answers with.
 func (h *domainGitHandler) allowed(ctx context.Context, o *gitOwner) (*models.HostingPackage, string) {
-	if o.user.Username == nil || *o.user.Username == "" {
-		return nil, "no_account"
-	}
-	if o.user.Suspended {
-		return nil, "account_suspended"
-	}
-	if o.user.PackageID == nil {
-		return nil, "git_deploy_requires_package"
-	}
-	pkg, err := h.cfg.Packages.FindByID(ctx, *o.user.PackageID)
-	if err != nil || pkg == nil {
-		return nil, "git_deploy_requires_package"
-	}
-	if !pkg.GitDeployEnabled {
-		return nil, "git_deploy_not_in_package"
-	}
-	return pkg, ""
+	return gitdeploy.Allowed(ctx, h.cfg.Packages, o.user)
 }
 
 // requireAllowed answers the request itself when the owner may not use Git
@@ -444,7 +439,7 @@ func (h *domainGitHandler) branches(c *gin.Context) {
 	if !ok {
 		return
 	}
-	repoURL, token, ok := h.remoteOf(c, o, row)
+	repoURL, token, ok := h.remoteOf(c, row)
 	if !ok {
 		return
 	}
@@ -470,26 +465,28 @@ func (h *domainGitHandler) configured(c *gin.Context, o *gitOwner) (*models.Doma
 
 // remoteOf is the stored repository's URL and token, answering the request
 // itself when either can't be used.
-func (h *domainGitHandler) remoteOf(c *gin.Context, o *gitOwner, row *models.DomainGitRepo) (*gitdeploy.RepoURL, string, bool) {
-	repoURL, err := gitdeploy.ParseRepoURL(row.RepoURL)
+func (h *domainGitHandler) remoteOf(c *gin.Context, row *models.DomainGitRepo) (*gitdeploy.RepoURL, string, bool) {
+	repoURL, token, err := gitdeploy.Remote(h.cfg.SSOKey, row)
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_repo_url", "detail": err.Error()})
+		respondGitRefused(c, err)
 		return nil, "", false
 	}
-	if len(row.TokenEnc) == 0 {
-		return repoURL, "", true
+	return repoURL, token, true
+}
+
+// respondGitRefused answers a *gitdeploy.Refused, and reports whether err
+// was one.
+func respondGitRefused(c *gin.Context, err error) bool {
+	var refused *gitdeploy.Refused
+	if !errors.As(err, &refused) {
+		return false
 	}
-	if h.cfg.SSOKey == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "sso_key_unavailable", "detail": "the panel's sso.key is not configured, so the stored token can't be read"})
-		return nil, "", false
+	body := gin.H{"error": refused.Code}
+	if refused.Detail != "" {
+		body["detail"] = refused.Detail
 	}
-	plain, err := h.cfg.SSOKey.Open(row.TokenEnc)
-	if err != nil {
-		slog.ErrorContext(c.Request.Context(), "git: open the stored token", "domain", o.domain.ID, "error", err)
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "token_unreadable", "detail": "the stored token can't be read: save it again"})
-		return nil, "", false
-	}
-	return repoURL, string(plain), true
+	c.JSON(refused.Status, body)
+	return true
 }
 
 func (h *domainGitHandler) delete(c *gin.Context) {
@@ -567,10 +564,11 @@ func (h *domainGitHandler) listDeployments(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": data, "total": total, "page": page, "page_size": pageSize})
 }
 
-// startDeployment stores run and starts it on the agent, answering the
-// request with the result.
-func (h *domainGitHandler) startDeployment(c *gin.Context, run *models.DomainGitDeployment, req gitdeploy.DeployStartRequest) {
-	err := gitdeploy.Start(c.Request.Context(), h.cfg.Agent, h.cfg.Deployments, run, req)
+// answerStart answers a request that started run with how the start went.
+func answerStart(c *gin.Context, run *models.DomainGitDeployment, err error) {
+	if respondGitRefused(c, err) {
+		return
+	}
 	switch {
 	case err == nil:
 		c.JSON(http.StatusAccepted, newGitDeploymentDTO(run, false))
@@ -588,50 +586,14 @@ func (h *domainGitHandler) startDeployment(c *gin.Context, run *models.DomainGit
 	}
 }
 
-// newRun is a run of the domain, as its owner, making release live.
-func newRun(o *gitOwner, kind, release string) *models.DomainGitDeployment {
-	now := time.Now().UTC()
-	id := ids.NewULID()
-	if kind == models.GitDeployKindDeploy {
-		release = id
-	}
-	return &models.DomainGitDeployment{
-		ID: id, UserID: o.domain.UserID, DomainID: o.domain.ID, OSUser: *o.user.Username,
-		Kind: kind, ReleaseID: release, StartedAt: now, CreatedAt: now, UpdatedAt: now,
-	}
-}
-
 // deploy fetches the stored branch into a new release and makes it live.
 func (h *domainGitHandler) deploy(c *gin.Context) {
 	o, ok := h.loadDomain(c)
 	if !ok {
 		return
 	}
-	pkg, ok := h.requireAllowed(c, o)
-	if !ok {
-		return
-	}
-	row, ok := h.configured(c, o)
-	if !ok {
-		return
-	}
-	repoURL, token, ok := h.remoteOf(c, o, row)
-	if !ok {
-		return
-	}
-	if err := h.cfg.CheckHost(c.Request.Context(), repoURL.Hostname); err != nil {
-		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "repo_host_not_allowed", "detail": err.Error()})
-		return
-	}
-	run := newRun(o, models.GitDeployKindDeploy, "")
-	run.Branch = row.Branch
-	run.DocRoot = gitdeploy.DocRoot(run.OSUser, o.domain.Name, row.WebDir)
-	h.startDeployment(c, run, gitdeploy.DeployStartRequest{
-		Domain: o.domain.Name, RepoURL: repoURL.Raw, Branch: row.Branch,
-		Username: row.Username, Token: token,
-		WebDir: row.WebDir, SharedPaths: row.SharedPathList(), Commands: row.DeployCommands,
-		Composer: pkg.ComposerEnabled,
-	})
+	run, err := h.deployer.Deploy(c.Request.Context(), o.domain, o.user, models.GitDeploySourceManual)
+	answerStart(c, run, err)
 }
 
 // loadDeployment loads the run named by param, which must be the domain's
@@ -745,8 +707,9 @@ func (h *domainGitHandler) activate(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "release_not_deployed", "detail": "only the release of a deployment that succeeded can be made live"})
 		return
 	}
-	run := newRun(o, models.GitDeployKindRollback, target.ID)
+	run := gitdeploy.NewRun(o.domain, *o.user.Username, models.GitDeployKindRollback, target.ID)
 	run.Branch, run.CommitSHA = target.Branch, target.CommitSHA
 	run.DocRoot = gitdeploy.DocRoot(run.OSUser, o.domain.Name, row.WebDir)
-	h.startDeployment(c, run, gitdeploy.DeployStartRequest{Domain: o.domain.Name, WebDir: row.WebDir})
+	err := gitdeploy.Start(c.Request.Context(), h.cfg.Agent, h.cfg.Deployments, run, gitdeploy.DeployStartRequest{Domain: o.domain.Name, WebDir: row.WebDir})
+	answerStart(c, run, err)
 }

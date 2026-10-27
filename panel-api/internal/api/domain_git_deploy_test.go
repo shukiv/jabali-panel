@@ -321,3 +321,19 @@ func TestDomainGit_Releases(t *testing.T) {
 		t.Errorf("releases request = %+v", req)
 	}
 }
+
+// Settings a previous owner left (GH #1238) never deploy, whatever starts
+// the deployment: the Deploy button, a webhook, or a push that waited.
+func TestDomainGit_APreviousOwnersSettingsNeverDeploy(t *testing.T) {
+	e := newGitTestEnv(t)
+	e.configure(t, `{"repo_url":"https://gitlab.com/acme/shop.git"}`)
+	e.agent.answers["git.deploy_start"] = gitdeploy.DeployStartResponse{Unit: "u"}
+	e.repos.rows["d1"].UserID = "u-bob"
+	code, out, raw := e.do(t, http.MethodPost, "/domains/d1/git/deployments", "")
+	if code != http.StatusNotFound || out["error"] != "git_not_configured" {
+		t.Fatalf("deploy = %d %s", code, raw)
+	}
+	if len(e.deploys.runs) != 0 {
+		t.Fatal("a run was stored")
+	}
+}

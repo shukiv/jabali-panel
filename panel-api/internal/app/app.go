@@ -550,6 +550,38 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			})
 		}
 
+		// GH #2277 (ADR-0178): Git hosts post pushes here. Like the
+		// automation API it mounts OUTSIDE the session middleware and the
+		// CSRF guard: a delivery is believed only by its signature. A
+		// delivery starts a deployment, a write, so a DR standby refuses it
+		// (GH #331).
+		if deps.Agent != nil && deps.Domains != nil && deps.Users != nil && deps.Packages != nil && deps.DB != nil {
+			hookGroup := r.Group("/api/v1")
+			if deps.ServerSettings != nil {
+				hookGroup.Use(middleware.StandbyReadOnly(deps.ServerSettings, deps.Log))
+			}
+			hookCfg := api.GitWebhookConfig{
+				Webhooks: repository.NewDomainGitWebhookRepository(deps.DB),
+				Domains:  deps.Domains,
+				Users:    deps.Users,
+				Deployer: &gitdeploy.Deployer{
+					Agent:       deps.Agent,
+					Packages:    deps.Packages,
+					Repos:       repository.NewDomainGitRepoRepository(deps.DB),
+					Deployments: repository.NewDomainGitDeploymentRepository(deps.DB),
+					SSOKey:      deps.SSOKey,
+				},
+			}
+			// Each only when set: a nil pointer in an interface is not nil.
+			if deps.Reconciler != nil {
+				hookCfg.Reconciler = deps.Reconciler
+			}
+			if deps.Redis != nil {
+				hookCfg.Deliveries = deps.Redis
+			}
+			api.RegisterGitWebhookRoutes(hookGroup, hookCfg)
+		}
+
 		// M51: chain bearer-token auth in front of the Kratos cookie
 		// path. Token-authed callers populate claims the same way Kratos
 		// does, so every ownership check downstream Just Works.
@@ -1717,6 +1749,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				RemoteRateLimit: rl.StrictPerActor(),
 				Deployments:     repository.NewDomainGitDeploymentRepository(deps.DB),
 				Reconciler:      gitSched,
+				Webhooks:        repository.NewDomainGitWebhookRepository(deps.DB),
 			})
 		}
 

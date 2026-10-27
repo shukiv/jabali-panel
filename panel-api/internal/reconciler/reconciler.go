@@ -21,6 +21,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dnscompile"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
@@ -250,6 +251,10 @@ type Reconciler struct {
 	// gitDeployments holds the domain_git_deployments repository (GH #2277,
 	// ADR-0178).
 	gitDeployments repository.DomainGitDeploymentRepository
+	// gitWebhooks and gitDeployer start the deployment a push waited for
+	// (GH #2277).
+	gitWebhooks repository.DomainGitWebhookRepository
+	gitDeployer *gitdeploy.Deployer
 	// pyFrameworks is the loaded JAB-164 framework marketplace catalog. When a
 	// python_apps row carries a framework slug and hasn't been scaffolded, the
 	// reconciler resolves the entry here and dispatches app.python.scaffold

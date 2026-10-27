@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
@@ -67,6 +70,10 @@ type gitTestEnv struct {
 	// deploys and sched back the deployment routes (domain_git_deploy_test.go).
 	deploys *gitTestDeployments
 	sched   *gitTestSched
+	// hooks, deliveries and now back the webhook (domain_git_webhook_test.go).
+	hooks      *gitTestWebhooks
+	deliveries *miniredis.Miniredis
+	now        time.Time
 }
 
 func newGitTestEnv(t *testing.T) *gitTestEnv {
@@ -85,26 +92,48 @@ func newGitTestEnv(t *testing.T) *gitTestEnv {
 		claims:  &auth.AccessClaims{UserID: "u-alice"},
 		deploys: &gitTestDeployments{runs: map[string]*models.DomainGitDeployment{}},
 		sched:   &gitTestSched{},
+		hooks:   &gitTestWebhooks{rows: map[string]*models.DomainGitWebhook{}},
+		now:     time.Now(),
 	}
+	e.deliveries = miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: e.deliveries.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
 	bob := &models.User{ID: "u-bob", Username: &bobName}
+	domains := &composerTestDomains{byID: map[string]*models.Domain{
+		"d1": {ID: "d1", UserID: "u-alice", Name: "example.com"},
+		"d2": {ID: "d2", UserID: "u-bob", Name: "other.com"},
+	}}
+	users := &composerTestUsers{byID: map[string]*models.User{"u-alice": e.alice, "u-bob": bob}}
+	packages := &composerTestPackages{byID: map[string]*models.HostingPackage{pkgID: e.pkg}}
+	checkHost := func(_ context.Context, host string) error {
+		e.hosts = append(e.hosts, host)
+		return e.hostErr
+	}
 	r := gin.New()
 	r.Use(func(c *gin.Context) { ginctx.SetClaims(c, e.claims); c.Next() })
 	RegisterDomainGitRoutes(r.Group(""), DomainGitHandlerConfig{
-		Domains: &composerTestDomains{byID: map[string]*models.Domain{
-			"d1": {ID: "d1", UserID: "u-alice", Name: "example.com"},
-			"d2": {ID: "d2", UserID: "u-bob", Name: "other.com"},
-		}},
-		Users:    &composerTestUsers{byID: map[string]*models.User{"u-alice": e.alice, "u-bob": bob}},
-		Packages: &composerTestPackages{byID: map[string]*models.HostingPackage{pkgID: e.pkg}},
-		Repos:    e.repos,
-		Agent:    e.agent,
-		SSOKey:   e.key,
-		CheckHost: func(_ context.Context, host string) error {
-			e.hosts = append(e.hosts, host)
-			return e.hostErr
-		},
+		Domains:     domains,
+		Users:       users,
+		Packages:    packages,
+		Repos:       e.repos,
+		Agent:       e.agent,
+		SSOKey:      e.key,
+		CheckHost:   checkHost,
 		Deployments: e.deploys,
 		Reconciler:  e.sched,
+		Webhooks:    e.hooks,
+	})
+	RegisterGitWebhookRoutes(r.Group(""), GitWebhookConfig{
+		Webhooks: e.hooks,
+		Domains:  domains,
+		Users:    users,
+		Deployer: &gitdeploy.Deployer{
+			Agent: e.agent, Packages: packages, Repos: e.repos, Deployments: e.deploys,
+			SSOKey: e.key, CheckHost: checkHost,
+		},
+		Reconciler: e.sched,
+		Deliveries: rdb,
+		Now:        func() time.Time { return e.now },
 	})
 	e.router = r
 	return e

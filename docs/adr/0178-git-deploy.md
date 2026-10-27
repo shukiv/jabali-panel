@@ -1,6 +1,6 @@
 # ADR-0178: Deploying a domain from a Git repository
 
-**Status:** Accepted (2026-10-26). Built: the repository settings (part 1), deployments, releases and rollback (part 2). The webhook and the Git tab follow (see Next parts).
+**Status:** Accepted (2026-10-26). Built: the repository settings (part 1), deployments, releases and rollback (part 2), the deploy-on-push webhook (part 3). The Git tab follows (see Next parts).
 **Driven by:** GH #2277 (a reporter asked to deploy PHP applications from GitHub, GitLab, Bitbucket or any Git host, private repositories included, with branch selection, manual and webhook deployments, deploy commands, releases with rollback, environment files kept out of the repository, and a deployment history, all under the hosting account; the maintainer approved building it on 2026-10-25).
 **Related:** ADR-0176 (Composer runs), ADR-0067 (SSH shell sandbox), GH #1458 (cron in the sandbox), GH #2032 (a tenant's sealed Cloudflare token), GH #282 (no-package policy), GH #658 (the sandbox never jails root).
 
@@ -150,14 +150,41 @@ way to make the server connect to an address of the user's choosing.
 14. **A run's history belongs to the domain's owner.** The API lists and shows
     only the runs of the domain's current owner: a new owner doesn't see the
     previous owner's logs.
+15. **A push deploys through a signed webhook.** The owner creates a webhook
+    (`domain_git_webhooks`, removed with the Git settings) and gives its URL,
+    `/api/v1/webhooks/git/<hook id>`, and secret to the Git host. The hook ID
+    only finds the domain; a delivery is believed only by its signature over
+    the raw body: `X-Hub-Signature-256` or `X-Hub-Signature` as `sha256=`
+    (GitHub, Gitea, Forgejo, Bitbucket), GitLab's signing token (Standard
+    Webhooks, timestamp within five minutes), or GitLab's older secret token
+    in `X-Gitlab-Token` (the maintainer chose to accept both GitLab schemes on
+    2026-10-27, since self-hosted GitLab before 19.0 has only the second).
+    sha1 signatures are refused. The panel makes the secret and shows it once,
+    or the user brings the host's own (GitLab makes its signing token). The
+    secret is sealed with the sso key, as the token is.
+    - A push to the stored branch deploys it as the domain's owner, through
+      the same code as the Deploy button; the body is read for the branch
+      name and nothing else. The agent fetches the branch as it is then.
+    - A push that arrives during a deployment waits (`queued_at`), and the
+      reconciler starts one more deployment once the run has ended; pushes
+      meanwhile collapse into it (the maintainer's choice, 2026-10-27). Past
+      six starts a minute a push waits the same way.
+    - Each delivery is remembered for seven days by its ID and by a hash of
+      its body, so a retry, or a captured delivery replayed under a new ID,
+      deploys nothing. A start that failed on the panel's side forgets it, so
+      the host's retry gets through.
+    - GitLab turns a webhook off after four answers in a row outside 2xx.
+      Every signed delivery the panel doesn't act on (another branch, a tag,
+      a ping, a duplicate, a push that waits) is answered 2xx with what
+      happened; 4xx is kept for what doesn't change by itself: a bad
+      signature, an unknown webhook, a package without Git deploy.
+    - The route has no session and sits outside the CSRF guard, like the
+      automation API; a DR standby refuses it.
 
 ## Next parts
 
 These follow the design above; each lands with its own change.
 
-- **Webhook.** A per-domain secret checked against the Git host's signature,
-  JSON bodies only, a size limit, its own rate limit, and delivery IDs
-  remembered so a retried delivery deploys once.
 - **The Git tab** in the domain's page.
 
 ## Consequences
@@ -182,3 +209,15 @@ These follow the design above; each lands with its own change.
   vhost setup recreates; the next deployment refuses to replace a directory
   there until it is moved away.
 - Submodules are not fetched.
+- The Git host must reach the panel at the webhook's URL, with a TLS
+  certificate it accepts. A panel behind a firewall that only admits its
+  users, or with a self-signed certificate, gets no deliveries.
+- GitHub sends form-encoded bodies unless the webhook is set to
+  `application/json`; the panel refuses those (415).
+- Anyone who learns a webhook's GitLab secret token can make the panel
+  deploy the stored branch, at most six starts a minute; the signing token
+  doesn't travel with each delivery.
+- A delivery sent again within seven days deploys nothing, including the
+  Git host's own "Redeliver"; the Deploy button does.
+- A push that waits starts within one reconciler pass (a minute by default)
+  of the run ending.

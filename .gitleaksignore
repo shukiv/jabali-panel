@@ -1,0 +1,7 @@
+# Findings gitleaks reports that are not secrets, by fingerprint
+# (commit:file:rule:line, from the CI job summary). Prefer a `gitleaks:allow`
+# comment on the line; a fingerprint is for a commit already pushed.
+
+# GH #2277 webhook tests: fake signing key and secret (PR #2296).
+f8a6f0a7ac252bb958e21ebfedc433f855308f55:panel-api/internal/gitdeploy/webhook_test.go:generic-api-key:20
+f8a6f0a7ac252bb958e21ebfedc433f855308f55:panel-api/internal/gitdeploy/webhook_test.go:generic-api-key:165
