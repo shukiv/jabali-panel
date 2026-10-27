@@ -257,17 +257,19 @@ func (r *domainOwnershipRepo) ListParentProvenUnder(ctx context.Context, name st
 }
 
 func (r *domainOwnershipRepo) DeleteExpiredDomain(ctx context.Context, id string, cutoff time.Time) error {
-	res := r.db.WithContext(ctx).
-		Where("id = ? AND ownership_status = ? AND ownership_verified_at IS NULL AND ownership_pending_since <= ? AND is_panel_primary = ? AND managed_by <> ?",
-			id, models.OwnershipPending, cutoff, false, models.DomainManagedByDockerApp).
-		Delete(&models.Domain{})
-	if res.Error != nil {
-		return translate(res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return ErrOwnershipChanged
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.
+			Where("id = ? AND ownership_status = ? AND ownership_verified_at IS NULL AND ownership_pending_since <= ? AND is_panel_primary = ? AND managed_by <> ?",
+				id, models.OwnershipPending, cutoff, false, models.DomainManagedByDockerApp).
+			Delete(&models.Domain{})
+		if res.Error != nil {
+			return translate(res.Error)
+		}
+		if res.RowsAffected == 0 {
+			return ErrOwnershipChanged
+		}
+		return deleteDomainPythonApps(tx, id)
+	})
 }
 
 func (r *domainOwnershipRepo) MarkAliasVerified(ctx context.Context, id, method, expectToken string, at time.Time) (bool, error) {

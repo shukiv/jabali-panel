@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"regexp"
 	"testing"
 	"time"
 
@@ -135,10 +136,47 @@ func TestDomainRepository_Delete_AllowsRegularDomain(t *testing.T) {
 	mock.ExpectExec("DELETE FROM `domains` WHERE id = \\?").
 		WithArgs("dom_regular").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	expectDomainPythonAppsDeleted(mock, "dom_regular")
 	mock.ExpectCommit()
 
 	err := repo.Delete(context.Background(), "dom_regular")
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// expectDomainPythonAppsDeleted expects the deletes of a domain's Python apps
+// and their env rows. python_apps has no foreign key to domains, so a domain's
+// delete takes them itself; an app left behind kept running on its port with
+// no vhost (GH #2289).
+func expectDomainPythonAppsDeleted(mock sqlmock.Sqlmock, domainID string) {
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `python_app_env` WHERE app_id IN (SELECT `id` FROM `python_apps` WHERE domain_id = ?)")).
+		WithArgs(domainID).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(regexp.QuoteMeta("DELETE FROM `python_apps` WHERE domain_id = ?")).
+		WithArgs(domainID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+}
+
+// A domain row that is gone by the time of the delete leaves the apps alone.
+func TestDomainRepository_Delete_RowGoneKeepsTheApps(t *testing.T) {
+	db, mock, raw := newMockDB(t)
+	defer raw.Close()
+
+	repo := NewDomainRepository(db)
+
+	mock.ExpectQuery("SELECT `id`,`is_panel_primary` FROM `domains` WHERE id = \\?.*LIMIT").
+		WithArgs("dom_raced", 1).
+		WillReturnRows(sqlmock.NewRows(
+			[]string{"id", "is_panel_primary"},
+		).AddRow("dom_raced", false))
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM `domains` WHERE id = \\?").
+		WithArgs("dom_raced").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err := repo.Delete(context.Background(), "dom_raced")
+	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

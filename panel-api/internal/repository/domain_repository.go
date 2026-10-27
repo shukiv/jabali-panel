@@ -542,14 +542,29 @@ func (r *domainRepo) Delete(ctx context.Context, id string) error {
 		return ErrCannotDeletePanelPrimary
 	}
 
-	res := r.db.WithContext(ctx).Delete(&models.Domain{}, "id = ?", id)
-	if res.Error != nil {
-		return res.Error
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Delete(&models.Domain{}, "id = ?", id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return deleteDomainPythonApps(tx, id)
+	})
+}
+
+// deleteDomainPythonApps deletes, inside tx, the Python apps of a domain
+// whose row tx is deleting, and their env rows. python_apps has no foreign key
+// to domains (000168), so before this an app outlived its domain: it kept
+// running with no vhost and kept its loopback port. The reconciler's sweep
+// removes the units of apps with no row (GH #2289).
+func deleteDomainPythonApps(tx *gorm.DB, domainID string) error {
+	apps := tx.Model(&models.PythonApp{}).Select("id").Where("domain_id = ?", domainID)
+	if err := tx.Where("app_id IN (?)", apps).Delete(&models.PythonAppEnv{}).Error; err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return tx.Where("domain_id = ?", domainID).Delete(&models.PythonApp{}).Error
 }
 
 // FindPanelPrimary — see interface doc.
