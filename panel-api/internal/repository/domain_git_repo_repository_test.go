@@ -56,7 +56,7 @@ func TestDomain_TransferOwnerDropsTheGitSettings(t *testing.T) {
 	repo := repository.NewDomainRepository(gdb)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT `nginx_rules` FROM `domains` WHERE id = .+ FOR UPDATE").
+	mock.ExpectQuery("SELECT `nginx_rules`,`docker_app_id` FROM `domains` WHERE id = .+ FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"nginx_rules"}).AddRow(nil))
 	mock.ExpectQuery("SELECT \\* FROM `python_apps` WHERE domain_id = .+ FOR UPDATE").
 		WithArgs("01DOMAIN0000000000000000AB").

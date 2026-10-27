@@ -147,6 +147,10 @@ export const DomainChownAction = ({ domain, open, onClose }: DomainChownActionPr
               project folder setting are deleted: they belong to the current owner.
               The new owner can set them up again.
             </li>
+            <li>
+              A <b>Docker app</b> of the current owner is unlinked from the domain. It
+              keeps running and keeps its data. A server-level Docker app stays linked.
+            </li>
             <li>You'll be asked to re-authenticate the first time in a session.</li>
           </ul>
         }

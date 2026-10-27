@@ -466,7 +466,7 @@ func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, new
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var d models.Domain
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("nginx_rules").Where("id = ?", domainID).First(&d).Error; err != nil {
+			Select("nginx_rules", "docker_app_id").Where("id = ?", domainID).First(&d).Error; err != nil {
 			return translate(err)
 		}
 		// GH #2289: the domain's Python apps run as the old owner, from the
@@ -480,11 +480,22 @@ func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, new
 			return err
 		}
 		updates := map[string]any{"user_id": newUserID, "doc_root": newDocRoot}
-		if len(apps) > 0 {
-			rules := d.NginxRules
-			for i := range apps {
-				rules = rules.WithoutPythonApp(&apps[i])
+		rules, rulesChanged := d.NginxRules, len(apps) > 0
+		for i := range apps {
+			rules = rules.WithoutPythonApp(&apps[i])
+		}
+		ports, unlink, err := dockerAppPortsToUnlink(tx, d.DockerAppID, newUserID)
+		if err != nil {
+			return err
+		}
+		if unlink {
+			updates["docker_app_id"] = nil
+			for i := range ports {
+				rules = rules.WithoutProxyPassTo(ports[i].ProxyTarget())
 			}
+			rulesChanged = true
+		}
+		if rulesChanged {
 			updates["nginx_rules"] = rules
 		}
 		if err := tx.Model(&models.Domain{}).
@@ -504,6 +515,33 @@ func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, new
 		// home; the new owner's domain finds composer.json on its own.
 		return tx.Where("domain_id = ?", domainID).Delete(&models.DomainComposerSettings{}).Error
 	})
+}
+
+// dockerAppPortsToUnlink decides, inside tx, whether the Docker app linked
+// onto a domain that is changing owner stays linked. A server-level app (no
+// owner) and the new owner's own app stay. Any other account's app is
+// unlinked, or it would go on serving the new owner's domain (GH #2289); it
+// keeps running and keeps its data. It returns the app's ports, whose
+// proxy_pass rules go with the link, and whether the link goes.
+func dockerAppPortsToUnlink(tx *gorm.DB, dockerAppID *string, newUserID string) ([]models.DockerAppPublishedPort, bool, error) {
+	if dockerAppID == nil {
+		return nil, false, nil
+	}
+	var app models.DockerApp
+	err := tx.Select("id", "user_id").Where("id = ?", *dockerAppID).Take(&app).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		// A link to an app that is gone: it goes too.
+	case err != nil:
+		return nil, false, err
+	case app.UserID == nil || *app.UserID == newUserID:
+		return nil, false, nil
+	}
+	var ports []models.DockerAppPublishedPort
+	if err := tx.Where("app_id = ?", *dockerAppID).Find(&ports).Error; err != nil {
+		return nil, false, err
+	}
+	return ports, true, nil
 }
 
 func (r *domainRepo) Update(ctx context.Context, d *models.Domain) error {

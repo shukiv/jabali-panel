@@ -56,7 +56,8 @@ Audited (success + failure), announced via M14.
 A first-class **Change owner** action reassigns a domain to a different user (GH
 #1238); the vhost, DNS, and mail follow the new owner on the next reconcile. The
 domain's Python apps, Git repository settings and Composer project folder
-setting belong to the old owner and are deleted. The
+setting belong to the old owner and are deleted. A Docker app of the old owner
+is unlinked from the domain and keeps its data; a server-level one stays. The
 admin can also **rename a tenant's username in place** (GH #1238) — the panel
 re-prefixes that user's MariaDB databases, DB users, and PostgreSQL shadow roles
 to match.
