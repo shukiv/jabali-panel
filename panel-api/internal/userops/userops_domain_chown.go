@@ -40,7 +40,9 @@ type ChownDeps struct {
 //
 // What doesn't pass to the new owner is deleted with the change: the domain's
 // Python apps, its Git repository settings and its Composer project folder
-// setting (see DomainRepository.TransferOwner).
+// setting. A Docker app of another account is unlinked from the domain and
+// keeps running; a server-level one stays linked (see
+// DomainRepository.TransferOwner).
 func ChangeDomainOwner(ctx context.Context, d Deps, cd ChownDeps, domain *models.Domain, newOwner *models.User) error {
 	if domain == nil || newOwner == nil {
 		return fmt.Errorf("chown: nil domain or new owner")

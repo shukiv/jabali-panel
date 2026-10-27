@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // DockerApp represents an installed catalog app (M48). One row per
 // install. The full catalog is admin-curated and lives under
@@ -125,6 +128,25 @@ type DockerAppPublishedPort struct {
 }
 
 func (DockerAppPublishedPort) TableName() string { return "docker_app_published_ports" }
+
+// ProxyTarget is the URL a domain's proxy_pass rule sends the port's
+// requests to.
+func (p *DockerAppPublishedPort) ProxyTarget() string {
+	return "http://127.0.0.1:" + strconv.Itoa(p.HostPort)
+}
+
+// WithoutProxyPassTo returns the rules minus the proxy_pass rules that send
+// requests to target.
+func (n NginxRules) WithoutProxyPassTo(target string) NginxRules {
+	var kept NginxRules
+	for _, r := range n {
+		if r.Type == "proxy_pass" && r.Target == target {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
+}
 
 // DockerAppBackup is a restic snapshot row for a docker app. Snapshots
 // take the contents of /var/lib/jabali/docker-apps/<slug> at the point
