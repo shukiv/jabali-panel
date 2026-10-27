@@ -27,6 +27,7 @@ import type { Domain } from "../../../../components/domains/types";
 const domain = { id: "d1", name: "site.tld" } as Domain;
 const base = "/domains/d1/git";
 const REPO = "https://github.com/octocat/Hello-World.git";
+const TOKEN = "git-token-abc_DEF-123"; // gitleaks:allow (test value)
 
 const dep = (over: Partial<GitDeployment> = {}): GitDeployment => ({
   id: "01M5XN3T7020M5BAFVHG618WNN",
@@ -164,6 +165,9 @@ describe("GitTab (GH #2277)", () => {
     fireEvent.change(url, { target: { value: "git@github.com:octocat/Hello-World.git" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByText(/Enter the repository's https:\/\/ URL/)).toBeInTheDocument();
+    fireEvent.change(url, { target: { value: "ssh://git@github.com/octocat/Hello-World.git" } });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByText(/SSH URLs \(git@…\) are not accepted/)).toBeInTheDocument();
     fireEvent.change(url, { target: { value: "https://me:pw@github.com/octocat/Hello-World.git" } });
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     expect(await screen.findByText(/Leave the username and token out of the URL/)).toBeInTheDocument();
@@ -192,10 +196,19 @@ describe("GitTab (GH #2277)", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Edit settings/ }));
     const again = await screen.findByRole("dialog");
-    fireEvent.click(within(again).getByRole("checkbox", { name: /Public repository/ }));
+    fireEvent.change(within(again).getByLabelText("Access token"), { target: { value: TOKEN } });
     fireEvent.click(within(again).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(put).toHaveBeenCalledTimes(2));
-    expect(put.mock.calls[1][1]).toMatchObject({ token: "", clear_token: true });
+    expect(put.mock.calls[1][1]).toMatchObject({ token: TOKEN, clear_token: false });
+
+    // A token typed and then "public repository": the token is not sent.
+    fireEvent.click(await screen.findByRole("button", { name: /Edit settings/ }));
+    const third = await screen.findByRole("dialog");
+    fireEvent.change(within(third).getByLabelText("Access token"), { target: { value: TOKEN } });
+    fireEvent.click(within(third).getByRole("checkbox", { name: /Public repository/ }));
+    fireEvent.click(within(third).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(3));
+    expect(put.mock.calls[2][1]).toMatchObject({ token: "", clear_token: true });
   });
 
   it("asks for the token again when the repository moves to another host", async () => {
