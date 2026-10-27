@@ -604,33 +604,12 @@ func (h *pythonAppHandler) frameworks(c *gin.Context) {
 }
 
 func (h *pythonAppHandler) detachProxyRule(ctx context.Context, domain *models.Domain, app *models.PythonApp) {
-	target := proxyTargetFor(app)
-	aliasPrefix := strings.TrimSuffix(app.AppRoot, "/") + "/"
-	var kept models.NginxRules
-	for _, r := range domain.NginxRules {
-		if r.Type == "proxy_pass" && r.Target == target {
-			continue
-		}
-		// Drop the framework static_alias that points into this app's tree.
-		if (r.Type == "static_alias" || r.Type == "media_alias") && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
-			continue
-		}
-		kept = append(kept, r)
-	}
-	domain.NginxRules = kept
+	domain.NginxRules = domain.NginxRules.WithoutPythonApp(app)
 	_ = h.cfg.Domains.Update(ctx, domain)
 }
 
 func proxyTargetFor(app *models.PythonApp) string {
-	port := 0
-	if app.LoopbackPort != nil {
-		port = *app.LoopbackPort
-	}
-	return "http://127.0.0.1:" + itoaPort(port)
-}
-
-func itoaPort(p int) string {
-	return strings.TrimSpace(intToStr(p))
+	return app.ProxyTarget()
 }
 
 func envMapToRows(m map[string]string) []models.PythonAppEnv {

@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // PythonApp is a native (non-PHP) Python web app the panel runs as a per-user
 // systemd service behind an nginx proxy (ADR-0131 / GH #203). Mirrors the
@@ -64,6 +68,34 @@ type PythonApp struct {
 }
 
 func (PythonApp) TableName() string { return "python_apps" }
+
+// ProxyTarget is the URL the domain's proxy_pass rule sends the app's
+// requests to: its loopback port.
+func (a *PythonApp) ProxyTarget() string {
+	port := 0
+	if a.LoopbackPort != nil {
+		port = *a.LoopbackPort
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(port)
+}
+
+// WithoutPythonApp returns the rules minus the ones that send requests to
+// app: its proxy_pass, and the static and media aliases into its tree.
+func (n NginxRules) WithoutPythonApp(app *PythonApp) NginxRules {
+	target := app.ProxyTarget()
+	aliasPrefix := strings.TrimSuffix(app.AppRoot, "/") + "/"
+	var kept NginxRules
+	for _, r := range n {
+		if r.Type == "proxy_pass" && r.Target == target {
+			continue
+		}
+		if (r.Type == "static_alias" || r.Type == "media_alias") && app.AppRoot != "" && strings.HasPrefix(r.Target, aliasPrefix) {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
+}
 
 // PythonAppEnv is one environment variable for a PythonApp; the reconciler
 // renders these into the unit's EnvironmentFile.

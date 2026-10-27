@@ -43,7 +43,9 @@ default; tick **also delete files** (default off, GH #1382) to remove the docroo
 tree at the same time.
 
 **Change owner.** An admin can reassign a domain to a different user (GH #1238);
-the vhost, DNS, and mail follow the new owner on the next reconcile.
+the vhost, DNS, and mail follow the new owner on the next reconcile. The
+domain's Python apps, Git repository settings and Composer project folder
+belong to the old owner and are deleted; the new owner sets them up again.
 
 ## What lives outside the vhost
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
@@ -463,10 +464,36 @@ func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix
 
 func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		updates := map[string]any{"user_id": newUserID, "doc_root": newDocRoot}
+		// GH #2289: the domain's Python apps run as the old owner, from the
+		// old owner's home, so they don't pass to the new owner either. They
+		// go with the nginx rules that send the domain to them; the
+		// reconciler's sweep removes their units.
+		var apps []models.PythonApp
+		if err := tx.Where("domain_id = ?", domainID).Find(&apps).Error; err != nil {
+			return err
+		}
+		if len(apps) > 0 {
+			var d models.Domain
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Select("nginx_rules").Where("id = ?", domainID).First(&d).Error; err != nil {
+				return translate(err)
+			}
+			rules := d.NginxRules
+			for i := range apps {
+				rules = rules.WithoutPythonApp(&apps[i])
+			}
+			updates["nginx_rules"] = rules
+		}
 		if err := tx.Model(&models.Domain{}).
 			Where("id = ?", domainID).
-			Updates(map[string]any{"user_id": newUserID, "doc_root": newDocRoot}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			return err
+		}
+		if len(apps) > 0 {
+			if err := deleteDomainPythonApps(tx, domainID); err != nil {
+				return err
+			}
 		}
 		// GH #2277: the domain's Git repository settings hold the old owner's
 		// access token; they don't pass to the new owner.

@@ -56,6 +56,9 @@ func TestDomain_TransferOwnerDropsTheGitSettings(t *testing.T) {
 	repo := repository.NewDomainRepository(gdb)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT \\* FROM `python_apps` WHERE domain_id = ").
+		WithArgs("01DOMAIN0000000000000000AB").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectExec("UPDATE `domains` SET .+ WHERE id = ").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("DELETE FROM `domain_git_repos` WHERE domain_id = ").
