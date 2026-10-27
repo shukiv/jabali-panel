@@ -231,7 +231,7 @@ func ValidateCommandPolicy(raw string, ownedDocroots []string, ownedHome string,
 		if !pol.ShellScripts {
 			return nil, &ValidationError{
 				Code:   ErrCodeShellNeedsSSH,
-				Detail: "shell scripts need SSH access in your hosting plan",
+				Detail: "shell scripts need SSH access in the account's hosting plan, and never run as root",
 			}
 		}
 		return validateShellCommand(argv, scriptRoots(ownedDocroots, ownedHome))

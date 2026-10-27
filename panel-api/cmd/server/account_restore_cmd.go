@@ -121,10 +121,14 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	// Provision systemd timers for restored cron jobs
 	if r.CronJobs > 0 && meta.User.ID != "" {
 		if username := getUsernameFromMeta(&meta); username != "" {
-			if timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps, repository.NewPackageRepository(sharedDB)); timerErr != nil {
+			skipped, timerErr := provisionRestoredCronTimers(ctx, meta.User.ID, username, deps, repository.NewPackageRepository(sharedDB))
+			for _, id := range skipped {
+				fmt.Fprintf(w, "  WARNING: cron job %s runs a shell script and the account's package has no SSH; its timer starts once the package includes SSH\n", id)
+			}
+			if timerErr != nil {
 				fmt.Fprintf(w, "  WARNING: cron timer provisioning failed: %v\n", timerErr)
 			} else {
-				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs)
+				fmt.Fprintf(w, "✓ cron timers provisioned for %d jobs\n", r.CronJobs-len(skipped))
 			}
 		} else {
 			fmt.Fprintln(w, "  WARNING: skipping cron timer provisioning — no username available")
@@ -714,17 +718,18 @@ func getUsernameFromMeta(meta *internalbackup.AccountMetadata) string {
 
 // provisionRestoredCronTimers creates systemd timers for all enabled cron jobs
 // in the restored account. Follows the cronApplyOne pattern from reconciler.
-// A job that runs the account's shell script is left to the reconciler when
-// the account's package has no SSH (GH #2290); it applies none such.
-func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps, pkgs cronops.PackageFinder) error {
+// A job that runs the account's shell script gets no timer while the
+// account's package has no SSH (GH #2290); its id is returned in skipped,
+// and the reconciler installs the timer once the package includes SSH.
+func provisionRestoredCronTimers(ctx context.Context, userID, username string, deps backupmetadata.Deps, pkgs cronops.PackageFinder) (skipped []string, err error) {
 	if deps.CronJobs == nil {
-		return fmt.Errorf("cron job repository not available")
+		return nil, fmt.Errorf("cron job repository not available")
 	}
 
 	// Get all cron jobs for the restored user
 	jobs, err := deps.CronJobs.ListByUserID(ctx, userID)
 	if err != nil {
-		return fmt.Errorf("list cron jobs: %w", err)
+		return nil, fmt.Errorf("list cron jobs: %w", err)
 	}
 
 	// Filter to enabled jobs only
@@ -736,7 +741,7 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 	}
 
 	if len(enabledJobs) == 0 {
-		return nil // No enabled jobs to provision
+		return nil, nil // No enabled jobs to provision
 	}
 
 	// Build owned docroots list for security context
@@ -744,7 +749,7 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 	if deps.Domains != nil {
 		domains, _, err := deps.Domains.ListByUserID(ctx, userID, repository.ListOptions{Limit: 1000})
 		if err != nil {
-			return fmt.Errorf("list domains for docroots: %w", err)
+			return nil, fmt.Errorf("list domains for docroots: %w", err)
 		}
 		docroots = make([]string, 0, len(domains))
 		for _, d := range domains {
@@ -761,6 +766,7 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 	// Provision each enabled cron job
 	for _, job := range enabledJobs {
 		if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
+			skipped = append(skipped, job.ID)
 			continue
 		}
 		agentCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -776,9 +782,9 @@ func provisionRestoredCronTimers(ctx context.Context, userID, username string, d
 		})
 		cancel()
 		if err != nil {
-			return fmt.Errorf("provision cron timer %s (%s): %w", job.ID, job.Name, err)
+			return skipped, fmt.Errorf("provision cron timer %s (%s): %w", job.ID, job.Name, err)
 		}
 	}
 
-	return nil
+	return skipped, nil
 }

@@ -55,7 +55,7 @@ The allowlist:
   the script (`bash -c …` is refused). Inside the script every shell feature
   works, `cd`, pipes and `&&` included, because the job runs in the same
   sandbox as your SSH shell. Without SSH access in your plan the panel refuses
-  the job ("Shell scripts need SSH access in the account's hosting plan").
+  the job ("Shell scripts need SSH access in the account's hosting plan, and never run as root").
 
 A job may hold **several commands, one per line** — they run in order and stop
 if one fails. Blank lines and `#` comments (including a `#!/bin/bash` shebang

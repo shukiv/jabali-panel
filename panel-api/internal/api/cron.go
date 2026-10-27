@@ -515,7 +515,7 @@ func (h *cronHandler) runNow(c *gin.Context) {
 	if !pol.ShellScripts && cronvalidate.UsesShell(job.Command) {
 		respondValidationErr(c, "command", &cronvalidate.ValidationError{
 			Code:   cronvalidate.ErrCodeShellNeedsSSH,
-			Detail: "shell scripts need SSH access in your hosting plan",
+			Detail: "shell scripts need SSH access in the account's hosting plan, and never run as root",
 		})
 		return
 	}

@@ -92,7 +92,7 @@ func shellOffErr(job *models.CronJob, pol cronvalidate.Policy) error {
 	}
 	return fmt.Errorf("%w: %w", ErrCommandInvalid, &cronvalidate.ValidationError{
 		Code:   cronvalidate.ErrCodeShellNeedsSSH,
-		Detail: "shell scripts need SSH access in your hosting plan",
+		Detail: "shell scripts need SSH access in the account's hosting plan, and never run as root",
 	})
 }
 
