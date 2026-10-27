@@ -478,8 +478,8 @@ func TestGitWebhook_APreviousOwnersSettingsDeployNothing(t *testing.T) {
 	if code, out, raw := e.push(t, hookID, secret, "main", "d-1"); code != http.StatusNotFound || out["error"] != "git_not_configured" {
 		t.Fatalf("push = %d %s", code, raw)
 	}
-	if len(e.webhookRuns()) != 0 {
-		t.Fatal("a run started")
+	if len(e.webhookRuns()) != 0 || e.hooks.rows["d1"].LastResult != "" {
+		t.Fatalf("runs %d, recorded %+v", len(e.webhookRuns()), e.hooks.rows["d1"])
 	}
 }
 
