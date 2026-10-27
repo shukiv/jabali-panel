@@ -44,6 +44,32 @@ func TestNextTenantRunAfter_KeepsClockTimesAcrossDSTFallBack(t *testing.T) {
 	}
 }
 
+// The scheduler and the handlers pass TenantWindow{} (no window, no Loc): the
+// hours are read on the panel's clock, the Server Settings timezone.
+func TestNextTenantRunAfter_ReadsThePanelClock(t *testing.T) {
+	setPanelZone(t, "Europe/Berlin")
+	loc := berlinClock(t)
+	planned := time.Date(2026, 10, 24, 20, 29, 0, 0, loc).UTC()
+	got := NextTenantRunAfter(planned, time.Date(2026, 10, 25, 19, 0, 0, 0, loc).UTC(), CadenceEvery6h, TenantWindow{}, "sched-A")
+	if want := time.Date(2026, 10, 25, 20, 29, 0, 0, loc).UTC(); !got.Equal(want) {
+		t.Errorf("got %s, want %s (20:29 on the panel clock)", got.In(loc), want.In(loc))
+	}
+}
+
+// 02:29 happens twice on 25 Oct in Berlin. Whichever of the two the series
+// runs at, the next run is 08:29 CET: it doesn't run a second time at 02:29.
+func TestNextTenantRunAfter_RepeatedHourRunsOnce(t *testing.T) {
+	loc := berlinClock(t)
+	w := TenantWindow{Loc: loc}
+	for _, planned := range []string{"2026-10-25T00:29:00Z", "2026-10-25T01:29:00Z"} { // 02:29 CEST, 02:29 CET
+		p := mustTime(t, planned)
+		got := NextTenantRunAfter(p, p.Add(tick), CadenceEvery6h, w, "sched-A")
+		if want := mustTime(t, "2026-10-25T07:29:00Z"); !got.Equal(want) {
+			t.Errorf("from %s: got %s, want %s (08:29 CET)", p.In(loc), got.In(loc), want.In(loc))
+		}
+	}
+}
+
 // Daily and weekly runs keep their clock time across the change too.
 func TestNextTenantRunAfter_DailyAndWeeklyKeepTheirClockTime(t *testing.T) {
 	loc := berlinClock(t)

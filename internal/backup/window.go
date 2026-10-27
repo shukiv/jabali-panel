@@ -246,7 +246,8 @@ func (w TenantWindow) place(cand time.Time, interval time.Duration, scheduleID s
 //
 // So a run that started late, or that ran once after the panel was down, puts
 // the next one back on its usual time. A clock time that a change to summer
-// time skips is skipped, as cron does. With the admin's window enforced, a
+// time skips is skipped, as cron does, and one that repeats when the clocks go
+// back runs once. With the admin's window enforced, a
 // time outside it moves to the next opening plus the schedule's smear offset,
 // as NextTenantRun does. A zero planned (no run planned yet) counts one
 // interval from now.
@@ -301,6 +302,9 @@ func nextOnClock(planned, now time.Time, interval time.Duration, loc *time.Locat
 			t := time.Date(noon.Year(), noon.Month(), noon.Day(), h, p.Minute(), 0, 0, loc)
 			if t.Hour() != h || t.Minute() != p.Minute() {
 				continue // the change to summer time skips this clock time
+			}
+			if t.Year() == p.Year() && t.YearDay() == p.YearDay() && h == p.Hour() {
+				continue // the planned run's own clock time, which repeats when the clocks go back
 			}
 			if t.After(now) {
 				return t.UTC()

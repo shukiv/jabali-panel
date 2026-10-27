@@ -46,7 +46,7 @@ The panel runs your schedules itself: it checks for due backups every minute, wh
 - A schedule's first run is one interval after you save it. Later runs keep the times of day of that first run, on the server's clock (shown next to the schedules): every 6 hours from 19:29 runs at 01:29, 07:29, 13:29 and 19:29 each day, and weekly runs on the same day and time each week.
 - A run that starts late, or a run missed while the panel was down, runs once when it can, and the next one is at its usual time.
 - Saving a schedule without changing **How often** keeps its times. Changing **How often** starts again from when you save. Turning a schedule back on waits for its next time; it doesn't start a backup at once.
-- Through a daylight saving change the runs keep their times of day. A time the change to summer time skips (02:00–03:00 in Central Europe) is skipped that night, as cron does. Hourly schedules run every hour across the change.
+- Through a daylight saving change the runs keep their times of day. A time the change to summer time skips (02:00–03:00 in Central Europe) is skipped that night, as cron does, and a time that happens twice when the clocks go back runs once. Hourly schedules run every hour across the change.
 - If your host restricts backups to a time window, the schedules run inside it.
 
 **Days to keep** is how many days of backups the schedule keeps. Once a day, early in the morning, the panel keeps the newest backup of each day and removes the others. So a schedule that runs every 6 hours lists every backup made since that cleanup, and one for each earlier day.
