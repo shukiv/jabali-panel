@@ -54,12 +54,12 @@ func TestDomain_TransferOwnerDeletesThePythonApps(t *testing.T) {
 	require.NoError(t, err)
 
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT \\* FROM `python_apps` WHERE domain_id = ").
+	mock.ExpectQuery("SELECT `nginx_rules` FROM `domains` WHERE id = .+ FOR UPDATE").
+		WillReturnRows(sqlmock.NewRows([]string{"nginx_rules"}).AddRow(allJSON))
+	mock.ExpectQuery("SELECT \\* FROM `python_apps` WHERE domain_id = .+ FOR UPDATE").
 		WithArgs(domainID).
 		WillReturnRows(sqlmock.NewRows([]string{"id", "domain_id", "app_root", "loopback_port"}).
 			AddRow("01APPAAA0000000000000000AB", domainID, "/home/alice/apps/shop", 20000))
-	mock.ExpectQuery("SELECT `nginx_rules` FROM `domains` WHERE id = .+ FOR UPDATE").
-		WillReturnRows(sqlmock.NewRows([]string{"nginx_rules"}).AddRow(allJSON))
 	mock.ExpectExec("UPDATE `domains` SET .+ WHERE id = ").
 		WithArgs("/home/bob/domains/example.com/public_html", rulesArg{want: kept}, "01NEWUSR0000000000000000AB", sqlmock.AnyArg(), domainID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -85,10 +85,6 @@ func TestDomain_TransferOwnerRowGoneKeepsTheApps(t *testing.T) {
 
 	const domainID = "01DOMAIN0000000000000000AB"
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT \\* FROM `python_apps` WHERE domain_id = ").
-		WithArgs(domainID).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "domain_id", "app_root", "loopback_port"}).
-			AddRow("01APPAAA0000000000000000AB", domainID, "/home/alice/apps/shop", 20000))
 	mock.ExpectQuery("SELECT `nginx_rules` FROM `domains` WHERE id = .+ FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"nginx_rules"}))
 	mock.ExpectRollback()

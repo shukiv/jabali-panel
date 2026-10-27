@@ -94,7 +94,7 @@ func (h *domainHandler) chown(c *gin.Context) {
 		Agent:   h.cfg.Agent,
 		Log:     slog.Default(),
 	}
-	cd := userops.ChownDeps{AppInstalls: h.cfg.AppInstalls}
+	cd := userops.ChownDeps{AppInstalls: h.cfg.AppInstalls, PythonApps: h.cfg.PythonApps}
 	// Unlike rename (which leaves the reconciler nil and waits for the periodic
 	// pass), chown wires it: Reconciler.Schedule is a non-blocking enqueue, so
 	// the docroot/PHP-pool rebind + vhost re-render happen promptly without the

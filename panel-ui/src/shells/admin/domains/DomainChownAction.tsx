@@ -144,8 +144,8 @@ export const DomainChownAction = ({ domain, open, onClose }: DomainChownActionPr
             <li>The files move to the new owner's home and are re-owned to their user.</li>
             <li>
               The domain's <b>Python apps</b>, Git repository settings and Composer
-              project folder are deleted: they belong to the current owner. The new
-              owner can set them up again.
+              project folder setting are deleted: they belong to the current owner.
+              The new owner can set them up again.
             </li>
             <li>You'll be asked to re-authenticate the first time in a session.</li>
           </ul>

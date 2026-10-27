@@ -112,6 +112,10 @@ type DomainHandlerConfig struct {
 	// the chown route — a nil repo makes the handler 503 rather than silently
 	// skip the security check (fail-closed).
 	AppInstalls repository.ApplicationInstallRepository
+	// PythonApps lets the change-owner stop the units of the domain's Python
+	// apps, which the change deletes (GH #2289). Optional — nil leaves them to
+	// the reconciler's sweep.
+	PythonApps repository.PythonAppRepository
 	// AuditEvents records the admin change-owner (GH #1238). Optional — nil
 	// in dev binaries makes the audit a no-op.
 	AuditEvents repository.AuditEventRepository

@@ -63,6 +63,7 @@ first (a cross-tenant credential leak otherwise).`,
 			}
 			cd := userops.ChownDeps{
 				AppInstalls: repository.NewApplicationInstallRepository(sharedDB),
+				PythonApps:  repository.NewPythonAppRepository(sharedDB),
 				// Reconciler nil: the CLI is a separate process; the running panel's
 				// periodic reconcile re-binds the pool + re-renders the vhost.
 			}

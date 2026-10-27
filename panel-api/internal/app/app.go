@@ -853,6 +853,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				AppInstalls:  deps.WordPressInstalls,
 				AuditEvents:  repository.NewAuditEventRepository(deps.DB),
 				KratosClient: deps.KratosClient,
+				// GH #2289: change-owner stops the units of the Python apps it deletes.
+				PythonApps: deps.PythonApps,
 			})
 		}
 		// M36 — per-domain IP allow/deny lists.

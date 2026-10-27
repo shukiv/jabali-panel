@@ -464,21 +464,23 @@ func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix
 
 func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		updates := map[string]any{"user_id": newUserID, "doc_root": newDocRoot}
+		var d models.Domain
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("nginx_rules").Where("id = ?", domainID).First(&d).Error; err != nil {
+			return translate(err)
+		}
 		// GH #2289: the domain's Python apps run as the old owner, from the
 		// old owner's home, so they don't pass to the new owner either. They
-		// go with the nginx rules that send the domain to them; the
-		// reconciler's sweep removes their units.
+		// go with the nginx rules that send the domain to them. The locking
+		// read keeps an app from being added to the domain until this
+		// commits.
 		var apps []models.PythonApp
-		if err := tx.Where("domain_id = ?", domainID).Find(&apps).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("domain_id = ?", domainID).Find(&apps).Error; err != nil {
 			return err
 		}
+		updates := map[string]any{"user_id": newUserID, "doc_root": newDocRoot}
 		if len(apps) > 0 {
-			var d models.Domain
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-				Select("nginx_rules").Where("id = ?", domainID).First(&d).Error; err != nil {
-				return translate(err)
-			}
 			rules := d.NginxRules
 			for i := range apps {
 				rules = rules.WithoutPythonApp(&apps[i])
@@ -490,10 +492,8 @@ func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, new
 			Updates(updates).Error; err != nil {
 			return err
 		}
-		if len(apps) > 0 {
-			if err := deleteDomainPythonApps(tx, domainID); err != nil {
-				return err
-			}
+		if err := deleteDomainPythonApps(tx, domainID); err != nil {
+			return err
 		}
 		// GH #2277: the domain's Git repository settings hold the old owner's
 		// access token; they don't pass to the new owner.
