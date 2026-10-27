@@ -173,7 +173,8 @@ export const BackupSchedulesCard = () => {
       title: "Keep",
       dataIndex: "keep_daily",
       key: "keep_daily",
-      render: (k?: number | null) => (k ? `${k} copies` : <Typography.Text type="secondary">default</Typography.Text>),
+      // keep_daily: the newest backup of each day, for this many days (GH #2300).
+      render: (k?: number | null) => (k ? `${k} days` : <Typography.Text type="secondary">default</Typography.Text>),
     },
     {
       title: "Next run",
@@ -235,7 +236,8 @@ export const BackupSchedulesCard = () => {
               </>
             ) : (
               <>
-                Scheduled backups run on the interval you choose. You pick what to back up, where, and how often.{" "}
+                Scheduled backups run on the interval you choose and keep the same times of day ({tz}). You pick what
+                to back up, where, and how often.{" "}
               </>
             )}
             <Tag>
@@ -279,7 +281,11 @@ export const BackupSchedulesCard = () => {
           >
             <Select allowClear placeholder="Pick a destination" options={destOptions} notFoundContent="No allowed destinations" />
           </Form.Item>
-          <Form.Item label="Copies to keep" name="keep_daily" tooltip={`Up to your plan limit (${view?.max_backups ?? 1}).`}>
+          <Form.Item
+            label="Days to keep"
+            name="keep_daily"
+            tooltip={`The newest backup of each day is kept, for this many days. Up to your plan limit (${view?.max_backups ?? 1}).`}
+          >
             <InputNumber min={1} max={view?.max_backups || 1} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">

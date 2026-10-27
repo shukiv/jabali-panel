@@ -213,7 +213,12 @@ func smearOffset(scheduleID string, capMinutes int) time.Duration {
 // window span keeps a long-cadence schedule spread across the whole window.
 func NextTenantRun(now time.Time, cadence string, w TenantWindow, scheduleID string) time.Time {
 	interval := CadenceInterval(cadence)
-	cand := now.UTC().Add(interval).Truncate(time.Minute)
+	return w.place(now.UTC().Add(interval).Truncate(time.Minute), interval, scheduleID)
+}
+
+// place keeps cand when the window contains it, and otherwise moves it to the
+// next window opening plus the schedule's smear offset.
+func (w TenantWindow) place(cand time.Time, interval time.Duration, scheduleID string) time.Time {
 	if w.Contains(cand) {
 		return cand
 	}
@@ -227,4 +232,84 @@ func NextTenantRun(now time.Time, cadence string, w TenantWindow, scheduleID str
 		return open
 	}
 	return smeared
+}
+
+// NextTenantRunAfter computes the next run of a schedule whose run was planned
+// for `planned`, strictly after now (GH #2300). The runs keep the planned run's
+// clock times, like cron, instead of counting the interval from when the last
+// run started:
+//   - hourly keeps the planned minute, counted in elapsed hours, so the hour the
+//     clocks go back is neither skipped nor run twice;
+//   - every 6 or 12 hours and daily keep the planned minute and its hours of the
+//     day on the window's clock (the panel's), through a DST change;
+//   - weekly keeps the planned weekday, hour and minute.
+//
+// So a run that started late, or that ran once after the panel was down, puts
+// the next one back on its usual time. A clock time that a change to summer
+// time skips is skipped, as cron does, and one that repeats when the clocks go
+// back runs once. With the admin's window enforced, a
+// time outside it moves to the next opening plus the schedule's smear offset,
+// as NextTenantRun does. A zero planned (no run planned yet) counts one
+// interval from now.
+func NextTenantRunAfter(planned, now time.Time, cadence string, w TenantWindow, scheduleID string) time.Time {
+	if planned.IsZero() {
+		return NextTenantRun(now, cadence, w, scheduleID)
+	}
+	interval := CadenceInterval(cadence)
+	planned = planned.UTC().Truncate(time.Minute)
+	now = now.UTC()
+	var cand time.Time
+	if interval == time.Hour {
+		cand = nextHourly(planned, now)
+	} else {
+		cand = nextOnClock(planned, now, interval, w.clock())
+	}
+	if cand.IsZero() {
+		return NextTenantRun(now, cadence, w, scheduleID)
+	}
+	return w.place(cand, interval, scheduleID)
+}
+
+// nextHourly is the first of planned + k hours strictly after now.
+func nextHourly(planned, now time.Time) time.Time {
+	elapsed := now.Sub(planned)
+	k := elapsed / time.Hour
+	if elapsed < 0 && elapsed%time.Hour != 0 {
+		k-- // floor, for a planned run still ahead
+	}
+	return planned.Add((k + 1) * time.Hour)
+}
+
+// nextOnClock is the first time strictly after now on planned's clock times in
+// loc: its minute, at its hour plus each multiple of interval in the day (6 h,
+// 12 h, 24 h), or at its weekday and hour (a week). A clock time the day
+// doesn't have is skipped. Zero when none is found in the days looked at,
+// which a week plus a skipped day covers.
+func nextOnClock(planned, now time.Time, interval time.Duration, loc *time.Location) time.Time {
+	p := planned.In(loc)
+	weekly := interval >= 7*24*time.Hour
+	step := int(interval / time.Hour)
+	ln := now.In(loc)
+	for day := 0; day <= 8; day++ {
+		noon := time.Date(ln.Year(), ln.Month(), ln.Day()+day, 12, 0, 0, 0, loc)
+		if weekly && noon.Weekday() != p.Weekday() {
+			continue
+		}
+		for h := 0; h < 24; h++ {
+			if (weekly && h != p.Hour()) || (!weekly && h%step != p.Hour()%step) {
+				continue
+			}
+			t := time.Date(noon.Year(), noon.Month(), noon.Day(), h, p.Minute(), 0, 0, loc)
+			if t.Hour() != h || t.Minute() != p.Minute() {
+				continue // the change to summer time skips this clock time
+			}
+			if t.Year() == p.Year() && t.YearDay() == p.YearDay() && h == p.Hour() {
+				continue // the planned run's own clock time, which repeats when the clocks go back
+			}
+			if t.After(now) {
+				return t.UTC()
+			}
+		}
+	}
+	return time.Time{}
 }

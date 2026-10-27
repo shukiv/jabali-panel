@@ -2638,7 +2638,21 @@ func (h *meBackupHandler) updateSchedule(c *gin.Context) {
 		return
 	}
 	uid := user.ID
-	next := internalbackup.NextTenantRun(time.Now().UTC(), req.Cadence, h.tenantWindow(c.Request.Context()), sched.ID)
+	// GH #2300: an edit that keeps the cadence keeps the schedule's run times, as
+	// the admin edit does (GH #2246). A run time that passed while the schedule
+	// was off moves to the next of its times, so turning it on doesn't start a
+	// backup at once. A new cadence times it again from now.
+	now := time.Now().UTC()
+	w := h.tenantWindow(c.Request.Context())
+	var next time.Time
+	switch {
+	case req.Cadence != sched.Cadence || sched.NextRunAt == nil:
+		next = internalbackup.NextTenantRun(now, req.Cadence, w, sched.ID)
+	case !sched.Enabled && !sched.NextRunAt.After(now):
+		next = internalbackup.NextTenantRunAfter(*sched.NextRunAt, now, req.Cadence, w, sched.ID)
+	default:
+		next = *sched.NextRunAt
+	}
 	sched.UserID = &uid
 	sched.Cadence = req.Cadence
 	sched.Content = content

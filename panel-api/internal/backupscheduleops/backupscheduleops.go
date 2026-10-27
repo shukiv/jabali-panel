@@ -323,6 +323,14 @@ func Update(ctx context.Context, d Deps, in UpdateInput) (*models.BackupSchedule
 		s.Content = models.NormalizeBackupContent(*in.Content)
 	}
 	if in.Enabled != nil {
+		// GH #2300: an interval schedule turned back on waits for its next
+		// time, as on the account's page, rather than running at once for a
+		// time that passed while it was off.
+		now := time.Now().UTC()
+		if *in.Enabled && !s.Enabled && s.Cadence != "" && s.NextRunAt != nil && !s.NextRunAt.After(now) {
+			next := internalbackup.NextTenantRunAfter(*s.NextRunAt, now, s.Cadence, tenantWindow(ctx, d.Settings), s.ID)
+			s.NextRunAt = &next
+		}
 		s.Enabled = *in.Enabled
 	}
 	if in.IncludeSystemBackup != nil && s.Kind == models.BackupScheduleKindAccount {

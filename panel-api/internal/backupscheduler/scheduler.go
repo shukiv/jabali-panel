@@ -459,7 +459,13 @@ func (s *Scheduler) enqueueTenantWindow(ctx context.Context, sched models.Backup
 			w = internalbackup.EffectiveTenantWindow(set.TenantBackupWindowEnforce, set.TenantBackupWindowStart, set.TenantBackupWindowEnd)
 		}
 	}
-	next := internalbackup.NextTenantRun(now, sched.Cadence, w, sched.ID)
+	// GH #2300: the next run keeps this run's planned clock times, so a tick
+	// that sees it late (a panel restart) or a DST change doesn't move them.
+	var planned time.Time
+	if sched.NextRunAt != nil {
+		planned = *sched.NextRunAt
+	}
+	next := internalbackup.NextTenantRunAfter(planned, now, sched.Cadence, w, sched.ID)
 	if !w.Contains(now) {
 		// Due but outside the window — defer to the next (smeared) opening
 		// without enqueuing anything.
