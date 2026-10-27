@@ -103,7 +103,12 @@ another server (see [SSL certificates](./admin/backup-restore.md#ssl-certificate
 
 From a backup you can restore just **one domain's document root** without
 touching the rest of the account (GH #1359) — useful for reverting a single site
-after a bad deploy.
+after a bad deploy. Every domain of the backup is offered, and each domain's
+DNS is listed too; a domain whose backup holds no custom DNS records is shown
+greyed out (GH #2303). By default the backup's files are written over the live
+ones and files added since are kept; **Delete files added since the backup**
+makes the domain's folder an exact copy of the backup instead. Other domains'
+folders are never touched.
 
 ### Database restore from a file
 

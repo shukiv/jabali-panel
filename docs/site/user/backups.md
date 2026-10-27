@@ -14,20 +14,15 @@ If tenant-visible backups are disabled for your package, the page shows only the
 
 ## Requesting a restore
 
-1. Pick the snapshot you want to restore from.
-2. Pick the components — everything, or a subset (files only, databases only, mailboxes only).
-3. Pick a target — restore in place (overwrites current state) or to a "staging" location (writes to `/home/<your-username>-restore-<timestamp>/`).
-4. Submit. The request is queued for operator approval before running.
+Open a backup's **Restore** action. The drawer lists what that backup holds; tick what to bring back:
 
-Operator approval is required by default to prevent accidental large-scale data overwrites. The operator may grant your package automatic restore approval if they trust you to manage your own data — ask if useful.
+- **Home directory** — every file of your home, over the live files. Files you added since the backup are kept.
+- **Databases** — each one is emptied and loaded from the backup.
+- **Mailboxes** — messages from the backup come back; messages you have now are kept, and none are doubled.
+- **DNS records** — every domain of the backup is listed. Restoring one replaces its custom DNS records with the backed-up set; the records the panel manages rebuild themselves. A domain with no custom records in the backup is shown greyed out, with "no custom DNS records in this backup", since there is nothing to restore.
+- **Domain files** — one domain's folder (`~/domains/<domain>`), without restoring the whole home. Every domain of the backup is listed. The backup's files are written over the live ones; files added since the backup are kept, unless you tick **Delete files added since the backup**, which leaves each selected domain's folder exactly as it was in the backup. Other domains' folders are never touched.
 
-## What a restore includes
-
-- Home directory files.
-- Databases (each restored into its original DB; the DB is dropped and recreated before the dump replays).
-- Mailbox content (each mailbox is restored as-is, including IMAP folder structure and flags).
-- DNS zone records.
-- Cron job definitions.
+Confirm, then **Restore selected**. The restore runs in the background and the drawer shows what was restored when it ends; it also appears in the backups list. Only domains your account has now are listed: a domain the account no longer has can't be restored into.
 
 ## What a restore does *not* include
 

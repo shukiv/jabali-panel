@@ -34,9 +34,11 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
 type backupRestoreSelectiveParams struct {
@@ -49,8 +51,12 @@ type backupRestoreSelectiveParams struct {
 	// Domains restores only the named domains' docroots (~/domains/<domain>)
 	// from the home stage, additively — the per-domain alternative to a full
 	// home restore (GH #1359). The panel validates ownership + format.
-	Domains   []string `json:"domains"`
-	Overwrite bool     `json:"overwrite"`
+	Domains []string `json:"domains"`
+	// DeleteExtra makes each restored domain folder hold exactly what the
+	// backup holds: files added since the backup are deleted (GH #2303).
+	// Without it the domain restore is additive.
+	DeleteExtra bool `json:"delete_extra"`
+	Overwrite   bool `json:"overwrite"`
 	// Restic dest (optional; empty = default local repo, like materialize).
 	RepoURL        string            `json:"repo_url,omitempty"`
 	CredentialsRef string            `json:"credentials_ref,omitempty"`
@@ -268,7 +274,7 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 	// Per-domain docroots (GH #1359): restore only ~/domains/<domain> from the
 	// home stage, additively — the granular alternative to a full home restore.
 	if homeStage != nil && len(p.Domains) > 0 && !p.RestoreHome {
-		applied, warnings := applySelectiveDomains(ctx, stagingRoot, p.TargetUsername, p.Domains, homeStage, c)
+		applied, warnings := applySelectiveDomains(ctx, stagingRoot, p.TargetUsername, p.Domains, homeStage, c, p.DeleteExtra)
 		out.Applied = append(out.Applied, applied...)
 		out.Warnings = append(out.Warnings, warnings...)
 	}
@@ -384,12 +390,13 @@ func applySelectiveHome(ctx context.Context, stagingRoot, username string, st *b
 }
 
 // applySelectiveDomains restores ONLY the named domains' docroots
-// (~/domains/<domain>) from the home stage, additively (GH #1359). Restic
-// --include limits the extract to those paths; the rsync then writes over the
-// live docroot without --delete (never removes files created since the backup),
-// re-owns to the tenant, and re-applies the docroot setgid group. Per-domain
-// failures are collected as warnings so one bad domain doesn't sink the rest.
-func applySelectiveDomains(ctx context.Context, stagingRoot, username string, domains []string, st *backup.ManifestStage, c *backup.Client) (applied, warnings []string) {
+// (~/domains/<domain>) from the home stage (GH #1359). Restic --include
+// limits the extract to those paths; restoreDomainFiles then writes each over
+// the live folder (additively, or as an exact copy with deleteExtra, GH
+// #2303), re-owns it to the tenant, and the docroot setgid group is applied
+// again. Per-domain failures are collected as warnings so one bad domain
+// doesn't sink the rest.
+func applySelectiveDomains(ctx context.Context, stagingRoot, username string, domains []string, st *backup.ManifestStage, c *backup.Client, deleteExtra bool) (applied, warnings []string) {
 	target := filepath.Join(stagingRoot, "domains")
 	if err := os.MkdirAll(target, 0o750); err != nil {
 		return nil, []string{"domains: mkdir staging: " + err.Error()}
@@ -415,28 +422,52 @@ func applySelectiveDomains(ctx context.Context, stagingRoot, username string, do
 			warnings = append(warnings, "domain "+d+": not in this backup — skipped")
 			continue
 		}
-		dst := "/home/" + username + "/domains/" + d + "/"
-		if err := os.MkdirAll(dst, 0o750); err != nil {
-			warnings = append(warnings, "domain "+d+": mkdir target: "+err.Error())
+		if err := restoreDomainFiles(ctx, src, "/home/"+username, d, uid, gid, deleteExtra); err != nil {
+			warnings = append(warnings, "domain "+d+": "+err.Error())
 			continue
 		}
-		// -aH not -aHAX: skip untrusted ACL/xattr from the repo; owner/mode are
-		// re-normalized below (same posture as applySelectiveHome).
-		if err := execCommandContext(ctx, "rsync", "-aH", src, dst).Run(); err != nil {
-			warnings = append(warnings, "domain "+d+": rsync: "+err.Error())
-			continue
+		how := "(additive, no delete)"
+		if deleteExtra {
+			how = "(files added since the backup deleted)"
 		}
-		if err := chownTreeRecursive("/home/"+username, dst, uid, gid); err != nil {
-			warnings = append(warnings, "domain "+d+": chown: "+err.Error())
-			continue
-		}
-		applied = append(applied, "domain "+d+" → /home/"+username+"/domains/"+d+" (additive, no delete)")
+		applied = append(applied, "domain "+d+" → /home/"+username+"/domains/"+d+" "+how)
 	}
 	// Re-apply the docroot setgid/www-data group across the user's docroots.
 	if err := restoreDocrootGroup(username); err != nil {
 		warnings = append(warnings, "domains: docroot group: "+err.Error())
 	}
 	return applied, warnings
+}
+
+// restoreDomainFiles copies the staged folder src over home/domains/<domain>
+// and re-owns it to uid:gid. The folder is opened from home one component at
+// a time without following a link (missing ones are created), and rsync
+// writes through that open folder, not its path: a link in its place, or one
+// swapped in later, never redirects the copy. deleteExtra deletes what the
+// backup doesn't hold, inside this folder only (GH #2303).
+func restoreDomainFiles(ctx context.Context, src, home, domain string, uid, gid int, deleteExtra bool) error {
+	dst := filepath.Join(home, "domains", domain)
+	dir, err := fsperm.OpenDirUnder(home, dst, 0o750, uid, gid)
+	if err != nil {
+		return fmt.Errorf("its folder can't be used (a link or a file is in the way): %w", err)
+	}
+	defer dir.Close()
+	// -aH not -aHAX: skip untrusted ACL/xattr from the repo; owner/mode are
+	// re-normalized below (same posture as applySelectiveHome).
+	args := []string{"-aH"}
+	if deleteExtra {
+		args = append(args, "--delete")
+	}
+	args = append(args, src, "/dev/fd/3/")
+	cmd := execCommandContext(ctx, "rsync", args...)
+	cmd.ExtraFiles = []*os.File{dir}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("rsync: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := chownTreeRecursive(home, dst, uid, gid); err != nil {
+		return fmt.Errorf("chown: %w", err)
+	}
+	return nil
 }
 
 func init() {

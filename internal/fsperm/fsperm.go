@@ -192,6 +192,58 @@ func ChownTree(anchor, root string, uid, gid int) error {
 	return walkChown(fd, uid, gid)
 }
 
+// OpenDirUnder opens the directory root, reached from anchor one component
+// at a time without following a symlink, and creates the components that are
+// missing with mode and owner uid:gid (GH #2303). A symlink or a file on the
+// way fails the call, so nothing is created or opened behind a link. anchor
+// must be a directory the tenant can't swap for a link, as for ChownTree.
+//
+// The caller writes through the returned directory (by file descriptor, not
+// by path), so swapping a component for a link afterwards changes nothing.
+func OpenDirUnder(anchor, root string, mode uint32, uid, gid int) (*os.File, error) {
+	anchor, root = filepath.Clean(anchor), filepath.Clean(root)
+	rel, err := filepath.Rel(anchor, root)
+	if err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return nil, fmt.Errorf("%q is not under %q", root, anchor)
+	}
+	cur, err := unix.Open(anchor, openFlags, 0)
+	if err != nil {
+		return nil, fmt.Errorf("open %s: %w", anchor, err)
+	}
+	if rel != "." {
+		for _, comp := range strings.Split(rel, string(os.PathSeparator)) {
+			child, oerr := unix.Openat(cur, comp, openFlags, 0)
+			if errors.Is(oerr, unix.ENOENT) {
+				created := false
+				if merr := unix.Mkdirat(cur, comp, mode); merr == nil {
+					created = true
+				} else if !errors.Is(merr, unix.EEXIST) {
+					unix.Close(cur)
+					return nil, fmt.Errorf("create %s under %s: %w", comp, anchor, merr)
+				}
+				child, oerr = unix.Openat(cur, comp, openFlags, 0)
+				if oerr == nil && created {
+					// The umask narrowed mode; the new folder is the tenant's.
+					if err := unix.Fchmod(child, mode); err == nil {
+						err = unix.Fchown(child, uid, gid)
+					}
+					if err != nil {
+						unix.Close(child)
+						unix.Close(cur)
+						return nil, fmt.Errorf("owner of %s under %s: %w", comp, anchor, err)
+					}
+				}
+			}
+			unix.Close(cur)
+			if oerr != nil {
+				return nil, fmt.Errorf("open %s under %s: %w", comp, anchor, oerr)
+			}
+			cur = child
+		}
+	}
+	return os.NewFile(uintptr(cur), root), nil
+}
+
 // openUnder opens the directory root, descending from anchor one component
 // at a time without following a symlink.
 func openUnder(anchor, root string) (int, error) {

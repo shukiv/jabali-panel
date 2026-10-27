@@ -43,6 +43,10 @@ type backupManifestReadResult struct {
 	Username   string                   `json:"username"`
 	Stages     []backupManifestStageDTO `json:"stages"`
 	DNSDomains []string                 `json:"dns_domains"` // GH #267: domains with captured custom DNS records
+	// Domains are all the account's domains in the backup (GH #2303): the
+	// restore picker offers each one's files, and lists its DNS greyed out
+	// when it has no custom records to restore.
+	Domains []string `json:"domains"`
 }
 
 func backupManifestReadHandler(ctx context.Context, raw json.RawMessage) (any, error) {
@@ -84,8 +88,9 @@ func backupManifestReadHandler(ctx context.Context, raw json.RawMessage) (any, e
 	}
 
 	// GH #267: surface which domains have captured custom DNS records (from the
-	// meta stage) so the restore UI can offer per-domain DNS restore.
-	out.DNSDomains = []string{}
+	// meta stage) so the restore UI can offer per-domain DNS restore, and
+	// (GH #2303) every domain of the backup, for its files.
+	out.DNSDomains, out.Domains = []string{}, []string{}
 	for _, st := range m.Stages {
 		if st.Name != backup.StageMeta || st.Status != backup.StageStatusOK || st.SnapshotID == "" {
 			continue
@@ -93,16 +98,25 @@ func backupManifestReadHandler(ctx context.Context, raw json.RawMessage) (any, e
 		if metaBytes, derr := c.Dump(ctx, st.SnapshotID, "metadata.json"); derr == nil {
 			var meta backup.AccountMetadata
 			if json.Unmarshal(metaBytes, &meta) == nil {
-				for _, d := range meta.Domains {
-					if len(d.DNSRecords) > 0 {
-						out.DNSDomains = append(out.DNSDomains, d.Name)
-					}
-				}
+				out.Domains, out.DNSDomains = manifestDomainLists(&meta)
 			}
 		}
 		break
 	}
 	return out, nil
+}
+
+// manifestDomainLists returns the backup's domains, and those of them with
+// custom DNS records captured.
+func manifestDomainLists(meta *backup.AccountMetadata) (all, withDNS []string) {
+	all, withDNS = []string{}, []string{}
+	for _, d := range meta.Domains {
+		all = append(all, d.Name)
+		if len(d.DNSRecords) > 0 {
+			withDNS = append(withDNS, d.Name)
+		}
+	}
+	return all, withDNS
 }
 
 func init() {
