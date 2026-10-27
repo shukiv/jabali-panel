@@ -24,11 +24,13 @@ A schedule keeps its kind once it is saved: editing an Accounts or Full Server s
 On a plan that allows more than one backup schedule, an account adds its own schedules on its **Backups** page. An admin can add one for it here: **New schedule → Type: Account's own**, then pick the account. They are listed here with the type **Account's own**, what they back up, and the account's name. Every account schedule in the list shows what it backs up: Full account, Files only or Databases only. Each one:
 
 - backs up only that account;
-- runs on an interval instead of a cron expression: hourly, every 6 hours, every 12 hours, daily or weekly. When **Settings → Restrict tenant backups to a maintenance window** is on, it runs inside that window;
+- runs on an interval instead of a cron expression: hourly, every 6 hours, every 12 hours, daily or weekly. Its runs keep the times of day of its first run, like cron, on the server's clock: every 6 hours from 19:29 runs at 01:29, 07:29, 13:29 and 19:29. When **Settings → Restrict tenant backups to a maintenance window** is on, it runs inside that window;
 - backs up the full account, files only, or databases only;
 - writes to one destination.
 
 **Edit** opens it with the same choices the account has: what to back up, how often, the destination, the copies to keep, and on or off. The account sees your changes on its Backups page. Changing how often re-times the next run; other changes leave it where it is. Its account cannot be changed, and it cannot include the system backup. An existing cron schedule cannot become one.
+
+When the runs happen ([user guide](../user/backups.md#when-scheduled-backups-run)): the panel's scheduler checks for due schedules every minute, whether or not anyone is signed in. A run that starts late, or that runs once after the panel was down, doesn't move the ones after it. Through a daylight saving change the runs keep their times of day; a time the change to summer time skips is skipped, as cron does, and hourly schedules count elapsed hours. Before the November 2026 release each run was timed one interval after the previous one started, so a late start, or the account saving it, moved every later run, and a daylight saving change moved them by an hour (GH #2300).
 
 The account's hosting plan applies to it the same way it does on the account's page, so the account can always open and save it:
 
