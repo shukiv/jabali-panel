@@ -78,7 +78,7 @@ func parseAideDiffPaths(report string) []string {
 func newAideCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "aide",
-		Short: "AIDE file integrity monitor (M42) operator commands",
+		Short: "AIDE file integrity monitor operator commands",
 	}
 	cmd.AddCommand(newAideStatusCmd())
 	cmd.AddCommand(newAideCheckCmd())

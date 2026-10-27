@@ -17,8 +17,8 @@ The panel has no `/metrics` endpoint and no Prometheus exporter.
 
 ## Fleet metrics: `/api/v1/automation/status`
 
-For a multi-server manager that polls each Jabali server without a panel session
-(GH #308 / JAB-75). It is authenticated with an **automation token** (HMAC, with a replay check)
+For a multi-server manager that polls each Jabali server without a panel session.
+It is authenticated with an **automation token** (HMAC, with a replay check)
 that carries the `read:status` scope. Mint one with:
 
 ```

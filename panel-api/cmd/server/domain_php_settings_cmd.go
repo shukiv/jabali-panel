@@ -44,7 +44,7 @@ func domainPHPSettingsSubcommands() []*cobra.Command {
 func newDomainPHPSettingsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "php-settings",
-		Short: "Get/set a domain's php.ini directives (JAB-129)",
+		Short: "Get/set a domain's php.ini directives",
 	}
 	cmd.AddCommand(newDomainPHPSettingsGetCmd(), newDomainPHPSettingsSetCmd())
 	return cmd

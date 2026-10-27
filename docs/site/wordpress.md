@@ -1,6 +1,6 @@
 # WordPress
 
-WordPress is the first-class app in Jabali's Applications Framework (M10 / M19).
+WordPress is the first-class app in Jabali's Applications Framework.
 
 ## One-click install
 
@@ -31,7 +31,7 @@ In the Applications list, each install has an **Open Admin** button. Clicking it
 3. The file calls `wp_signon()` for the admin user, sets the auth cookie, redirects to `/wp-admin/`, then `flock`s + `unlink`s itself.
 4. The systemd reaper sweeps any orphaned SSO files every 30 s (60 s TTL ceiling).
 
-This is the M22 self-deleting SSO file pattern (ADR-0040, Installatron / Softaculous style). The earlier magic-link mu-plugin + HMAC callback approach (failed M22) is **not** in use.
+This is the self-deleting SSO file pattern (Installatron / Softaculous style). The earlier magic-link mu-plugin + HMAC callback approach failed and is **not** in use.
 
 ## Clone
 
@@ -47,7 +47,7 @@ Per-install toggle. When on, the panel runs `wp core update && wp plugin update 
 
 ## Caching (shipped)
 
-- **Per-domain nginx FastCGI page cache** — per-install toggle (ADR-0108). Cookie/auth-aware bypass (never caches authenticated requests), per-domain TTL, `Vary`-aware, revalidates expired entries, and targeted + full purge.
+- **Per-domain nginx FastCGI page cache** — per-install toggle. Cookie/auth-aware bypass (never caches authenticated requests), per-domain TTL, `Vary`-aware, revalidates expired entries, and targeted + full purge.
 - **Jabali Cache plugin** (`jabali-cache`) — ships WordPress object-cache + page-cache drop-ins and **auto-purges** the nginx page cache on content changes (post/comment/update).
 
 ## What is *not* shipped

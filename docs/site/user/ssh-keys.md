@@ -1,6 +1,6 @@
 # SSH Keys
 
-`/jabali-panel/ssh-keys`. Manage the SSH public keys used for SFTP access to your account (M12).
+`/jabali-panel/ssh-keys`. Manage the SSH public keys used for SFTP access to your account.
 
 ## Why SSH keys
 

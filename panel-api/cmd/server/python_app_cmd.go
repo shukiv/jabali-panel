@@ -20,7 +20,7 @@ import (
 func newPythonAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "python-app",
-		Short: "Manage Python apps (ADR-0131; admin-only)",
+		Short: "Manage Python apps (admin-only)",
 	}
 	cmd.AddCommand(
 		newPythonAppListCmd(),

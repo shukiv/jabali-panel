@@ -38,7 +38,7 @@ func newPackageCmd() *cobra.Command {
 func newPackageListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List hosting packages (direct DB — M20-safe)",
+		Short: "List hosting packages (direct DB)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -237,7 +237,7 @@ func newPackageCreateCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a hosting package (direct DB — M20-safe)",
+		Short: "Create a hosting package (direct DB)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -308,10 +308,10 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.cgiEnabled, "cgi", false, "enable CGI")
 	fl.BoolVar(&f.phpExec, "php-exec", false, "opt out of the PHP command-exec lockdown (exec/proc_open work)")
 	fl.StringVar(&f.phpDisabledFunctions, "php-disabled-functions", "", phpDisabledFunctionsFlagHelp)
-	fl.BoolVar(&f.egressSSHOut, "egress-ssh-out", false, "allow outbound SSH (:22) for enforced tenants on this package (GH #1798)")
+	fl.BoolVar(&f.egressSSHOut, "egress-ssh-out", false, "allow outbound SSH (:22) for enforced tenants on this package")
 	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere), e.g. '["140.82.112.0/20"]'`)
-	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
-	fl.BoolVar(&f.egressICMP, "egress-icmp", false, "allow outbound ICMP echo-request (ping) for enforced tenants on this package (GH #1798)")
+	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
+	fl.BoolVar(&f.egressICMP, "egress-icmp", false, "allow outbound ICMP echo-request (ping) for enforced tenants on this package")
 	// GH #1628: webmail defaults ON, so this create flag defaults true (pass
 	// --webmail=false to withhold webmail from the plan). Mirrors the REST
 	// create handler's nil->true default.
@@ -523,7 +523,7 @@ func newPackageEditCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "edit <package-id>",
-		Short: "Edit a hosting package (direct DB — M20-safe)",
+		Short: "Edit a hosting package (direct DB)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -646,10 +646,10 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.composerEnabled, "composer", "", composerFlagHelp+" (true/false)")                          // GH #2276
 	fl.StringVar(&f.gitDeployEnabled, "git-deploy", "", gitDeployFlagHelp+" (true/false)")                      // GH #2277
 	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", 0, redisKeysPerCallEditFlagHelp)                      // GH #2165
-	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false) — GH #1798")
-	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false) — GH #1798")
-	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere) — GH #1798`)
-	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page — GH #1701. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
+	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false)")
+	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false)")
+	fl.StringVar(&f.egressSSHOutCIDRs, "egress-ssh-out-cidrs", "", `JSON array of CIDRs scoping outbound SSH (empty=anywhere)`)
+	fl.StringVar(&f.phpSettingsPolicy, "php-settings-policy", "", `JSON object of php.ini directive to level (admin_only / tenant_allowed; tenant_privileged for security-sensitive directives) saying who may set it on the per-domain PHP Settings page. Empty = defaults (tenants may set every directive they can today). The CLI and admins are not limited by it. e.g. '{"memory_limit":"admin_only"}'`)
 	fl.StringVar(&f.scheduledBackups, "scheduled-backups", "", "tenant scheduled backups (true/false)")
 	fl.StringVar(&f.fpmUserCanEdit, "fpm-user-can-edit", "", "tenant FPM performance mode (true/false)")
 	fl.StringVar(&f.fpmAdvanced, "fpm-advanced", "", "tenant advanced FPM knobs (true/false, true implies fpm-user-can-edit)")
@@ -659,7 +659,7 @@ func newPackageDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{
 		Use:   "delete <package-id>",
-		Short: "Delete a hosting package (direct DB — M20-safe)",
+		Short: "Delete a hosting package (direct DB)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
@@ -793,7 +793,7 @@ var redisKeysPerCallEditFlagHelp = fmt.Sprintf("most keys one Redis key browser 
 
 // phpDisabledFunctionsFlagHelp documents --php-disabled-functions on both
 // package create and edit (GH #1701).
-const phpDisabledFunctionsFlagHelp = `PHP functions disabled for this package's sites, comma-separated (GH #1701). "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.`
+const phpDisabledFunctionsFlagHelp = `PHP functions disabled for this package's sites, comma-separated. "default" = the command-exec lockdown (exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl); "none" = nothing disabled. Allowing system/exec/shell_exec/passthru/popen/proc_open/pcntl_exec also lifts the PHP Defense ban on it for these sites. Wins over --php-exec.`
 
 // parseCLIDisabledFunctions turns a --php-disabled-functions value into the
 // stored column value (nil = the lockdown default).

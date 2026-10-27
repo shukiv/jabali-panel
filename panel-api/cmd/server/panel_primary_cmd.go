@@ -23,7 +23,7 @@ import (
 func newPanelPrimaryCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "panel-primary",
-		Short: "Manage the panel's primary mail domain row (ADR-0048)",
+		Short: "Manage the panel's primary mail domain row",
 	}
 	cmd.AddCommand(newPanelPrimaryEnsureCmd())
 	return cmd

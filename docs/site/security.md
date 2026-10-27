@@ -2,29 +2,29 @@
 
 Layered. CrowdSec is the IP-trust source; UFW handles the port baseline; AppSec WAF replaces ModSecurity; Snuffleupagus + AppArmor harden the application layer; AIDE watches the host; per-user egress firewall stops compromised tenants from being usable for outbound abuse.
 
-## CrowdSec — single source of IP-trust (M43)
+## CrowdSec — single source of IP-trust
 
-ADR-0089. CrowdSec is the only thing that decides whether an IP gets blocked.
+CrowdSec is the only thing that decides whether an IP gets blocked.
 
 - **Bouncers**: nginx (bans, CAPTCHA, AppSec WAF) and the nftables firewall bouncer, which drops banned IPs on every port, so mail (SMTP, IMAP, POP3) and SSH are covered too.
 - **Scenarios**: HTTP probe/scan, SSH bruteforce, IMAP/SMTP auth flood, app-specific WP/Drupal scan, malware-upload attempt.
 - **Decisions**: BAN, CAPTCHA, ALLOWLIST.
-- **Blocklist**: the free CrowdSec community blocklist (CAPI), plus any extra lists the admin turns on (FireHOL levels 1–3, IPsum level 3, Spamhaus DROP for IPv6, or the admin's own list URLs). The panel does not use the CrowdSec console; enrolment was removed (ADR-0113). See [Firewall → Blocklists](firewall.md#blocklists).
+- **Blocklist**: the free CrowdSec community blocklist (CAPI), plus any extra lists the admin turns on (FireHOL levels 1–3, IPsum level 3, Spamhaus DROP for IPv6, or the admin's own list URLs). The panel does not use the CrowdSec console; enrolment was removed. See [Firewall → Blocklists](firewall.md#blocklists).
 
 UFW is **demoted**: only port-open/port-close baseline. Old `ufw deny from <ip>` rules are migrated into CrowdSec decisions by `jabali ufw migrate-ip-bans`.
 
-CrowdSec extensions (M27, ADR 0061-0063):
+CrowdSec extensions:
 - **Per-IP allowlists** — admin-managed, persists across CrowdSec restarts.
 - **Per-scenario override** — change a scenario's severity / leakspeed / capacity at admin level.
 - **Alert routing** — a burst of new bans fires the `crowdsec.ban.spike` notification.
 
-## AppSec WAF (M27 — replaces ModSecurity)
+## AppSec WAF (replaces ModSecurity)
 
-ADR-0060. ModSecurity is **removed** (M27 cleanup_modsecurity purges packages + configs every install; migration 000074 drops the schema). Replacement is **CrowdSec AppSec**:
+ModSecurity is **removed** (cleanup_modsecurity purges packages + configs every install; migration 000074 drops the schema). Replacement is **CrowdSec AppSec**:
 
 - Inline `appsec-block` bouncer in nginx (`/etc/nginx/conf.d/jabali-appsec.conf`).
 - Rule packs from `hub.crowdsec.net/author/crowdsecurity` (vpatch family for CVE virtual-patching).
-- AppSec install path is **flat** (`/etc/crowdsec/appsec-rules/`) — no `crowdsecurity/` subdir (the install-path scar that purged + reinstalled 170 vpatch rules every update, fixed in PR #69).
+- AppSec install path is **flat** (`/etc/crowdsec/appsec-rules/`) — no `crowdsecurity/` subdir (an earlier bug purged and reinstalled 170 vpatch rules on every update; it is fixed).
 
 ### AppSec bot detection (CrowdSec 1.8)
 
@@ -96,7 +96,7 @@ or the bot-detection challenge.
 
 ### WAF false positives and rule exclusions
 
-`/jabali-admin/security` → CrowdSec → **WAF exclusions** (GH #1649) answers
+`/jabali-admin/security` → CrowdSec → **WAF exclusions** answers
 "which rule blocked this?" and turns that rule off for one host and path:
 
 - **Recent WAF blocks** inspects the last 10, 25 or 50 AppSec alerts and
@@ -133,10 +133,10 @@ or the bot-detection challenge.
   - If no installed rule has the name, the exclusion is saved and the card says
     it does nothing until a rule of that name is installed.
 - A row tagged with an app name is managed for that app's install:
-  - **Flarum** (GH #1650): rule 920450 on the forum's API path. Removing it
+  - **Flarum**: rule 920450 on the forum's API path. Removing it
     works, but the next change to that forum or `jabali appsec flarum-sync`
     adds it again.
-  - **Nextcloud** (Discussion #1032): rule 911100 on the install's four WebDAV
+  - **Nextcloud**: rule 911100 on the install's four WebDAV
     paths (`/remote.php/dav/`, `/remote.php/webdav/`, `/public.php/dav/`,
     `/public.php/webdav/`), so the Files app, sync clients and calendar/contact
     sync can use WebDAV methods. Removing one blocks those clients again.
@@ -152,16 +152,16 @@ The same data is on the CLI: `jabali appsec explain` and
 
 `/jabali-admin/security` → AppArmor — per-profile status (enforce / complain / **missing**).
 
-Jabali ships and manages these daemon profiles: `jabali-panel` (panel API), `jabali-bulwark` (webmail), `stalwart-mail`, and `jabali-fpm-app` (GH #690 — the per-user PHP-FPM/WordPress workload profile, attached to fpm-exec; ships complain-first for the soak, flip to enforce per-host after soak-readiness shows 0 would-deny). In enforce mode `jabali-fpm-app` lets tenant PHP start only the shell (`sh`/`bash`/`dash`), `cat` and the `mail()` shim, so `exec()`/`shell_exec()` calls to other programs (`df`, `ls`, `grep`, `id`, …) fail with "Permission denied" even when the hosting package allows those functions; the domain's PHP Settings page marks them **Starts only the shell and cat** (GH #2001). Its explicit deny rules hold in complain mode too: tenant PHP can't read `/etc/shadow`, `/root` or any account's `.ssh`, and can't connect to the system D-Bus. While the profile is in complain mode or not loaded, an allowed exec function can run any program the site's user can run (shell access, for whoever takes over the site); PHP Settings then marks it **Can start any program**, and the package editor warns as soon as a package allows one. Nothing else limits it: PHP Defense lifts its exec ban for packages that allow exec. A profile that fails to load or is purged is reported as **missing** (red) rather than silently omitted — an absent profile means an unconfined daemon.
+Jabali ships and manages these daemon profiles: `jabali-panel` (panel API), `jabali-bulwark` (webmail), `stalwart-mail`, and `jabali-fpm-app` (the per-user PHP-FPM/WordPress workload profile, attached to fpm-exec; ships complain-first for the soak, flip to enforce per-host after soak-readiness shows 0 would-deny). In enforce mode `jabali-fpm-app` lets tenant PHP start only the shell (`sh`/`bash`/`dash`), `cat` and the `mail()` shim, so `exec()`/`shell_exec()` calls to other programs (`df`, `ls`, `grep`, `id`, …) fail with "Permission denied" even when the hosting package allows those functions; the domain's PHP Settings page marks them **Starts only the shell and cat**. Its explicit deny rules hold in complain mode too: tenant PHP can't read `/etc/shadow`, `/root` or any account's `.ssh`, and can't connect to the system D-Bus. While the profile is in complain mode or not loaded, an allowed exec function can run any program the site's user can run (shell access, for whoever takes over the site); PHP Settings then marks it **Can start any program**, and the package editor warns as soon as a package allows one. Nothing else limits it: PHP Defense lifts its exec ban for packages that allow exec. A profile that fails to load or is purged is reported as **missing** (red) rather than silently omitted — an absent profile means an unconfined daemon.
 
-`jabali-sendmail` confines the PHP `mail()` shim: `jabali-fpm-app` hands the shim to it whenever a site's PHP sends mail. It ships in its own profile file (GH #2001), so its mode is switched on its own: an admin can keep `jabali-fpm-app` in complain (so `df`, `ls` and the like work from PHP) and still enforce `jabali-sendmail`. `jabali update` keeps the mode each profile is loaded in, so a server where the shim was enforced along with `jabali-fpm-app` keeps it enforced. With a smarthost selected for website mail (GH #2056), the profile also lets the shim read the mode file and connect to the website mail relay's socket; the relay itself runs as its own `jabali-mailrelay` user under a systemd sandbox (no capabilities, read-only system, no `/home`). The daily auto-promotion timer (below) doesn't switch `jabali-fpm-app` or `jabali-sendmail`; an admin does.
+`jabali-sendmail` confines the PHP `mail()` shim: `jabali-fpm-app` hands the shim to it whenever a site's PHP sends mail. It ships in its own profile file, so its mode is switched on its own: an admin can keep `jabali-fpm-app` in complain (so `df`, `ls` and the like work from PHP) and still enforce `jabali-sendmail`. `jabali update` keeps the mode each profile is loaded in, so a server where the shim was enforced along with `jabali-fpm-app` keeps it enforced. With a smarthost selected for website mail, the profile also lets the shim read the mode file and connect to the website mail relay's socket; the relay itself runs as its own `jabali-mailrelay` user under a systemd sandbox (no capabilities, read-only system, no `/home`). The daily auto-promotion timer (below) doesn't switch `jabali-fpm-app` or `jabali-sendmail`; an admin does.
 
 The phpMyAdmin and Adminer PHP pool (`jabali-pma`, user `www-data`) does not run under `jabali-fpm-app`: its `jabali-fpm@pma` unit starts php-fpm directly. `www-data` can read every site's files, and a program started from PHP ignores `open_basedir`, so the pool disables the command-exec functions instead. It disables the same functions as the tenant lockdown (`exec`, `passthru`, `shell_exec`, `system`, `proc_open`, `popen`, `pcntl_exec`, `pcntl_fork`, `proc_nice`, `dl`) plus `putenv`, `mail` and `mb_send_mail`, which close the `LD_PRELOAD`-plus-sendmail way around a disabled `exec`. Neither app needs these functions to serve a page. The only phpMyAdmin code that could use them on a page is the **External** transformation, and phpMyAdmin ships its list of allowed programs empty, so it already runs nothing. `jabali update` applies the list to existing servers.
 
-New profiles ship in **complain** mode for a 7-day burn-in soak; each profile shows a **soak-readiness** indicator (complain-mode profiles with zero would-deny events are ready to flip to enforce). Complain-mode `apparmor="ALLOWED"` would-deny events are surfaced alongside enforce-mode `DENIED` denials, so a complain-mode profile actively logging violations is not mistaken for a clean state. A daily timer **auto-promotes** a soak-clean profile from complain to enforce (JAB-349), so hardening advances without a manual flip on every host. A profile kept in complain mode on purpose can be **acknowledged** on the AppArmor page: the Server Status alert then leaves it out until its mode changes. A missing or unconfined profile is always reported (GH #2078).
+New profiles ship in **complain** mode for a 7-day burn-in soak; each profile shows a **soak-readiness** indicator (complain-mode profiles with zero would-deny events are ready to flip to enforce). Complain-mode `apparmor="ALLOWED"` would-deny events are surfaced alongside enforce-mode `DENIED` denials, so a complain-mode profile actively logging violations is not mistaken for a clean state. A daily timer **auto-promotes** a soak-clean profile from complain to enforce, so hardening advances without a manual flip on every host. A profile kept in complain mode on purpose can be **acknowledged** on the AppArmor page: the Server Status alert then leaves it out until its mode changes. A missing or unconfined profile is always reported.
 
 A **degraded-AppArmor** condition (a managed profile that should be enforcing but
-isn't) raises a dashboard alert plus a runtime confinement smoke test (JAB-379),
+isn't) raises a dashboard alert plus a runtime confinement smoke test,
 so a silently-unconfined daemon is caught rather than assumed safe.
 
 On kernels with broken unix-socket mediation (missing `/sys/kernel/security/apparmor/features/unix`), Jabali deliberately does **not** load the daemon profiles — on fresh install and on `jabali update` alike.
@@ -180,15 +180,15 @@ A daily timer (`jabali-aide-check.timer`) compares the host against the AIDE dat
 
 Security → AIDE runs a check, or rebuilds the baseline, in the background; the page shows each while it runs and says why a rebuild failed. See [AIDE](./admin/aide.md).
 
-## Per-user egress firewall (M34)
+## Per-user egress firewall
 
-ADR-0084. nftables + cgroup v2 vmap. Each user's processes run in their slice; the nftables ruleset matches by cgroup ID and decides:
+nftables + cgroup v2 vmap. Each user's processes run in their slice; the nftables ruleset matches by cgroup ID and decides:
 
 - Allow `:443` to anywhere (HTTPS — legitimate API use).
 - Allow `:587/465/993` to the panel's own mail host (so PHP scripts can submit mail).
 - Drop everything else by default.
 
-**External database ports are dropped by default** (GH #638). The default
+**External database ports are dropped by default**. The default
 allowlist is web + mail only (`25, 53, 80, 443, 465, 587`); outbound to a
 **remote** database — MSSQL `1433`, MySQL/MariaDB `3306`, PostgreSQL `5432`,
 Redis `6379`, MongoDB `27017`, etc. — is dropped by the enforced chain. This is
@@ -245,29 +245,29 @@ where the panel runs the app; any other listener gets nothing, and the drops
 are counted in `loopback_app_squat_drops`. A slice created again (a new cgroup)
 is picked up on the next reconciler pass, within a minute.
 
-## Malware (M33, M33.2)
+## Malware
 
-- **Linux Malware Detect (LMD) 2.0** — native HEX, MD5 and SHA-256 scanner with the rfxn signature pack. It replaced ClamAV, which was removed in M33 (amendment 3).
+- **Linux Malware Detect (LMD) 2.0** — native HEX, MD5 and SHA-256 scanner with the rfxn signature pack. It replaced ClamAV, which was removed.
 - **LMD real-time monitor** — `jabali-maldet-monitor.service`, opt-in (default off, mig 000082); apply-then-persist toggle.
 - **YARA-X** (`yr`) — pattern matching for LMD: the rfxn rule pack, the signature-base (Neo23x0) rules, and rules the admin uploads.
-- **M33.2 mail-yara-async** (ADR-0079) — async post-delivery JMAP-poll YARA scan; NOT MtaHook/MtaMilter.
-- **Quarantine-rate circuit breaker** (JAB-248) — the scanner trips a breaker if the quarantine rate spikes, so a bad signature can't quarantine a tenant's whole tree in a runaway loop.
+- **mail-yara-async** — async post-delivery JMAP-poll YARA scan; NOT MtaHook/MtaMilter.
+- **Quarantine-rate circuit breaker** — the scanner trips a breaker if the quarantine rate spikes, so a bad signature can't quarantine a tenant's whole tree in a runaway loop.
 
 ## Additional hardening
 
-- **Step-up auth for high-risk admin tools** (JAB-380) — the admin File Manager
+- **Step-up auth for high-risk admin tools** — the admin File Manager
   and Root Terminal require a fresh (recent-auth / MFA) re-authentication before
   they open, so a stolen session alone can't reach a root shell or the whole
   filesystem.
-- **API-side write allow-list for the admin File Manager** (JAB-367) — writes are
+- **API-side write allow-list for the admin File Manager** — writes are
   checked against an allow-list on the API, not just the UI, so a crafted request
   can't write outside the permitted paths.
-- **CrowdSec pprof/metrics locked down** (JAB-368) — tenant-uid processes are
+- **CrowdSec pprof/metrics locked down** — tenant-uid processes are
   blocked from CrowdSec's unauthenticated `:6060` pprof / metrics endpoint.
-- **Package disk quota on tenant database storage** (JAB-243) — a tenant's DB
+- **Package disk quota on tenant database storage** — a tenant's DB
   storage counts against the hosting-package disk quota, so databases can't be
   used to bypass the account quota.
-- **Country exemption from local MaxMind** (PR #1083) — country-based
+- **Country exemption from local MaxMind** — country-based
   allow/exempt CIDRs are derived from a local MaxMind mmdb plus supplemental
   CIDRs, with no external lookup at request time.
 - **Installer credentials on stdin** — the one-click app installers hand the
@@ -275,7 +275,7 @@ is picked up on the next reconciler pass, within a minute.
   command-line options or environment variables of the `systemd-run` unit it
   runs in. Each transient unit's description names only its binary, so command
   lines stay out of the journal.
-- **Secret-rotation tooling** (JAB-357) — `jabali secrets rotate <name>`
+- **Secret-rotation tooling** — `jabali secrets rotate <name>`
   (operator-only) rolls the panel DB app-user password, the Redis panel token,
   and the PowerDNS DB password live (each with its own verify + rollback), plus
   the now-vestigial `JWT_SECRET`, so a leaked credential can be rolled without a
@@ -288,7 +288,7 @@ is picked up on the next reconciler pass, within a minute.
 
 ## Audit log
 
-`/jabali-admin/audit`. Append-only (ADR-0106). Every privileged mutation:
+`/jabali-admin/audit`. Append-only. Every privileged mutation:
 - Who (subject user, actor user, source).
 - What (action, target).
 - When.

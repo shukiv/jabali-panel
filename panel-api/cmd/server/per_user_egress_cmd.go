@@ -27,7 +27,7 @@ import (
 func newPerUserEgressCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "per-user-egress",
-		Short: "Per-user PHP-FPM egress firewall (M34) operator commands",
+		Short: "Per-user PHP-FPM egress firewall operator commands",
 	}
 	cmd.AddCommand(
 		newPerUserEgressFlipMatureCmd(),

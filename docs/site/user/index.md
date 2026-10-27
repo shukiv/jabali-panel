@@ -6,7 +6,7 @@ This is the table of contents for the tenant-facing documentation.
 
 - [Login](./login.md) — the login flow.
 - [Two-Factor Challenge](./two-factor-challenge.md) — using TOTP.
-- [Request Password Reset](./password-reset-request.md) and [Reset Password](./password-reset-reset.md).
+- [Request Password Reset](./password-reset-request.md) and [Reset Password](./password-reset-confirm.md).
 - [Dashboard](./dashboard.md) — the page you land on after login.
 - [Profile](./profile.md) — name, password, 2FA, notifications, backup, usage.
 

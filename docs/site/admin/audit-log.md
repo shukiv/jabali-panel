@@ -1,6 +1,6 @@
 # Audit Log
 
-`/jabali-admin/audit`. Append-only structured record of every privileged mutation on the panel (ADR-0106).
+`/jabali-admin/audit`. Append-only structured record of every privileged mutation on the panel.
 
 ## What is recorded
 

@@ -1,6 +1,6 @@
 # Migrating From Another Panel
 
-`/jabali-admin/migrations`. M15 (in part) + ongoing pipeline work.
+`/jabali-admin/migrations`.
 
 ## Supported sources
 
@@ -14,7 +14,7 @@ own read-only CLI, then rebuilds destination-side).
 | **DirectAdmin** | DA backup tarball or live SSH | ✅ — see `docs/user/directadmin-migration.astro` (legacy) for source-side prep notes. |
 | **Hestia** | Hestia `v-backup-user` tarball (`<user>.<ts>.tar[.gz]`) or live SSH | ✅ — files, DBs, DNS (incl. SRV + CAA), and apps (e.g. Nextcloud) restore end-to-end; the account Contact Name (FNAME/LNAME) carries onto the user. Mail is the Exim→Stalwart subset (see below). |
 | **WHM** | WHM-level dump (multiple `cpmove`s in one) | 🟡 — same caveats as cPanel per-user. |
-| **Plesk** | live SSH (subscriptions) | ✅ (GH #429) — reads databases, DNS, and reseller customers + service plans via `plesk bin` / wp-toolkit read-only CLI, then rebuilds destination-side. |
+| **Plesk** | live SSH (subscriptions) | ✅ — reads databases, DNS, and reseller customers + service plans via `plesk bin` / wp-toolkit read-only CLI, then rebuilds destination-side. |
 | **CloudPanel** | live SSH (site users) | ✅ |
 | **CyberPanel** | live SSH (websites) | ✅ |
 | **Jabali → Jabali** | live SSH (accounts) | ✅ — move accounts between Jabali servers. |
@@ -46,7 +46,7 @@ own read-only CLI, then rebuilds destination-side).
 
 - BIND zones translated to PowerDNS schema rows — A/AAAA/CNAME/MX/TXT/**SRV** (priority in the pdns prio column) / **CAA** all import; the source SOA is dropped (pdns generates its own).
 - Hestia's `web/<domain>/public_html` docroot layout is handled for both the file split and the app-config scan (differs from the native `domains/<domain>/public_html`).
-- Resource types are preserved per source facet (GH #1606): Hestia lists web dirs and DNS zones independently, so a web dir with no source zone imports as a **Web Domain only** (`dns_disabled`, no managed PowerDNS zone), a DNS zone with no web dir imports as a **DNS Zone only** (`web_disabled`, no nginx vhost/PHP), and a domain in both imports full-facet. Other importers (cPanel, DirectAdmin, Plesk, CloudPanel, CyberPanel) create every domain full-facet unchanged.
+- Resource types are preserved per source facet: Hestia lists web dirs and DNS zones independently, so a web dir with no source zone imports as a **Web Domain only** (`dns_disabled`, no managed PowerDNS zone), a DNS zone with no web dir imports as a **DNS Zone only** (`web_disabled`, no nginx vhost/PHP), and a domain in both imports full-facet. Other importers (cPanel, DirectAdmin, Plesk, CloudPanel, CyberPanel) create every domain full-facet unchanged.
 - The account **Contact Name** (`user.conf` FNAME/LNAME) carries onto the created jabali user's name.
 - Exim → Stalwart routing rules: forwards + autoresponders ported; complex Exim ACL rules need manual re-implementation.
 

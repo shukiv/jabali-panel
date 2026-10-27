@@ -1,6 +1,6 @@
 # PHP Extensions
 
-PHP Manager (`/jabali-admin/php-pools`) → **PHP Extensions** tab. Server-wide PHP extension manager (M9.6, ADR-0031). Enables and installs PHP extensions per managed PHP version.
+PHP Manager (`/jabali-admin/php-pools`) → **PHP Extensions** tab. Server-wide PHP extension manager. Enables and installs PHP extensions per managed PHP version.
 
 ## Scope
 

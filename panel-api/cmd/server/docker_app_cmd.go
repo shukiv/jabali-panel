@@ -46,7 +46,7 @@ func loadDockerCatalogForCLI() (*dockerapp.Catalog, error) {
 func newDockerAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "docker-app",
-		Short: "Manage M48 docker-app catalog installs (admin-only)",
+		Short: "Manage Docker app catalog installs (admin-only)",
 	}
 	cmd.AddCommand(
 		newDockerAppCatalogCmd(),

@@ -16,7 +16,7 @@ func newDomainChownCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "chown <domain> <new-owner>",
-		Short: "Reassign a domain to a different owner, moving its docroot (GH #1238)",
+		Short: "Reassign a domain to a different owner, moving its docroot",
 		Long: `Reassign a domain to a different tenant.
 
 The domain row is preserved (its SSL lineage, DNS zone, and mailboxes stay); its

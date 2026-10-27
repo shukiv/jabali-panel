@@ -49,16 +49,16 @@ Or CLI:
 jabali db root-password
 ```
 
-Audited (success + failure), announced via M14.
+Audited (success + failure), announced via notifications.
 
 ### Move a domain between users
 
-A first-class **Change owner** action reassigns a domain to a different user (GH
-#1238); the vhost, DNS, and mail follow the new owner on the next reconcile. The
+A first-class **Change owner** action reassigns a domain to a different user;
+the vhost, DNS, and mail follow the new owner on the next reconcile. The
 domain's Python apps, Git repository settings and Composer project folder
 setting belong to the old owner and are deleted. A Docker app of the old owner
 is unlinked from the domain and keeps its data; a server-level one stays. The
-admin can also **rename a tenant's username in place** (GH #1238) — the panel
+admin can also **rename a tenant's username in place** — the panel
 re-prefixes that user's MariaDB databases, DB users, and PostgreSQL shadow roles
 to match.
 
@@ -70,7 +70,7 @@ to match.
 
 ### Verify the public installer URL (get.jabali-panel.com)
 
-Short install URL (GH #444). After a release or any DNS/redirect change, confirm
+Short install URL. After a release or any DNS/redirect change, confirm
 it still serves the installer:
 
 ```bash
@@ -106,7 +106,7 @@ jabali repair --auto           # safe auto-fixes (perms, drop-in regen, no destr
 jabali repair --all --yes      # destructive (wipes nginx tmp, regen pool sockets) — only when --diagnose tells you to
 ```
 
-`jabali repair` covers 7 detectors (M33-era), grouped by destructiveness. ADR-0077.
+`jabali repair` covers 7 detectors, grouped by destructiveness.
 
 **Updates → Repair Center → Auto-Repair safe issues** runs `jabali repair --auto`. That includes `docroot-www-data-group`, which puts docroot files back in group www-data and sets setgid on their directories, so nginx can serve newly uploaded media. A broken row that Auto-Repair leaves says why. A destructive one shows its `jabali repair --<id> --yes` command. One with no fix (`dirty-migration`, `fpm-masters-down`) needs your decision. In `--diagnose` output these carry `[destructive]` and `[manual]` after the label.
 

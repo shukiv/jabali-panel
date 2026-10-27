@@ -75,5 +75,5 @@ pandoc -f markdown -t html5 --no-highlight --wrap=none site/<page>.md
 - Each page is self-contained: it doesn't assume the reader has read another doc, except where it explicitly links one.
 - Domain language matches `/home/shuki/projects/jabali2/CONTEXT.md`: **Agent**, **Reconciler**, **Privileged DB Admin Action**, **Cron Job**, **Cron Job Intake**, **SSO Token**, **Shadow Account**, **SSO Token Resolution**.
 - All "this is intentionally not here" notes for old-panel features live in `removed-features.md` so user docs stay focused on what's shipped.
-- ADRs are cited inline when a decision is load-bearing (e.g. ADR-0089 for CrowdSec-as-trust-source).
+- No internal codes in the published pages: no milestones (M43), JAB- tickets, ADR numbers, or GitHub issue and PR numbers. Say what the feature does and where it is instead. jabali-panel.com removes them when it merges a page, so a code added here comes back on the website with the next merge. `TestDocsSiteHasNoInternalCodes` (`panel-api/cmd/server`) fails on one. Product names such as M365 are fine.
 - File paths, systemd unit names, and CLI verbs are quoted exact and verified against the current code.

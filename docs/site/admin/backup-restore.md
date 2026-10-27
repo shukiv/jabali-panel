@@ -15,18 +15,18 @@ Pick a snapshot, then choose:
 - **Target user** — restore to the same user (overwrite), to a new user (preserve original), or to an existing different user (uncommon; usually for forensic investigation).
   An account deleted and created again with the same username counts as the
   same user: the restore rebuilds its domains, databases, mailboxes and other
-  panel records on it (GH #1993).
-- **Components** — restore everything (a **Select all** toggle) or pick subsets (files, databases, mailboxes, DNS, FTP subaccounts). FTP/SFTP subaccounts are rebuilt with their original login password (GH #1361); MariaDB **and** PostgreSQL databases are covered.
+  panel records on it.
+- **Components** — restore everything (a **Select all** toggle) or pick subsets (files, databases, mailboxes, DNS, FTP subaccounts). FTP/SFTP subaccounts are rebuilt with their original login password; MariaDB **and** PostgreSQL databases are covered.
 - **Dry run** — see what would be touched without writing.
 
-A single domain's document root can be restored on its own (GH #1359) without
+A single domain's document root can be restored on its own without
 touching the rest of the account.
 
 The agent restores in the same per-stage order the backup ran: files first, databases second, mailboxes third, DNS records last. Each stage is idempotent at the file or row level.
 
 ### SSL certificates
 
-An account backup carries each domain's certificate and private key (GH #1993)
+An account backup carries each domain's certificate and private key
 when the certificate was issued by a certificate authority or uploaded on the
 custom certificate page, and covers only the account's own domains and their
 verified web domain aliases. An alias counts by its own name only: a
@@ -70,7 +70,7 @@ installed, and why.
 
 A restore recreates each restored database user's MariaDB account or
 PostgreSQL role and its grants, not just its row in the panel, so a site's
-database login keeps working on a new server (GH #1993). A backup records each
+database login keeps working on a new server. A backup records each
 database user's password hash for this: the MariaDB hash, or the PostgreSQL
 SCRAM-SHA-256 verifier.
 
@@ -101,7 +101,7 @@ report says to run `jabali update`.
 ### PostgreSQL databases
 
 A restore loads each PostgreSQL database's dump as a role with no server-wide
-rights, never as the server's `postgres` role (GH #1993). The dump goes into a
+rights, never as the server's `postgres` role. The dump goes into a
 new database, which takes the old one's place only once the load succeeds. A
 dump that fails to load leaves the database as it was, and the restore report
 gives the loader's error. A dump that needs an extension only a superuser can
@@ -115,10 +115,10 @@ create doesn't load.
   that can't sign in, until a database user is granted on it: the first user
   you grant on it under **Databases** takes them over. The restore report
   lists each such database.
-- **Databases restored by an earlier release.** A restore before GH #1993
+- **Databases restored by an earlier release.** A restore by an earlier release
   left what it created owned by `postgres`, so the database's user couldn't
-  alter its own tables or run `TRUNCATE ... RESTART IDENTITY` on them
-  (GH #2004). The panel hands those objects to the database's user (or, with
+  alter its own tables or run `TRUNCATE ... RESTART IDENTITY` on them.
+The panel hands those objects to the database's user (or, with
   none, to the role that can't sign in) when it starts, whenever a database
   or its user changes, and once a day. It leaves two things for an admin,
   and logs each with a `pg-reown:` warning: a database with an event trigger
@@ -133,7 +133,7 @@ create doesn't load.
 ### DNS records
 
 A restore brings back each domain's custom DNS records: the ones added under
-DNS (GH #1993). The panel rebuilds its own records for the domain (its address,
+DNS. The panel rebuilds its own records for the domain (its address,
 mail, SPF and DKIM) itself. The custom records are added once the domain's DNS
 zone exists; for a domain the restore brought back, the panel creates the zone
 first, which can take up to a minute. Each record goes through the same checks
@@ -153,7 +153,7 @@ is listed in the restore report.
 
 ### Mail settings
 
-A restored domain gets back its mail settings (GH #1993): its mail provider
+A restored domain gets back its mail settings: its mail provider
 (Jabali, none, Microsoft 365, Google Workspace, or a DNS template's), the
 provider's DKIM token, its DMARC `np` and testing tags, and its CalDAV and
 CardDAV hosts. Each goes through the checks of the page that sets it; a value
@@ -170,7 +170,7 @@ records out. Turn it on in the domain's mail settings afterwards.
 
 ### Web domain aliases
 
-A restore brings back each domain's web domain aliases (GH #1993), the extra
+A restore brings back each domain's web domain aliases, the extra
 hostnames added on the domain's **Aliases** tab. Each goes through the checks
 of that tab: an alias that isn't a valid hostname, that is the domain's own or
 `www` name, that is the panel's hostname, or that is already a domain, a
@@ -209,8 +209,8 @@ Round-trip restore was live-verified on 192.168.100.150.
 A system restore that includes accounts rebuilds the panel rows of an account
 its panel database dump doesn't have (an account deleted before the system
 backup ran, or a target host with no rows at all) from that account's newest
-backup. Its domains come back with the settings the account backup carries
-(GH #1993): their web, PHP, certificate-mode and mail settings. A setting an
+backup. Its domains come back with the settings the account backup carries:
+their web, PHP, certificate-mode and mail settings. A setting an
 older backup doesn't carry takes its default, as on a new domain. Two things
 differ from an account restore:
 
@@ -225,7 +225,7 @@ A domain comes back verified, unless its backup records it as pending.
 ## Restore from an uploaded archive
 
 Besides restic destinations, both account and full-server restores accept a
-backup **archive you upload** directly (GH #1408) — the portable path for moving
+backup **archive you upload** directly — the portable path for moving
 to a host that shares no restic destination with the source:
 
 - **Account** — upload an account backup and restore selected legs. Tenants can
@@ -238,7 +238,7 @@ to a host that shares no restic destination with the source:
 ### Uploaded backups stay on the server
 
 An account backup an admin uploads is kept on this server and listed in the
-**Backups** tab under **Uploaded backups** (GH #1993). A failed restore can be
+**Backups** tab under **Uploaded backups**. A failed restore can be
 retried from there without uploading the file again. Before the upload, choose
 what happens to it after the restore:
 
@@ -264,14 +264,14 @@ nothing: the file is deleted once the restore ends.
 ### Checks before a restore
 
 Before **Restore**, the restore drawer checks the uploaded backup against this
-server and lists what it found (GH #1993). The panel runs the same check again
+server and lists what it found. The panel runs the same check again
 when the restore starts, so a backup the check blocks is never restored.
 
 - **PHP versions** — every PHP version the account's sites use must be
   installed here. A missing one blocks the restore: install it under **PHP
   Versions**, then restore. A backup holds each of the account's PHP pools:
   the default one, and one for each other version a domain runs on. Each
-  domain comes back on its own version (GH #1993). A backup made before Jabali
+  domain comes back on its own version. A backup made before Jabali
   kept every pool holds only the default one. A domain on another version
   comes back on the default version, and the restore report names it: set its
   version again in the domain's PHP settings.
@@ -302,7 +302,7 @@ their own account and a full-server restore (`jabali system restore
 ### Progress
 
 A restore from an uploaded backup shows its progress while it runs, in the
-restore drawer and in the **Uploaded backups** list (GH #1993):
+restore drawer and in the **Uploaded backups** list:
 
 1. **Restoring files, databases and apps** — first unpacking the backup (with
    a percentage), then each part in turn ("Restoring database shop_wp (2 of 4)").
@@ -316,8 +316,8 @@ with an older agent only the step is shown.
 
 ### Keep or overwrite what is already there
 
-A restore from an uploaded archive adds only what the account is missing
-(GH #1993). **Overwrite existing items with the backup** in the restore drawer
+A restore from an uploaded archive adds only what the account is missing.
+**Overwrite existing items with the backup** in the restore drawer
 is off by default:
 
 - **Off** — files already in the home stay as they are; only missing files are
@@ -348,7 +348,7 @@ is off by default:
     own pages run. MTA-STS is turned on when the backup has it on, never
     off. A PHP setting the
     account's hosting package lets only an administrator set stays as it is.
-    A backup made before Jabali recorded every PHP setting (GH #1993) changes
+    A backup made before Jabali recorded every PHP setting changes
     only the PHP limits (memory, upload and post size, input variables,
     execution and input time); the domain keeps its other PHP settings.
     The catch-all is taken only when it points at a mailbox the account had
@@ -372,7 +372,7 @@ on, an older agent still restores.
 ### What an uploaded archive can't restore
 
 An uploaded archive is a file anyone could have written, so the panel restores
-it into the target account only (GH #1993):
+it into the target account only:
 
 - **Databases and database users** — the account's own, or new ones named
   `<account>_<name>`. Never this server's own databases, MariaDB accounts or
@@ -425,7 +425,7 @@ it into the target account only (GH #1993):
   out. The domain uses the server's defaults for them.
 - **FTP passwords** — an FTP or SFTP subaccount's password comes back only
   into an account the restore created, whose home holds nothing but the
-  archive's data (GH #1993). It is taken only for the account's own
+  archive's data. It is taken only for the account's own
   subaccounts (`<account>_<name>`) that aren't on this server yet. An FTP
   subaccount restored into an account that was already here gets a new
   password, and so does one from a backup made before Jabali kept FTP
@@ -433,7 +433,7 @@ it into the target account only (GH #1993):
   password under **FTP Accounts**. An account created by an earlier attempt
   at the same restore counts as already here.
 - **SSH keys** — restored only into an account the restore created, for the
-  same reason as FTP passwords (GH #1993). Into an account that was already
+  same reason as FTP passwords. Into an account that was already
   here, each key the account doesn't have is listed in the restore report:
   check it, then add it under **SSH Keys**.
 - **Sign-in** — the account's sign-in from the backup (its password) is not

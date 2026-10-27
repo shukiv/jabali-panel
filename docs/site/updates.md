@@ -1,6 +1,6 @@
 # Updates
 
-M29. `/jabali-admin/updates`.
+`/jabali-admin/updates`.
 
 ## What `jabali update` does
 
@@ -15,7 +15,7 @@ M29. `/jabali-admin/updates`.
 
 ## How the UI runs it
 
-ADR-0064. Updates from the panel UI fire as **transient systemd units** (`systemd-run --transient --unit=jabali-update-<timestamp>`). This means:
+Updates from the panel UI fire as **transient systemd units** (`systemd-run --transient --unit=jabali-update-<timestamp>`). This means:
 
 - The update survives the panel restarting itself mid-update (step 7).
 - You can watch the live log from a fresh page load even if the browser disconnected.
@@ -31,9 +31,9 @@ jabali update --force         # run the full cycle even when there is no new rel
 jabali update --from-source   # build on this host instead of downloading the release
 ```
 
-If the update fails, `jabali update` prints a hint pointing at `jabali repair --diagnose` (M33 added the hint after a string of recurring deploy scars where the operator needed to run repair next anyway).
+If the update fails, `jabali update` prints a hint pointing at `jabali repair --diagnose` (after a failed update, repair is usually the next step).
 
-## OS security auto-updates (JAB-353)
+## OS security auto-updates
 
 Separate from `jabali update` (which updates the panel), **OS security
 auto-updates are on by default** via `unattended-upgrades`, so security patches
@@ -45,7 +45,7 @@ OS-update state (pending / applied) alongside the panel version.
 An update run is tracked as a DB row and sealed success/failed when it finishes.
 A run whose status can't be read — the agent is down or too old to answer, or a
 transient unit hangs — is now **backstopped** so it can't spin "running" forever
-in the Tasks indicator (GH #1486): any run older than 2 h is reaped as failed,
+in the Tasks indicator: any run older than 2 h is reaped as failed,
 and a pollable run whose status call errors is reaped once clearly stale.
 
 ## What it does *not* update

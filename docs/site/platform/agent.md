@@ -52,8 +52,8 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 - `mail.catchall.set`
 - `mail.disclaimer.set`
 - `mail.shared_folder.*`
-- `mail.directory.apply` (a mail domain's read-only [directory](../user/email.md#the-domain-directory) address book, ADR-0171)
-- `mailbox.trusted_senders.apply` (a mailbox's [trusted senders](../user/mailboxes.md#trusted-senders), as contact cards in its Stalwart account, GH #2017)
+- `mail.directory.apply` (a mail domain's read-only [directory](../user/email.md#the-domain-directory) address book)
+- `mailbox.trusted_senders.apply` (a mailbox's [trusted senders](../user/mailboxes.md#trusted-senders), as contact cards in its Stalwart account)
 - `mail.mtasts.*`
 
 **DB**
@@ -106,10 +106,10 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 
 - **Two checks on every connection to the main socket:**
   - Socket permissions. `/run/jabali/` is `root:jabali 0750` and the socket is `root:jabali 0660`, so only root and the `jabali` group can connect.
-  - Caller UID (JAB-366, JAB-357). The agent reads the connecting process's UID (`SO_PEERCRED`) and accepts only the UIDs in `-allowed-uids`. install.sh passes the panel user and root. The agent refuses to start when the list is empty or unparsable; only the test flag `-insecure-allow-any-uid` turns the check off. So a service account left in the `jabali` group by mistake still cannot drive the agent.
+  - Caller UID. The agent reads the connecting process's UID (`SO_PEERCRED`) and accepts only the UIDs in `-allowed-uids`. install.sh passes the panel user and root. The agent refuses to start when the list is empty or unparsable; only the test flag `-insecure-allow-any-uid` turns the check off. So a service account left in the `jabali` group by mistake still cannot drive the agent.
 - Only the UIDs in `-admin-uids` may request the root-scoped File Manager. By default this is the `-allowed-uids` list.
-- No other service is a member of the `jabali` group, and a restore never adds one back (JAB-357).
-- The agent has no AppArmor profile. It was removed in M40.3 because an AppArmor 4.x complain-mode bug blocked the agent's MariaDB socket connection. See [AppArmor](../admin/apparmor.md).
+- No other service is a member of the `jabali` group, and a restore never adds one back.
+- The agent has no AppArmor profile. It was removed because an AppArmor 4.x complain-mode bug blocked the agent's MariaDB socket connection. See [AppArmor](../admin/apparmor.md).
 - Each handled request is logged at debug level with `id`, `command` and `ok`.
 
 ## Adding a new handler

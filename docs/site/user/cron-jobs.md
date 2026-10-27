@@ -1,6 +1,6 @@
 # Cron Jobs
 
-`/jabali-panel/cron`. Scheduled commands that run under your account (M8).
+`/jabali-panel/cron`. Scheduled commands that run under your account.
 
 ## Adding a cron job
 

@@ -476,7 +476,7 @@ Keys follow camelCase with the leading prefix `admin` / `user`:
 | `site/admin/login.md` | `adminLogin` | `/docs/admin/login/` |
 | `site/admin/two-factor-challenge.md` | `adminTwoFactorChallenge` | `/docs/admin/two-factor-challenge/` |
 | `site/admin/password-reset-request.md` | `adminPasswordResetRequest` | `/docs/admin/password-reset-request/` |
-| `site/admin/password-reset-reset.md` | `adminPasswordResetReset` | `/docs/admin/password-reset-reset/` |
+| `site/admin/password-reset-confirm.md` | `adminPasswordResetReset` | `/docs/admin/password-reset-confirm/` |
 | `site/admin/home.md` | `adminHome` | `/docs/admin/home/` (alias) |
 
 | Source file | `docsHtml.<key>` | URL |
@@ -487,7 +487,7 @@ Keys follow camelCase with the leading prefix `admin` / `user`:
 | `site/user/login.md` | `userLogin` | `/docs/user/login/` |
 | `site/user/two-factor-challenge.md` | `userTwoFactorChallenge` | `/docs/user/two-factor-challenge/` |
 | `site/user/password-reset-request.md` | `userPasswordResetRequest` | `/docs/user/password-reset-request/` |
-| `site/user/password-reset-reset.md` | `userPasswordResetReset` | `/docs/user/password-reset-reset/` |
+| `site/user/password-reset-confirm.md` | `userPasswordResetReset` | `/docs/user/password-reset-confirm/` |
 | `site/user/domains.md` | `userDomains` | `/docs/user/domains/` |
 | `site/user/dns-records.md` | `userDnsRecords` | `/docs/user/dns-records/` |
 | `site/user/dnssec.md` | `userDnssec` | `/docs/user/dnssec/` |

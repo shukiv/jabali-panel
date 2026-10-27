@@ -27,7 +27,7 @@ func auditRepoFromDB() repository.AuditEventRepository {
 func newAuditCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "Query, verify, and prune the unified audit log (M49 / ADR-0106)",
+		Short: "Query, verify, and prune the unified audit log",
 	}
 	cmd.AddCommand(newAuditQueryCmd(), newAuditVerifyCmd(), newAuditPruneCmd())
 	return cmd
@@ -102,7 +102,7 @@ func newAuditPruneCmd() *cobra.Command {
 	var days int
 	cmd := &cobra.Command{
 		Use:     "prune",
-		Short:   "Delete audit rows older than --days (retention; ADR-0106)",
+		Short:   "Delete audit rows older than --days (retention)",
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)

@@ -1,6 +1,6 @@
 # Applications Framework
 
-16 PHP apps, one wizard, one install pipeline. ADR-0033.
+16 PHP apps, one wizard, one install pipeline.
 
 ## Registry
 
@@ -8,7 +8,7 @@ Every app runs on the account's own PHP-FPM pool. An app that needs a database g
 
 | App | What | Database | Notes |
 |---|---|---|---|
-| WordPress | CMS / blog / shop | MariaDB | Primary citizen (M10). Magic SSO file. Clone supported. |
+| WordPress | CMS / blog / shop | MariaDB | Primary citizen. Magic SSO file. Clone supported. |
 | Drupal | CMS | MariaDB | |
 | Joomla | CMS | MariaDB | |
 | MediaWiki | Wiki | MariaDB | |
@@ -71,7 +71,7 @@ Every app uses the same 6-step pipeline:
 
 ## Python apps — build and status
 
-When a Python app is created, or its `requirements.txt` changes, the panel builds it as the account's user: it creates the app's virtualenv, runs `pip install -r requirements.txt`, and installs the app server (gunicorn for WSGI, uvicorn for ASGI) if `requirements.txt` did not already. A first install of a real project can take several minutes, so the build runs in the background (GH #357). The app shows **building** until it finishes, then **running**, or **failed** with the reason on hover.
+When a Python app is created, or its `requirements.txt` changes, the panel builds it as the account's user: it creates the app's virtualenv, runs `pip install -r requirements.txt`, and installs the app server (gunicorn for WSGI, uvicorn for ASGI) if `requirements.txt` did not already. A first install of a real project can take several minutes, so the build runs in the background. The app shows **building** until it finishes, then **running**, or **failed** with the reason on hover.
 
 - A failed `pip install` shows the packages pip was working on and the last lines of its output. The panel retries it after 15 minutes, or straight away when `requirements.txt` changes.
 - Each pip step stops after 8 minutes. A build that never finishes in that time shows **failed** with `timed out`.
@@ -80,7 +80,7 @@ When a Python app is created, or its `requirements.txt` changes, the panel build
 
 ## Python apps — sic
 
-The Python Apps catalog includes **sic** (GH #2156), a community link
+The Python Apps catalog includes **sic**, a community link
 aggregator in the style of Lobsters or Hacker News, built on Django. Unlike the
 framework entries it installs a complete app: the code of one pinned upstream
 commit, checked against a pinned sha256 before it is unpacked. It needs
@@ -106,15 +106,15 @@ accounts are not affected.
 
 ## Python apps — media directory
 
-A Python app can serve a per-app **media directory straight from nginx** (GH
-#878), parallel to the static-files mapping: `media_url` → `media_root` gets its
+A Python app can serve a per-app **media directory straight from nginx**,
+parallel to the static-files mapping: `media_url` → `media_root` gets its
 own nginx `alias` rule (1-hour cache, vs 30-day for static assets), so
 user-uploaded media is served without going through the WSGI/ASGI worker.
 
 ## Database admin tooling
 
 MariaDB databases open in **phpMyAdmin**; PostgreSQL databases open in
-**Adminer** (6.1.1, with a ported single-sign-on plugin, GH #1405).
+**Adminer** (6.1.1, with a ported single-sign-on plugin).
 See [Databases](./databases.md).
 
 ## CLI

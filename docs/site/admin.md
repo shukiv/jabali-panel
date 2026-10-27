@@ -16,17 +16,17 @@ Lives at `/jabali-admin`. Top-level pages:
 | Security | `/jabali-admin/security` | CrowdSec decisions + blocklists + allowlists + alerts; AppSec WAF; AppArmor profile status; Snuffleupagus PHP hardening; AIDE host-integrity; per-user egress firewall; malware scans; UFW port baseline; CrowdSec test-IP card. |
 | Server Status | `/jabali-admin/server-status` | Errgroup-aggregated live status of all services with 5 s polling; per-service start/stop/restart controls (behind an off-toggle). |
 | Resource Limits | (per-user under Users → Edit) | POSIX quota + cgroup v2 slice + nginx `limit_req` per user. |
-| PHP | `/jabali-admin/php-pools` | Installed PHP versions, per-version FPM tuning, server-wide extension manager (M9.6). |
+| PHP | `/jabali-admin/php-pools` | Installed PHP versions, per-version FPM tuning, server-wide extension manager. |
 | Applications | `/jabali-admin/applications` | App registry (WP + 14 others); per-app version pin and global enable. |
 | Logs | `/jabali-admin/logs` | Tail panel / agent / nginx / Stalwart / Kratos / Bulwark / PowerDNS / CrowdSec. |
-| Audit | `/jabali-admin/audit` | Append-only audit log (every privileged mutation; ADR-0106). |
+| Audit | `/jabali-admin/audit` | Append-only audit log (every privileged mutation). |
 | Server Settings | `/jabali-admin/settings` | Panel hostname; primary mail domain; default IP pool; DB admin sections; notifications channels; AppSec policy; updates source. |
 | Notifications | `/jabali-admin/notifications/{channels,events,routing,test}` | Configure channels (in-app, email, Slack, Telegram, Discord, ntfy, Web Push, SMS, webhook); per-event routing (category rail); test send; owns an **Owner** column for tenant-owned channels. |
 | Updates | `/jabali-admin/updates` | Run `jabali update` from the UI as a transient systemd unit (survives panel restart mid-update); Update Center reports OS security-update state. |
 | Support | `/jabali-admin/support` | Generate an encrypted diag bundle (enclosed.cc), `mailto:` ticket. |
 | Migrations | `/jabali-admin/migrations` | Ingest cPanel / DirectAdmin / Hestia / WHM archives, track restore progress. |
 | Backups | `/jabali-admin/backups` | Destinations (local / sftp / s3 / b2 / azure / gcs / rest), schedules, retention, restore; Full Server container backup + restore-from-upload. |
-| Automation | `/jabali-admin/automation` | Scoped API tokens for the opt-in Automation API (read-only endpoints on :443 for firewalled billing hosts, GH #1161). |
+| Automation | `/jabali-admin/automation` | Scoped API tokens for the opt-in Automation API (read-only endpoints on :443 for firewalled billing hosts). |
 | Terminal | `/jabali-admin/terminal` | Web terminal (root). |
 
 ## Sidebar groups
@@ -41,6 +41,6 @@ The sidebar groups pages by activity:
 
 ## What is intentionally *not* here
 
-- **OIDC / Hydra** — rolled back in M16. The panel does not act as an OIDC provider.
-- **ModSecurity** — replaced by CrowdSec AppSec (M27).
-- **filebrowser** — replaced by the in-panel AntD File Manager (M11).
+- **OIDC / Hydra** — rolled back. The panel does not act as an OIDC provider.
+- **ModSecurity** — replaced by CrowdSec AppSec.
+- **filebrowser** — replaced by the in-panel AntD File Manager.

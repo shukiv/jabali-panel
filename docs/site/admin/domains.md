@@ -42,7 +42,7 @@ Convergence latency is typically under 60 seconds.
 
 ## Ownership proof
 
-A domain a tenant adds stays **pending** until its owner proves control of the name with a TXT record (`_jabali-challenge.<name>` = `jabali-verify=<token>`) at the domain's current DNS provider (GH #1816, ADR-0170). A pending domain has no published zone, no recursor forward, no mail, no trusted certificate and no MTA-STS policy, and every request for its real name gets no response (nginx 444). Only its preview URL serves the site, once the owner turns Preview URL on.
+A domain a tenant adds stays **pending** until its owner proves control of the name with a TXT record (`_jabali-challenge.<name>` = `jabali-verify=<token>`) at the domain's current DNS provider. A pending domain has no published zone, no recursor forward, no mail, no trusted certificate and no MTA-STS policy, and every request for its real name gets no response (nginx 444). Only its preview URL serves the site, once the owner turns Preview URL on.
 
 A name is **verified at once** when:
 
@@ -72,7 +72,7 @@ jabali domain enable  <name|id>
 jabali domain disable <name|id>
 jabali domain delete  <name|id>
 
-# Ownership proof (GH #1816)
+# Ownership proof
 jabali domain ownership status  <name|id>   # state and the TXT record
 jabali domain ownership verify  <name|id>   # check now
 jabali domain ownership approve <name|id>   # audited

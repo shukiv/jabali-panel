@@ -249,7 +249,7 @@ func newMailGroupCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&displayName, "display-name", "", "display name (the From name)")
 	cmd.Flags().StringVar(&description, "description", "", "description")
 	cmd.Flags().StringVar(&kind, "kind", "resource", "group kind: resource | distribution")
-	cmd.Flags().BoolVar(&internalOnly, "internal-only", false, "reject mail from senders outside the group's domain (GH #348)")
+	cmd.Flags().BoolVar(&internalOnly, "internal-only", false, "reject mail from senders outside the group's domain")
 	return cmd
 }
 

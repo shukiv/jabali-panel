@@ -20,7 +20,7 @@ import (
 func newUserSSHForwardingCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ssh-forwarding <email|username|user-id> <on|off>",
-		Short: "Opt a hosting user into/out of SSH TCP forwarding for VS Code Remote-SSH (GH #1229)",
+		Short: "Opt a hosting user into/out of SSH TCP forwarding for VS Code Remote-SSH",
 		Long: `Opt a hosting user into or out of SSH TCP forwarding.
 
 Default is OFF — SSH-enabled users cannot forward (JAB-352 lockdown), which blocks

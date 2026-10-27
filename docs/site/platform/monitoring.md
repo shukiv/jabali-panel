@@ -57,4 +57,4 @@ Structured JSON in stdout from panel-api and agent; `jq` away.
 
 - **APM / tracing** — not yet. OpenTelemetry support is on the roadmap; the panel + agent currently emit log lines but not trace spans.
 - **Continuous profiling** — not shipped.
-- **eBPF observability** — not shipped. The Tetragon tripwires were removed in M39.
+- **eBPF observability** — not shipped. The Tetragon tripwires were removed.

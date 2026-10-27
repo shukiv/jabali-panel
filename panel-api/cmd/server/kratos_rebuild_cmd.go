@@ -38,7 +38,7 @@ func newAdminRebuildKratosCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "rebuild-kratos",
-		Short: "Recreate Kratos identities from panel users (DB-loss recovery, ADR-0034)",
+		Short: "Recreate Kratos identities from panel users (DB-loss recovery)",
 		Long: `Rebuilds every Kratos identity from the panel users table. For each row
 including those with NULL kratos_identity_id (disaster recovery):
 

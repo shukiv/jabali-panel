@@ -96,8 +96,8 @@ Start with the recommendation, then raise specific values only when you hit an e
 
 Your selected PHP version now also applies on the **command line** — an
 interactive SSH session, Composer, wp-cli, and your cron jobs all run your
-pinned PHP version (and its enabled extensions), not the server default
-(ADR-0126). Run `php -v` over SSH to confirm; Composer works because it
+pinned PHP version (and its enabled extensions), not the server default.
+Run `php -v` over SSH to confirm; Composer works because it
 runs through that same `php`. If `php -m` is missing an extension, enable
 it for your PHP version (an admin manages extensions in PHP Manager), then
 re-check.

@@ -28,7 +28,7 @@ Before this release, backup crons and the tenant backup window ran in UTC. After
 
 ## Database
 
-- **Root password** — rotate the MariaDB root password ([M46](../databases.md#admin-db-ops-m46)). Stored encrypted in `db_admin_secrets`.
+- **Root password** — rotate the MariaDB root password (see [Admin DB ops](../databases.md#admin-db-ops)). Stored encrypted in `db_admin_secrets`.
 - **Curated tunables** — apply changes to the whitelisted set of MariaDB / PostgreSQL config keys. Reconciler-converged through `db_tuning_reconcile.go`.
 - **Maintenance** — schedule `OPTIMIZE` / `ANALYZE` / `CHECK` / `REPAIR` against selected databases.
 - **Processlist + Kill** — live processlist with one-click `KILL` against a query.
@@ -37,7 +37,7 @@ See [Database Tuning](./database-tuning.md) for the per-key reference.
 
 ## Nginx
 
-Server-wide nginx tunables (M55). Applied at `http{}` scope so they default for every site; individual vhosts may still override per-directive. Every change is validated with `nginx -t` and rolled back automatically if the test fails.
+Server-wide nginx tunables. Applied at `http{}` scope so they default for every site; individual vhosts may still override per-directive. Every change is validated with `nginx -t` and rolled back automatically if the test fails.
 
 - **Max upload size** (`client_max_body_size`) — largest request body nginx accepts before returning 413. Default `512m`, the same as the PHP pool's `post_max_size`. Raise it for big-upload apps (ownCloud, Nextcloud); this is also what lets reverse-proxied apps accept uploads.
 - **Show nginx version** (`server_tokens`) — off by default (hides the version from responses and error pages).
@@ -55,10 +55,10 @@ Tunables persist to `server_settings` and are applied by the agent's `nginx.tuna
 
 - **Mail hostname** — the name mail clients and webmail use, `mail.<panel-hostname>` by default. See [Mail Hostname](./mail-hostname.md).
 - **Recovery sender** — the `From:` for Kratos password-recovery email.
-- **Spam filter** — the scores at which incoming mail goes to Junk, is rejected or is discarded (defaults 5 / 15 / 20; reject and discard can be off). See [Spam filter](../mail.md#spam-filter-gh-2017).
+- **Spam filter** — the scores at which incoming mail goes to Junk, is rejected or is discarded (defaults 5 / 15 / 20; reject and discard can be off). See [Spam filter](../mail.md#spam-filter).
 - **Outbound throttles** — defaults (see [Mail Throttles](./mail-throttles.md)).
 - **MTA-STS policy mode** — `enforce` or `testing`.
-- **Stalwart expression filters** — admin-defined routing / drop / quarantine expressions (M47 Wave 3v2).
+- **Stalwart expression filters** — admin-defined routing / drop / quarantine expressions.
 
 ## Security
 

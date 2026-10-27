@@ -37,7 +37,7 @@ var sharedResourceRightSet = map[string]bool{"read": true, "readwrite": true, "a
 func newSharedResourceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shared-resource",
-		Short: "Manage shared mail resources — calendars, contacts, files (M52)",
+		Short: "Manage shared mail resources — calendars, contacts, files",
 	}
 	cmd.AddCommand(
 		newSharedResourceListCmd(),

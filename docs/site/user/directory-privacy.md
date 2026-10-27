@@ -1,6 +1,6 @@
 # Directory Privacy
 
-Domains → Edit → **Security** tab → **Directory Privacy**. Per-subdirectory HTTP Basic Auth (M50, the cPanel "Directory Privacy" equivalent).
+Domains → Edit → **Security** tab → **Directory Privacy**. Per-subdirectory HTTP Basic Auth (the cPanel "Directory Privacy" equivalent).
 
 ## What it does
 

@@ -27,7 +27,7 @@ import (
 func newDomainEmailDKIMRotateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "email-dkim-rotate <domain-name-or-id>",
-		Short: "Rotate the domain's DKIM keypair (ADR-0043; operator-driven, not automatic)",
+		Short: "Rotate the domain's DKIM keypair (operator-driven, not automatic)",
 		Args:  cobra.ExactArgs(1),
 		Long: `Generates a fresh Ed25519 DKIM keypair for the domain, snapshots
 the old private key to /etc/jabali-panel/dkim/<domain>.key.old,

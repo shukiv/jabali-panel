@@ -23,7 +23,7 @@ import (
 func newUfwCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ufw",
-		Short: "UFW utilities (M43 — port baseline only; IP decisions live in CrowdSec)",
+		Short: "UFW utilities (port baseline only; IP decisions live in CrowdSec)",
 	}
 	cmd.AddCommand(
 		newUfwMigrateIPBansCmd(),
@@ -64,7 +64,7 @@ func newUfwMigrateIPBansCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "migrate-ip-bans",
-		Short: "Migrate UFW `from <IP>` deny rules to CrowdSec decisions (M43 Step 4)",
+		Short: "Migrate UFW `from <IP>` deny rules to CrowdSec decisions",
 		Long: `Walks ufw status numbered, finds every rule with a non-default
 ` + "`from`" + ` address, and creates an equivalent CrowdSec decision via
 ` + "`cscli decisions add`" + ` with reason="ufw-migrated" and duration=90d.

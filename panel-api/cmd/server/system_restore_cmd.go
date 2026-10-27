@@ -53,7 +53,7 @@ func newSystemRestoreCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "restore",
-		Short: "Restore a system backup onto this host (CLI; ADR-0080)",
+		Short: "Restore a system backup onto this host (CLI)",
 		Long: `Restore a system backup onto a clean OS install. The bare-metal
 recovery flow: fresh OS → bash <(install.sh --restore-from=...) →
 jabali system restore --snapshot=latest --force.
@@ -198,7 +198,7 @@ the running panel.`,
 	cmd.Flags().BoolVar(&apply, "apply", true, "after staging, apply selected stages onto live host (default true)")
 	cmd.Flags().BoolVar(&force, "force", false, "required — restore overwrites the running panel")
 	cmd.Flags().BoolVar(&interactive, "interactive", false, "force interactive prompts even when --remote-url is set")
-	cmd.Flags().StringVar(&fromTar, "from-tar", "", "restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo (GH #1408). Applies panel_db + panel_config + tls by default")
+	cmd.Flags().StringVar(&fromTar, "from-tar", "", "restore the SYSTEM leg from a downloaded Full Server container (.tar) instead of a restic repo. Applies panel_db + panel_config + tls by default")
 	return cmd
 }
 

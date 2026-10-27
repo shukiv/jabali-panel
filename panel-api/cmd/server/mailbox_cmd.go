@@ -22,7 +22,7 @@ import (
 func newMailboxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mailbox",
-		Short: "Manage mailboxes (M6 Email via Stalwart)",
+		Short: "Manage mailboxes (email via Stalwart)",
 		Long: `Per-domain mailbox CRUD + password rotation. Requires email to
 be enabled on the target domain — use "jabali domain email-enable" first.
 
@@ -149,8 +149,8 @@ and cannot be recovered.`,
 	cmd.Flags().StringVar(&localPart, "local", "", "Local part, e.g. \"alice\" (required)")
 	cmd.Flags().StringVar(&password, "password", "", "Explicit password (omit to auto-generate)")
 	cmd.Flags().Uint64Var(&quotaMB, "quota-mb", 0, "Disk quota in MiB (default 1024)")
-	cmd.Flags().StringVar(&displayName, "display-name", "", "Human-readable display name (GH #197)")
-	cmd.Flags().BoolVar(&sendOnly, "send-only", false, "SMTP-submission only — authenticates to send but never receives (GH #371)")
+	cmd.Flags().StringVar(&displayName, "display-name", "", "Human-readable display name")
+	cmd.Flags().BoolVar(&sendOnly, "send-only", false, "SMTP-submission only — authenticates to send but never receives")
 	_ = cmd.MarkFlagRequired("domain")
 	_ = cmd.MarkFlagRequired("local")
 	return cmd

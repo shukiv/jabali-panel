@@ -22,7 +22,7 @@ Filters: by role, by package, by suspension state, by free-text search across em
 ## Actions per row
 
 - **Edit** — opens [Edit User](./users-edit.md).
-- **Reset password** — generates a new password (shown once) and sets it for the panel login, the account's SSH and SFTP, and the stored password, the same way as a password set on **Edit**. If the server account can't be updated, the new password still works for the panel, and the dialog says SSH and SFTP keep the old one; reset again to retry (GH #2058).
+- **Reset password** — generates a new password (shown once) and sets it for the panel login, the account's SSH and SFTP, and the stored password, the same way as a password set on **Edit**. If the server account can't be updated, the new password still works for the panel, and the dialog says SSH and SFTP keep the old one; reset again to retry.
 - **Reset 2FA** — strips TOTP and recovery codes; the user must re-enrol on next login.
 - **Suspend** — sets `users.is_suspended=1`; the reconciler returns a "suspended" page on every vhost owned by the user. The user's mailboxes stop signing in: IMAP, POP3, SMTP submission, JMAP and webmail. Mail to them is still accepted and stored, so nothing is lost, and they can sign in again as soon as the user is unsuspended. Suspending and unsuspending both clear Stalwart's webmail login cache, so the change reaches webmail at once.
 - **Delete** — destructive; removes domains, databases, mailboxes, OS account, `/home/<user>`, and all related rows.
@@ -43,7 +43,7 @@ jabali user 2fa-reset <email>
 jabali user delete <email>
 ```
 
-Direct-DB path (M20-safe); bypasses the HTTP layer, runs from the panel host.
+Direct-DB path; bypasses the HTTP layer, runs from the panel host.
 
 Deleting a user now removes its Kratos identity as well as the DB row and OS account, so the username and email free up immediately and the same user can be recreated. To clear an identity orphaned by an older build (a delete that left the identity behind, so recreate failed with "username taken"):
 

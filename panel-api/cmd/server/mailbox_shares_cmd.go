@@ -39,7 +39,7 @@ import (
 func newMailboxSharesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shares",
-		Short: "Manage shared mailbox folders (M6.5)",
+		Short: "Manage shared mailbox folders",
 	}
 	cmd.AddCommand(
 		newMailboxSharesListCmd(),

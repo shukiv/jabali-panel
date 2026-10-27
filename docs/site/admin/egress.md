@@ -1,6 +1,6 @@
 # Per-User Egress Firewall
 
-Security → Egress. nftables + cgroup v2 vmap rules that restrict each user's outbound traffic. M34, ADR-0084.
+Security → Egress. nftables + cgroup v2 vmap rules that restrict each user's outbound traffic.
 
 ## Why per-user egress matters
 
@@ -58,7 +58,7 @@ A **dead letter** tag on an alert under Notifications → History is about deliv
 - nftables rules are stateless at the layer the panel manages; established connections are not interrupted when a rule changes.
 - A user's per-user PHP-FPM pool inherits the slice automatically — no extra wiring per pool.
 - The egress firewall does not interpose between the user and inbound traffic; inbound firewalling is [UFW](./ufw-baseline.md) plus [CrowdSec Decisions](./crowdsec-decisions.md).
-- An app's loopback port (Python app, Docker app, reverse-proxy domain) can be opened only by the account that owns the app and by system users such as nginx. Other accounts are dropped, whatever their egress state; see [Security](../security.md#per-user-egress-firewall-m34).
+- An app's loopback port (Python app, Docker app, reverse-proxy domain) can be opened only by the account that owns the app and by system users such as nginx. Other accounts are dropped, whatever their egress state; see [Security](../security.md#per-user-egress-firewall).
 
 ## CLI
 

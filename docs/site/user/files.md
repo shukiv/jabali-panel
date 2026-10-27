@@ -1,6 +1,6 @@
 # Files
 
-`/jabali-panel/files`. The in-panel file manager (M11, ADR-0030).
+`/jabali-panel/files`. The in-panel file manager.
 
 ## What you can do
 
@@ -24,7 +24,7 @@
 
 ## How it works
 
-File operations route through the panel API, which calls the agent over Unix socket. The agent enforces the per-user UID constraint at the syscall layer (it never opens files outside `/home/<your-username>`). There is no separate file-browser daemon; the previous `filebrowser` was retired in M11.
+File operations route through the panel API, which calls the agent over Unix socket. The agent enforces the per-user UID constraint at the syscall layer (it never opens files outside `/home/<your-username>`). There is no separate file-browser daemon; the previous `filebrowser` was retired.
 
 ## Performance
 

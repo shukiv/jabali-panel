@@ -1,18 +1,18 @@
 # File Manager
 
-`/jabali-panel/files`. AntD-native (M11, ADR-0030). The earlier `filebrowser` daemon was decommissioned 2026-04-19.
+`/jabali-panel/files`. AntD-native. The earlier `filebrowser` daemon was decommissioned 2026-04-19.
 
 ## What you can do
 
 - Browse: navigate inside your own home directory (`/home/<you>`). Symlinks resolved, no escaping above your root.
-- Upload: drag-and-drop multiple files; **chunked uploads with a cancel button and a live speed readout** (GH #1410). Direct upload works even over a bare IP (no domain configured yet).
+- Upload: drag-and-drop multiple files; **chunked uploads with a cancel button and a live speed readout**. Direct upload works even over a bare IP (no domain configured yet).
 - Download: single file or selected files (zipped server-side).
 - Create / rename / delete: files and directories.
 - Edit text files in-browser (Monaco editor; syntax highlighting for common languages).
 - View images, archives (list contents), PDFs.
 - Set permissions: octal (`755`, `644`, etc.) or per-bit checkboxes.
-- Compress / extract: tar.gz, zip, 7z — with **live progress for extract, copy, and move** (GH #1392).
-- Copy / move (Paste): runs **async with a real byte-progress bar** on large trees (GH #1392) instead of blocking the request.
+- Compress / extract: tar.gz, zip, 7z — with **live progress for extract, copy, and move**.
+- Copy / move (Paste): runs **async with a real byte-progress bar** on large trees instead of blocking the request.
 
 ## What you can't do
 
@@ -21,15 +21,15 @@
 - Run arbitrary shell commands from the file manager (use SSH / SFTP for that).
 - Execute uploaded scripts directly (they execute only when served by nginx → PHP-FPM; the file manager doesn't shell out).
 
-## Admin File Manager (GH #1184)
+## Admin File Manager
 
 Admins get the **same** File Manager UI (layout, functions, design) as tenants,
 but scoped to the **whole filesystem** rather than one home tree. It is:
 
 - **Opt-in** and **deny-listed** — sensitive paths are blocked, and the write
-  allow-list is enforced **on the API**, not just in the UI (JAB-367).
-- Gated behind **step-up (recent-auth / MFA) re-authentication** before it opens
-  (JAB-380), so a stolen session alone can't reach the whole filesystem.
+  allow-list is enforced **on the API**, not just in the UI.
+- Gated behind **step-up (recent-auth / MFA) re-authentication** before it opens,
+so a stolen session alone can't reach the whole filesystem.
 
 ## Implementation note
 

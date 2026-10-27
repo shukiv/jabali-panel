@@ -390,7 +390,7 @@ func newDomainSkipAutoSANCmd() *cobra.Command {
 	var enable, disable bool
 	cmd := &cobra.Command{
 		Use:     "skip-auto-san <domain-name|domain-id>",
-		Short:   "Opt a domain in/out of the panel-cert auto-SAN (M50)",
+		Short:   "Opt a domain in/out of the panel-cert auto-SAN",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -420,7 +420,7 @@ func newDomainMTAStsCmd() *cobra.Command {
 	var enable, disable bool
 	cmd := &cobra.Command{
 		Use:     "mta-sts <domain-name|domain-id>",
-		Short:   "Enable/disable MTA-STS for a mail domain (ADR-0109)",
+		Short:   "Enable/disable MTA-STS for a mail domain",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {

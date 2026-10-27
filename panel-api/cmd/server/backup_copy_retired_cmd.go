@@ -19,7 +19,7 @@ import (
 func newBackupCopyRetiredCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "copy",
-		Short: "[RETIRED] superseded by per-destination model (ADR-0080)",
+		Short: "[RETIRED] superseded by per-destination model",
 		Long: `The 'backup copy' namespace was retired in M30.2 (ADR-0080).
 
 Original design (M30.1):

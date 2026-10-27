@@ -44,7 +44,7 @@ func newMigrateImapCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "imap",
-		Short: "Migrate a remote IMAP mailbox into a jabali mailbox (GH #390/#374)",
+		Short: "Migrate a remote IMAP mailbox into a jabali mailbox",
 		Long: `Migrate mail over IMAP from Google Workspace / Microsoft 365 (or any
 IMAP server) into an existing jabali mailbox. App-password auth.
 

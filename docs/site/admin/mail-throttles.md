@@ -1,6 +1,6 @@
 # Mail Throttles
 
-`/jabali-admin/mail/throttles`. Caps on how much mail a sender, a domain or the whole server can send (M47 Wave 3). Each cap becomes a Stalwart outbound throttle (`MtaOutboundThrottle`).
+`/jabali-admin/mail/throttles`. Caps on how much mail a sender, a domain or the whole server can send. Each cap becomes a Stalwart outbound throttle (`MtaOutboundThrottle`).
 
 ## Why throttle outbound
 

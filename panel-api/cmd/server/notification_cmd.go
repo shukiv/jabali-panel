@@ -41,7 +41,7 @@ func newNotificationChannelsCmd() *cobra.Command {
 	cmd.AddCommand(newNotificationChannelCreateCmd(), newNotificationChannelDeleteCmd(), newNotificationChannelTestCmd())
 	cmd.AddCommand(&cobra.Command{
 		Use:     "seal-secrets",
-		Short:   "Encrypt any plaintext channel secrets at rest (JAB-171 one-time backfill)",
+		Short:   "Encrypt any plaintext channel secrets at rest (one-time backfill)",
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key := ssoKeyForCLI()

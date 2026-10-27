@@ -1,6 +1,6 @@
 # UFW — Port Baseline
 
-Security → UFW. The simple port-open / port-close baseline. M43 (ADR-0089) reduced UFW to this role; IP-trust decisions live in [CrowdSec Decisions](./crowdsec-decisions.md).
+Security → UFW. The simple port-open / port-close baseline. UFW has only this role; IP-trust decisions live in [CrowdSec Decisions](./crowdsec-decisions.md).
 
 ## Default rules
 
@@ -25,7 +25,7 @@ Default policy: `deny incoming`, `allow outgoing` (outbound per-user is constrai
 - The current ruleset rendered as a sortable table.
 - Per-row **Disable** to take a port closed.
 - **Add port** form for non-standard ports (additional SSH, alternate web port).
-- A warning panel listing any rule of the form `from <ip>` — the M43 migration replaced these with CrowdSec decisions; the warning surfaces any that escaped migration.
+- A warning panel listing any rule of the form `from <ip>` — the move of IP decisions to CrowdSec replaced these with CrowdSec decisions; the warning surfaces any that escaped migration.
 
 ## Migrating from old `ufw deny`
 

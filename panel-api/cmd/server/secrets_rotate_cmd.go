@@ -174,7 +174,7 @@ func sqlSingleQuote(v string) string {
 func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "secrets",
-		Short: "Rotate panel secrets after remediation (JAB-357; operator ceremony, run as root)",
+		Short: "Rotate panel secrets after remediation (operator ceremony, run as root)",
 	}
 	cmd.AddCommand(newSecretsRotateCmd())
 	return cmd
@@ -507,7 +507,7 @@ func newRotateJWTCmd() *cobra.Command {
 	var dryRun bool
 	cmd := &cobra.Command{
 		Use:     "jwt",
-		Short:   "Rotate JWT_SECRET in panel.env (vestigial post-M20; safe near-noop)",
+		Short:   "Rotate JWT_SECRET in panel.env (vestigial since the move to Kratos; safe near-noop)",
 		Args:    cobra.NoArgs,
 		PreRunE: rotateAuditPreRun,
 		RunE: func(cmd *cobra.Command, _ []string) error {

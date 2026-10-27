@@ -1,6 +1,6 @@
 # Cron Jobs
 
-M8. systemd-user timers + a command allowlist.
+systemd-user timers + a command allowlist.
 
 ## Model
 
@@ -8,7 +8,7 @@ A **Cron Job** is:
 
 - 5-field cron schedule (`min hour day month dow`).
 - An owner user (must have a Linux account).
-- A command from the **allowlist** (`php`, `wp`, `python`, `node`, plus a curated set per-app), or an **ordered sequence** of `wp` / `php` commands run one after another in a single job (GH #1435, #1437).
+- A command from the **allowlist** (`php`, `wp`, `python`, `node`, plus a curated set per-app), or an **ordered sequence** of `wp` / `php` commands run one after another in a single job.
 - An optional name (display label).
 
 Internally each cron row becomes:
@@ -28,15 +28,15 @@ systemd-user timers give:
 - `RandomizedDelaySec=` — natural jitter without operators having to add `sleep $RANDOM`.
 - No per-user `crontab -e` shell access (we don't grant interactive shell to panel users).
 
-A tenant job's output goes to the journal like any unit's. **Run now** and the job's log read it as root, limited to the job owner's entries by the journal's `_UID` field, so they work whether the journal is stored persistently or not. Before the November 2026 release they read it with `journalctl --user` run as the tenant. That sees only the tenant's own journal file, and journald keeps one per user only when the journal is stored persistently. On a server with a volatile journal (`Storage=volatile`, or `Storage=auto` with no `/var/log/journal`), Run now showed "Exit code 0" with no output and the job's log was empty, although the job had run (GH #2120).
+A tenant job's output goes to the journal like any unit's. **Run now** and the job's log read it as root, limited to the job owner's entries by the journal's `_UID` field, so they work whether the journal is stored persistently or not. Before the November 2026 release they read it with `journalctl --user` run as the tenant. That sees only the tenant's own journal file, and journald keeps one per user only when the journal is stored persistently. On a server with a volatile journal (`Storage=volatile`, or `Storage=auto` with no `/var/log/journal`), Run now showed "Exit code 0" with no output and the job's log was empty, although the job had run.
 
-A tenant job's unit also sets `SyslogIdentifier=jabali-cron-<id>`, and Run now and the log match on it, again limited to the owner's `_UID`. journald logs the last line a job writes without a trailing newline only when the job's output stream closes, after the job has exited. It can then no longer tie the line to the unit through the writer's cgroup, and it takes the unit name a stream announces only from root, so for a tenant job that line had no `_SYSTEMD_USER_UNIT`. Before the November 2026 release, a script whose output has no final newline (`echo "done<br>";`) showed nothing in Run now or the log, on any journal (GH #2120). A root job's last line keeps its unit field, so root jobs never had this gap. The reconciler adds the identifier to existing units within a minute of the update; a run logged before that keeps its missing line.
+A tenant job's unit also sets `SyslogIdentifier=jabali-cron-<id>`, and Run now and the log match on it, again limited to the owner's `_UID`. journald logs the last line a job writes without a trailing newline only when the job's output stream closes, after the job has exited. It can then no longer tie the line to the unit through the writer's cgroup, and it takes the unit name a stream announces only from root, so for a tenant job that line had no `_SYSTEMD_USER_UNIT`. Before the November 2026 release, a script whose output has no final newline (`echo "done<br>";`) showed nothing in Run now or the log, on any journal. A root job's last line keeps its unit field, so root jobs never had this gap. The reconciler adds the identifier to existing units within a minute of the update; a run logged before that keeps its missing line.
 
 ## Command allowlist
 
-Only commands on a fixed allowlist can be scheduled. The allowlist lives in the shared validator (`/internal/cronvalidate/`) used by the REST API, the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md) and the agent, which checks every command again before it installs or runs it. There is no setting to extend it. Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home (GH #1435), and an **ordered sequence** of `wp`/`php` steps in one job (GH #1437).
+Only commands on a fixed allowlist can be scheduled. The allowlist lives in the shared validator (`/internal/cronvalidate/`) used by the REST API, the CLI (`Cron Job Intake` — the single ingest path, per CONTEXT.md) and the agent, which checks every command again before it installs or runs it. There is no setting to extend it. Alongside `php` and `wp`, the validator accepts **`python` and `node`** scripts located under the owner's home, and an **ordered sequence** of `wp`/`php` steps in one job.
 
-**Shell scripts follow the hosting package's SSH access** (GH #2290). A tenant job may run the account's own `.sh` script (`bash <script.sh> [args]`, `sh <script.sh> [args]`, or the script's absolute path alone, which runs with `bash`) only when the account's package has SSH enabled. The script must be an absolute path in one of the account's docroots or under its home, and no option may come before it, so `bash -c`, `-s`, `--rcfile` and `--init-file` are refused. A tenant job runs inside the account's SSH sandbox (`jabali-ssh-shell --exec`, GH #1458), so a script can do nothing the account's SSH shell can't. Without SSH a script would be a way around the allowlist, so the panel refuses it with `400 validation_failed`, code `shell_needs_ssh`. An account with no package, or whose package can't be read, is treated as having no SSH.
+**Shell scripts follow the hosting package's SSH access**. A tenant job may run the account's own `.sh` script (`bash <script.sh> [args]`, `sh <script.sh> [args]`, or the script's absolute path alone, which runs with `bash`) only when the account's package has SSH enabled. The script must be an absolute path in one of the account's docroots or under its home, and no option may come before it, so `bash -c`, `-s`, `--rcfile` and `--init-file` are refused. A tenant job runs inside the account's SSH sandbox (`jabali-ssh-shell --exec`), so a script can do nothing the account's SSH shell can't. Without SSH a script would be a way around the allowlist, so the panel refuses it with `400 validation_failed`, code `shell_needs_ssh`. An account with no package, or whose package can't be read, is treated as having no SSH.
 
 Root jobs keep the closed list: a root job never runs a shell script, whatever the admin's package allows. For an arbitrary command as root, use root's own crontab over SSH.
 
@@ -44,7 +44,7 @@ The panel tells the agent on each `cron.apply` and `cron.run_now` whether the ac
 
 ## Admin view
 
-**Admin → Cron Jobs** lists every tenant's jobs. From there an admin can create a job under any tenant (or as `root`), and toggle, run, view the log of, edit, or delete any job. Editing changes only the name, command and schedule. The owner and the run-as target stay fixed; to move a job to another tenant, delete it and create it again. An admin's edit is checked exactly like the tenant's own: the command must stay inside the **job owner's** directories, not the admin's (GH #1686).
+**Admin → Cron Jobs** lists every tenant's jobs. From there an admin can create a job under any tenant (or as `root`), and toggle, run, view the log of, edit, or delete any job. Editing changes only the name, command and schedule. The owner and the run-as target stay fixed; to move a job to another tenant, delete it and create it again. An admin's edit is checked exactly like the tenant's own: the command must stay inside the **job owner's** directories, not the admin's.
 
 A `root` job is always owned by the admin who creates it. The API refuses `run_as_root` combined with another account's `user_id` (`422 run_as_root_owner_mismatch`), because a root job's command is checked against its owner's directories. A root job whose owner is not an admin, which only a raw API call could create before this check, can no longer be edited or toggled (`422 root_cron_owner_not_admin`). Delete it and create it again as an admin. Blocking edits does not stop such a job: its system timer keeps running until the job is deleted. To find such jobs, including ones whose owner no longer exists: `SELECT c.id, c.user_id FROM cron_jobs c LEFT JOIN users u ON u.id = c.user_id WHERE c.run_as_root = 1 AND (u.id IS NULL OR u.is_admin = 0);`
 
@@ -52,7 +52,7 @@ A root job runs as root through its own system unit, `jabali-cron-<id>.service` 
 
 ## System jobs
 
-**Admin → Cron Jobs → System jobs** lists the scheduled jobs Jabali itself installs on the server, apart from tenant jobs (GH #1686). The tab can be linked directly: `/jabali-admin/cron?tab=system`.
+**Admin → Cron Jobs → System jobs** lists the scheduled jobs Jabali itself installs on the server, apart from tenant jobs. The tab can be linked directly: `/jabali-admin/cron?tab=system`.
 
 Each row shows what the job does, its schedule, its status, when it last ran and whether that run succeeded, and when it runs next. The status is one of these:
 
@@ -91,7 +91,7 @@ All three endpoints are admin-only.
 
 ## CLI
 
-Run these as root on the panel host: `jabali` is the server's administration command. A hosting account that runs it gets an error saying it must run as root, and manages its own cron jobs under **Cron Jobs** in the panel instead (GH #2093). `jabali cron list` names each job's account in its `USER` column: the username, or the email of an admin (`--json` keeps `user_id`). `--user` takes a user id, email or username.
+Run these as root on the panel host: `jabali` is the server's administration command. A hosting account that runs it gets an error saying it must run as root, and manages its own cron jobs under **Cron Jobs** in the panel instead. `jabali cron list` names each job's account in its `USER` column: the username, or the email of an admin (`--json` keeps `user_id`). `--user` takes a user id, email or username.
 
 ```bash
 jabali cron list --user <id>

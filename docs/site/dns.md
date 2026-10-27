@@ -5,11 +5,11 @@ Jabali ships **two** PowerDNS processes:
 - **pdns-server** (authoritative) — answers for hosted zones, MariaDB backend, listens on the server's public IPs `:53`.
 - **pdns-recursor** — handles local `.` recursion for the server itself, listens on loopback `127.0.0.1:53`.
 
-Split-port setup (ADR-0047): the recursor binds the loopback so local processes (the panel, certbot, Stalwart, etc.) can resolve external names without going through an upstream resolver, while the authoritative binds public IPs so the world can query hosted zones.
+Split-port setup: the recursor binds the loopback so local processes (the panel, certbot, Stalwart, etc.) can resolve external names without going through an upstream resolver, while the authoritative binds public IPs so the world can query hosted zones.
 
-DNS is an optional module (the DNS module in Server Settings, `server_settings.dns_enabled`). With it off, the panel still keeps each domain's zone records in its database, but it publishes nothing: no zone push to PowerDNS and no recursor forwarders. Turning the module on installs PowerDNS, and the panel publishes every zone once PowerDNS is up. While the module is off, `jabali update` masks `pdns` and `pdns-recursor` so they don't show as failed; turning it on, or **Retry**, unmasks them before the install starts them (GH #2101). Leave it off when your domains' DNS is hosted elsewhere (a registrar, Cloudflare, another provider).
+DNS is an optional module (the DNS module in Server Settings, `server_settings.dns_enabled`). With it off, the panel still keeps each domain's zone records in its database, but it publishes nothing: no zone push to PowerDNS and no recursor forwarders. Turning the module on installs PowerDNS, and the panel publishes every zone once PowerDNS is up. While the module is off, `jabali update` masks `pdns` and `pdns-recursor` so they don't show as failed; turning it on, or **Retry**, unmasks them before the install starts them. Leave it off when your domains' DNS is hosted elsewhere (a registrar, Cloudflare, another provider).
 
-The mail module needs DNS: its install stops without the server's own zone. On the Modules card, Mail can be turned on only once DNS is on and shows **active**; until then the card says why (GH #2056). If a module's install fails, the card shows the reason and the path of its install log under the module, and **Retry** runs the install again. **status unknown** means the panel got no status for that module from its agent; it doesn't mean the module is missing, so there's no Retry. Reload the page in a moment. If the card can't read the module settings at all (for example while the panel restarts), it says so and offers **Reload** instead of showing the switches (GH #2101).
+The mail module needs DNS: its install stops without the server's own zone. On the Modules card, Mail can be turned on only once DNS is on and shows **active**; until then the card says why. If a module's install fails, the card shows the reason and the path of its install log under the module, and **Retry** runs the install again. **status unknown** means the panel got no status for that module from its agent; it doesn't mean the module is missing, so there's no Retry. Reload the page in a moment. If the card can't read the module settings at all (for example while the panel restarts), it says so and offers **Reload** instead of showing the switches.
 
 ## Zones
 
@@ -23,13 +23,13 @@ Each hosted domain gets an authoritative zone in PowerDNS. Default records:
 - `_dmarc` TXT (if mail enabled)
 - DKIM TXT (if mail enabled)
 - SPF TXT (if mail enabled)
-- MTA-STS TXT (if mail enabled, ADR-0109)
+- MTA-STS TXT (if mail enabled)
 
 Add / edit / delete custom records on the DNS page: click the domain's name to open its records.
 
 ## Secondary nameservers
 
-Server Settings → DNS sets ns2 and up to 16 more **Secondary DNS servers (AXFR + NOTIFY)**: a secondary DNS provider's transfer addresses, or the secondaries of a hidden-primary setup. Each listed address may transfer every zone and is sent a NOTIFY when a zone changes. Nobody else can transfer a zone, and NOTIFY never goes to the hosts in a zone's NS records. CLI: `jabali settings set dns_secondary_ips=<ip>,<ip>`. Setup steps: the `dns-secondary-nameserver` runbook (GH #2131).
+Server Settings → DNS sets ns2 and up to 16 more **Secondary DNS servers (AXFR + NOTIFY)**: a secondary DNS provider's transfer addresses, or the secondaries of a hidden-primary setup. Each listed address may transfer every zone and is sent a NOTIFY when a zone changes. Nobody else can transfer a zone, and NOTIFY never goes to the hosts in a zone's NS records. CLI: `jabali settings set dns_secondary_ips=<ip>,<ip>`. Setup steps: the `dns-secondary-nameserver` runbook.
 
 ## DNSSEC
 
@@ -63,7 +63,7 @@ are derived from it:
 
 | Provider | MX | SPF (apex) | Other | Jabali mail cert SANs |
 |----------|----|-----------|-------|------------------------|
-| **Jabali mail** (default) | `mail.<domain>` | `v=spf1 mx …` | DKIM, autoconfig/autodiscover, IMAP/submission SRVs (the M6 set) | yes (mail/autoconfig/autodiscover/mta-sts) |
+| **Jabali mail** (default) | `mail.<domain>` | `v=spf1 mx …` | DKIM, autoconfig/autodiscover, IMAP/submission SRVs | yes (mail/autoconfig/autodiscover/mta-sts) |
 | **No mail** | — | — | none | no |
 | **Microsoft 365** | `<domain-dashed>.mail.protection.outlook.com` | `include:spf.protection.outlook.com -all` | `autodiscover → autodiscover.outlook.com`; optional `selector1/2._domainkey` CNAMEs (set the tenant's `onmicrosoft` name) | no |
 | **Google Workspace** | `smtp.google.com` | `include:_spf.google.com ~all` | optional `google._domainkey` TXT (paste from Google Admin) | no |

@@ -6,7 +6,7 @@
 
 Each row shows the event's label, its name, its description and its severity. The switch turns the event on or off for the whole server. A row whose state differs from its default shows **Overridden**. A change takes effect within 30 seconds.
 
-An event that is off is dropped: it reaches no channel and no bell. The `ssh.login` row also has an ignore list for logins from known hosts and users (GH #1436).
+An event that is off is dropped: it reaches no channel and no bell. The `ssh.login` row also has an ignore list for logins from known hosts and users.
 
 From a shell:
 
@@ -40,13 +40,13 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `crowdsec.ban.spike` | warning | no | CrowdSec ban spike. Unusually large burst of new bans within a short window. |
 | `backup.fail` | error | yes | Backup failed. A scheduled backup job exited non-zero. |
 | `backup.success` | info | no | Backup completed. A backup job finished. Fires once per fully-succeeded job (info); a job that finished with some items skipped/failed (partial) fires as a warning. Opt-in — off by default to avoid a message per backup. |
-| `backup.retention.fail` | error | yes | Backup retention failed. The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full (JAB-392). |
-| `backup.limit.reached` | warning | yes | Tenant backup limit reached. A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins (GH #454). |
+| `backup.retention.fail` | error | yes | Backup retention failed. The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full. |
+| `backup.limit.reached` | warning | yes | Tenant backup limit reached. A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins. |
 | `admin.login` | info | yes | Admin signed in. First request of a new Kratos admin session. |
 | `ssh.login` | info | yes | SSH login. Successful SSH authentication for a panel-managed user. |
 | `notifications.channel.auto_disabled` | warning | yes | Channel auto-disabled. A notification channel was disabled after repeated send failures. |
 | `panel.welcome` | info | yes | Welcome. Fired once at install time for the bootstrap admin to point them at notification setup. |
-| `security.root_terminal.opened` | critical | yes | Root web terminal opened. An admin opened the in-panel root shell (M45). Highest-trust action; every byte is recorded to /var/log/jabali/terminal/<id>.cast. |
+| `security.root_terminal.opened` | critical | yes | Root web terminal opened. An admin opened the in-panel root shell. Highest-trust action; every byte is recorded to /var/log/jabali/terminal/<id>.cast. |
 | `security.decision.fired` | info | no | Security decision fired. Aggregated drop/throttle from any decision brain (UFW, nginx limit_req, CrowdSec). One envelope per polling window when activity exceeds 0. |
 | `snuffleupagus.incident.detected` | warning | yes | PHP Defense incident. PHP Defense rule fired on a tenant request (block / simulated block / log). |
 | `postgres.service_down` | error | yes | PostgreSQL service down. postgresql.service is enabled but inactive — running connections fail. |
@@ -55,7 +55,7 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `agent.dispatch.failure` | warning | yes | Agent dispatch failure. panel-api → agent RPC returned an internal error. One envelope per error bucket per 30-min window. Common causes: systemctl/DBus permission issues, missing helper binaries, exit-status leaks from wrapped commands. |
 | `reconciler.error` | warning | yes | Reconciler error. A ReconcileAll pass logged a level=ERROR. Could be a domain rebuild that crashed, an SSL cert provisioning rollback, a managed-IP rebind that the kernel rejected, etc. |
 | `agent.unreachable` | error | yes | Agent unreachable. panel-api couldn't reach /run/jabali/agent.sock. Usually means jabali-agent.service crashed or is restart-looping; check `systemctl status jabali-agent`. |
-| `notifications.dlq.nonzero` | warning | yes | Notifications DLQ non-empty. The M14 dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel. |
+| `notifications.dlq.nonzero` | warning | yes | Notifications DLQ non-empty. The notifications dead-letter queue has unprocessed envelopes. Means at least one channel send (Slack/email/web push) failed after the dispatcher retry budget. DLQ is a marker of channel rot — operator should inspect and either reset or disable the offending channel. |
 | `panel.api.error` | warning | no | panel-api 5xx. An HTTP request to /api/v1/* returned 5xx. Bucketed per endpoint+status pair; one envelope per bucket per 30-min window. |
 | `bandwidth.quota.warn` | warning | yes | Bandwidth quota — 80%. User crossed 80% of their package's monthly BandwidthQuotaMB. Per-user dedupe via 6h cooldown. Also sent when websites suspended for bandwidth are restored. |
 | `bandwidth.quota.crit` | critical | yes | Bandwidth quota — 100%. User crossed their package's monthly BandwidthQuotaMB. With Bandwidth Quota Auto-Suspend on (Server Settings, off by default) their websites are also suspended until usage is back under 80%; mail keeps working. |

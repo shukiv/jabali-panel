@@ -1,6 +1,6 @@
 # CrowdSec — Allowlists and Scenario Overrides
 
-Security → CrowdSec → **Allowlists** and **Scenario Overrides** tabs (M27 extensions, ADRs 0061–0063).
+Security → CrowdSec → **Allowlists** and **Scenario Overrides** tabs.
 
 ## Allowlists
 

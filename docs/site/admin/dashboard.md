@@ -1,6 +1,6 @@
 # Admin Dashboard
 
-`/jabali-admin/dashboard`. First page after admin login. The layout is the one voted for in [discussion #1249](https://github.com/shukiv/jabali-panel/discussions/1249) (Option 7, "community mix").
+`/jabali-admin/dashboard`. First page after admin login. The layout is the one voted for in a [community discussion](https://github.com/shukiv/jabali-panel/discussions/1249) (Option 7, "community mix").
 
 ## Banners
 

@@ -29,7 +29,7 @@ func serverSettingsRepoFromDB() repository.ServerSettingsRepository {
 func newDRCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dr",
-		Short: "Disaster-recovery standby: pair, status, promote (GH #331)",
+		Short: "Disaster-recovery standby: pair, status, promote",
 		Long: "One-way async DR standby with manual promotion. A standby pulls the " +
 			"primary's state from a read-only backup destination and serves no live " +
 			"traffic until `dr promote`. No automatic failover, no split-brain.",

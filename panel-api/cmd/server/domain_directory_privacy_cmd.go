@@ -80,7 +80,7 @@ func domainDirectoryPrivacySubcommands() []*cobra.Command {
 func newDomainDirPrivacyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "dir-privacy",
-		Short: "Manage password-protected directories (auth_basic) (JAB-130)",
+		Short: "Manage password-protected directories (auth_basic)",
 	}
 	cmd.AddCommand(
 		newDirPrivacyListCmd(),

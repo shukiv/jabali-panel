@@ -79,7 +79,7 @@ example phpredis `Redis::OPT_PREFIX` or Laravel `REDIS_PREFIX`). The credential
 can read and write only keys under that prefix.
 
 The socket works from your website, from your SSH shell and from your cron
-jobs (GH #2059), so queue workers and CLI commands such as `php artisan` use
+jobs, so queue workers and CLI commands such as `php artisan` use
 the same credential.
 
 Commands that work across every user's keys are not available: `KEYS`, `SCAN`,
@@ -161,7 +161,7 @@ else.
 The flush deletes the keys of the account the token belongs to, so create the
 token as that hosting account; an admin can create it while acting as the
 user. An admin account has no Linux account and no Redis keys: its own token
-gets `409 no_linux_user` (GH #2159).
+gets `409 no_linux_user`.
 
 The response is `{"deleted": <n>, "complete": true}`. One call runs for at most
 20 seconds; if you have more keys than that, `complete` is `false` and you call

@@ -1,12 +1,12 @@
 # AppSec WAF
 
-Security → AppSec. The Web Application Firewall layer that inspects HTTP requests for malicious payloads. M27, ADR-0060.
+Security → AppSec. The Web Application Firewall layer that inspects HTTP requests for malicious payloads.
 
 ## Architecture
 
 The CrowdSec AppSec component runs an inline filter in nginx via the `appsec-block` bouncer (`/etc/nginx/conf.d/jabali-appsec.conf`). Each request is sent to the AppSec inspector over a fast local socket; if the inspector returns "block", nginx returns `403`; otherwise the request continues.
 
-This replaces the previously-shipped ModSecurity stack (libmodsecurity + nginx connector + OWASP CRS), which was removed entirely in M27. The installer's `cleanup_modsecurity` step purges leftover ModSecurity packages on every install to prevent broken nginx reloads.
+This replaces the previously-shipped ModSecurity stack (libmodsecurity + nginx connector + OWASP CRS), which was removed entirely. The installer's `cleanup_modsecurity` step purges leftover ModSecurity packages on every install to prevent broken nginx reloads.
 
 ## Rule packs
 
@@ -16,7 +16,7 @@ Rule packs come from `hub.crowdsec.net/author/crowdsecurity`. The default instal
 - `crowdsecurity/base-config` — generic web exploit signatures.
 - `crowdsecurity/appsec-virtual-patching` — common LFI / RCE / XSS patterns.
 
-The install path is **flat** (`/etc/crowdsec/appsec-rules/`). An earlier bug used a `crowdsecurity/` subdirectory and re-purged-and-reinstalled 170 vpatch rules on every `jabali update`; the fix shipped in PR #69.
+The install path is **flat** (`/etc/crowdsec/appsec-rules/`). An earlier bug used a `crowdsecurity/` subdirectory and re-purged-and-reinstalled 170 vpatch rules on every `jabali update`; that bug is fixed.
 
 ## Operator controls
 

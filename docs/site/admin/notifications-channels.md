@@ -1,6 +1,6 @@
 # Notifications — Channels
 
-`/jabali-admin/notifications/channels`. The server-wide places where notifications are delivered (M14). Every enabled channel receives every event that is on; see [Routing](./notifications-routing.md).
+`/jabali-admin/notifications/channels`. The server-wide places where notifications are delivered. Every enabled channel receives every event that is on; see [Routing](./notifications-routing.md).
 
 ## Channel kinds
 
@@ -41,5 +41,3 @@ jabali notification channels delete <id> --force
 ## Architecture
 
 Producers add each event to the Redis stream `jabali:notifications:queue`. The dispatcher inside the panel process reads the stream and calls the sender for each target channel. An event that still fails after 5 tries moves to `jabali:notifications:dlq`, shown on the **Dead Letter** tab. Each sender is one Go file under `panel-api/internal/notifications/senders/`.
-
-ADR-0056 covers the data model; ADRs 0057–0059 cover the sender interface, Web Push, and the bell dropdown.

@@ -1,6 +1,6 @@
 # Server Status
 
-M31. `/jabali-admin/server-status`.
+`/jabali-admin/server-status`.
 
 Single page, 5-second polling, errgroup-aggregated.
 
@@ -8,10 +8,10 @@ Single page, 5-second polling, errgroup-aggregated.
 
 - **Services card**: jabali-panel, jabali-agent, jabali-kratos, nginx, mariadb, redis-server and ssh, plus jabali-stalwart, jabali-webmail, pdns, postgresql and docker when their module is on. Each row shows the state and the Start / Restart / Reload / Stop / Enable / Disable buttons. See [Services](./admin/services.md).
 - **Host vitals**: CPU%, load avg, RAM (used / free / cache), disk used per mount, network in/out per interface.
-- **Queues card** (placeholder — defers to M31.1): mail queue depth, backup queue depth, reconciler tick lag.
+- **Queues card** (placeholder, not built yet): mail queue depth, backup queue depth, reconciler tick lag.
 - **Recent panel-api requests**: top 10 by latency.
 
-## Health badge (JAB-373)
+## Health badge
 
 The admin header carries a lightweight **Health** badge backed by a cheap
 `?view=health` projection of Server Status (single-flight + short TTL so the

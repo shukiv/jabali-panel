@@ -1,6 +1,6 @@
 # Backups (Admin)
 
-`/jabali-admin/backups`. The parent surface for backup destinations, schedules, retention, and restore. M30 and M30.1.
+`/jabali-admin/backups`. The parent surface for backup destinations, schedules, retention, and restore.
 
 ## Tabs
 

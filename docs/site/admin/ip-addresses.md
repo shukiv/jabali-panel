@@ -1,6 +1,6 @@
 # IP Addresses
 
-`/jabali-admin/ips`. The pool of IPv4 (and optionally IPv6) addresses available for per-domain listen-IP selection. M24, ADR-0049.
+`/jabali-admin/ips`. The pool of IPv4 (and optionally IPv6) addresses available for per-domain listen-IP selection.
 
 ## When to use
 

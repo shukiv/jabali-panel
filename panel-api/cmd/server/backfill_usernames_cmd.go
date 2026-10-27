@@ -28,7 +28,7 @@ func newAdminBackfillUsernamesCmd() *cobra.Command {
 	var apply bool
 	cmd := &cobra.Command{
 		Use:   "backfill-usernames",
-		Short: "Assign a unique username to every user missing one (M54 Wave A)",
+		Short: "Assign a unique username to every user missing one",
 		Long: `Assigns a unique username to every panel user whose username is NULL/empty,
 derived from the email local-part (lowercased, non [a-z0-9_-] -> _, trimmed to
 32, forced to start [a-z_]). Collisions get a -2/-3/... suffix.

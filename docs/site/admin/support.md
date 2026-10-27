@@ -1,6 +1,6 @@
 # Support
 
-`/jabali-admin/support`. M29. Upload an encrypted diagnostic bundle for the Jabali maintainers, then email them the link.
+`/jabali-admin/support`. Upload an encrypted diagnostic bundle for the Jabali maintainers, then email them the link.
 
 ## Bundle contents
 

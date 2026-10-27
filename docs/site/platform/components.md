@@ -15,11 +15,11 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **Ory Kratos** | 26.2.0 | Identity (login, 2FA, recovery); Unix sockets only | Apache-2.0 |
 | **nginx** | Debian native | Reverse-proxy + per-vhost server. Sury-nginx purged defensively | BSD-2 |
 | **PHP-FPM** (Sury) | 8.1–8.5 | One master per panel user (`jabali-fpm@<user>`), on that user's version; the distro units are masked | PHP License |
-| **MariaDB** | Debian | Panel DB + tenant DBs; socket plus loopback `127.0.0.1:3306` only (M25.1, amended: Stalwart's SQL directory needs TCP) | GPL-2 |
+| **MariaDB** | Debian | Panel DB + tenant DBs; socket plus loopback `127.0.0.1:3306` only (loopback TCP because Stalwart's SQL directory needs it) | GPL-2 |
 | **PostgreSQL** | Debian 17 | Tenant DBs only; opt-in | PostgreSQL |
 | **Redis** | Debian | Notification dispatcher stream + panel cache | BSD-3 |
 | **PowerDNS Authoritative** | Debian | Authoritative `:53` for hosted zones, MariaDB backend | GPL-2 |
-| **pdns-recursor** | Debian | Loopback recursor `127.0.0.1:53` (split-port, ADR-0047) | GPL-2 |
+| **pdns-recursor** | Debian | Loopback recursor `127.0.0.1:53` (split-port) | GPL-2 |
 | **CrowdSec** | packagecloud | IP-trust source + AppSec WAF + bouncers | MIT |
 | **certbot** | Debian | Let's Encrypt issuance and renewal | Apache-2.0 |
 
@@ -34,10 +34,10 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **AIDE** + `aide-common` | Debian | Daily host-integrity scan |
 | **auditd** + `audispd-plugins` | Debian | Linux audit subsystem |
 | **bubblewrap** | Debian | Per-user PHP sandbox + SSH chroot for migrations |
-| **UFW** | Debian | Port baseline only (IP decisions live in CrowdSec — M43, ADR-0089) |
-| **nftables** | Debian | Per-user egress (cgroup v2 vmap, M34, ADR-0084) |
+| **UFW** | Debian | Port baseline only (IP decisions live in CrowdSec) |
+| **nftables** | Debian | Per-user egress (cgroup v2 vmap) |
 | **Linux Malware Detect (LMD)** | 2.0.1 (GitHub) | On-demand malware scanner — native HEX + YARA |
-| **YARA-X** (`yr` binary) | 1.20.0 (GitHub) | Pattern matching for LMD + the M33.2 async mail scanner |
+| **YARA-X** (`yr` binary) | 1.20.0 (GitHub) | Pattern matching for LMD + the async mail scanner |
 
 ## Apps / tooling
 
@@ -81,7 +81,7 @@ Test-only: `DATA-DOG/go-sqlmock`, `alicebob/miniredis/v2`, `stretchr/testify`.
 
 ## In-house patterns shipped under `install/`
 
-- **`jabali-sso-<43-char-nonce>.php`** — self-deleting magic SSO file (M22, ADR-0040; Installatron / Softaculous style). Used by Bulwark webmail and every application install for one-click admin sign-in. 60 s TTL; 256-bit nonce filename; `flock` + `unlink` on first hit.
+- **`jabali-sso-<43-char-nonce>.php`** — self-deleting magic SSO file (Installatron / Softaculous style). Used by Bulwark webmail and every application install for one-click admin sign-in. 60 s TTL; 256-bit nonce filename; `flock` + `unlink` on first hit.
 - **phpMyAdmin `sso.php`** and **Adminer `jabali-sso-plugin.php`** — adapt the magic-file pattern to the two DB web UIs.
 - **`install/snuffleupagus/rules/`** — server-wide Snuffleupagus baseline rules.
 - **`install/wp-cli.sha256`** / **`install/phpmyadmin.sha256`** — checksum-pinned upstream tarballs.
@@ -90,14 +90,14 @@ Test-only: `DATA-DOG/go-sqlmock`, `alicebob/miniredis/v2`, `stretchr/testify`.
 
 Components that previously shipped but are not present in the current build. See [Removed Features](../removed-features.md) for the rationale per item.
 
-| Component | Removed in | Replacement |
+| Component | Status | Replacement |
 |---|---|---|
-| **Hydra** (OIDC provider) | M16 rollback | Magic-file SSO (M22) for app sign-in |
-| **ModSecurity** + libmodsecurity + nginx-modsecurity-connector + OWASP CRS | M27 | CrowdSec AppSec WAF |
-| **filebrowser** | M11 | In-panel AntD File Manager |
-| **Tetragon** + `jabali-tetragon-relay` | M39 (2026-04-30) | (none — eBPF tripwires retired) |
-| **ClamAV daemon + freshclam timer** | M33 | On-demand `clamscan`, now itself superseded by LMD-native + YARA-X |
-| **`@refinedev/*`** | M21 | TanStack Query + AntD + react-router |
+| **Hydra** (OIDC provider) | Rolled back | Magic-file SSO for app sign-in |
+| **ModSecurity** + libmodsecurity + nginx-modsecurity-connector + OWASP CRS | Removed | CrowdSec AppSec WAF |
+| **filebrowser** | Replaced | In-panel AntD File Manager |
+| **Tetragon** + `jabali-tetragon-relay` | Removed 2026-04-30 | (none — eBPF tripwires retired) |
+| **ClamAV daemon + freshclam timer** | Removed | On-demand `clamscan`, now itself superseded by LMD-native + YARA-X |
+| **`@refinedev/*`** | Removed | TanStack Query + AntD + react-router |
 
 The installer's `cleanup_*` functions actively purge leftover packages and config from these components on every install, so a host that previously ran an older Jabali generation does not carry a footprint forward.
 

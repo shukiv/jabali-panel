@@ -1,6 +1,6 @@
 # Notifications
 
-M14. Events go to the in-app bell and to every enabled channel. A Redis stream feeds a dispatcher that runs inside the panel process.
+Events go to the in-app bell and to every enabled channel. A Redis stream feeds a dispatcher that runs inside the panel process.
 
 ## Channels
 
@@ -24,13 +24,12 @@ Click **Test** on a channel's row, or run `jabali notification broadcast --title
 - The dispatcher inside the panel process reads the stream and checks whether the event is on. It writes the bell row, then calls the sender for each target channel.
 - A failed delivery is retried. After 5 tries, the event moves to `jabali:notifications:dlq` (the **Dead Letter** tab). A channel that fails 3 times in a row is disabled.
 - Senders are adapters. Adding a new channel kind means one Go file under `panel-api/internal/notifications/senders/`.
-- ADRs 0056-0059 cover the data model, the sender interface, Web Push, and the bell dropdown.
 
-## Per-user (tenant) channels — JAB-171
+## Per-user (tenant) channels
 
 Tenants can own their own channels and route their own events to them at
 **`/jabali-panel/notifications`**. This is separate from (and additive to) the
-server-wide admin channels above. See ADR-0159 for the full design + security model.
+server-wide admin channels above.
 
 **Off by default.** The whole surface is gated behind a master switch an admin flips at
 **Server Settings → General → Tenant notifications**. Until then every `/me/notifications/*`

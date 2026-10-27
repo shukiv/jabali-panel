@@ -63,7 +63,7 @@ func apparmorProfileFile(name string) string {
 func newAppArmorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apparmor",
-		Short: "AppArmor profile management (M40) operator commands",
+		Short: "AppArmor profile management operator commands",
 	}
 	cmd.AddCommand(newAppArmorFlipMatureCmd())
 	cmd.AddCommand(newAppArmorStatusCmd())
@@ -194,7 +194,7 @@ arbitrary system profiles. Use --profile <name> to target one.`,
 	cmd.Flags().StringVar(&profileFilter, "profile", "", "Flip a single profile only")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would change without invoking aa-enforce")
 	cmd.Flags().IntVar(&soakDays, "soak-days", 7, "violation-scan window in days; a profile with any AppArmor DENIED or complain-mode ALLOWED event in this window is not flipped")
-	cmd.Flags().BoolVar(&force, "force", false, "flip even if recent violations exist (DANGEROUS — this is how #705 crash-looped mx)")
+	cmd.Flags().BoolVar(&force, "force", false, "flip even if recent violations exist (DANGEROUS: a profile forced to enforce despite violations can crash-loop its service)")
 	return cmd
 }
 

@@ -30,7 +30,7 @@ Fix: `jabali update` to pick up the post-fix install template.
 
 ### Installer fails at "render-config" for AppSec
 
-Cause: `install_crowdsec_appsec` ran pre-build, so render-config had no binary. PR#92 gates this; PR#93 re-runs render-config post-build.
+Cause: `install_crowdsec_appsec` ran pre-build, so render-config had no binary. The installer now gates this step and re-runs render-config after the build.
 
 Fix: `jabali update`.
 
@@ -40,7 +40,7 @@ Symptom: `npm run build` exits 137 during `panel-ui` build on a 1 GB RAM VPS.
 
 Cause: V8 heap default outsizes the VM.
 
-Fix (already in install.sh ≥ PR #69): `NODE_OPTIONS=--max-old-space-size=<50%-of-RAM>` + 1 GB swap auto-created on exit 137 fallback.
+Fix (already in install.sh): `NODE_OPTIONS=--max-old-space-size=<50%-of-RAM>` + 1 GB swap auto-created on exit 137 fallback.
 
 ## Runtime issues
 

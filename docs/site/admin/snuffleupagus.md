@@ -26,11 +26,11 @@ The shipped bundle also contains rules for `putenv`, writing `.php` files, `eval
 
 ## Packages that allow command execution
 
-A hosting package can allow some command-execution functions (**Disabled PHP functions** on the package, GH #1701). For the sites on that package, PHP Defense does not ban the functions the package allows: each of their PHP pools loads its own copy of the rules, `/etc/jabali/snuffleupagus/pools/<pool>.rules`, with only those bans commented out. Every other rule, including the `eval` blacklist, still applies, and the server-wide rules apply to every other site. The copies are rebuilt whenever the mode or a rule changes. A domain's PHP Settings page shows, read-only, which functions PHP Defense blocks or logs for that domain. Command-line PHP (cron, SSH) keeps the server-wide rules.
+A hosting package can allow some command-execution functions (**Disabled PHP functions** on the package). For the sites on that package, PHP Defense does not ban the functions the package allows: each of their PHP pools loads its own copy of the rules, `/etc/jabali/snuffleupagus/pools/<pool>.rules`, with only those bans commented out. Every other rule, including the `eval` blacklist, still applies, and the server-wide rules apply to every other site. The copies are rebuilt whenever the mode or a rule changes. A domain's PHP Settings page shows, read-only, which functions PHP Defense blocks or logs for that domain. Command-line PHP (cron, SSH) keeps the server-wide rules.
 
 ## Composer runs from the panel
 
-A Composer run that a user starts from the panel (GH #2276, ADR-0176) loads its own copy of the rules, `/etc/jabali/snuffleupagus/composer.rules`.
+A Composer run that a user starts from the panel loads its own copy of the rules, `/etc/jabali/snuffleupagus/composer.rules`.
 - **Lifted bans:** the copy comments out the seven command-execution bans and the `phpinfo` ban. Composer runs `git`, `unzip` and composer.json scripts through `proc_open`. Symfony Process calls `phpinfo()` before it starts any process.
 - **Logging:** the copy logs to PHP's error log instead of syslog, so a blocked call shows in the run's own log. The run is then marked failed.
 - **Selection:** an ini in `/etc/jabali/snuffleupagus/composer.d/` selects the copy. The run sets `PHP_INI_SCAN_DIR`, so the PHP processes that Composer starts load it too.
@@ -46,7 +46,7 @@ Open the rules list, choose **Disable** on a rule and give a reason. The panel c
 
 Stopped and simulated calls appear under **Recent incidents** within a minute, with the rule and the full log line. `jabali php-defense incidents` lists them on the command line.
 
-PHP in SSH sessions and cron jobs runs in the SSH sandbox, which has no system log socket, so its blocks leave no line by default. Turn on **Log PHP Defense blocks from the sandbox** (Server Settings → SSH → Shell Sandbox, ADR-0177) to list them too. With it on, any program in the sandbox can write to the system log. Each line carries the user's ID: an incident counts for a site only when it comes from that site's owner (or root), and CrowdSec's SSH detection counts only the SSH server's own lines. Composer runs keep their blocks in the run's own log either way.
+PHP in SSH sessions and cron jobs runs in the SSH sandbox, which has no system log socket, so its blocks leave no line by default. Turn on **Log PHP Defense blocks from the sandbox** (Server Settings → SSH → Shell Sandbox) to list them too. With it on, any program in the sandbox can write to the system log. Each line carries the user's ID: an incident counts for a site only when it comes from that site's owner (or root), and CrowdSec's SSH detection counts only the SSH server's own lines. Composer runs keep their blocks in the run's own log either way.
 
 ## Related
 

@@ -1,6 +1,6 @@
 # Database Tuning
 
-Server Settings → Database → **Tuning**. The curated MariaDB / PostgreSQL configuration tuner. M46, ADR-0098.
+Server Settings → Database → **Tuning**. The curated MariaDB / PostgreSQL configuration tuner.
 
 ## What can be tuned
 
