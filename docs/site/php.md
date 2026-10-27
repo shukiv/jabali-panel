@@ -200,6 +200,32 @@ The five newest releases are kept. `POST /api/v1/domains/{id}/git/releases/{rele
 
 Anything the site writes inside a release, outside its shared paths, is gone after the next deployment: make uploads and caches shared paths. Submodules are not fetched.
 
+### Deploying on push
+
+A webhook deploys the saved branch whenever it is pushed. `POST /api/v1/domains/{id}/git/webhook` creates it and answers with its **URL** and a **secret**. The secret is shown this once: posting again gives a new secret (the URL stays, and the old secret stops working). To use a secret the Git host made instead, send it as `{"secret": "..."}`: GitLab's signing token (`whsec_...`) or a Bitbucket generated secret.
+
+Add the webhook on the Git host, for push events, with the URL and the secret:
+
+| Host | Where | Secret |
+|---|---|---|
+| GitHub | Repository Settings → Webhooks | Content type **application/json** (GitHub's default, form-encoded, is refused); the secret in **Secret** |
+| GitLab | Settings → Webhooks | Either GitLab's **signing token**, sent to the panel as `secret`, or the panel's secret in **Secret token** (older GitLab) |
+| Bitbucket | Repository settings → Webhooks, trigger *Repository push* | The panel's secret, or Bitbucket's generated one sent to the panel |
+| Gitea, Forgejo | Settings → Webhooks | POST, content type **application/json**, the secret in **Secret** |
+
+Any other sender can post `{"ref": "refs/heads/<branch>"}` as JSON with an `X-Hub-Signature-256: sha256=<hex HMAC-SHA256 of the body>` header.
+
+What a delivery does:
+
+- A push to the saved branch, with a valid signature, deploys it exactly as `POST .../git/deployments` does. The deployment fetches the branch as it is then; nothing in the delivery is deployed.
+- A push during a deployment waits, and one more deployment starts within a minute of that one ending. Pushes meanwhile wait together, so the site ends on the newest commit. A webhook starts at most six deployments a minute; more pushes wait the same way.
+- Another branch, a tag, a deleted branch or the host's test ping changes nothing.
+- A delivery the panel has seen in the last seven days changes nothing, so a retry deploys once. That includes the host's **Redeliver**; use the Deploy button to deploy again.
+
+`GET .../git/webhook` shows the URL, whether a push is waiting, and what the last delivery did: `started`, `queued`, `ignored`, `duplicate`, `failed`, or `refused:<reason>` (for example `refused:git_deploy_not_in_package`). `DELETE .../git/webhook` removes the webhook; removing the Git settings removes it too.
+
+The Git host has to reach the panel at the webhook's URL and accept its TLS certificate: a panel that only admits certain addresses, or uses a self-signed certificate, receives nothing.
+
 ## FPM slow log (GH #1332)
 
 Each pool can emit a **per-pool FPM slow log** for requests over a threshold, so a
