@@ -108,6 +108,7 @@
       "healthy": "Saudável",
       "critical": "{{count}} crítico",
       "warning_one": "{{count}} aviso",
+      "warning_many": "{{count}} avisos",
       "warning_other": "{{count}} avisos"
     },
     "server_ip": "IP do servidor:",
@@ -142,6 +143,7 @@
     },
     "alert": {
       "title_one": "{{count}} problema crítico no host",
+      "title_many": "{{count}} problemas críticos no host",
       "title_other": "{{count}} problemas críticos no host",
       "action": "Abra Status do servidor para investigar →"
     }

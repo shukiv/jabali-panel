@@ -107,6 +107,7 @@
       "healthy": "Integro",
       "critical": "{{count}} critico",
       "warning_one": "{{count}} avviso",
+      "warning_many": "{{count}} avvisi",
       "warning_other": "{{count}} avvisi"
     },
     "server_ip": "IP del server:",
@@ -141,6 +142,7 @@
     },
     "alert": {
       "title_one": "{{count}} problema critico sull'host",
+      "title_many": "{{count}} problemi critici sull'host",
       "title_other": "{{count}} problemi critici sull'host",
       "action": "Apri Stato del server per approfondire →"
     }

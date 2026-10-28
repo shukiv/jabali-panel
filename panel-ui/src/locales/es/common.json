@@ -107,6 +107,7 @@
       "healthy": "Correcto",
       "critical": "{{count}} críticas",
       "warning_one": "{{count}} aviso",
+      "warning_many": "{{count}} avisos",
       "warning_other": "{{count}} avisos"
     },
     "server_ip": "IP del servidor:",
@@ -141,6 +142,7 @@
     },
     "alert": {
       "title_one": "{{count}} problema crítico en el host",
+      "title_many": "{{count}} problemas críticos en el host",
       "title_other": "{{count}} problemas críticos en el host",
       "action": "Abrir Estado del servidor para investigar →"
     }

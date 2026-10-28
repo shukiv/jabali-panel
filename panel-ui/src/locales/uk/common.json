@@ -107,6 +107,8 @@
       "healthy": "У нормі",
       "critical": "{{count}} критичних",
       "warning_one": "{{count}} попередження",
+      "warning_few": "{{count}} попередження",
+      "warning_many": "{{count}} попереджень",
       "warning_other": "{{count}} попереджень"
     },
     "server_ip": "IP сервера:",
@@ -141,6 +143,8 @@
     },
     "alert": {
       "title_one": "{{count}} критична проблема на хості",
+      "title_few": "{{count}} критичні проблеми на хості",
+      "title_many": "{{count}} критичних проблем на хості",
       "title_other": "{{count}} критичних проблем на хості",
       "action": "Відкрийте «Стан сервера» для аналізу →"
     }
