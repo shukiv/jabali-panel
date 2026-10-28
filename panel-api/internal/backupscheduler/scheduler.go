@@ -711,7 +711,7 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 // retention sweep removes its old backups.
 func keepsOwnBackups(s models.BackupSchedule) bool {
 	set := func(v *int) bool { return v != nil && *v > 0 }
-	return set(s.KeepDaily) || set(s.KeepWeekly) || set(s.KeepMonthly)
+	return set(s.KeepDaily) || set(s.KeepWeekly) || set(s.KeepMonthly) || set(s.KeepWithinDays)
 }
 
 // dropScheduleOldest makes room under the plan's backup limit for a run of a

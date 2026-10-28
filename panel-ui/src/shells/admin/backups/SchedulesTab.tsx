@@ -44,6 +44,8 @@ interface BackupSchedule {
   keep_daily?: number | null;
   keep_weekly?: number | null;
   keep_monthly?: number | null;
+  // An account's "Days to keep": every backup of the last N days (GH #2300).
+  keep_within_days?: number | null;
   last_run_at?: string | null;
   next_run_at?: string | null;
   next_firings?: string[];
@@ -116,6 +118,10 @@ interface ScheduleDrawerProps {
   onSaved: () => void;
 }
 
+// An account's own schedule keeps days, as on its Backups page (GH #2300).
+const KEEP_DAYS_HELP =
+  "Every backup made in that many days is kept, counted back from the newest. It must fit in the account's plan limit at this frequency.";
+
 function ScheduleDrawer({
   open,
   editing,
@@ -165,7 +171,7 @@ function ScheduleDrawer({
           content: editing.content || "full",
           cadence: editing.cadence,
           destination_id: editing.destinations?.[0]?.id,
-          keep: editing.keep_daily ?? undefined,
+          keep: editing.keep_within_days ?? editing.keep_daily ?? undefined,
           enabled: editing.enabled,
         });
       } else if (editing) {
@@ -186,8 +192,10 @@ function ScheduleDrawer({
           weekdays: spec.weekdays ?? [1],
           dom: spec.dom ?? 1,
           enabled: editing.enabled,
-          keep:
-            spec.freq === "daily" || spec.freq === "hourly"
+          // An account's own schedule keeps days, like its Backups page.
+          keep: editing.user_id
+            ? (editing.keep_within_days ?? editing.keep_daily ?? undefined)
+            : spec.freq === "daily" || spec.freq === "hourly"
               ? (editing.keep_daily ?? undefined)
               : spec.freq === "weekly"
                 ? (editing.keep_weekly ?? undefined)
@@ -236,7 +244,7 @@ function ScheduleDrawer({
           content: values.content,
           cadence: values.cadence,
           destination_ids: values.destination_id ? [values.destination_id] : [],
-          keep_daily: values.keep ?? null,
+          keep_within_days: values.keep ?? null,
           enabled: values.enabled,
         };
         if (editing) {
@@ -321,9 +329,14 @@ function ScheduleDrawer({
       // matching keep_* column is set; the other two stay null so
       // restic forget skips them.
       // Hourly keeps daily backups: retention has no hourly count.
-      body.keep_daily = values.freq === "daily" || values.freq === "hourly" ? (values.keep ?? null) : null;
-      body.keep_weekly = values.freq === "weekly" ? (values.keep ?? null) : null;
-      body.keep_monthly = values.freq === "monthly" ? (values.keep ?? null) : null;
+      // An account's own schedule keeps days instead, as on its Backups page.
+      if (ownerID) {
+        body.keep_within_days = values.keep ?? null;
+      } else {
+        body.keep_daily = values.freq === "daily" || values.freq === "hourly" ? (values.keep ?? null) : null;
+        body.keep_weekly = values.freq === "weekly" ? (values.keep ?? null) : null;
+        body.keep_monthly = values.freq === "monthly" ? (values.keep ?? null) : null;
+      }
 
       if (editing) {
         await apiClient.patch(`/admin/backup-schedules/${editing.id}`, body);
@@ -438,8 +451,8 @@ function ScheduleDrawer({
             </Form.Item>
             <Form.Item
               name="keep"
-              label="Copies to keep"
-              extra={editing ? "Up to the account's plan limit. Leave blank to keep the current value." : "Up to the account's plan limit."}
+              label="Days to keep"
+              extra={`${KEEP_DAYS_HELP}${editing ? " Leave blank to keep the current value." : ""}`}
             >
               <InputNumber min={1} style={{ width: 200 }} />
             </Form.Item>
@@ -595,28 +608,34 @@ function ScheduleDrawer({
               restic forget runs daily and prunes snapshots from this
               schedule beyond this limit. Leave blank to keep every snapshot.
             </Typography.Paragraph>
-            <Form.Item
-              name="keep"
-              extra={
-                freq === "hourly"
-                  ? "Retention keeps one backup a day, so the daily sweep removes the day's other hourly backups."
-                  : undefined
-              }
-              label={
-                freq === "daily" || freq === "hourly"
-                  ? "Keep last N daily backups"
-                  : freq === "weekly"
-                    ? "Keep last N weekly backups"
-                    : "Keep last N monthly backups"
-              }
-            >
-              <InputNumber
-                min={0}
-                max={freq === "daily" || freq === "hourly" ? 365 : freq === "weekly" ? 104 : 120}
-                placeholder="keep all"
-                style={{ width: 200 }}
-              />
-            </Form.Item>
+            {ownerID ? (
+              <Form.Item name="keep" label="Days to keep" extra={KEEP_DAYS_HELP}>
+                <InputNumber min={1} placeholder="keep all" style={{ width: 200 }} />
+              </Form.Item>
+            ) : (
+              <Form.Item
+                name="keep"
+                extra={
+                  freq === "hourly"
+                    ? "Retention keeps one backup a day, so the daily sweep removes the day's other hourly backups."
+                    : undefined
+                }
+                label={
+                  freq === "daily" || freq === "hourly"
+                    ? "Keep last N daily backups"
+                    : freq === "weekly"
+                      ? "Keep last N weekly backups"
+                      : "Keep last N monthly backups"
+                }
+              >
+                <InputNumber
+                  min={0}
+                  max={freq === "daily" || freq === "hourly" ? 365 : freq === "weekly" ? 104 : 120}
+                  placeholder="keep all"
+                  style={{ width: 200 }}
+                />
+              </Form.Item>
+            )}
           </>
         )}
         <Form.Item name="enabled" label="Enabled" valuePropName="checked">

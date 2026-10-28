@@ -44,7 +44,11 @@ The panel runs your schedules itself: it checks for due backups every minute, wh
 - Through a daylight saving change the runs keep their times of day. A time the change to summer time skips (02:00–03:00 in Central Europe) is skipped that night, as cron does, and a time that happens twice when the clocks go back runs once. Hourly schedules run every hour across the change.
 - If your host restricts backups to a time window, the schedules run inside it.
 
-**Days to keep** is how many days of backups the schedule keeps. Once a day, early in the morning, the panel keeps the newest backup of each day and removes the others. So a schedule that runs every 6 hours lists every backup made since that cleanup, and one for each earlier day.
+**Days to keep** keeps every backup the schedule made in that many days, counted back from its newest complete backup. Once a day, early in the morning, the panel removes the older ones. So a schedule that runs every 6 hours with 7 days to keep holds about 28 backups, and a daily one about 7.
+
+Your plan limits how many backups your account holds, so you can keep as many days as that limit holds at the schedule's frequency. The form shows about how many backups the days you pick keep. A schedule can always keep 1 day: an hourly one keeps up to your plan's limit, and at the limit each run first removes the schedule's oldest backup.
+
+Before the November 2026 release, Days to keep kept only the newest backup of each day, so a schedule that ran several times a day kept one backup a day.
 
 When your account holds as many backups as your plan allows, a schedule with **Days to keep** set removes its own oldest backup to make room for the next run. It never removes its last backup, or a backup you made yourself or another schedule made.
 

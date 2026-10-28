@@ -21,6 +21,10 @@ type ScheduleView = {
   content: string;
   destination_id?: string;
   keep_daily?: number | null;
+  // Days to keep: every backup of the last N days (GH #2300), up to
+  // keep_within_days_max, what the plan's limit holds at the host's timing.
+  keep_within_days?: number | null;
+  keep_within_days_max?: number;
   cron_expr: string;
   next_firings?: string[];
   scheduled_backups_enabled: boolean;
@@ -47,7 +51,7 @@ export const MyProfileScheduleCard = () => {
   const [enabled, setEnabled] = useState(false);
   const [content, setContent] = useState("full");
   const [destinationId, setDestinationId] = useState("");
-  const [keepDaily, setKeepDaily] = useState<number | null>(null);
+  const [keepDays, setKeepDays] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
 
   const view = schedQuery.data;
@@ -56,7 +60,7 @@ export const MyProfileScheduleCard = () => {
     setEnabled(view.enabled);
     setContent(view.content || "full");
     setDestinationId(view.destination_id ?? "");
-    setKeepDaily(view.keep_daily ?? null);
+    setKeepDays(view.keep_within_days ?? view.keep_daily ?? null);
   }, [view]);
 
   const dests = destQuery.data?.data ?? [];
@@ -69,7 +73,9 @@ export const MyProfileScheduleCard = () => {
         enabled,
         content,
         destination_id: destinationId,
-        keep_daily: keepDaily,
+        // Days to keep replaces the older one-per-day rule.
+        keep_daily: null,
+        keep_within_days: keepDays,
       });
       feedback.message.success("Schedule saved");
       schedQuery.refetch();
@@ -81,6 +87,8 @@ export const MyProfileScheduleCard = () => {
   };
 
   const nextRun = view?.next_firings?.[0];
+  const keepDaysMax = view?.keep_within_days_max || 1;
+  const keepDaysNote = `Days to keep keeps every backup made in that many days; your plan holds up to ${keepDaysMax} day${keepDaysMax === 1 ? "" : "s"} at this timing.`;
 
   return (
     <Card
@@ -105,7 +113,7 @@ export const MyProfileScheduleCard = () => {
             ) : (
               <>Your host sets when scheduled backups run.</>
             )}{" "}
-            You choose what to back up and where — the timing is set by your host.
+            You choose what to back up and where — the timing is set by your host. {keepDaysNote}
           </Typography.Paragraph>
           <Space wrap align="center">
             <Switch checked={enabled} onChange={setEnabled} checkedChildren="On" unCheckedChildren="Off" />
@@ -128,15 +136,14 @@ export const MyProfileScheduleCard = () => {
               notFoundContent="No allowed destinations"
             />
             <Space>
-              <span>Keep</span>
+              <span>Days to keep</span>
               <InputNumber
                 min={1}
-                max={view?.max_backups || 1}
-                value={keepDaily ?? undefined}
-                onChange={(v) => setKeepDaily(typeof v === "number" ? v : null)}
+                max={keepDaysMax}
+                value={keepDays ?? undefined}
+                onChange={(v) => setKeepDays(typeof v === "number" ? v : null)}
                 style={{ width: 80 }}
               />
-              <span>copies</span>
             </Space>
             <Button type="primary" loading={saving} onClick={handleSave}>
               Save schedule

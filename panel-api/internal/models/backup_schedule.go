@@ -52,6 +52,10 @@ type BackupSchedule struct {
 	CreatedAt   time.Time  `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt   time.Time  `gorm:"type:datetime(6);not null" json:"updated_at"`
 
+	// KeepWithinDays keeps every backup from the last N days, counted back
+	// from the newest complete one: an account's "Days to keep" (GH #2300).
+	KeepWithinDays *int `gorm:"column:keep_within_days;type:int" json:"keep_within_days,omitempty"`
+
 	// Loaded by repository when ListWithDestinations is called; not a
 	// GORM relation tag (the join table has its own model below).
 	Destinations []BackupDestination `gorm:"-" json:"destinations,omitempty"`

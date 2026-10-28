@@ -169,6 +169,7 @@ func (r *backupScheduleRepo) Update(ctx context.Context, s *models.BackupSchedul
 			"keep_daily":            s.KeepDaily,
 			"keep_weekly":           s.KeepWeekly,
 			"keep_monthly":          s.KeepMonthly,
+			"keep_within_days":      s.KeepWithinDays,
 			"next_run_at":           s.NextRunAt,
 			"updated_at":            s.UpdatedAt,
 		})
@@ -197,6 +198,7 @@ func (r *backupScheduleRepo) UpdateWithMemberships(ctx context.Context, s *model
 				"keep_daily":            s.KeepDaily,
 				"keep_weekly":           s.KeepWeekly,
 				"keep_monthly":          s.KeepMonthly,
+				"keep_within_days":      s.KeepWithinDays,
 				"next_run_at":           s.NextRunAt,
 				"updated_at":            s.UpdatedAt,
 			})
