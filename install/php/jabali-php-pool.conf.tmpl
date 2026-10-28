@@ -82,6 +82,14 @@ php_admin_value[opcache.max_accelerated_files] = 20000
 ; domain, and submits to Stalwart on 127.0.0.1:587 with the envelope sender
 ; forced to that identity. php_admin_value: the path is not tenant-tunable.
 php_admin_value[sendmail_path] = /usr/local/libexec/jabali/jabali-sendmail -t -i
+; Session upload progress off (CVE-2026-115560, php.net advisory 2026-10-23).
+; With it on, a script that switches session.serialize_handler at runtime
+; before session_start() opens a memory-corruption path to running native
+; code in the worker, which disable_functions and open_basedir do not limit.
+; php.net advises turning it off until the fixed PHP release; it only feeds
+; upload progress bars, which few apps use. php_admin_flag, so .user.ini and
+; ini_set cannot turn it back on; not in the agent's adminFlagAllowlist.
+php_admin_flag[session.upload_progress.enabled] = off
 ; Shared-hosting PHP defaults (GH #253). php_value (not php_admin_value) so a
 ; per-domain override below takes precedence; these apply only when the domain
 ; sets nothing. Stock PHP defaults (128M / 2M / 8M / 1000) are too small for

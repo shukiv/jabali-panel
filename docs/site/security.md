@@ -270,6 +270,13 @@ is picked up on the next reconciler pass, within a minute.
 - **Country exemption from local MaxMind** — country-based
   allow/exempt CIDRs are derived from a local MaxMind mmdb plus supplemental
   CIDRs, with no external lookup at request time.
+- **Session upload progress off** — every site's PHP pool, and the phpMyAdmin
+  and Adminer pool, set `session.upload_progress.enabled` off, as php.net
+  advises for CVE-2026-115560 until the fixed PHP release. It is an admin
+  setting, so a site's `.user.ini` or `ini_set()` can't turn it back on. The
+  only thing it fed was upload progress bars: phpMyAdmin's import shows no
+  percentage while a file uploads, and the import still works. `jabali update`
+  applies it to existing servers.
 - **Installer credentials on stdin** — the one-click app installers hand the
   database and admin passwords to each app's installer on stdin, never as
   command-line options or environment variables of the `systemd-run` unit it
