@@ -104,6 +104,58 @@ func TestMePutSchedule_KeepWithinDays_ClampedByTheAdminCron(t *testing.T) {
 	}
 }
 
+// Migration 342 copied the older keep_daily into keep_within_days without the
+// new limit, so a stored value can be above what the plan holds. The account
+// sees the limit (what its next save stores), so the form opens valid.
+func TestMeSchedules_KeepWithinDays_AboveThePlanShowsTheLimit(t *testing.T) {
+	store := newSchedStore()
+	users := &usersMap{m: map[string]*models.User{"userA": pkgUser("userA", "pkg1")}}
+	pkg := schedTestPkg(3)
+	pkg.MaxBackups = 5
+	r := newSchedRouter(newSchedHandler(store, users, pkg, nil), "userA")
+	body := `{"enabled":false,"content":"full","cadence":"every_6h","keep_within_days":1}`
+	if rec := doReq(t, r, http.MethodPost, "/me/backup-schedules", body); rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d body=%s", rec.Code, rec.Body.String())
+	}
+	onlyRow(t, store).KeepWithinDays = intPtr(5) // as migrated from keep_daily 5
+
+	rec := doReq(t, r, http.MethodGet, "/me/backup-schedules", "")
+	var list struct {
+		Data struct {
+			Schedules []struct {
+				KeepWithinDays *int `json:"keep_within_days"`
+			} `json:"schedules"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &list)
+	if len(list.Data.Schedules) != 1 || list.Data.Schedules[0].KeepWithinDays == nil || *list.Data.Schedules[0].KeepWithinDays != 1 {
+		t.Errorf("list = %s, want keep_within_days 1 (5 backups every 6 hours)", rec.Body.String())
+	}
+}
+
+func TestMeGetSchedule_KeepWithinDays_AboveThePlanShowsTheLimit(t *testing.T) {
+	store := newSchedStore()
+	dest := &models.BackupDestination{ID: "d1", Kind: "local", Enabled: true}
+	h := newPutSchedHandler(store, dest) // plan of 5 backups, daily
+	r := newPutSchedRouter(h, "userA")
+	r.GET("/me/backup-schedule", h.getSchedule)
+	if rec := doReq(t, r, http.MethodPut, "/me/backup-schedule", `{"enabled":true,"content":"full","destination_id":"d1","keep_within_days":3}`); rec.Code != http.StatusOK {
+		t.Fatalf("put = %d body=%s", rec.Code, rec.Body.String())
+	}
+	onlyRow(t, store).KeepWithinDays = intPtr(9)
+
+	rec := doReq(t, r, http.MethodGet, "/me/backup-schedule", "")
+	var view struct {
+		Data struct {
+			KeepWithinDays *int `json:"keep_within_days"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &view)
+	if view.Data.KeepWithinDays == nil || *view.Data.KeepWithinDays != 5 {
+		t.Errorf("view = %s, want keep_within_days 5", rec.Body.String())
+	}
+}
+
 func itoa(n int) string {
 	b, _ := json.Marshal(n)
 	return string(b)
