@@ -239,3 +239,39 @@ func TestBackupSchedule_Update_PersistsContent(t *testing.T) {
 	require.NoError(t, repo.Update(context.Background(), s))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// GH #2300: an account's "Days to keep" is keep_within_days. Both update
+// paths write a listed set of columns, so a column missing from either list
+// is silently not saved: the account's days would never change.
+func TestBackupSchedule_Updates_PersistKeepWithinDays(t *testing.T) {
+	days := 7
+	uid := "01J5USER0000000000000000001"
+	s := &models.BackupSchedule{
+		ID:             "01J5SCHED0000000000000000A",
+		Kind:           models.BackupScheduleKindAccount,
+		UserID:         &uid,
+		Cadence:        "every_6h",
+		Enabled:        true,
+		KeepWithinDays: &days,
+	}
+
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupScheduleRepository(db)
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE .backup_schedules. SET .*.keep_within_days.=").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	require.NoError(t, repo.Update(context.Background(), s))
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	db2, mock2, raw2 := newMockBackupDB(t)
+	defer raw2.Close()
+	repo2 := NewBackupScheduleRepository(db2)
+	mock2.ExpectBegin()
+	mock2.ExpectExec("UPDATE .backup_schedules. SET .*.keep_within_days.=").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock2.ExpectCommit()
+	require.NoError(t, repo2.UpdateWithMemberships(context.Background(), s, nil, nil))
+	require.NoError(t, mock2.ExpectationsWereMet())
+}

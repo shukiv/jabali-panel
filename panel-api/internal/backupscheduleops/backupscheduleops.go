@@ -136,6 +136,7 @@ type CreateInput struct {
 	KeepDaily      *int
 	KeepWeekly     *int
 	KeepMonthly    *int
+	KeepWithinDays *int
 	DestinationIDs []string
 }
 
@@ -199,6 +200,7 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.BackupSchedule
 		KeepDaily:           in.KeepDaily,
 		KeepWeekly:          in.KeepWeekly,
 		KeepMonthly:         in.KeepMonthly,
+		KeepWithinDays:      in.KeepWithinDays,
 		NextRunAt:           &next,
 	}
 	if err := d.Schedules.CreateWithMemberships(ctx, s, in.DestinationIDs, userIDs); err != nil {
@@ -228,6 +230,7 @@ type UpdateInput struct {
 	KeepDaily           *int
 	KeepWeekly          *int
 	KeepMonthly         *int
+	KeepWithinDays      *int
 	DestinationIDs      *[]string
 	UserIDs             *[]string
 }
@@ -345,6 +348,9 @@ func Update(ctx context.Context, d Deps, in UpdateInput) (*models.BackupSchedule
 	}
 	if in.KeepMonthly != nil {
 		s.KeepMonthly = in.KeepMonthly
+	}
+	if in.KeepWithinDays != nil {
+		s.KeepWithinDays = in.KeepWithinDays
 	}
 
 	if err := d.Schedules.UpdateWithMemberships(ctx, s, in.DestinationIDs, userIDs); err != nil {

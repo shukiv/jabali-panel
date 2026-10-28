@@ -129,6 +129,9 @@ func newBackupScheduleGetCmd() *cobra.Command {
 			if s.KeepMonthly != nil {
 				fmt.Printf("Keep monthly: %d\n", *s.KeepMonthly)
 			}
+			if s.KeepWithinDays != nil {
+				fmt.Printf("Days to keep: %d (every backup of the last %d days)\n", *s.KeepWithinDays, *s.KeepWithinDays)
+			}
 			return nil
 		},
 	}
@@ -146,6 +149,7 @@ func newBackupScheduleCreateCmd() *cobra.Command {
 		keepDaily     int
 		keepWeekly    int
 		keepMonthly   int
+		keepDays      int
 	)
 	cmd := &cobra.Command{
 		Use:     "create",
@@ -194,6 +198,9 @@ func newBackupScheduleCreateCmd() *cobra.Command {
 			if cmd.Flags().Changed("keep-monthly") {
 				in.KeepMonthly = &keepMonthly
 			}
+			if cmd.Flags().Changed("keep-within-days") {
+				in.KeepWithinDays = &keepDays
+			}
 			// One shared lifecycle: admin-target rejection, system-kind
 			// normalization, cron validation, and the transactional
 			// row+memberships commit all live in the leaf now (JAB-307), so
@@ -229,6 +236,7 @@ func newBackupScheduleCreateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&keepDaily, "keep-daily", 0, "restic forget --keep-daily")
 	cmd.Flags().IntVar(&keepWeekly, "keep-weekly", 0, "restic forget --keep-weekly")
 	cmd.Flags().IntVar(&keepMonthly, "keep-monthly", 0, "restic forget --keep-monthly")
+	cmd.Flags().IntVar(&keepDays, "keep-within-days", 0, "keep every backup of the last N days (an account's \"Days to keep\")")
 	cmd.MarkFlagsMutuallyExclusive("cron", "preset")
 	_ = cmd.MarkFlagRequired("kind")
 	return cmd
@@ -244,6 +252,7 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 		keepDaily     int
 		keepWeekly    int
 		keepMonthly   int
+		keepDays      int
 		destinations  []string
 		users         []string
 		clearDests    bool
@@ -298,6 +307,9 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("keep-monthly") {
 				in.KeepMonthly = &keepMonthly
 			}
+			if cmd.Flags().Changed("keep-within-days") {
+				in.KeepWithinDays = &keepDays
+			}
 			if clearDests {
 				in.DestinationIDs = &[]string{}
 			} else if len(destinations) > 0 {
@@ -318,7 +330,7 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 			}
 
 			if in.CronExpr == nil && in.Enabled == nil && in.IncludeSystemBackup == nil &&
-				in.KeepDaily == nil && in.KeepWeekly == nil && in.KeepMonthly == nil &&
+				in.KeepDaily == nil && in.KeepWeekly == nil && in.KeepMonthly == nil && in.KeepWithinDays == nil &&
 				in.DestinationIDs == nil && in.UserIDs == nil {
 				return fmt.Errorf("no changes specified")
 			}
@@ -362,6 +374,7 @@ func newBackupScheduleUpdateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&keepDaily, "keep-daily", 0, "")
 	cmd.Flags().IntVar(&keepWeekly, "keep-weekly", 0, "")
 	cmd.Flags().IntVar(&keepMonthly, "keep-monthly", 0, "")
+	cmd.Flags().IntVar(&keepDays, "keep-within-days", 0, "keep every backup of the last N days")
 	cmd.Flags().StringArrayVar(&destinations, "destination", nil, "replace destinations (repeatable)")
 	cmd.Flags().StringArrayVar(&users, "user", nil, "replace users (repeatable)")
 	cmd.Flags().BoolVar(&clearDests, "clear-destinations", false, "remove all destinations")

@@ -28,7 +28,7 @@ On a plan that allows more than one backup schedule, an account adds its own sch
 - backs up the full account, files only, or databases only;
 - writes to one destination.
 
-**Edit** opens it with the same choices the account has: what to back up, how often, the destination, the copies to keep, and on or off. The account sees your changes on its Backups page. Changing how often re-times the next run; other changes leave it where it is. Its account cannot be changed, and it cannot include the system backup. An existing cron schedule cannot become one.
+**Edit** opens it with the same choices the account has: what to back up, how often, the destination, the days to keep, and on or off. The account sees your changes on its Backups page. Changing how often re-times the next run; other changes leave it where it is. Its account cannot be changed, and it cannot include the system backup. An existing cron schedule cannot become one.
 
 When the runs happen ([user guide](../user/backups.md#when-scheduled-backups-run)): the panel's scheduler checks for due schedules every minute, whether or not anyone is signed in. A run that starts late, or that runs once after the panel was down, doesn't move the ones after it. Through a daylight saving change the runs keep their times of day; a time the change to summer time skips is skipped, as cron does, a time that happens twice when the clocks go back runs once, and hourly schedules count elapsed hours. An interval schedule turned back on, here or on the account's page, waits for its next time instead of running at once. Before the November 2026 release each run was timed one interval after the previous one started, so a late start, or the account saving it, moved every later run, and a daylight saving change moved them by an hour.
 
@@ -36,9 +36,9 @@ The account's hosting plan applies to it the same way it does on the account's p
 
 - Adding one needs a plan that allows scheduled backups and more than one schedule, with room left: the account's own schedules count toward the plan's limit, however they were added. For a plan with one schedule, raise the plan's backup schedule limit first.
 - Its destination must be enabled and of a kind the plan allows. An enabled schedule needs a destination.
-- Copies to keep: 1 up to the plan's backup limit.
+- Days to keep: every backup the schedule made in that many days. At most as many days as the plan's backup limit holds at the schedule's frequency (7 backups: 7 days daily, 1 day every 6 hours), and always at least 1. An account's cron-timed schedule counts its runs from its cron.
 
-When editing, the destination and copies are checked only when they change, so a schedule can always be turned off.
+When editing, the destination and the days are checked only when they change, or when the frequency does, so a schedule can always be turned off.
 
 On a plan with a single backup schedule, the account's one schedule is also listed as **Account's own**. It runs at **Settings → Tenant scheduled-backup time (cron)** and opens in the cron form with its account fixed. When the account saves it again, its time goes back to that setting.
 
@@ -61,7 +61,7 @@ Retention runs once a day, from `jabali-backup-retention.timer` at 05:00 (`jabal
 Retention keeps or forgets **whole backups**. One backup is several restic snapshots: one per stage (home folder, databases, mail, … for an account; the panel database, TLS, OS users, … for the system backup) and a manifest that ties them together. The sweep:
 
 1. Groups the schedule's snapshots by backup (their `job-id` tag), and the backups by account, or by host for the system backup. One account's backups never use up another's keep counts.
-2. Applies restic's keep rules to each account's backups, by the backup's time. They count complete backups (those with a manifest) and account backups without a manifest that still hold home folder, database, mail or docker app data. As in restic, one backup of each day, week or month is kept, up to the counts: a complete backup if that day, week or month has one, otherwise the one holding the most kinds of data, and of equal ones the most recent. When a count is not used up, the oldest backup is kept too.
+2. Keeps every backup made in the schedule's days to keep (an account's own schedule), counted back from the account's newest complete backup, so a run of failed backups can't push the complete ones out. Then applies restic's keep rules to each account's backups, by the backup's time. They count complete backups (those with a manifest) and account backups without a manifest that still hold home folder, database, mail or docker app data. As in restic, one backup of each day, week or month is kept, up to the counts: a complete backup if that day, week or month has one, otherwise the one holding the most kinds of data, and of equal ones the most recent. When a count is not used up, the oldest backup is kept too.
 3. Forgets every snapshot of each backup it does not keep, by snapshot ID, and deletes that backup's row in the panel.
 
 So a restore point is never left partial. An older version applied the keep counts to each stage separately. When a backup's stages fell on different days (a run across midnight), or a failed run wrote only some stages, that could keep a manifest whose home folder or database snapshot was forgotten.

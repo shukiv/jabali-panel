@@ -33,6 +33,7 @@ var (
 	ErrDestinationRequired        = errors.New("pick a backup destination to enable the schedule")
 	ErrOneDestination             = errors.New("an account's own schedule writes to one destination")
 	ErrKeepOutOfRange             = errors.New("copies to keep must be within the account's hosting plan")
+	ErrKeepDaysOutOfRange         = errors.New("days to keep must fit in the account's hosting plan's backup limit at this schedule's frequency")
 )
 
 // PackageFinder reads an account's hosting plan.
@@ -53,7 +54,9 @@ type AccountScheduleInput struct {
 	Cadence       string
 	DestinationID string
 	KeepDaily     *int
-	Enabled       bool
+	// KeepWithinDays is the account's "Days to keep" (GH #2300).
+	KeepWithinDays *int
+	Enabled        bool
 }
 
 // CreateForAccount creates an account's own interval schedule, the kind the
@@ -108,6 +111,9 @@ func CreateForAccount(ctx context.Context, d Deps, in AccountScheduleInput) (*mo
 	if err := checkKeep(pkg, in.KeepDaily); err != nil {
 		return nil, err
 	}
+	if err := checkKeepDays(pkg, internalbackup.CadenceRunsPerWeek(in.Cadence), in.KeepWithinDays); err != nil {
+		return nil, err
+	}
 
 	id := ids.NewULID()
 	uid := u.ID
@@ -122,6 +128,7 @@ func CreateForAccount(ctx context.Context, d Deps, in AccountScheduleInput) (*mo
 		KeepDaily: in.KeepDaily,
 		NextRunAt: &next,
 	}
+	s.KeepWithinDays = in.KeepWithinDays
 	if err := d.Schedules.CreateWithMemberships(ctx, s, dests, []string{uid}); err != nil {
 		return nil, err
 	}
@@ -157,7 +164,16 @@ func checkAccountPatch(ctx context.Context, d Deps, s *models.BackupSchedule, ow
 		return ErrDestinationRequired
 	}
 	keepChange := in.KeepDaily != nil && (s.KeepDaily == nil || *s.KeepDaily != *in.KeepDaily)
-	if !(destChange && newDest != "") && !keepChange {
+	// Days to keep is checked when it changes, and when the frequency does:
+	// the same days hold more backups at a higher frequency.
+	keepDays := s.KeepWithinDays
+	if in.KeepWithinDays != nil {
+		keepDays = in.KeepWithinDays
+	}
+	daysChange := in.KeepWithinDays != nil && (s.KeepWithinDays == nil || *s.KeepWithinDays != *in.KeepWithinDays)
+	cadenceChange := in.Cadence != nil && *in.Cadence != s.Cadence && s.Cadence != ""
+	daysCheck := keepDays != nil && (daysChange || cadenceChange)
+	if !(destChange && newDest != "") && !keepChange && !daysCheck {
 		return nil
 	}
 
@@ -175,7 +191,45 @@ func checkAccountPatch(ctx context.Context, d Deps, s *models.BackupSchedule, ow
 		}
 	}
 	if keepChange {
-		return checkKeep(pkg, in.KeepDaily)
+		if err := checkKeep(pkg, in.KeepDaily); err != nil {
+			return err
+		}
+	}
+	if daysCheck {
+		return checkKeepDays(pkg, scheduleRunsPerWeek(s, in), keepDays)
+	}
+	return nil
+}
+
+// scheduleRunsPerWeek is how many backups the patched schedule makes a week:
+// from its cadence, or for a cron-timed schedule from its cron.
+func scheduleRunsPerWeek(s *models.BackupSchedule, in UpdateInput) int {
+	cadence := s.Cadence
+	if in.Cadence != nil && s.Cadence != "" {
+		cadence = *in.Cadence
+	}
+	if cadence != "" {
+		return internalbackup.CadenceRunsPerWeek(cadence)
+	}
+	expr := s.CronExpr
+	if in.CronExpr != nil {
+		expr = *in.CronExpr
+	}
+	n, err := internalbackup.CronRunsPerWeek(expr, time.Now().UTC())
+	if err != nil {
+		return internalbackup.CadenceRunsPerWeek("") // an invalid cron is refused later
+	}
+	return n
+}
+
+// checkKeepDays: 0 (no rule) up to the most days whose backups fit in the
+// plan's backup limit at runsPerWeek, as on the account's page.
+func checkKeepDays(pkg *models.HostingPackage, runsPerWeek int, days *int) error {
+	if days == nil {
+		return nil
+	}
+	if m := internalbackup.MaxKeepWithinDays(pkg.MaxBackups, runsPerWeek); *days < 0 || *days > m {
+		return fmt.Errorf("%w (0 to %d)", ErrKeepDaysOutOfRange, m)
 	}
 	return nil
 }

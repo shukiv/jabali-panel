@@ -2142,10 +2142,14 @@ type meScheduleView struct {
 	KeepDaily               *int     `json:"keep_daily,omitempty"`
 	KeepWeekly              *int     `json:"keep_weekly,omitempty"`
 	KeepMonthly             *int     `json:"keep_monthly,omitempty"`
+	KeepWithinDays          *int     `json:"keep_within_days,omitempty"`
 	CronExpr                string   `json:"cron_expr"`
 	NextFirings             []string `json:"next_firings,omitempty"`
 	ScheduledBackupsEnabled bool     `json:"scheduled_backups_enabled"`
 	MaxBackups              uint32   `json:"max_backups"`
+	// KeepWithinDaysMax is the most days to keep the plan's backup limit
+	// holds at the admin's cron (GH #2300).
+	KeepWithinDaysMax int `json:"keep_within_days_max"`
 }
 
 // meScheduleGate resolves the caller + hosting package for the tenant
@@ -2219,6 +2223,9 @@ func (h *meBackupHandler) getSchedule(c *gin.Context) {
 	if pkg != nil {
 		view.ScheduledBackupsEnabled = pkg.BackupsEnabled() && pkg.ScheduledBackupsEnabled
 		view.MaxBackups = pkg.MaxBackups
+		if runs, rerr := internalbackup.CronRunsPerWeek(settings.TenantBackupCron, time.Now().UTC()); rerr == nil {
+			view.KeepWithinDaysMax = internalbackup.MaxKeepWithinDays(pkg.MaxBackups, runs)
+		}
 	}
 	if fires, ferr := internalbackup.PreviewFires(settings.TenantBackupCron, time.Now().UTC(), 3); ferr == nil {
 		for _, f := range fires {
@@ -2230,6 +2237,7 @@ func (h *meBackupHandler) getSchedule(c *gin.Context) {
 		view.Enabled = sched.Enabled
 		view.Content = models.NormalizeBackupContent(sched.Content)
 		view.KeepDaily, view.KeepWeekly, view.KeepMonthly = sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly
+		view.KeepWithinDays = sched.KeepWithinDays
 		if dests, derr := h.cfg.Schedules.GetDestinations(c.Request.Context(), sched.ID); derr == nil && len(dests) > 0 {
 			view.DestinationID = dests[0].ID
 		}
@@ -2241,12 +2249,13 @@ func (h *meBackupHandler) getSchedule(c *gin.Context) {
 // field — the tenant can never set the timing; it is always forced from the
 // admin-owned server_settings.tenant_backup_cron.
 type meScheduleRequest struct {
-	Enabled       bool   `json:"enabled"`
-	Content       string `json:"content"`
-	DestinationID string `json:"destination_id"`
-	KeepDaily     *int   `json:"keep_daily"`
-	KeepWeekly    *int   `json:"keep_weekly"`
-	KeepMonthly   *int   `json:"keep_monthly"`
+	Enabled        bool   `json:"enabled"`
+	Content        string `json:"content"`
+	DestinationID  string `json:"destination_id"`
+	KeepDaily      *int   `json:"keep_daily"`
+	KeepWeekly     *int   `json:"keep_weekly"`
+	KeepMonthly    *int   `json:"keep_monthly"`
+	KeepWithinDays *int   `json:"keep_within_days"`
 }
 
 func (h *meBackupHandler) putSchedule(c *gin.Context) {
@@ -2324,6 +2333,10 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "schedule_time_invalid", "detail": "the scheduled-backup time set by your host is invalid; contact support"})
 		return
 	}
+	// Days to keep: as many as the plan's backup limit holds at the admin's
+	// cron (GH #2300).
+	runs, _ := internalbackup.CronRunsPerWeek(settings.TenantBackupCron, time.Now().UTC())
+	keepWithin := clampKeepWithinDays(req.KeepWithinDays, pkg.MaxBackups, runs)
 	uid := user.ID
 	// Scope the fan-out to THIS tenant only (an empty user list would fan out to
 	// every non-admin user at tick time — never for a tenant-owned schedule), and
@@ -2345,6 +2358,7 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		sched.Content = content
 		sched.Enabled = req.Enabled
 		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+		sched.KeepWithinDays = keepWithin
 		sched.NextRunAt = &next
 		// One transaction: the row plus the user and destination links commit
 		// together, or the whole create rolls back. The previous three sequential
@@ -2361,6 +2375,7 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 		sched.Content = content
 		sched.Enabled = req.Enabled
 		sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+		sched.KeepWithinDays = keepWithin
 		sched.NextRunAt = &next
 		// One transaction: the field changes plus both membership sets commit
 		// together, or the whole update rolls back. UpdateWithMemberships writes the
@@ -2381,16 +2396,17 @@ func (h *meBackupHandler) putSchedule(c *gin.Context) {
 // firing times are read-only (the scheduler owns them); the tenant edits
 // content/cadence/destination/retention/on-off.
 type meScheduleRow struct {
-	ID            string  `json:"id"`
-	Enabled       bool    `json:"enabled"`
-	Content       string  `json:"content"`
-	Cadence       string  `json:"cadence"`
-	DestinationID string  `json:"destination_id,omitempty"`
-	KeepDaily     *int    `json:"keep_daily,omitempty"`
-	KeepWeekly    *int    `json:"keep_weekly,omitempty"`
-	KeepMonthly   *int    `json:"keep_monthly,omitempty"`
-	NextRunAt     *string `json:"next_run_at,omitempty"`
-	LastRunAt     *string `json:"last_run_at,omitempty"`
+	ID             string  `json:"id"`
+	Enabled        bool    `json:"enabled"`
+	Content        string  `json:"content"`
+	Cadence        string  `json:"cadence"`
+	DestinationID  string  `json:"destination_id,omitempty"`
+	KeepDaily      *int    `json:"keep_daily,omitempty"`
+	KeepWeekly     *int    `json:"keep_weekly,omitempty"`
+	KeepMonthly    *int    `json:"keep_monthly,omitempty"`
+	KeepWithinDays *int    `json:"keep_within_days,omitempty"`
+	NextRunAt      *string `json:"next_run_at,omitempty"`
+	LastRunAt      *string `json:"last_run_at,omitempty"`
 }
 
 // meSchedulesView is the multi-schedule list payload: the tenant's own rows plus
@@ -2413,13 +2429,14 @@ type meSchedulesView struct {
 // is a fixed allow-list (NOT free cron) so a tenant can never pick a stampede
 // minute; the admin owns the window the cadence fires inside.
 type meScheduleUpsertRequest struct {
-	Enabled       bool   `json:"enabled"`
-	Content       string `json:"content"`
-	Cadence       string `json:"cadence"`
-	DestinationID string `json:"destination_id"`
-	KeepDaily     *int   `json:"keep_daily"`
-	KeepWeekly    *int   `json:"keep_weekly"`
-	KeepMonthly   *int   `json:"keep_monthly"`
+	Enabled        bool   `json:"enabled"`
+	Content        string `json:"content"`
+	Cadence        string `json:"cadence"`
+	DestinationID  string `json:"destination_id"`
+	KeepDaily      *int   `json:"keep_daily"`
+	KeepWeekly     *int   `json:"keep_weekly"`
+	KeepMonthly    *int   `json:"keep_monthly"`
+	KeepWithinDays *int   `json:"keep_within_days"`
 }
 
 // ownedTenantSchedules returns the caller's OWN account_backup schedules.
@@ -2492,13 +2509,14 @@ func (h *meBackupHandler) listSchedules(c *gin.Context) {
 	}
 	for _, s := range h.ownedTenantSchedules(c.Request.Context(), user.ID) {
 		row := meScheduleRow{
-			ID:          s.ID,
-			Enabled:     s.Enabled,
-			Content:     models.NormalizeBackupContent(s.Content),
-			Cadence:     s.Cadence,
-			KeepDaily:   s.KeepDaily,
-			KeepWeekly:  s.KeepWeekly,
-			KeepMonthly: s.KeepMonthly,
+			ID:             s.ID,
+			Enabled:        s.Enabled,
+			Content:        models.NormalizeBackupContent(s.Content),
+			Cadence:        s.Cadence,
+			KeepDaily:      s.KeepDaily,
+			KeepWeekly:     s.KeepWeekly,
+			KeepMonthly:    s.KeepMonthly,
+			KeepWithinDays: s.KeepWithinDays,
 		}
 		if s.NextRunAt != nil {
 			v := s.NextRunAt.Format(time.RFC3339)
@@ -2519,7 +2537,7 @@ func (h *meBackupHandler) listSchedules(c *gin.Context) {
 // validateScheduleUpsert checks the shared body rules for create + update and,
 // on success, returns the normalized content + clamped keep_* + the destination
 // list to link. On failure it writes the error response and returns ok=false.
-func (h *meBackupHandler) validateScheduleUpsert(c *gin.Context, pkg *models.HostingPackage, req meScheduleUpsertRequest) (content string, keepDaily, keepWeekly, keepMonthly *int, dests []string, ok bool) {
+func (h *meBackupHandler) validateScheduleUpsert(c *gin.Context, pkg *models.HostingPackage, req meScheduleUpsertRequest) (content string, keepDaily, keepWeekly, keepMonthly, keepWithin *int, dests []string, ok bool) {
 	if !internalbackup.ValidCadence(req.Cadence) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_cadence", "detail": "cadence must be hourly/every_6h/every_12h/daily/weekly"})
 		return
@@ -2569,8 +2587,26 @@ func (h *meBackupHandler) validateScheduleUpsert(c *gin.Context, pkg *models.Hos
 		return &n
 	}
 	keepDaily, keepWeekly, keepMonthly = clamp(req.KeepDaily), clamp(req.KeepWeekly), clamp(req.KeepMonthly)
+	keepWithin = clampKeepWithinDays(req.KeepWithinDays, pkg.MaxBackups, internalbackup.CadenceRunsPerWeek(req.Cadence))
 	ok = true
 	return
+}
+
+// clampKeepWithinDays bounds an account's days to keep (GH #2300): 0 (no
+// rule) up to the most days whose backups fit in the plan's backup limit at
+// runsPerWeek, and at least 1 of those.
+func clampKeepWithinDays(v *int, maxBackups uint32, runsPerWeek int) *int {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	if n < 0 {
+		n = 0
+	}
+	if m := internalbackup.MaxKeepWithinDays(maxBackups, runsPerWeek); n > m {
+		n = m
+	}
+	return &n
 }
 
 func (h *meBackupHandler) createSchedule(c *gin.Context) {
@@ -2594,7 +2630,7 @@ func (h *meBackupHandler) createSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
 		return
 	}
-	content, keepDaily, keepWeekly, keepMonthly, dests, vok := h.validateScheduleUpsert(c, pkg, req)
+	content, keepDaily, keepWeekly, keepMonthly, keepWithin, dests, vok := h.validateScheduleUpsert(c, pkg, req)
 	if !vok {
 		return
 	}
@@ -2602,16 +2638,17 @@ func (h *meBackupHandler) createSchedule(c *gin.Context) {
 	id := ids.NewULID()
 	next := internalbackup.NextTenantRun(time.Now().UTC(), req.Cadence, h.tenantWindow(c.Request.Context()), id)
 	sched := &models.BackupSchedule{
-		ID:          id,
-		Kind:        models.BackupScheduleKindAccount,
-		UserID:      &uid,
-		Cadence:     req.Cadence,
-		Content:     content,
-		Enabled:     req.Enabled,
-		KeepDaily:   keepDaily,
-		KeepWeekly:  keepWeekly,
-		KeepMonthly: keepMonthly,
-		NextRunAt:   &next,
+		ID:             id,
+		Kind:           models.BackupScheduleKindAccount,
+		UserID:         &uid,
+		Cadence:        req.Cadence,
+		Content:        content,
+		Enabled:        req.Enabled,
+		KeepDaily:      keepDaily,
+		KeepWeekly:     keepWeekly,
+		KeepMonthly:    keepMonthly,
+		KeepWithinDays: keepWithin,
+		NextRunAt:      &next,
 	}
 	// One transaction: the row and both membership sets commit together, or the
 	// whole create rolls back. The previous three sequential writes could leave a
@@ -2646,7 +2683,7 @@ func (h *meBackupHandler) updateSchedule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_body", "detail": err.Error()})
 		return
 	}
-	content, keepDaily, keepWeekly, keepMonthly, dests, vok := h.validateScheduleUpsert(c, pkg, req)
+	content, keepDaily, keepWeekly, keepMonthly, keepWithin, dests, vok := h.validateScheduleUpsert(c, pkg, req)
 	if !vok {
 		return
 	}
@@ -2671,6 +2708,7 @@ func (h *meBackupHandler) updateSchedule(c *gin.Context) {
 	sched.Content = content
 	sched.Enabled = req.Enabled
 	sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly = keepDaily, keepWeekly, keepMonthly
+	sched.KeepWithinDays = keepWithin
 	sched.NextRunAt = &next
 	// One transaction: the field changes and both membership sets commit together,
 	// or the whole update rolls back. The previous three sequential writes could

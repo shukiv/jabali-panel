@@ -713,6 +713,7 @@ jabali backup schedule create [flags]
 - `--keep-daily` — restic forget --keep-daily (default `0`)
 - `--keep-monthly` — restic forget --keep-monthly (default `0`)
 - `--keep-weekly` — restic forget --keep-weekly (default `0`)
+- `--keep-within-days` — keep every backup of the last N days (an account's "Days to keep") (default `0`)
 - `--kind` — schedule kind: account_backup|system_backup (required)
 - `--preset` — preset: daily|weekly|monthly (mutually exclusive with --cron)
 - `--user` — user id|email|username for account_backup fan-out (repeatable; empty=all non-admins) (default `[]`)
@@ -773,6 +774,7 @@ jabali backup schedule update <id> [flags]
 - `--keep-daily` —  (default `0`)
 - `--keep-monthly` —  (default `0`)
 - `--keep-weekly` —  (default `0`)
+- `--keep-within-days` — keep every backup of the last N days (default `0`)
 - `--preset` — preset: daily|weekly|monthly
 - `--user` — replace users (repeatable) (default `[]`)
 
