@@ -77,6 +77,12 @@ type BackupJobRepository interface {
 	// (GH #1045, mrlp57's "scheduled backups never fire").
 	// materialising rows.
 	CountRetainedForUser(ctx context.Context, userID string) (int64, error)
+	// CountRetainedForSchedule and OldestRetainedForSchedule see the finished
+	// backups (succeeded or partial) one schedule made of one account. A
+	// scheduled run at the plan's limit removes its own schedule's oldest to
+	// make room, never the schedule's last (GH #2300).
+	CountRetainedForSchedule(ctx context.Context, userID, scheduleID string) (int64, error)
+	OldestRetainedForSchedule(ctx context.Context, userID, scheduleID string) (*models.BackupJob, error)
 
 	// Run grouping — admin UI rolls scheduler-fired jobs under one
 	// header per run_id. ListRuns aggregates jobs that share a run_id;
@@ -204,6 +210,31 @@ func (r *backupJobRepo) OldestAccountBackupForUser(ctx context.Context, userID s
 		Order("created_at ASC").
 		First(&out).Error
 	if err != nil {
+		return nil, translate(err)
+	}
+	return &out, nil
+}
+
+// finishedForSchedule scopes to the finished account backups one schedule made
+// of one account: the ones a run at the plan's limit may remove.
+func (r *backupJobRepo) finishedForSchedule(ctx context.Context, userID, scheduleID string) *gorm.DB {
+	return r.db.WithContext(ctx).Model(&models.BackupJob{}).
+		Where("user_id = ? AND schedule_id = ? AND kind = ? AND status IN ?", userID, scheduleID,
+			models.BackupJobKindAccountBackup,
+			[]string{models.BackupJobStatusSucceeded, models.BackupJobStatusPartial})
+}
+
+func (r *backupJobRepo) CountRetainedForSchedule(ctx context.Context, userID, scheduleID string) (int64, error) {
+	var n int64
+	if err := r.finishedForSchedule(ctx, userID, scheduleID).Count(&n).Error; err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
+}
+
+func (r *backupJobRepo) OldestRetainedForSchedule(ctx context.Context, userID, scheduleID string) (*models.BackupJob, error) {
+	var out models.BackupJob
+	if err := r.finishedForSchedule(ctx, userID, scheduleID).Order("created_at ASC").First(&out).Error; err != nil {
 		return nil, translate(err)
 	}
 	return &out, nil

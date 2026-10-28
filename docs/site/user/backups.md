@@ -46,6 +46,8 @@ The panel runs your schedules itself: it checks for due backups every minute, wh
 
 **Days to keep** is how many days of backups the schedule keeps. Once a day, early in the morning, the panel keeps the newest backup of each day and removes the others. So a schedule that runs every 6 hours lists every backup made since that cleanup, and one for each earlier day.
 
+When your account holds as many backups as your plan allows, a schedule with **Days to keep** set removes its own oldest backup to make room for the next run. It never removes its last backup, or a backup you made yourself or another schedule made.
+
 ## Off-host destination
 
 By default, backups live on the panel host's local disk. If the administrator has configured an off-host destination (SFTP, S3, B2, Azure, GCS, restic REST), snapshots are replicated there automatically — so a panel host failure does not lose the backup data.

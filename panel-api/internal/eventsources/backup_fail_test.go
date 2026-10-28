@@ -51,6 +51,12 @@ func (f *fakeBackupJobs) ListRunning(context.Context, int) ([]models.BackupJob, 
 func (f *fakeBackupJobs) CountRetainedForUser(context.Context, string) (int64, error) {
 	return 0, nil
 }
+func (f *fakeBackupJobs) CountRetainedForSchedule(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeBackupJobs) OldestRetainedForSchedule(context.Context, string, string) (*models.BackupJob, error) {
+	return nil, nil
+}
 func (f *fakeBackupJobs) ListQueuedOldest(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }

@@ -176,6 +176,33 @@ func TestBackupJob_OldestAccountBackup_RetainedOnly(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+// GH #2300: a scheduled run at the plan's limit removes its own schedule's
+// oldest backup of the account. Only finished backups count and qualify: a
+// queued or running one is never removed.
+func TestBackupJob_RetainedForSchedule_ScopedToAccountAndSchedule(t *testing.T) {
+	db, mock, raw := newMockBackupDB(t)
+	defer raw.Close()
+	repo := NewBackupJobRepository(db)
+
+	where := `WHERE user_id = \? AND schedule_id = \? AND kind = \? AND status IN \(\?,\?\)`
+	mock.ExpectQuery(`SELECT count\(\*\) FROM .backup_jobs. `+where).
+		WithArgs("userA", "sched1", models.BackupJobKindAccountBackup,
+			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial).
+		WillReturnRows(sqlmock.NewRows([]string{"count(*)"}).AddRow(4))
+	mock.ExpectQuery(`SELECT \* FROM .backup_jobs. `+where+` ORDER BY created_at ASC`).
+		WithArgs("userA", "sched1", models.BackupJobKindAccountBackup,
+			models.BackupJobStatusSucceeded, models.BackupJobStatusPartial, 1).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id"}).AddRow("j1", "userA"))
+
+	n, err := repo.CountRetainedForSchedule(context.Background(), "userA", "sched1")
+	require.NoError(t, err)
+	require.EqualValues(t, 4, n)
+	j, err := repo.OldestRetainedForSchedule(context.Background(), "userA", "sched1")
+	require.NoError(t, err)
+	require.Equal(t, "j1", j.ID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestBackupJobRepository_ListFinishedBackupsForDestination(t *testing.T) {
 	db, mock, raw := newMockBackupDB(t)
 	defer raw.Close()
