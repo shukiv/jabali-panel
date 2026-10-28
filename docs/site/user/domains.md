@@ -111,7 +111,7 @@ When your hosting package includes Git deploy, a domain has a **Git** tab. It de
 
 The deployment settings, also under **Edit settings**:
 
-- **Web directory**: the folder inside the repository that the site serves, `public` for Laravel. Empty serves the repository's root.
+- **Web directory**: the folder inside the repository that the site serves, `public` for Laravel. Empty serves the repository's root. If the repository doesn't have it, and the deploy commands don't build it, a deployment creates it, empty.
 - **Shared paths**: files and folders kept across deployments in `domains/<domain>/shared`, such as `.env` or `storage`.
 - **Deploy commands**: run in the new release before it goes live, one per line: `php artisan migrate --force`, `php8.3 <file>`, or `wp …`. No shell runs them, so pipes, `&&` and variables don't work.
 

@@ -298,8 +298,10 @@ func (d *gitDeployer) deploy(ctx context.Context) (err error) {
 	if err := os.RemoveAll(filepath.Join(rel, ".git")); err != nil {
 		return fmt.Errorf("remove .git from the release: %w", err)
 	}
-	if m.WebDir != "" && !gitDeployIsDir(filepath.Join(rel, m.WebDir)) {
-		return fmt.Errorf("the repository has no directory %s to serve the site from: fix the web directory in the settings", m.WebDir)
+	// A link or a file in the web directory's place fails before any of the
+	// repository's code runs; a missing one is created below (GH #2277).
+	if _, err := gitDeployWebDir(rel, m.WebDir, false); err != nil {
+		return err
 	}
 	if err := d.linkShared(rel, shared); err != nil {
 		return err
@@ -309,6 +311,15 @@ func (d *gitDeployer) deploy(ctx context.Context) (err error) {
 	}
 	if err := d.commands(ctx, rel); err != nil {
 		return err
+	}
+	// After the deploy commands, which may build it: a web directory the
+	// release still doesn't have is created, empty (GH #2277).
+	created, err := gitDeployWebDir(rel, m.WebDir, true)
+	if err != nil {
+		return err
+	}
+	if created {
+		d.say("the repository has no %s directory: created it, empty, in this release", m.WebDir)
 	}
 	if err := d.switchTo(m.Release); err != nil {
 		return err
@@ -326,6 +337,36 @@ func (d *gitDeployer) activate() error {
 		return fmt.Errorf("release %s has no directory %s to serve the site from", d.m.Release, d.m.WebDir)
 	}
 	return d.switchTo(d.m.Release)
+}
+
+// gitDeployWebDir walks the web directory inside the release rel one component
+// at a time, never through a link: a component that is a link or a file fails.
+// With create, a missing component is made (as the account, like the rest of
+// the release); without it the walk stops there.
+func gitDeployWebDir(rel, webDir string, create bool) (created bool, err error) {
+	if webDir == "" {
+		return false, nil
+	}
+	cur := rel
+	for _, comp := range strings.Split(filepath.Clean(webDir), string(os.PathSeparator)) {
+		cur = filepath.Join(cur, comp)
+		fi, lerr := os.Lstat(cur)
+		switch {
+		case lerr == nil && fi.IsDir():
+			continue
+		case lerr == nil:
+			return created, fmt.Errorf("%s in the repository is not a directory (a link or a file), so the site can't be served from it: fix the web directory in the settings", webDir)
+		case !errors.Is(lerr, fs.ErrNotExist):
+			return created, fmt.Errorf("check the web directory %s: %w", webDir, lerr)
+		case !create:
+			return false, nil
+		}
+		if merr := os.Mkdir(cur, 0o755); merr != nil {
+			return created, fmt.Errorf("create the web directory %s: %w", webDir, merr)
+		}
+		created = true
+	}
+	return created, nil
 }
 
 // gitDeployEnsureDir makes dir a directory, refusing a link or a file there.
