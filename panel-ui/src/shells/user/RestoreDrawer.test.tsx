@@ -55,6 +55,17 @@ function checkboxFor(section: string, label: string): HTMLInputElement {
   return el.querySelector("input") as HTMLInputElement;
 }
 
+// antd's Checkbox.Group passes on only the values its checkboxes have
+// registered, which each does in an effect after it first renders: a click
+// that lands before that is dropped. Click until the checkbox takes it.
+async function tick(section: string, label: string) {
+  await waitFor(() => {
+    const cb = checkboxFor(section, label);
+    if (!cb.checked) fireEvent.click(cb);
+    expect(checkboxFor(section, label).checked).toBe(true);
+  });
+}
+
 beforeEach(() => {
   mocked.post.mockReset().mockResolvedValue({ data: { job_id: "j1" } });
 });
@@ -81,7 +92,7 @@ describe("RestoreDrawer domains (GH #2303)", () => {
     mockManifest({ domains: ["plain.example"], dns_domains: [] });
     renderDrawer();
     await screen.findByText("Domain files");
-    fireEvent.click(checkboxFor("Domain files", "plain.example"));
+    await tick("Domain files", "plain.example");
     fireEvent.click(screen.getByText(/Delete files added since the backup/i));
     fireEvent.click(screen.getByText(/I understand this overwrites/i));
     fireEvent.click(screen.getByText("Restore selected"));
@@ -95,7 +106,7 @@ describe("RestoreDrawer domains (GH #2303)", () => {
     mockManifest({ domains: ["plain.example"], dns_domains: [] });
     renderDrawer();
     await screen.findByText("Domain files");
-    fireEvent.click(checkboxFor("Domain files", "plain.example"));
+    await tick("Domain files", "plain.example");
     fireEvent.click(screen.getByText(/I understand this overwrites/i));
     fireEvent.click(screen.getByText("Restore selected"));
     await waitFor(() => expect(mocked.post).toHaveBeenCalled(), { timeout: 5000 });
