@@ -675,9 +675,7 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 		}
 		if s.deps.Agent != nil {
 			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			_, ferr := s.deps.Agent.Call(fctx, "backup.forget", map[string]any{
-				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
-			})
+			ferr := s.forgetJob(fctx, oldest)
 			cancel()
 			if ferr != nil {
 				// Do NOT delete the row when the snapshot is still in the
@@ -702,6 +700,43 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 		return false
 	}
 	return true
+}
+
+// forgetJob asks the agent to forget a backup job's snapshots from the
+// repository the job wrote to: its destination's repo, credentials and restic
+// password. Named by job alone, the agent looks in its default local repo, so
+// a backup on any other destination was not found there, the caller deleted
+// its row, and its data stayed behind uncounted. A job without a destination
+// (pre-ADR-0080), or whose destination was deleted, uses the default repo, as
+// the admin Delete does. A destination that cannot be read is an error, so
+// the caller keeps the row.
+func (s *Scheduler) forgetJob(ctx context.Context, job *models.BackupJob) error {
+	params := map[string]any{"job_id": job.ID, "user_id": job.UserID, "kind": job.Kind}
+	var dest *models.BackupDestination
+	if job.DestinationID != nil && *job.DestinationID != "" && s.deps.Destinations != nil {
+		d, err := s.deps.Destinations.Get(ctx, *job.DestinationID)
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+		case err != nil:
+			return fmt.Errorf("load destination %s: %w", *job.DestinationID, err)
+		case d != nil:
+			dest = d
+			for k, v := range destWireParams(d) {
+				params[k] = v
+			}
+		}
+	}
+	call := func(passwordFile string) error {
+		if passwordFile != "" {
+			params["password_file"] = passwordFile
+		}
+		_, err := s.deps.Agent.Call(ctx, "backup.forget", params)
+		return err
+	}
+	if dest != nil {
+		return backupwrapperhelpers.WithDestPasswordFile(ctx, dest, s.deps.Agent, s.deps.SSOKey, call)
+	}
+	return call("")
 }
 
 // notifyBackupLimit fires backup.limit.reached to the tenant's inbox
