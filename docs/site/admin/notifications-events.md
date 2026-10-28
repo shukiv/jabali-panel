@@ -41,7 +41,7 @@ Each event has one of four severities: `info`, `warning`, `error` or `critical`.
 | `backup.fail` | error | yes | Backup failed. A scheduled backup job exited non-zero. |
 | `backup.success` | info | no | Backup completed. A backup job finished. Fires once per fully-succeeded job (info); a job that finished with some items skipped/failed (partial) fires as a warning. Opt-in — off by default to avoid a message per backup. |
 | `backup.retention.fail` | error | yes | Backup retention failed. The nightly restic forget/prune retention sweep failed for one or more backup destinations (a stale repository lock is the usual cause). Snapshots accumulate unpruned until fixed, growing the offsite repo toward disk-full. |
-| `backup.limit.reached` | warning | yes | Tenant backup limit reached. A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins. |
+| `backup.limit.reached` | warning | yes | Tenant backup limit reached. A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins. Not sent when a schedule with a keep count removes its own oldest backup to make room. |
 | `admin.login` | info | yes | Admin signed in. First request of a new Kratos admin session. |
 | `ssh.login` | info | yes | SSH login. Successful SSH authentication for a panel-managed user. |
 | `notifications.channel.auto_disabled` | warning | yes | Channel auto-disabled. A notification channel was disabled after repeated send failures. |

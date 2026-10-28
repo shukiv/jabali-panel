@@ -582,6 +582,11 @@ func (s *Scheduler) enqueueAccountBackup(ctx context.Context, sched models.Backu
 		if pkg != nil && pkg.BackupsEnabled() && s.atOrOverCap(ctx, user.ID, int(pkg.MaxBackups)) {
 			if pkg.BackupRetentionPrunes() && s.pruneOldestForUser(ctx, user, int(pkg.MaxBackups)) {
 				s.notifyBackupLimit(ctx, user, "prune", pkg.MaxBackups)
+			} else if keepsOwnBackups(sched) && s.dropScheduleOldest(ctx, sched, user, int(pkg.MaxBackups)) {
+				// No notice: this is the schedule's own retention, run before
+				// the nightly sweep. An hourly schedule at the limit would
+				// otherwise notify 24 times a day.
+				logger.Info("scheduled backup at the plan's limit: removed this schedule's oldest backup to make room", "max_backups", pkg.MaxBackups)
 			} else {
 				s.notifyBackupLimit(ctx, user, "reject", pkg.MaxBackups)
 				logger.Warn("scheduled backup skipped: retention cap reached", "policy", pkg.BackupRetentionPolicy, "max_backups", pkg.MaxBackups)
@@ -700,6 +705,57 @@ func (s *Scheduler) pruneOldestForUser(ctx context.Context, user *models.User, m
 		return false
 	}
 	return true
+}
+
+// keepsOwnBackups reports whether the schedule has a keep rule, so the nightly
+// retention sweep removes its old backups.
+func keepsOwnBackups(s models.BackupSchedule) bool {
+	set := func(v *int) bool { return v != nil && *v > 0 }
+	return set(s.KeepDaily) || set(s.KeepWeekly) || set(s.KeepMonthly)
+}
+
+// dropScheduleOldest makes room under the plan's backup limit for a run of a
+// schedule that has a keep rule, by removing that schedule's oldest backups of
+// the account: as many as the limit needs, at most maxPrunesPerTick a run, and
+// never the schedule's last one. Its keep rule would remove those anyway. Under
+// "reject" the run used to be skipped, and since the nightly sweep keeps what
+// the rule asks for, a schedule whose rule reached the limit never ran again
+// (GH #2300). Backups of other schedules, and manual ones, are left alone.
+// Returns true once under the limit.
+func (s *Scheduler) dropScheduleOldest(ctx context.Context, sched models.BackupSchedule, user *models.User, maxBackups int) bool {
+	total, err := s.deps.Jobs.CountRetainedForUser(ctx, user.ID)
+	if err != nil {
+		return false
+	}
+	need := int(total) - maxBackups + 1
+	if need <= 0 {
+		return true
+	}
+	own, err := s.deps.Jobs.CountRetainedForSchedule(ctx, user.ID, sched.ID)
+	if err != nil || int(own)-need < 1 {
+		return false
+	}
+	for i := 0; i < need && i < maxPrunesPerTick; i++ {
+		oldest, err := s.deps.Jobs.OldestRetainedForSchedule(ctx, user.ID, sched.ID)
+		if err != nil || oldest == nil {
+			return false
+		}
+		if s.deps.Agent != nil {
+			fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			ferr := s.forgetJob(fctx, oldest)
+			cancel()
+			if ferr != nil {
+				// Keep the row: the backup is still in its repository.
+				s.deps.Log.Error("backup limit: forgetting the schedule's oldest backup failed; keeping it",
+					"user_id", user.ID, "schedule_id", sched.ID, "job_id", oldest.ID, "err", ferr)
+				return false
+			}
+		}
+		if err := s.deps.Jobs.Delete(ctx, oldest.ID); err != nil {
+			return false
+		}
+	}
+	return !s.atOrOverCap(ctx, user.ID, maxBackups)
 }
 
 // forgetJob asks the agent to forget a backup job's snapshots from the
