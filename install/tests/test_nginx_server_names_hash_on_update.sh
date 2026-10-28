@@ -26,7 +26,10 @@ if [[ -z "$(fn install_nginx_server_names_hash)" ]]; then
   fail=1
 fi
 for caller in main provision_new_software; do
-  if ! fn "$caller" | grep -qx '  install_nginx_server_names_hash'; then
+  # Captured first: `fn | grep -q` under pipefail fails when grep exits early
+  # and awk, still printing a 17-33 KB function, takes SIGPIPE.
+  body=$(fn "$caller")
+  if ! grep -qx '  install_nginx_server_names_hash' <<<"$body"; then
     echo "FAIL: $caller() does not call install_nginx_server_names_hash"
     fail=1
   fi
