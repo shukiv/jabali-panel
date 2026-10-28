@@ -32,9 +32,15 @@ test.describe("GH #1686 — admin cron drawer target-aware help", () => {
     const drawer = page.getByRole("dialog");
     await expect(drawer.getByText(/create a cron job under any tenant/i)).toBeVisible();
 
-    // Command restrictions are shown near the command field (item 3).
-    await expect(drawer.getByText(/Commands must start with/i)).toBeVisible();
+    // Command restrictions are shown near the command field (item 3). Since
+    // the GH #2290 follow-up they sit in a "Command help" section, closed
+    // until opened, whose header names every allowed kind.
+    const help = drawer.getByText(/Command help/i);
+    await expect(help).toBeVisible();
+    await expect(drawer.getByText(/will not work/i)).toHaveCount(0);
+    await help.click();
     await expect(drawer.getByText(/will not work/i)).toBeVisible();
+    await expect(drawer.getByText("bash /home/USER/bin/task.sh")).toBeVisible();
 
     // Switch the target to root (item 4): paragraph swaps and the drawer title
     // updates. The title asserts the root locale key resolves (the vitest can't
