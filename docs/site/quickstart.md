@@ -1,6 +1,6 @@
 # Quickstart
 
-For brand-new hosts. Assumes Debian 13 (Trixie), root, public IPv4, and DNS pointed at the box.
+For brand-new hosts. Assumes Debian 13 (Trixie) or Ubuntu 24.04 (Noble), root, public IPv4, and DNS pointed at the box.
 
 ## 1. Install
 

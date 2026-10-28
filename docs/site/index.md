@@ -51,7 +51,7 @@ See [platform/stack.md](./platform/stack.md) for the full architecture.
 
 ## Audience
 
-- **Operators / sysadmins** — install on a Debian 13 server, manage all users, set quotas, run updates.
+- **Operators / sysadmins** — install on a Debian 13 or Ubuntu 24.04 server, manage all users, set quotas, run updates.
 - **Hosting customers** — log in to `/jabali-panel`, manage your own domains, mail, DBs, files.
 
 ## Where to start

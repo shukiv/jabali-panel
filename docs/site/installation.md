@@ -3,7 +3,8 @@
 ## Supported platforms
 
 - **Debian 13 (Trixie)** — primary, fully tested.
-- Earlier Debian / Ubuntu — installer detects and warns; not supported.
+- **Ubuntu 24.04 (Noble)** — supported. The installer detects Ubuntu and takes PHP from the ondrej/php PPA instead of packages.sury.org, and Docker from Docker's Ubuntu repository.
+- Other Debian and Ubuntu releases are not supported. The installer doesn't check the release number, so check it before you install; on any other Linux distribution it warns and continues.
 
 ## Requirements
 
@@ -13,7 +14,7 @@
 | Disk | 20 GB | 40 GB+ SSD |
 | CPU | 1 vCPU | 2 vCPU+ |
 | Network | Public IPv4, ports 22/25/53/80/443/465/587/993/995 open | + outbound 53/udp+tcp |
-| OS | Debian 13 fresh install | — |
+| OS | Debian 13 or Ubuntu 24.04, fresh install | — |
 
 The RAM guidance matches cPanel: **2 GB is the minimum, 4 GB is recommended.** The installer builds the panel (SPA + Go binaries) on the box, so on a ≤4 GB host it provisions a swap file and caps the build's memory (RAM-aware V8 heap + serialized `go build`) so compiling doesn't get OOM-killed — on 2 GB the build is slower but completes. Baseline services (MariaDB, CrowdSec) auto-size down on small hosts; on a very tight 2 GB box you can install without the `security` module to drop CrowdSec's ~500 MB WAF engine.
 
@@ -81,7 +82,7 @@ If `docker`, `docker_apps` or `postgres` fails to install, the installer warns a
 
 ## What the installer does
 
-1. Verifies Debian 13, root, no conflicting cPanel/Plesk/CyberPanel install.
+1. Verifies root, a Debian or Ubuntu system, no conflicting cPanel/Plesk/CyberPanel install.
 2. Adds Sury PHP repository (PHP 8.1–8.5+) and PackageCloud for CrowdSec.
 3. **Purges sury-nginx** if present — Jabali uses Debian-native nginx (Sury dropped nginx in 2026; this is defensive).
 4. Installs system packages: nginx, mariadb, php-fpm (all current Sury versions), redis, certbot, restic, ufw. The modules add their own: pdns-server and pdns-recursor for `dns`; Stalwart for `mail`; CrowdSec, Linux Malware Detect (LMD) and YARA-X for `security`, which also sets up the UFW firewall; Docker for `docker`; postgresql for `postgres`.
