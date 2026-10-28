@@ -2238,6 +2238,12 @@ func (h *meBackupHandler) getSchedule(c *gin.Context) {
 		view.Content = models.NormalizeBackupContent(sched.Content)
 		view.KeepDaily, view.KeepWeekly, view.KeepMonthly = sched.KeepDaily, sched.KeepWeekly, sched.KeepMonthly
 		view.KeepWithinDays = sched.KeepWithinDays
+		// A value above what the plan holds now (migration 342 copied the
+		// older keep_daily as is) shows as the limit, which the next save
+		// stores.
+		if m := view.KeepWithinDaysMax; m > 0 && view.KeepWithinDays != nil && *view.KeepWithinDays > m {
+			view.KeepWithinDays = &m
+		}
 		if dests, derr := h.cfg.Schedules.GetDestinations(c.Request.Context(), sched.ID); derr == nil && len(dests) > 0 {
 			view.DestinationID = dests[0].ID
 		}
@@ -2518,6 +2524,9 @@ func (h *meBackupHandler) listSchedules(c *gin.Context) {
 			KeepMonthly:    s.KeepMonthly,
 			KeepWithinDays: s.KeepWithinDays,
 		}
+		if pkg != nil {
+			row.KeepWithinDays = shownKeepWithinDays(s, pkg.MaxBackups)
+		}
 		if s.NextRunAt != nil {
 			v := s.NextRunAt.Format(time.RFC3339)
 			row.NextRunAt = &v
@@ -2607,6 +2616,20 @@ func clampKeepWithinDays(v *int, maxBackups uint32, runsPerWeek int) *int {
 		n = m
 	}
 	return &n
+}
+
+// shownKeepWithinDays is the days to keep an account sees for one of its
+// schedules: a value above what the plan's backup limit holds at the
+// schedule's frequency (migration 342 copied the older keep_daily as is)
+// shows as that limit, which the next save stores.
+func shownKeepWithinDays(s models.BackupSchedule, maxBackups uint32) *int {
+	runs := internalbackup.CadenceRunsPerWeek(s.Cadence)
+	if s.Cadence == "" {
+		if n, err := internalbackup.CronRunsPerWeek(s.CronExpr, time.Now().UTC()); err == nil {
+			runs = n
+		}
+	}
+	return clampKeepWithinDays(s.KeepWithinDays, maxBackups, runs)
 }
 
 func (h *meBackupHandler) createSchedule(c *gin.Context) {
