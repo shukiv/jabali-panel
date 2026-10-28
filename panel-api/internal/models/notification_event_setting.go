@@ -145,7 +145,7 @@ var AllNotificationEventKinds = []NotificationEventKindMeta{
 	{
 		Kind:        "backup.limit.reached",
 		Label:       "Tenant backup limit reached",
-		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins.",
+		Description: "A tenant hit their package's max_backups cap. Depending on the package retention policy the backup was blocked (reject) or the oldest was auto-pruned (prune). Notifies the tenant and admins. Not sent when a schedule with a keep count removes its own oldest backup to make room.",
 		Severity:    "warning",
 		DefaultOn:   true,
 	},
