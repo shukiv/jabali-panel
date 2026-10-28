@@ -106,7 +106,11 @@
     "health": {
       "healthy": "سليم",
       "critical": "{{count}} حرج",
+      "warning_zero": "{{count}} تحذيرات",
       "warning_one": "{{count}} تحذير",
+      "warning_two": "{{count}} تحذيران",
+      "warning_few": "{{count}} تحذيرات",
+      "warning_many": "{{count}} تحذيرًا",
       "warning_other": "{{count}} تحذيرات"
     },
     "server_ip": "‏IP الخادم:",
@@ -140,7 +144,11 @@
       "off": "معطّل"
     },
     "alert": {
+      "title_zero": "‏{{count}} مشكلات حرجة على المضيف",
       "title_one": "مشكلة حرجة واحدة على المضيف: {{count}}",
+      "title_two": "مشكلتان حرجتان على المضيف: {{count}}",
+      "title_few": "‏{{count}} مشكلات حرجة على المضيف",
+      "title_many": "‏{{count}} مشكلة حرجة على المضيف",
       "title_other": "‏{{count}} مشكلات حرجة على المضيف",
       "action": "افتح حالة الخادم للتحقيق ←"
     }
