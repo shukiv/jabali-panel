@@ -411,7 +411,7 @@
   "databaseuserdrawer": {
     "create_database_user": "Создать пользователя базы данных",
     "database_user_created": "Пользователь базы данных создан",
-    "engine": "СУБД",
+    "engine": "Движок",
     "mariadb_is_the_default_postgresql_must_be_en": "По умолчанию используется MariaDB. PostgreSQL нужно включить в настройках сервера.",
     "the_final_mariadb_username_will_be_your_pane": "Итоговое имя пользователя MariaDB — это ваше имя пользователя панели, подчёркивание и это значение (например, alice_api).",
     "username": "Имя пользователя"
@@ -420,7 +420,7 @@
     "actions": "Действия",
     "created": "Создано",
     "database_privileges": "Привилегии базы данных",
-    "engine": "СУБД",
+    "engine": "Движок",
     "user": "Пользователь"
   },
   "databasecreate": {
@@ -433,7 +433,7 @@
     "charset": "Кодировка",
     "created": "Создано",
     "database": "База данных",
-    "engine": "СУБД",
+    "engine": "Движок",
     "no_databases_yet": "Пока нет баз данных",
     "user_id": "ID пользователя"
   },
@@ -786,8 +786,8 @@
     "categories": "Категории",
     "search_all": "Поиск по всем событиям",
     "filter_category": "Фильтр в этой категории",
-    "only_overridden": "Только изменённые",
-    "overridden": "Изменено",
+    "only_overridden": "Только переопределённые",
+    "overridden": "Переопределено",
     "enable_all": "Включить все",
     "disable_all": "Выключить все",
     "reset_defaults": "Вернуть значения по умолчанию",
@@ -797,12 +797,12 @@
     "no_match": "Нет подходящих событий",
     "summary_events": "событий",
     "summary_enabled": "включено",
-    "summary_overridden": "изменено",
+    "summary_overridden": "переопределено",
     "bulk_failed": "Не удалось выполнить {{failed}} из {{total}} обновлений",
     "default_on": "По умолчанию: вкл",
     "default_off": "По умолчанию: выкл",
-    "overridden_default_on": "Изменено — по умолчанию вкл",
-    "overridden_default_off": "Изменено — по умолчанию выкл"
+    "overridden_default_on": "Переопределено — по умолчанию вкл",
+    "overridden_default_off": "Переопределено — по умолчанию выкл"
   },
   "historytab": {
     "body": "Текст",
@@ -914,7 +914,7 @@
     "email": "Электронная почта",
     "name": "Имя",
     "no_hosting_packages_yet": "Тарифов хостинга пока нет",
-    "php_exec": "PHP exec",
+    "php_exec": "exec в PHP",
     "search_by_package_name": "Поиск по названию тарифа",
     "ssh": "SSH"
   },
@@ -1422,7 +1422,7 @@
   "ssomaintenancecard": {
     "deletes_only_already_expired_tokens_active_s": "Удаляет только уже просроченные токены — активные сеансы SSO не затрагиваются.",
     "operator_procedure_run_on_the_host_not_from": "Процедура для оператора — выполняется на хосте, а не из браузера",
-    "purge": "Очистить",
+    "purge": "Очистить всё",
     "purge_expired_sso_tokens_now": "Удалить просроченные токены SSO сейчас?",
     "rotation_re_encrypts_every_stored_db_user_pa": "Ротация заново шифрует каждый сохранённый пароль пользователя БД, затем заменяет файл ключа на диске и перезагружает панель. Она намеренно доступна только в CLI: ротация из браузера, которая перезагружает панель посреди запроса, слишком рискованна, а сбой между перешифрованием и заменой ключа ломает SSO phpMyAdmin для всех клиентов. Сделайте резервную копию (шаг 3), чтобы можно было откатиться.",
     "sso_maintenance_phpmyadmin": "Обслуживание SSO (phpMyAdmin)"
@@ -1633,13 +1633,13 @@
     "copy_the_password_now_it_is_shown_only_once": "Скопируйте пароль сейчас — он показывается только один раз. Мы храним только хеш bcrypt.",
     "database_and_user_created": "База данных и пользователь созданы",
     "database_user_name": "Имя базы данных и пользователя",
-    "engine": "СУБД",
+    "engine": "Движок",
     "mariadb_is_the_default_postgresql_must_be_en": "По умолчанию используется MariaDB. PostgreSQL нужно включить в настройках сервера.",
     "quick_database_setup": "Быстрое создание базы данных"
   },
   "userdatabasedrawer": {
     "create_database": "Создать базу данных",
-    "engine": "СУБД",
+    "engine": "Движок",
     "mariadb_is_the_default_postgresql_must_be_en": "По умолчанию используется MariaDB. PostgreSQL должен включить администратор в настройках сервера.",
     "name": "Имя",
     "the_final_database_name_is_your_username_plu": "Итоговое имя базы данных — это ваше имя пользователя, подчёркивание и этот суффикс (например, `alice_wp`)."
@@ -1649,7 +1649,7 @@
     "charset": "Кодировка",
     "created": "Создано",
     "database": "База данных",
-    "engine": "СУБД",
+    "engine": "Движок",
     "size": "Размер"
   },
   "diskusagepage": {
@@ -1963,7 +1963,7 @@
     "cacheable_query_parameters": "Кэшируемые параметры запроса",
     "caches_php_html_responses_for_the_ttl_above": "Кэширует ответы PHP/HTML на время TTL выше (по умолчанию 600 с). Когда срок истекает, устаревшая страница отдаётся мгновенно, а nginx обновляет её в фоне — ни один посетитель не ждёт пересборки. Автоматически не применяется к POST-запросам, вошедшим пользователям WordPress, корзине и оформлению заказа, wp-admin и cookie сеансов, поэтому динамические и закрытые страницы остаются корректными.",
     "page_cache_with_background_refresh": "Страничный кэш с фоновым обновлением",
-    "purge": "Очистить",
+    "purge": "Очистить всё",
     "purge_cached_pages_for_this_domain": "Очистить кэшированные страницы этого домена?",
     "query_string_params_that_get_their_own_cache": "Параметры строки запроса, для которых создаётся отдельная запись кэша (например, paged для постраничной навигации). Всё остальное со строкой запроса по-прежнему не кэшируется. Это НЕ кэширует AJAX-фильтры JetEngine — это POST-запросы admin-ajax, они всегда идут мимо кэша. Держите список коротким: фасетные параметры умножают число записей кэша. Имена — строчные буквы, цифры и подчёркивания."
   },
@@ -1973,7 +1973,7 @@
     "save": "Сохранить"
   },
   "installappbutton": {
-    "install_app": "Установить приложение",
+    "install_app": "Установить на устройство",
     "install_jabali_as_an_app": "Установить Jabali как приложение"
   },
   "jabalifooter": {
@@ -2001,7 +2001,7 @@
     "last_attempt": "Последняя попытка",
     "next_retry": "Следующий повтор",
     "no_ssl_certificates_yet": "SSL-сертификатов пока нет",
-    "ownership_pending": "Ожидается подтверждение владения",
+    "ownership_pending": "Владение не подтверждено",
     "panel_cert_managed_in_panel_ssl": "Сертификат панели — управляется в «Менеджер SSL → SSL панели»",
     "renew_certificate": "Продлить сертификат",
     "retry_count": "Число повторов",
