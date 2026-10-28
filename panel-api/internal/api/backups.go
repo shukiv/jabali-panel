@@ -687,12 +687,29 @@ func (h *backupHandler) forgetBackup(c *gin.Context, job *models.BackupJob) erro
 // with no destination, or a since-deleted one, falls back to the default
 // local repo) and asks the agent to forget+prune the job's snapshots.
 func (h *backupHandler) forgetBackupErr(reqCtx context.Context, job *models.BackupJob) error {
+	return forgetJobSnapshots(reqCtx, h.cfg.Agent, h.cfg.Destinations, h.cfg.SSOKey, job)
+}
+
+// forgetJobSnapshots asks the agent to forget+prune a backup job's snapshots
+// from the repository the job wrote to: its destination's repo, credentials
+// and restic password. Named by job alone, the agent looks in its default
+// local repo, so a backup on any other destination is not found there and its
+// data stays behind once the caller deletes the row. A job without a
+// destination (pre-ADR-0080), or whose destination was deleted, uses the
+// default repo. A destination that cannot be read is an error, so the caller
+// keeps the row.
+func forgetJobSnapshots(reqCtx context.Context, ag agent.AgentInterface, dests repository.BackupDestinationRepository, ssoKey *ssokey.Key, job *models.BackupJob) error {
 	ctx, cancel := context.WithTimeout(reqCtx, backupCallTimeout)
 	defer cancel()
 	params := map[string]any{"job_id": job.ID, "user_id": job.UserID, "kind": job.Kind}
 	var dest *models.BackupDestination
-	if job.DestinationID != nil && h.cfg.Destinations != nil {
-		if d, derr := h.cfg.Destinations.Get(ctx, *job.DestinationID); derr == nil {
+	if job.DestinationID != nil && *job.DestinationID != "" && dests != nil {
+		d, derr := dests.Get(ctx, *job.DestinationID)
+		switch {
+		case errors.Is(derr, repository.ErrNotFound):
+		case derr != nil:
+			return fmt.Errorf("load backup destination %s: %w", *job.DestinationID, derr)
+		case d != nil:
 			dest = d
 			for k, v := range destWireParams(dest) {
 				params[k] = v
@@ -703,11 +720,11 @@ func (h *backupHandler) forgetBackupErr(reqCtx context.Context, job *models.Back
 		if passwordFile != "" {
 			params["password_file"] = passwordFile
 		}
-		_, err := h.cfg.Agent.Call(ctx, "backup.forget", params)
+		_, err := ag.Call(ctx, "backup.forget", params)
 		return err
 	}
 	if dest != nil {
-		return backupwrapperhelpers.WithDestPasswordFile(ctx, dest, h.cfg.Agent, h.cfg.SSOKey, call)
+		return backupwrapperhelpers.WithDestPasswordFile(ctx, dest, ag, ssoKey, call)
 	}
 	return call("")
 }
@@ -1824,11 +1841,7 @@ func (h *meBackupHandler) delete(c *gin.Context) {
 	// GH #1044: a restore job owns no restic snapshot — skip the forget and just
 	// drop the row (forgetting would prune a snapshot that never existed).
 	if h.cfg.Agent != nil && !isRestoreKind(job.Kind) {
-		ctx, cancel := context.WithTimeout(c.Request.Context(), backupCallTimeout)
-		defer cancel()
-		if _, err := h.cfg.Agent.Call(ctx, "backup.forget", map[string]any{
-			"job_id": job.ID, "user_id": job.UserID, "kind": job.Kind,
-		}); err != nil {
+		if err := forgetJobSnapshots(c.Request.Context(), h.cfg.Agent, h.cfg.Destinations, h.cfg.SSOKey, job); err != nil {
 			status, body := translateAgentError(err)
 			c.JSON(status, body)
 			return // leave the row for retry
@@ -2699,11 +2712,14 @@ func (h *meBackupHandler) deleteSchedule(c *gin.Context) {
 // Owner-scoped: OldestAccountBackupForUser filters by user_id, so a tenant can
 // only ever prune their OWN backups. Returns true once under the cap; false if
 // it can't free enough (e.g. only running/restore jobs remain) -> caller falls
-// back to reject. The forget is best-effort (an orphaned snapshot is reclaimed
-// by the retention sweep); the row delete is what guarantees loop progress.
+// back to reject. It counts what the limit counts (CountRetainedForUser):
+// counting every row, failed attempts included, kept the total over the limit
+// while it deleted every backup the account had. A backup whose forget fails
+// keeps its row and the caller rejects: deleting the row would leave the data
+// in its repository, uncounted and never removed.
 func (h *meBackupHandler) pruneOldestOwned(ctx context.Context, user *models.User, maxBackups int) bool {
 	for i := 0; i < 1000; i++ { // bounded so an odd repo state can't spin forever
-		_, total, err := h.cfg.Jobs.ListForUser(ctx, user.ID, 1, 0)
+		total, err := h.cfg.Jobs.CountRetainedForUser(ctx, user.ID)
 		if err != nil {
 			return false
 		}
@@ -2715,11 +2731,9 @@ func (h *meBackupHandler) pruneOldestOwned(ctx context.Context, user *models.Use
 			return false
 		}
 		if h.cfg.Agent != nil {
-			fctx, cancel := context.WithTimeout(ctx, backupCallTimeout)
-			_, _ = h.cfg.Agent.Call(fctx, "backup.forget", map[string]any{
-				"job_id": oldest.ID, "user_id": oldest.UserID, "kind": oldest.Kind,
-			})
-			cancel()
+			if ferr := forgetJobSnapshots(ctx, h.cfg.Agent, h.cfg.Destinations, h.cfg.SSOKey, oldest); ferr != nil {
+				return false
+			}
 		}
 		if derr := h.cfg.Jobs.Delete(ctx, oldest.ID); derr != nil {
 			return false
