@@ -8799,6 +8799,12 @@ php_admin_value[open_basedir] = /opt/phpmyadmin:/var/www/jabali-adminer:/tmp:/va
 ; install/tests/test_pma_pool_exec_lockdown.sh.
 php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,pcntl_exec,pcntl_fork,proc_nice,dl,putenv,mail,mb_send_mail
 
+; Session upload progress off (CVE-2026-115560, php.net advisory
+; 2026-10-23), as in the tenant pool template. phpMyAdmin's import then
+; shows no percentage while a file uploads; the import itself works.
+; Checked by install/tests/test_pma_pool_session_upload_progress.sh.
+php_admin_flag[session.upload_progress.enabled] = off
+
 ; Import limits (GH #285): the PHP defaults (upload_max_filesize=2M,
 ; post_max_size=8M, memory_limit=128M, max_execution_time=30s) make
 ; phpMyAdmin/Adminer SQL-file uploads fail on anything but tiny dumps.

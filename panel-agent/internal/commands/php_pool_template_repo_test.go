@@ -103,3 +103,40 @@ func TestPoolTemplateSlowlog(t *testing.T) {
 		t.Errorf("disabled: slow-log lines must be absent:\n%s", off)
 	}
 }
+
+// TestPoolTemplateSessionUploadProgressOff pins session upload progress off in
+// every tenant pool (CVE-2026-115560: php.net's interim advice, 2026-10-23).
+// php_admin_flag, so a tenant's .user.ini or ini_set cannot turn it back on,
+// and the directive stays out of adminFlagAllowlist so no pool override can.
+func TestPoolTemplateSessionUploadProgressOff(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "install", "php", "jabali-php-pool.conf.tmpl")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read repo pool template: %v", err)
+	}
+	tmpl, err := template.New("pool").Parse(string(b))
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+	var sb strings.Builder
+	if err := tmpl.Execute(&sb, phpPoolSpecTemplate{
+		PoolName: "jabali-alice", User: "alice", Group: "alice",
+		SocketPath: "/run/php/jabali-alice/fpm.sock", PmMode: "static",
+		PmMaxChildren: 5, ProcessIdleTimeoutSeconds: 60,
+		DisableFunctions: "exec",
+	}); err != nil {
+		t.Fatalf("execute template: %v", err)
+	}
+	var lines []string
+	for _, line := range strings.Split(sb.String(), "\n") {
+		if strings.Contains(line, "session.upload_progress.enabled") && !strings.HasPrefix(line, ";") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 || lines[0] != "php_admin_flag[session.upload_progress.enabled] = off" {
+		t.Errorf("rendered pool must set exactly php_admin_flag[session.upload_progress.enabled] = off, got %q", lines)
+	}
+	if adminFlagAllowlist["session.upload_progress.enabled"] {
+		t.Error("session.upload_progress.enabled must not be in adminFlagAllowlist: a pool override would turn it back on")
+	}
+}
