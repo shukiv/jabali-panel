@@ -91,6 +91,44 @@ func LoadZone(name string) (*time.Location, bool) {
 	return loc, true
 }
 
+// legacyZones maps the old zone names a browser lists to their current names
+// (GH #2320). Intl.supportedValuesOf("timeZone") in Chrome, Safari and Node
+// returns ICU's IDs, which keep spellings like Asia/Calcutta and Europe/Kiev.
+// Debian 13 and Ubuntu 24.04 ship those only in the optional tzdata-legacy
+// package: with no zone file, timedatectl, PHP and this binary (built with
+// -trimpath, so no Go zone archive to fall back on) all refuse them. Each
+// value is the alias's link target in tzdata.zi. The SPA keeps the same map
+// in panel-ui/src/data/timezones.ts; a test keeps the two equal.
+var legacyZones = map[string]string{
+	"Africa/Asmera":        "Africa/Asmara",
+	"America/Buenos_Aires": "America/Argentina/Buenos_Aires",
+	"America/Catamarca":    "America/Argentina/Catamarca",
+	"America/Cordoba":      "America/Argentina/Cordoba",
+	"America/Godthab":      "America/Nuuk",
+	"America/Indianapolis": "America/Indiana/Indianapolis",
+	"America/Jujuy":        "America/Argentina/Jujuy",
+	"America/Louisville":   "America/Kentucky/Louisville",
+	"America/Mendoza":      "America/Argentina/Mendoza",
+	"Asia/Calcutta":        "Asia/Kolkata",
+	"Asia/Katmandu":        "Asia/Kathmandu",
+	"Asia/Rangoon":         "Asia/Yangon",
+	"Asia/Saigon":          "Asia/Ho_Chi_Minh",
+	"Atlantic/Faeroe":      "Atlantic/Faroe",
+	"Europe/Kiev":          "Europe/Kyiv",
+	"Pacific/Enderbury":    "Pacific/Kanton",
+	"Pacific/Ponape":       "Pacific/Pohnpei",
+	"Pacific/Truk":         "Pacific/Chuuk",
+}
+
+// CanonicalZone returns the current name of a zone a browser lists by its old
+// name, and any other name unchanged.
+func CanonicalZone(name string) string {
+	if current, ok := legacyZones[name]; ok {
+		return current
+	}
+	return name
+}
+
 // Resolve picks the panel zone: the Server Settings value when it loads, else
 // the OS zone, else UTC.
 func Resolve(settingsZone string) (*time.Location, string) {

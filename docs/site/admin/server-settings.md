@@ -17,7 +17,7 @@
 
 General → **Server Time** sets the clock people see.
 
-- **Timezone** — the server's IANA timezone, for example `Europe/Berlin`. Saving it also sets the operating system's zone (`timedatectl`), so tenant cron jobs and system timers follow it. Empty means the operating system's zone. A zone the server does not have is refused.
+- **Timezone** — the server's IANA timezone, for example `Europe/Berlin`. Saving it also sets the operating system's zone (`timedatectl`), so tenant cron jobs and system timers follow it. Empty means the operating system's zone. A zone the server does not have is refused. The list uses the current zone names, for example `Asia/Kolkata` and `Europe/Kyiv`, not the older `Asia/Calcutta` and `Europe/Kiev` that some browsers use, and an older name sent through the API is saved under its current name. The same list is used for `date.timezone` on a domain's PHP Settings page.
 - **Date format** — how the panel shows dates and times. The default is `16/10/26 06:36` (`DD/MM/YY HH:mm`). The other choices are `16/10/2026 06:36`, `16.10.2026 06:36`, `2026-10-16 06:36`, `10/16/2026 06:36 AM` and `16 Oct 2026, 06:36`. Logs and the audit log add seconds.
 
 Every time in the panel shows in this zone and format, for administrators and clients alike. Hover a time to see it in UTC. The API, the database and the log files keep UTC (ISO 8601).

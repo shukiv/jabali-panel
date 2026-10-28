@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpbasedir"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
@@ -415,6 +416,10 @@ func (h *domainPHPSettingsHandler) patch(c *gin.Context) {
 		}
 	}
 	if req.PHPTimezone != nil {
+		// GH #2320: PHP refuses an old name a browser lists (Asia/Calcutta) and
+		// runs the site on UTC, so it is saved by its current name.
+		tz := paneltime.CanonicalZone(*req.PHPTimezone)
+		req.PHPTimezone = &tz
 		if err := validateTimezone(*req.PHPTimezone); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return

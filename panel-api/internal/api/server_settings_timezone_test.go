@@ -87,6 +87,21 @@ func TestServerSettingsPatch_TimezoneMustBeAZoneThisHostKnows(t *testing.T) {
 	require.Equal(t, "Asia/Tokyo", paneltime.Name(), "the panel clock follows the saved zone at once")
 }
 
+// GH #2320: a browser lists India as Asia/Calcutta, a name Debian 13 and
+// Ubuntu 24.04 have no zone file for (timedatectl refuses it). The zone is
+// saved, and handed to the OS, by its current name.
+func TestServerSettingsPatch_OldZoneNameIsSavedByItsCurrentName(t *testing.T) {
+	t.Cleanup(func() { paneltime.Set("UTC") })
+	repo := &lockedSettingsRepo{row: models.ServerSettings{ID: 1, SSHPort: 22, Timezone: "UTC"}}
+	r := serverTimeRouter(repo, true)
+
+	code, out := serverTimeDo(t, r, http.MethodPatch, "/api/v1/admin/settings", map[string]any{"timezone": "Asia/Calcutta"})
+	require.Equal(t, http.StatusOK, code, out)
+	require.Equal(t, "Asia/Kolkata", out["timezone"])
+	require.Equal(t, "Asia/Kolkata", repo.snapshot().Timezone)
+	require.Equal(t, "Asia/Kolkata", paneltime.Name())
+}
+
 // A stored zone this host no longer loads must not block saving the rest of
 // Server Settings: the General tab sends the timezone back with every save.
 func TestServerSettingsPatch_UnchangedStoredZoneIsNotRechecked(t *testing.T) {
