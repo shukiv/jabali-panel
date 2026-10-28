@@ -129,3 +129,54 @@ func TestDateFormats_MatchTheSPAPresets(t *testing.T) {
 		}
 	}
 }
+
+// GH #2320: an old name maps to the current one, which is a real zone and not
+// itself an old name; any other name passes through.
+func TestCanonicalZone(t *testing.T) {
+	if got := CanonicalZone("Asia/Calcutta"); got != "Asia/Kolkata" {
+		t.Errorf("CanonicalZone(Asia/Calcutta) = %q, want Asia/Kolkata", got)
+	}
+	for _, name := range []string{"Asia/Kolkata", "Europe/Berlin", "UTC", "", "Mars/Olympus"} {
+		if got := CanonicalZone(name); got != name {
+			t.Errorf("CanonicalZone(%q) = %q, want it unchanged", name, got)
+		}
+	}
+	for old, current := range legacyZones {
+		if old == current {
+			t.Errorf("%s maps to itself", old)
+		}
+		if _, ok := legacyZones[current]; ok {
+			t.Errorf("%s maps to %s, which is itself an old name", old, current)
+		}
+		if _, err := time.LoadLocation(current); err != nil {
+			t.Errorf("%s maps to %s, which does not load: %v", old, current, err)
+		}
+	}
+}
+
+// The SPA lists each zone by its current name from its own copy of the map,
+// and the API saves each by its current name from this one. Both must hold
+// the same pairs, or a name one side renames reaches the other unrenamed.
+func TestLegacyZones_MatchTheSPAMap(t *testing.T) {
+	const tsPath = "../../panel-ui/src/data/timezones.ts"
+	src, err := os.ReadFile(tsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", tsPath, err)
+	}
+	block := regexp.MustCompile(`(?s)LEGACY_TIMEZONE_NAMES[^{]*\{(.*?)\n\}`).FindSubmatch(src)
+	if block == nil {
+		t.Fatalf("%s: LEGACY_TIMEZONE_NAMES not found", tsPath)
+	}
+	ts := map[string]string{}
+	for _, m := range regexp.MustCompile(`"([^"]+)":\s*"([^"]+)"`).FindAllSubmatch(block[1], -1) {
+		ts[string(m[1])] = string(m[2])
+	}
+	if len(ts) != len(legacyZones) {
+		t.Errorf("SPA map has %d names, Go map %d", len(ts), len(legacyZones))
+	}
+	for old, current := range legacyZones {
+		if ts[old] != current {
+			t.Errorf("%s: SPA %q, Go %q", old, ts[old], current)
+		}
+	}
+}

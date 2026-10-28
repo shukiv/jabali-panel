@@ -380,7 +380,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		current.AdminEmail = strings.TrimSpace(*req.AdminEmail)
 	}
 	if req.Timezone != nil {
-		tz := strings.TrimSpace(*req.Timezone)
+		// GH #2320: an old name a browser lists (Asia/Calcutta) is saved, and
+		// handed to timedatectl, by the current name the host has a file for.
+		tz := paneltime.CanonicalZone(strings.TrimSpace(*req.Timezone))
 		// GH #2164: the panel shows every time in this zone and reads backup
 		// crons in it, so a new value must be a zone this host can load, not
 		// just a well-formed name. Only a change is checked: a stored value

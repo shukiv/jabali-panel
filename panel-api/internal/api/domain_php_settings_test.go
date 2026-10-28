@@ -58,3 +58,17 @@ func TestValidateTimezone(t *testing.T) {
 		})
 	}
 }
+
+// GH #2320: the PHP Settings list comes from the browser, which names some
+// zones the old way (Asia/Calcutta). PHP on Debian 13 and Ubuntu 24.04 refuses
+// those names and runs the site on UTC, so the current name is saved.
+func TestPHPSettingsPatch_OldZoneNameIsSavedByItsCurrentName(t *testing.T) {
+	f := newPHPPolicyFixture(t, "")
+	w := f.patch(t, map[string]any{"php_timezone": "Asia/Calcutta"})
+	if w.Code != 200 {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(f.domains.writes) != 1 || f.domains.writes[0].Timezone == nil || *f.domains.writes[0].Timezone != "Asia/Kolkata" {
+		t.Fatalf("writes = %+v, want one write with timezone Asia/Kolkata", f.domains.writes)
+	}
+}
