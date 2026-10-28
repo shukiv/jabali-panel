@@ -36,10 +36,10 @@ A rule with no credential pairs renders an htpasswd file with a single impossibl
 
 ## API
 
-- `GET /api/domains/:id/directory-privacy` ,list rules.
-- `POST /api/domains/:id/directory-privacy` ,add a rule.
-- `PATCH /api/domains/:id/directory-privacy/:ruleId` ,update.
-- `DELETE /api/domains/:id/directory-privacy/:ruleId` ,remove.
+- `GET /api/domains/:id/directory-privacy` — list rules.
+- `POST /api/domains/:id/directory-privacy` — add a rule.
+- `PATCH /api/domains/:id/directory-privacy/:ruleId` — update.
+- `DELETE /api/domains/:id/directory-privacy/:ruleId` — remove.
 
 Mutations require `domain.write` on the target domain.
 
@@ -49,6 +49,6 @@ Every mutation appends an audit row: `directory_privacy.rule.created`, `…updat
 
 ## Troubleshooting
 
-- **"Renewal failed after enabling /"** ,vhost was generated before the ACME override block was added. The reconciler rewrites the vhost on its next tick (every 60 s); check again after a minute.
-- **"Browser shows realm but rejects every password"** ,confirm the rule has at least one credential pair. Zero-credential rules deny by design.
-- **htpasswd missing on disk** ,usually a reconciler error; check `journalctl -u jabali-panel` for the rule ID; the reconciler runs inside the panel process.
+- **"Renewal failed after enabling /"** — vhost was generated before the ACME override block was added. The reconciler rewrites the vhost on its next tick (every 60 s); check again after a minute.
+- **"Browser shows realm but rejects every password"** — confirm the rule has at least one credential pair. Zero-credential rules deny by design.
+- **htpasswd missing on disk** — usually a reconciler error; check `journalctl -u jabali-panel` for the rule ID; the reconciler runs inside the panel process.
