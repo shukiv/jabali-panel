@@ -23,6 +23,8 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **CrowdSec** | packagecloud | IP-trust source + AppSec WAF + bouncers | MIT |
 | **certbot** | Debian | Let's Encrypt issuance and renewal | Apache-2.0 |
 
+`jabali update` moves Stalwart up to the version in this table, never down. A server that already runs a newer Stalwart, installed by hand, keeps it, and the update prints a warning. Jabali is tested with the version in the table.
+
 ## Security stack
 
 | Component | Source | Role |

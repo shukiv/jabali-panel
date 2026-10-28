@@ -13976,15 +13976,32 @@ install_notify_template() {
 # (the jabali update path). Bump here + install/stalwart.sha256 together.
 STALWART_VERSION="0.16.24"
 
+# _stalwart_refuse_downgrade reports whether the installed Stalwart ($1, as
+# parsed from `stalwart --version`) is NEWER than STALWART_VERSION, and warns
+# when it is. Both binary checks (upgrade_stalwart_binary, install_stalwart)
+# then keep it instead of installing the pin: an operator who installed a newer
+# Stalwart by hand (1.0 is out, GH #2318) must not be put back on an older one
+# by the next `jabali update`, and an older Stalwart may not read the data a
+# newer one wrote. dpkg compares the parts as numbers, so 0.9.x is older than
+# 0.16.x. An unparsed version ("unknown") is not newer: that binary gets the pin.
+_stalwart_refuse_downgrade() {
+  local installed="$1"
+  [[ "$installed" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  dpkg --compare-versions "$installed" gt "$STALWART_VERSION" || return 1
+  _warn "Stalwart $installed is newer than $STALWART_VERSION, the version this Jabali release installs and is tested with -- keeping it (Jabali never downgrades Stalwart)"
+  return 0
+}
+
 # upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
 # server binary (GH #525). install.sh's full install_stalwart runs on fresh
 # installs only; the update path re-copies the unit + push-cert but never
 # re-downloads the SERVER binary, so a version bump never reached existing
 # hosts (they stayed on the originally-installed version). This narrow function
 # does JUST the binary: compare the installed version to the pinned target and,
-# on mismatch, download + checksum-verify + atomically swap it (via the shared
-# _install_stalwart_binary), then restart jabali-stalwart so the new binary goes
-# live. Idempotent — a no-op when already at STALWART_VERSION. Mirrors how
+# when it is older, download + checksum-verify + atomically swap it (via the
+# shared _install_stalwart_binary), then restart jabali-stalwart so the new
+# binary goes live. Idempotent — a no-op when already at STALWART_VERSION, and
+# when the installed binary is newer (_stalwart_refuse_downgrade). Mirrors how
 # install_kratos / _install_bulwark self-upgrade on update.
 upgrade_stalwart_binary() {
   local stalwart_binary="/usr/local/bin/stalwart"
@@ -13993,6 +14010,9 @@ upgrade_stalwart_binary() {
     installed=$("$stalwart_binary" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
     if [[ "$installed" == "$STALWART_VERSION" ]]; then
       _ok "Stalwart already at $STALWART_VERSION"
+      return 0
+    fi
+    if _stalwart_refuse_downgrade "$installed"; then
       return 0
     fi
     _log "upgrading Stalwart $installed -> $STALWART_VERSION"
@@ -14084,8 +14104,9 @@ install_stalwart() {
   local stalwart_install_dir="/opt/stalwart"
 
   # Idempotence: skip re-download if the installed binary reports the
-  # target version. Stalwart's version command output format is stable
-  # across 0.14.x-0.16.x ("Stalwart Mail Server v0.16.0").
+  # target version, or a newer one (_stalwart_refuse_downgrade). Stalwart's
+  # version command output format is stable across 0.14.x-0.16.x
+  # ("Stalwart Mail Server v0.16.0").
   if [[ -x "$stalwart_binary" ]]; then
     local installed_version
     # `stalwart --version` prints a bare semver ("0.16.14", no `v` prefix), so
@@ -14095,7 +14116,7 @@ install_stalwart() {
     installed_version=$("$stalwart_binary" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
     if [[ "$installed_version" == "$stalwart_version" ]]; then
       _ok "Stalwart $stalwart_version already installed"
-    else
+    elif ! _stalwart_refuse_downgrade "$installed_version"; then
       _warn "upgrading Stalwart $installed_version -> $stalwart_version"
       _install_stalwart_binary "$stalwart_version"
     fi

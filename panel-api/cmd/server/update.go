@@ -1860,9 +1860,10 @@ fi
 			// but never re-downloaded the binary, so a version bump (GH #525)
 			// never reached existing hosts — they stayed on the originally-
 			// installed version. upgrade_stalwart_binary is idempotent: a no-op
-			// when already at the pinned STALWART_VERSION, else it downloads +
-			// checksum-verifies + atomically swaps the binary and restarts
-			// jabali-stalwart. Non-fatal — a host that can't upgrade keeps
+			// when already at the pinned STALWART_VERSION or on a newer one (it
+			// never downgrades), else it downloads + checksum-verifies +
+			// atomically swaps the binary and restarts jabali-stalwart.
+			// Non-fatal — a host that can't upgrade keeps
 			// running the old binary rather than failing the whole update.
 			installSh := repoDir + "/install.sh"
 			if _, err := os.Stat(installSh); err != nil {
