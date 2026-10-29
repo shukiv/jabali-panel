@@ -2643,7 +2643,8 @@ paths:
         is matched against the decoded path without the query string; `/`,
         `..`, `?`, `#`, `%`, quotes and backslashes are refused. Methods are
         GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS. At most 50 paths per
-        domain. Applied by the reconciler within a minute.
+        domain. Applied in about a minute (the next reconciler pass, then
+        a CrowdSec reload).
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
       requestBody:
