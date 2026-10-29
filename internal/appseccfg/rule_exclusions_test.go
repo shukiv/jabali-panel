@@ -119,7 +119,7 @@ func TestRender_RuleExclusionScopedHookAfterGeoblock(t *testing.T) {
 	if !strings.Contains(d.PreEval[0].Filter, "GeoIPEnrich") {
 		t.Errorf("geoblock must come first: %q", d.PreEval[0].Filter)
 	}
-	wantFilter := `IsInBand == true && req.Host == "shop.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/api/" && !(req.URL.Path contains "..")`
+	wantFilter := `IsInBand == true && req.Host == "shop.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/api/" && !(req.URL.Path contains "..") && !(req.URL.Path matches "(?i)%(2e|u002e)")`
 	if d.PreEval[1].Filter != wantFilter {
 		t.Errorf("filter = %q\nwant     %q", d.PreEval[1].Filter, wantFilter)
 	}
