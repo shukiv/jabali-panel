@@ -148,10 +148,14 @@ func sortedBotPathExclusions(list []BotPathExclusion) []BotPathExclusion {
 // The filter has the shape of the rule exclusions by name
 // (RenderRuleExclusions): host equality (req.Host is a client-controlled
 // header, never a prefix), the decoded path without the query string, and
-// two guards against a raw URI that CrowdSec parses to a path nginx serves
-// elsewhere: a path with ".." and one that parses with an authority
-// ("//other/api/" has path "/api/"). Each filter is a single-quoted YAML
-// scalar, since a path may hold ": " or " #".
+// guards against a raw URI that is served at a path outside the prefix: a
+// path with ".." (nginx resolves it, "/api/%2e%2e/other" decodes to it), one
+// that parses with an authority ("//other/api/" has path "/api/"), and one
+// that still holds "%" after CrowdSec's single decode ("/api/%252e%252e/other"
+// is "/api/%2e%2e/other" here, and an app that decodes again serves "/other").
+// The WAF's TraversalGuard decodes twice for the same reason; an expr filter
+// has no second decode, so a "%" left in the path refuses the exemption.
+// Each filter is a single-quoted YAML scalar, since a path may hold ": ".
 func renderBotPathExclusions(list []BotPathExclusion) string {
 	if len(list) == 0 {
 		return ""
@@ -172,7 +176,7 @@ func renderBotPathExclusions(list []BotPathExclusion) string {
 			continue
 		}
 		filter := `req.Host == "` + e.Host + `" && req.URL.Host == "" && req.URL.Path startsWith "` + e.PathPrefix +
-			`" && !(req.URL.Path contains "..")`
+			`" && !(req.URL.Path contains "..") && !(req.URL.Path contains "%")`
 		if methods, _ := NormalizeBotMethods(e.Methods); len(methods) > 0 {
 			filter += ` && req.Method in ["` + strings.Join(methods, `", "`) + `"]`
 		}
