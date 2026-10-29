@@ -83,6 +83,10 @@ type Opts struct {
 	// an unconditional exemption, not left to `not in []` edge semantics).
 	// Caller expands www.<domain>; sanitised like the other host lists.
 	BotIncludeHosts []string
+	// BotPathExclusions are the per-path opt-outs: one path prefix of one host
+	// (optionally for some methods) that skips the challenge, in either scope.
+	// Validated as they render; see bot_path_exclusions.go.
+	BotPathExclusions []BotPathExclusion
 	// RuleExclusions are the operator exclusions that name an AppSec rule
 	// (crowdsecurity/vpatch-…): each renders as a pre_eval
 	// RemoveInBandRuleByName scoped to one host and one path prefix, and the
@@ -681,6 +685,9 @@ func RenderBotExempt(o Opts) string {
 			b.WriteString(`        - ExemptFromChallenge("jabali-domain-optout")` + "\n")
 		}
 	}
+	// Per-path opt-outs, in both scopes. An exemption only adds to the ones
+	// above, so its place in the list does not matter.
+	b.WriteString(renderBotPathExclusions(o.BotPathExclusions))
 	return b.String()
 }
 
