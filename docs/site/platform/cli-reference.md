@@ -2004,6 +2004,43 @@ jabali domain bandwidth <domain-name|domain-id> [flags]
 
 - `--days` — lookback window in days (1..365) (default `30`)
 
+#### `jabali domain bot-exclusion`
+
+Manage the paths of a domain that skip the bot-detection challenge
+
+```
+jabali domain bot-exclusion
+```
+
+##### `jabali domain bot-exclusion add`
+
+Let requests to a path of a domain skip the bot-detection challenge
+
+```
+jabali domain bot-exclusion add <domain> <path-prefix> [flags]
+```
+
+**Flags:**
+
+- `--method` — only these methods (GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS); repeat or comma-separate (default `[]`)
+- `--note` — why the path skips the challenge
+
+##### `jabali domain bot-exclusion delete`
+
+Remove a path of a domain from the bot-detection exclusions
+
+```
+jabali domain bot-exclusion delete <domain> <id>
+```
+
+##### `jabali domain bot-exclusion list`
+
+List the paths of a domain that skip the bot-detection challenge
+
+```
+jabali domain bot-exclusion list <domain>
+```
+
 #### `jabali domain browse`
 
 List a path under the domain's docroot (as the domain owner)

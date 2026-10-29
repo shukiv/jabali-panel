@@ -96,6 +96,8 @@ type Deps struct {
 	MailCredentials userops.MailCredentialSweeper
 	BWDaily               repository.BWDailyRepository
 	DomainIPACLs          repository.DomainIPACLRepository
+	// GH #2328 — paths of a domain that skip the bot-detection challenge.
+	BotChallengeExclusions repository.BotChallengeExclusionRepository
 	// GH #1625 — additional hostnames served from a web domain's vhost.
 	WebDomainAliases repository.WebDomainAliasRepository
 	// M6.6 — per-domain mail TLS rows.
@@ -868,6 +870,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:   deps.Domains,
 				ACLs:      deps.DomainIPACLs,
 				Reconcile: schedule,
+			})
+		}
+		// GH #2328 — paths of a domain that skip the bot-detection
+		// challenge (admin only). The reconciler applies them every pass.
+		if deps.Domains != nil && deps.BotChallengeExclusions != nil {
+			api.RegisterBotChallengeExclusionRoutes(v1, api.BotChallengeExclusionHandlerConfig{
+				Domains:    deps.Domains,
+				Exclusions: deps.BotChallengeExclusions,
 			})
 		}
 		// GH #1625 — web domain aliases (extra server_name + cert SANs).

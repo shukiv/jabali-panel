@@ -72,6 +72,7 @@ func fullDeps() Deps {
 		MailOutboundPolicies: repository.NewMailOutboundPolicyRepository(db),
 		BWDaily: repository.NewBWDailyRepository(db),
 		DomainIPACLs: repository.NewDomainIPACLRepository(db),
+		BotChallengeExclusions: repository.NewBotChallengeExclusionRepository(db),
 		MailCerts: repository.NewMailCertificateRepository(db),
 		DomainDirectoryPrivacy: repository.NewDomainDirectoryPrivacyRepository(db),
 		MigrationJobs: repository.NewMigrationJobRepository(db),

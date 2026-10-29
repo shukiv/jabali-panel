@@ -2624,6 +2624,49 @@ paths:
       parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: acl_id, required: true, schema: { type: string } } ]
       responses: { "204": { description: OK } }
 
+  /domains/{id}/bot-challenge-exclusions:
+    get:
+      tags: [Bot Detection]
+      summary: Paths of a domain that skip the bot-detection challenge
+      description: |
+        GH #2328. Admin only. Each path prefix applies to the domain and
+        www.<domain>, for the listed methods (empty = every method). The
+        WAF, rate limits and CrowdSec IP decisions still apply.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: "{data, total}" }, "403": { description: Not an admin }, "404": { description: Not found } }
+    post:
+      tags: [Bot Detection]
+      summary: Add a path that skips the bot-detection challenge
+      description: |
+        Body `{path_prefix, methods?, note?}`. The prefix starts with `/` and
+        is matched against the decoded path without the query string; `/`,
+        `..`, `?`, `#`, `%`, quotes and backslashes are refused. Methods are
+        GET, HEAD, POST, PUT, PATCH, DELETE or OPTIONS. At most 50 paths per
+        domain. Applied by the reconciler within a minute.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path_prefix]
+              properties:
+                path_prefix: { type: string, maxLength: 512 }
+                methods: { type: array, items: { type: string, enum: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS] } }
+                note: { type: string, maxLength: 512 }
+      responses: { "201": { description: Created }, "400": { description: Invalid input or 50 paths reached }, "403": { description: Not an admin }, "404": { description: Not found }, "409": { description: Already listed } }
+
+  /domains/{id}/bot-challenge-exclusions/{excl_id}:
+    delete:
+      tags: [Bot Detection]
+      summary: Remove a path that skips the bot-detection challenge
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } }, { in: path, name: excl_id, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "403": { description: Not an admin }, "404": { description: Not found } }
+
   /domains/{id}/aliases:
     get:
       tags: [Aliases]
