@@ -30,7 +30,9 @@ func (d *botExclDomains) FindByID(_ context.Context, id string) (*models.Domain,
 	return nil, repository.ErrNotFound
 }
 
-type botExclStore struct{ rows []models.BotChallengeExclusion }
+type botExclStore struct {
+	rows []models.BotChallengeExclusion
+}
 
 func (s *botExclStore) List(context.Context) ([]models.BotChallengeExclusion, error) {
 	return s.rows, nil

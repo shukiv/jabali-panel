@@ -20,6 +20,7 @@ func newDomainCmd() *cobra.Command {
 		newDomainListCmd(),
 		newDomainShowCmd(),
 		newDomainIPACLCmd(),
+		newDomainBotExclusionCmd(),
 		newDomainWhoisCmd(),
 		newDomainBrowseCmd(),
 		newDomainSetCmd(),
