@@ -72,14 +72,18 @@ func (m *SMTPMailer) SendCode(email, code string) error {
 // codeMessage is the verification-code mail from the mailbox from to email.
 // It carries its own Date and Message-ID: RFC 5322 requires Date, Gmail asks
 // for a Message-ID, and the relay is not relied on to add either (GH #2319).
+// Gmail flagged the first wording ("claim your free … hostname", the code in
+// the subject) as phishing, so the mail names the product and says who asked.
 func codeMessage(from, email, code string, now time.Time) string {
 	domain := BaseDomain
 	if at := strings.LastIndex(from, "@"); at >= 0 {
 		domain = from[at+1:]
 	}
-	return fmt.Sprintf("Date: %s\r\nMessage-ID: <%s@%s>\r\nFrom: Jabali Hosted <%s>\r\nTo: <%s>\r\nSubject: %s is your Jabali hostname verification code\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
-		"Your verification code is: %s\r\n\r\n"+
-		"Enter it in the Jabali Panel installer to claim your free %s hostname.\r\n"+
-		"The code expires in 15 minutes. If you didn't request this, ignore this message.\r\n",
-		now.Format(time.RFC1123Z), rand.Text(), domain, from, email, code, code, BaseDomain)
+	return fmt.Sprintf("Date: %s\r\nMessage-ID: <%s@%s>\r\nFrom: Jabali Panel <%s>\r\nTo: <%s>\r\nSubject: Your Jabali Panel verification code\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n"+
+		"Someone started the Jabali Panel installer on a server and asked for a\r\n"+
+		"%s hostname for this email address.\r\n\r\n"+
+		"Verification code: %s\r\n\r\n"+
+		"The code expires in 15 minutes. If this wasn't you, ignore this email:\r\n"+
+		"nothing happens without the code.\r\n",
+		now.Format(time.RFC1123Z), rand.Text(), domain, from, email, BaseDomain, code)
 }

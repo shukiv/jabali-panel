@@ -1,6 +1,7 @@
 package hostedsvc
 
 import (
+	"io"
 	"net/mail"
 	"strings"
 	"testing"
@@ -35,10 +36,45 @@ func TestCodeMessage_HasDateAndMessageID(t *testing.T) {
 		t.Errorf("two messages share Message-ID %q", id)
 	}
 
-	if got, want := msg.Header.Get("Subject"), "123456 is your Jabali hostname verification code"; got != want {
-		t.Errorf("Subject = %q, want %q", got, want)
-	}
 	if from, err := mail.ParseAddress(msg.Header.Get("From")); err != nil || from.Address != "webmaster@jabali-panel.com" {
 		t.Errorf("From = %q (%v)", msg.Header.Get("From"), err)
+	}
+}
+
+// Gmail flagged the first wording as phishing ("many people marked similar
+// messages as phishing", GH #2319). The mail names the product it comes from,
+// says who asked for it, keeps the code out of the subject and drops the
+// "claim your free" wording.
+func TestCodeMessage_Wording(t *testing.T) {
+	raw := codeMessage("webmaster@jabali-panel.com", "user@example.com", "123456", time.Now())
+	msg, err := mail.ReadMessage(strings.NewReader(raw))
+	if err != nil {
+		t.Fatalf("not a valid message: %v\n%s", err, raw)
+	}
+	if from, err := mail.ParseAddress(msg.Header.Get("From")); err != nil || from.Name != "Jabali Panel" {
+		t.Errorf("From = %q (%v), want the name Jabali Panel", msg.Header.Get("From"), err)
+	}
+	if got, want := msg.Header.Get("Subject"), "Your Jabali Panel verification code"; got != want {
+		t.Errorf("Subject = %q, want %q", got, want)
+	}
+	var body strings.Builder
+	if _, err := io.Copy(&body, msg.Body); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Jabali Panel installer",
+		"jabalihosted.com hostname for this email address",
+		"Verification code: 123456",
+		"expires in 15 minutes",
+		"nothing happens without the code",
+	} {
+		if !strings.Contains(body.String(), want) {
+			t.Errorf("body lacks %q:\n%s", want, body.String())
+		}
+	}
+	for _, word := range []string{"free", "claim"} {
+		if strings.Contains(strings.ToLower(raw), word) {
+			t.Errorf("message still says %q:\n%s", word, raw)
+		}
 	}
 }
