@@ -33,11 +33,41 @@ never silently challenges traffic on a domain the operator didn't choose:
 - **Per-server** master switch (default OFF).
 - **Per-domain opt-in** (`scope=selected`) — challenge only chosen domains.
 - **Per-domain opt-out** — exclude a specific domain.
+- **Per-path opt-out** — let requests to chosen paths of a domain skip the
+  challenge (see below).
 - **Tenant self-service** — a tenant can toggle it on their **own** domains.
 
 Oversized request bodies are inspected up to the AppSec limit and then passed
 (the `partial` body-size action) rather than dropped, so large uploads on
 `/api/v1/*` are not blocked before the panel's own allowlist runs.
+
+### Paths that skip the challenge
+
+A client that cannot solve the challenge, such as an API client, a webhook or a
+mobile app, fails on a domain where the challenge is on. Instead of exempting
+the whole domain, an admin can list the paths that skip the challenge: Admin →
+Domains → Edit → **Security** → *Bot detection: paths that skip the challenge*,
+or from the command line:
+
+```bash
+jabali domain bot-exclusion add example.com /api/webhook --method POST --note "payment provider"
+jabali domain bot-exclusion list example.com
+jabali domain bot-exclusion delete example.com <id>
+```
+
+- A path matches as a prefix of the decoded request path, without the query
+  string: `/api/` also covers `/api/orders?id=1`.
+- Each path applies to the domain and `www.<domain>`, for the chosen methods,
+  or for every method when none are chosen.
+- Only the challenge is skipped. The WAF, rate limits and CrowdSec IP bans
+  still apply.
+- A request whose path holds `..`, or still holds `%` after decoding, gets the
+  challenge, so an encoded path cannot reach another part of the site through
+  a listed one.
+- A domain can list up to 50 paths. A change takes effect within a minute,
+  while bot detection is on.
+
+WAF rule exclusions do not affect the bot-detection challenge; this list does.
 
 ## Inspecting blocks
 
