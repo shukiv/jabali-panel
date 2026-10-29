@@ -44,7 +44,8 @@ func TestCodeMessage_HasDateAndMessageID(t *testing.T) {
 // Gmail flagged the first wording as phishing ("many people marked similar
 // messages as phishing", GH #2319). The mail names the product it comes from,
 // says who asked for it, keeps the code out of the subject and drops the
-// "claim your free" wording.
+// "claim your free" wording. It names no domain in the text either: Gmail
+// turns a bare domain into a link and judges the mail by that link.
 func TestCodeMessage_Wording(t *testing.T) {
 	raw := codeMessage("webmaster@jabali-panel.com", "user@example.com", "123456", time.Now())
 	msg, err := mail.ReadMessage(strings.NewReader(raw))
@@ -63,7 +64,7 @@ func TestCodeMessage_Wording(t *testing.T) {
 	}
 	for _, want := range []string{
 		"Jabali Panel installer",
-		"jabalihosted.com hostname for this email address",
+		"to get a hostname for that server",
 		"Verification code: 123456",
 		"expires in 15 minutes",
 		"nothing happens without the code",
@@ -76,5 +77,8 @@ func TestCodeMessage_Wording(t *testing.T) {
 		if strings.Contains(strings.ToLower(raw), word) {
 			t.Errorf("message still says %q:\n%s", word, raw)
 		}
+	}
+	if strings.Contains(body.String(), BaseDomain) {
+		t.Errorf("body names %s, which Gmail turns into a link:\n%s", BaseDomain, body.String())
 	}
 }
