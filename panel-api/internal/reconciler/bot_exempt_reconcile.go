@@ -2,9 +2,11 @@ package reconciler
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -44,6 +46,14 @@ func (r *Reconciler) reconcileBotChallengeExempt(ctx context.Context) {
 		r.log.Warn("bot-exempt reconcile: write exempt state file", "err", err)
 		// fall through: still try to refresh from whatever is on disk.
 	}
+	// GH #2328: per-path opt-outs. A failed listing keeps the file as it is.
+	if r.botChallengeExclusions != nil {
+		if rows, err := r.botChallengeExclusions.List(ctx); err != nil {
+			r.log.Warn("bot-exempt reconcile: list path exclusions", "err", err)
+		} else if _, err := appseccfg.WriteBotExemptPaths(appseccfg.BotExemptPathsPath, botPathExclusionsFor(domains, rows)); err != nil {
+			r.log.Warn("bot-exempt reconcile: write path state file", "err", err)
+		}
+	}
 	if _, err := appseccfg.WriteBotIncludeHosts(appseccfg.BotIncludeHostsPath, include); err != nil {
 		r.log.Warn("bot-exempt reconcile: write include state file", "err", err)
 	}
@@ -63,4 +73,25 @@ func (r *Reconciler) reconcileBotChallengeExempt(ctx context.Context) {
 	if _, err := r.agent.Call(rctx, "security.crowdsec.appsec.botdetection.refresh_exempt", map[string]any{}); err != nil {
 		r.log.Warn("bot-exempt reconcile: refresh_exempt", "err", err)
 	}
+}
+
+// botPathExclusionsFor expands the per-path opt-out rows (GH #2328) to one
+// state-file entry per host, the domain and www.<domain>, as the whole-domain
+// opt-out does. Rows of a domain missing from domains are left out.
+func botPathExclusionsFor(domains []models.Domain, rows []models.BotChallengeExclusion) []appseccfg.BotPathExclusion {
+	names := make(map[string]string, len(domains))
+	for i := range domains {
+		names[domains[i].ID] = strings.ToLower(domains[i].Name)
+	}
+	out := []appseccfg.BotPathExclusion{}
+	for _, row := range rows {
+		name, ok := names[row.DomainID]
+		if !ok {
+			continue
+		}
+		for _, host := range []string{name, "www." + name} {
+			out = append(out, appseccfg.BotPathExclusion{Host: host, PathPrefix: row.PathPrefix, Methods: row.MethodList()})
+		}
+	}
+	return out
 }

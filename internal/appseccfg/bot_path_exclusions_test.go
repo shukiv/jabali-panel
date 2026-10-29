@@ -12,7 +12,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const wantPathFilter = `req.Host == "api.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/api/endpoint" && !(req.URL.Path contains "..")`
+// The ".." and "%" guards refuse the exemption for a raw URI that nginx, or
+// an app that decodes the path again, serves outside the prefix:
+// "/api/endpoint/%2e%2e/admin" decodes to a "..", and
+// "/api/endpoint/%252e%252e/admin" still holds "%" after the one decode.
+const wantPathFilter = `req.Host == "api.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/api/endpoint" && !(req.URL.Path contains "..") && !(req.URL.Path contains "%")`
 
 func TestRenderBotExempt_PathExclusion(t *testing.T) {
 	out := RenderBotExempt(Opts{BotPathExclusions: []BotPathExclusion{
@@ -68,7 +72,7 @@ func TestRenderBotExempt_PathExclusionYAMLRoundTrip(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(out), &cfg); err != nil {
 		t.Fatalf("rendered config does not parse: %v\n%s", err, out)
 	}
-	want := `req.Host == "api.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/it's: here" && !(req.URL.Path contains "..")`
+	want := `req.Host == "api.example.com" && req.URL.Host == "" && req.URL.Path startsWith "/it's: here" && !(req.URL.Path contains "..") && !(req.URL.Path contains "%")`
 	for _, e := range cfg.Inband.PreEval {
 		if len(e.Apply) == 1 && e.Apply[0] == `ExemptFromChallenge("jabali-path-optout")` {
 			if e.Filter != want {
