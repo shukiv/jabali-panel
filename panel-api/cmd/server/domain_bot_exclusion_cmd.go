@@ -107,7 +107,7 @@ func newDomainBotExclusionAddCmd() *cobra.Command {
 			if jsonOutput {
 				return printJSON(api.NewBotChallengeExclusionView(*row))
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Added %s on %s (id=%s). Applied within a minute while bot detection is on.\n", row.PathPrefix, d.Name, row.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %s on %s (id=%s). Applied in about a minute while bot detection is on.\n", row.PathPrefix, d.Name, row.ID)
 			return nil
 		},
 	}

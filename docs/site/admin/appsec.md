@@ -64,7 +64,7 @@ jabali domain bot-exclusion delete example.com <id>
 - A request whose path holds `..`, or still holds `%` after decoding, gets the
   challenge, so an encoded path cannot reach another part of the site through
   a listed one.
-- A domain can list up to 50 paths. A change takes effect within a minute,
+- A domain can list up to 50 paths. A change takes effect in about a minute,
   while bot detection is on.
 
 WAF rule exclusions do not affect the bot-detection challenge; this list does.

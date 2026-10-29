@@ -75,7 +75,7 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
             CrowdSec → Bot Detection). A path matches as a prefix, without the
             query string: <code>/api/</code> also covers{" "}
             <code>/api/orders?id=1</code>. The WAF, rate limits and IP bans
-            still apply. Changes take effect within a minute.
+            still apply. Changes take effect in about a minute.
           </Typography.Paragraph>
         }
       />
