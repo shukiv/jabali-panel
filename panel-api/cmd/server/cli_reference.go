@@ -43,7 +43,14 @@ func writeCLICommand(b *strings.Builder, cmd *cobra.Command) {
 	}
 	writeCLIFlags(b, "Flags", cmd.LocalFlags())
 
-	// Recurse into visible subcommands, name-sorted.
+	for _, c := range visibleSubcommands(cmd) {
+		writeCLICommand(b, c)
+	}
+}
+
+// visibleSubcommands returns cmd's subcommands without hidden ones and
+// Cobra's own help/completion, name-sorted.
+func visibleSubcommands(cmd *cobra.Command) []*cobra.Command {
 	subs := make([]*cobra.Command, 0, len(cmd.Commands()))
 	for _, c := range cmd.Commands() {
 		if c.Hidden || c.Name() == "help" || c.Name() == "completion" {
@@ -52,9 +59,49 @@ func writeCLICommand(b *strings.Builder, cmd *cobra.Command) {
 		subs = append(subs, c)
 	}
 	sort.Slice(subs, func(i, j int) bool { return subs[i].Name() < subs[j].Name() })
-	for _, c := range subs {
-		writeCLICommand(b, c)
+	return subs
+}
+
+// cliSummaryWidth is the column the README's command list wraps at.
+const cliSummaryWidth = 80
+
+// renderCLICommandSummary emits the README's command list: one entry per
+// top-level command with its subcommands, wrapped at cliSummaryWidth. A
+// command without subcommands shows its short description instead. A drift
+// test keeps the README block equal to this, so a new command is listed there
+// as well as in the full reference.
+func renderCLICommandSummary(root *cobra.Command) string {
+	tops := visibleSubcommands(root)
+	nameWidth := 0
+	for _, c := range tops {
+		if n := len(c.Name()); n > nameWidth {
+			nameWidth = n
+		}
 	}
+	col := len("jabali ") + nameWidth + 2
+
+	var b strings.Builder
+	for _, c := range tops {
+		line := fmt.Sprintf("%-*s", col, "jabali "+c.Name())
+		subs := visibleSubcommands(c)
+		if len(subs) == 0 {
+			fmt.Fprintf(&b, "%s# %s\n", line, strings.TrimSpace(c.Short))
+			continue
+		}
+		for i, s := range subs {
+			word := s.Name()
+			if i < len(subs)-1 {
+				word += "|"
+			}
+			if len(line)+len(word) > cliSummaryWidth && len(line) > col {
+				b.WriteString(line + "\n")
+				line = strings.Repeat(" ", col)
+			}
+			line += word
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 func writeCLIFlags(b *strings.Builder, heading string, fs *pflag.FlagSet) {
