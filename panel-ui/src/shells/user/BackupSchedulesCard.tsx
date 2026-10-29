@@ -22,6 +22,9 @@ import {
   BACKUP_CONTENT_OPTIONS as CONTENT_OPTIONS,
   backupCadenceLabel as cadenceLabel,
   backupContentLabel as contentLabel,
+  cadenceRunsPerWeek,
+  keptBackups,
+  maxKeepDays,
 } from "../../lib/backupScheduleOptions";
 
 interface ScheduleRow {
@@ -31,6 +34,8 @@ interface ScheduleRow {
   cadence: string;
   destination_id?: string;
   keep_daily?: number | null;
+  // Days to keep: every backup of the last N days (GH #2300).
+  keep_within_days?: number | null;
   next_run_at?: string | null;
   last_run_at?: string | null;
 }
@@ -57,7 +62,7 @@ interface DrawerForm {
   content: string;
   cadence: string;
   destination_id?: string;
-  keep_daily?: number | null;
+  keep_within_days?: number | null;
   enabled: boolean;
 }
 
@@ -68,6 +73,8 @@ export const BackupSchedulesCard = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const formCadence = Form.useWatch("cadence", form);
+  const formKeepDays = Form.useWatch("keep_within_days", form);
 
   const listQuery = useQuery({
     queryKey: ["me-backup-schedules"],
@@ -95,7 +102,7 @@ export const BackupSchedulesCard = () => {
 
   const openCreate = () => {
     setEditingId(null);
-    form.setFieldsValue({ content: "full", cadence: "daily", destination_id: undefined, keep_daily: null, enabled: true });
+    form.setFieldsValue({ content: "full", cadence: "daily", destination_id: undefined, keep_within_days: null, enabled: true });
     setDrawerOpen(true);
   };
   const openEdit = (row: ScheduleRow) => {
@@ -104,7 +111,7 @@ export const BackupSchedulesCard = () => {
       content: row.content || "full",
       cadence: row.cadence || "daily",
       destination_id: row.destination_id,
-      keep_daily: row.keep_daily ?? null,
+      keep_within_days: row.keep_within_days ?? row.keep_daily ?? null,
       enabled: row.enabled,
     });
     setDrawerOpen(true);
@@ -119,7 +126,9 @@ export const BackupSchedulesCard = () => {
         content: values.content,
         cadence: values.cadence,
         destination_id: values.destination_id ?? "",
-        keep_daily: values.keep_daily ?? null,
+        // Days to keep replaces the older one-per-day rule.
+        keep_daily: null,
+        keep_within_days: values.keep_within_days ?? null,
       };
       if (editingId) {
         await apiClient.put(`/me/backup-schedules/${editingId}`, body);
@@ -146,6 +155,7 @@ export const BackupSchedulesCard = () => {
         cadence: row.cadence,
         destination_id: row.destination_id ?? "",
         keep_daily: row.keep_daily ?? null,
+        keep_within_days: row.keep_within_days ?? null,
       });
       listQuery.refetch();
     } catch (err) {
@@ -165,16 +175,32 @@ export const BackupSchedulesCard = () => {
 
   const atCap = !!view && view.schedules.length >= view.max_backup_schedules;
 
+  // Days to keep holds every backup of those days, so how many backups that is
+  // depends on how often the schedule runs; the plan's limit caps it.
+  const maxBackups = view?.max_backups || 1;
+  const keepDaysMax = maxKeepDays(maxBackups, cadenceRunsPerWeek(formCadence ?? "daily"));
+  const keepDaysHint = (() => {
+    if (!formKeepDays) return "No backups are removed by this schedule.";
+    const runs = cadenceRunsPerWeek(formCadence ?? "daily");
+    const n = keptBackups(formKeepDays, runs, maxBackups);
+    return Math.ceil((formKeepDays * runs) / 7) > maxBackups
+      ? `About ${n} backups: your plan's limit. At the limit, a run removes this schedule's oldest backup first.`
+      : `About ${n} backup${n === 1 ? "" : "s"}.`;
+  })();
+
   const columns = [
     { title: "Type", dataIndex: "content", key: "content", render: (c: string) => contentLabel(c) },
     { title: "Cadence", dataIndex: "cadence", key: "cadence", render: (c: string) => cadenceLabel(c) },
     { title: "Destination", dataIndex: "destination_id", key: "destination_id", render: (id?: string) => destName(id) },
     {
       title: "Keep",
-      dataIndex: "keep_daily",
-      key: "keep_daily",
-      // keep_daily: the newest backup of each day, for this many days (GH #2300).
-      render: (k?: number | null) => (k ? `${k} days` : <Typography.Text type="secondary">default</Typography.Text>),
+      dataIndex: "keep_within_days",
+      key: "keep_within_days",
+      // Every backup of the last N days (GH #2300).
+      render: (k: number | null | undefined, row: ScheduleRow) => {
+        const days = k ?? row.keep_daily;
+        return days ? `${days} day${days === 1 ? "" : "s"}` : <Typography.Text type="secondary">default</Typography.Text>;
+      },
     },
     {
       title: "Next run",
@@ -283,10 +309,18 @@ export const BackupSchedulesCard = () => {
           </Form.Item>
           <Form.Item
             label="Days to keep"
-            name="keep_daily"
-            tooltip={`The newest backup of each day is kept, for this many days. Up to your plan limit (${view?.max_backups ?? 1}).`}
+            name="keep_within_days"
+            tooltip={`Keeps every backup made in that many days, counted back from the newest. Your plan holds ${maxBackups} backups, so at this frequency up to ${keepDaysMax} day${keepDaysMax === 1 ? "" : "s"}.`}
+            extra={keepDaysHint}
+            rules={[
+              {
+                type: "number",
+                max: keepDaysMax,
+                message: `At this frequency your plan holds ${keepDaysMax} day${keepDaysMax === 1 ? "" : "s"} of backups`,
+              },
+            ]}
           >
-            <InputNumber min={1} max={view?.max_backups || 1} style={{ width: "100%" }} />
+            <InputNumber min={1} max={keepDaysMax} style={{ width: "100%" }} />
           </Form.Item>
           <Form.Item label="Enabled" name="enabled" valuePropName="checked">
             <Switch checkedChildren="On" unCheckedChildren="Off" />

@@ -311,7 +311,7 @@ func forgetEverySchedule(ctx context.Context, cmd *cobra.Command, scheds []model
 		if !s.Enabled {
 			continue
 		}
-		if s.KeepDaily == nil && s.KeepWeekly == nil && s.KeepMonthly == nil {
+		if s.KeepDaily == nil && s.KeepWeekly == nil && s.KeepMonthly == nil && s.KeepWithinDays == nil {
 			fmt.Fprintf(cmd.OutOrStdout(),
 				"schedule %s: no retention policy, skipping\n", s.ID)
 			continue
@@ -364,6 +364,9 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 	if s.KeepMonthly != nil {
 		policy.Monthly = *s.KeepMonthly
 	}
+	if s.KeepWithinDays != nil {
+		policy.WithinDays = *s.KeepWithinDays
+	}
 	out := cmd.OutOrStdout()
 	if policy.empty() {
 		fmt.Fprintf(out, "schedule %s dest %s (%s): no positive keep count, skipping\n", s.ID, d.ID, d.Name)
@@ -405,8 +408,8 @@ func forgetForSchedule(ctx context.Context, cmd *cobra.Command, s models.BackupS
 		nSnaps += len(j.SnapshotIDs)
 	}
 	fmt.Fprintf(out,
-		"schedule %s dest %s (%s): keep daily=%s weekly=%s monthly=%s per whole backup: %d snapshot(s), keeping %d job(s), forgetting %d job(s) (%d snapshot(s))\n",
-		s.ID, d.ID, d.Name, intPtrStr(s.KeepDaily), intPtrStr(s.KeepWeekly), intPtrStr(s.KeepMonthly),
+		"schedule %s dest %s (%s): keep daily=%s weekly=%s monthly=%s within-days=%s per whole backup: %d snapshot(s), keeping %d job(s), forgetting %d job(s) (%d snapshot(s))\n",
+		s.ID, d.ID, d.Name, intPtrStr(s.KeepDaily), intPtrStr(s.KeepWeekly), intPtrStr(s.KeepMonthly), intPtrStr(s.KeepWithinDays),
 		len(snaps), len(plan.Keep)+len(plan.Drop)-len(drop), len(drop), nSnaps)
 	if plan.Untagged > 0 {
 		fmt.Fprintf(out, "schedule %s dest %s: %d snapshot(s) carry no job-id tag; left alone\n", s.ID, d.ID, plan.Untagged)
