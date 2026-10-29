@@ -16,6 +16,8 @@
 <p>
   <a href="https://jabali-panel.com/">Website</a>
   &nbsp;|&nbsp;
+  <a href="https://jabali-panel.com/docs/">Documentation</a>
+  &nbsp;|&nbsp;
   <a href="https://demo.jabali-panel.com">Live demo</a>
   &nbsp;|&nbsp;
   <a href="#installation">Install</a>
@@ -45,6 +47,7 @@
 ## Demo and Website
 
 - Website: https://jabali-panel.com/
+- Documentation: https://jabali-panel.com/docs/
 - Demo: https://demo.jabali-panel.com
 
 ### Demo mode (build-tag gated, on `main`)
@@ -374,34 +377,100 @@ jabali repair --all --yes      # destructive recovery
 ## CLI
 
 The `jabali` command uses a noun:verb pattern. All commands support
-`--json` for machine-readable output and `--yes` to skip confirmations.
+`--json` for machine-readable output. Commands that confirm before a risky
+step take `--yes`, which skips the question or, where the command does a dry
+run first, applies the change.
 
+<!-- BEGIN generated: go test ./panel-api/cmd/server -run TestREADMECLICommands -update -->
 ```
-jabali user        list|create|delete|show|password|suspend|unsuspend|admin
-jabali domain      list|create|delete|show|enable|disable|email-enable|email-disable
-jabali db          list|create|delete|users|user-create|user-delete|tune|root-password
-jabali mailbox     list|create|delete|passwd|set-quota|forwarder|autoresponder|shares
-jabali ssl         list|status|check|issue|renew|panel|panel-issue
-jabali dns         list|records|add|delete-record|sync|dnssec-enable|dnssec-disable
-jabali backup      list|create|delete|info|restore|password|destinations|schedules
-jabali cron        list|create|delete|toggle|run
-jabali php         list|install|uninstall|default|extensions
-jabali service     list|status|start|stop|restart|enable|disable
-jabali system      info|status|disk|memory|hostname|kill
-jabali wp          list|install|delete|update|scan|import
-jabali agent       ping|status|restart|log
-jabali cpanel      analyze|restore|fix-permissions
-jabali login       token [--user=] [--ttl=15] [--panel=]
-jabali logs        share [--raw] [--ttl=86400]
-jabali ufw         migrate-ip-bans            # M43 CrowdSec single IP-trust
-jabali repair      --diagnose|--auto|--all
-jabali panel-primary set|show                 # ADR-0048 primary mail domain
-jabali nspawn      list|build|update|delete
-jabali malware-purge                          # M33 retention sweep
-jabali ftp         list|create|delete|reset   # FTP/SFTP subaccounts (GH #1053)
-jabali notification channels|routing|test     # server-wide + tenant-owned
-jabali update      [--force]
+jabali active-tasks      # Show running/queued tasks (updates, backups, malware scans)
+jabali admin             backfill-usernames|purge-orphan-identities|
+                         rebuild-kratos|relabel-identifiers|slice-cutover
+jabali aide              check|rebuild|status
+jabali app               cache|cache-doctor|cache-doctor-run|clone|delete|e2e|
+                         get|install|list|magic-link|refresh-cache-plugin|
+                         registry|scan
+jabali apparmor          flip-mature|status
+jabali appsec            exclusion|explain|flarum-sync|host-mode|render-config
+jabali audit             prune|query|verify
+jabali automation-token  list|mint|revoke
+jabali backup            account-restore|copy|destination|retention|schedule|
+                         scheduler
+jabali cron              add|delete|http-trigger|list|run-now|update
+jabali crowdsec          alerts|allowlists|blocklists|bouncers|captcha|
+                         country-exempt|decisions|geoblock|hub|metrics|profiles|
+                         status
+jabali db                backup|chown|config|create|delete|kill|list|
+                         maintenance|maintenance-status|postgres|processes|
+                         restore|root-password|sso|user
+jabali disk-usage        refresh|refresh-all|show
+jabali dns               prune-orphan-records|prune-service-records|record|zone
+jabali docker            disable|enable|enable-tenant|status
+jabali docker-app        backup-create|backups|catalog|delete|edit|env|exec|
+                         install|list|logs|maintenance|patch|rebuild|restart|
+                         restore|start|status|stop|update
+jabali domain            bandwidth|browse|catchall|chown|create|delete|
+                         dir-privacy|disable|disclaimer|email-disable|
+                         email-dkim-rotate|email-enable|enable|fix-perms|
+                         htaccess-preview|ip-acl|list|mta-sts|ownership|
+                         php-settings|php-version|prune-orphans|set|show|
+                         skip-auto-san|whois
+jabali dr                feed|pair|promote|status|unfeed|unpair
+jabali files             archive|chmod|copy|delete|download|extract|list|mkdir|
+                         move|read|rename|stat|upload|write
+jabali impersonation     create|end|list
+jabali ip                add|delete|list|update
+jabali limits            apply|check|override|package|status|usage
+jabali log               access|types
+jabali mail              deliverability|logs|queue|throttle
+jabali mail-cert         disable|enable|reissue|show
+jabali mail-group        add-member|create|delete|list|remove-member|
+                         set-members|set-resources|show
+jabali mailbox           autoresponder|create|delete|forwarder|list|passwd|
+                         set-quota|shares
+jabali malware           events|quarantine|scan|scan-status|settings|status|
+                         update-signatures|yara
+jabali malware-purge     # Hard-delete terminated malware quarantine rows past retention
+jabali migrate           force|imap|import|import-wp|pull-source|reap-secrets|
+                         refresh|restore|status|up
+jabali notification      broadcast|channels|dlq|events|inbox
+jabali nspawn            build|list|prune
+jabali package           create|delete|edit|list
+jabali page-template     get|list|reset|set
+jabali panel-cert        issue|status|toggle
+jabali panel-primary     ensure
+jabali pdns              backfill|dnssec
+jabali per-user-egress   approve|deny|flip-mature|get|requests|set-policy|
+                         summary
+jabali php               ext|pool|version
+jabali php-defense       incidents|incidents-clear|mode|rule-toggle|rules|status
+jabali python-app        create|delete|env|frameworks|list|logs|restart|start|
+                         stop
+jabali release           promote
+jabali repair            # Detect and fix known deployment-host issues
+jabali retention-sweep   # Prune expired rows from unbounded log/report tables
+jabali secrets           rotate
+jabali security          feed-check
+jabali serve             # Start the Jabali Panel HTTP(S) server
+jabali service           action|status
+jabali session           list|revoke|revoke-user
+jabali settings          get|keys|mail-hostname|set
+jabali shared-resource   create|grant|grants|list|remove|revoke
+jabali ssh-key           add|delete|list
+jabali ssl               disable|enable|list|readiness|renew|retry|set-custom|
+                         shared
+jabali sso               prune-tokens|rotate-key
+jabali sso-reap          # Sweep stranded jabali-sso-<nonce>.php files
+jabali system            diagnostic|info|process|resolver|restore|services|
+                         ssh-keys
+jabali ufw               default|disable|enable|migrate-ip-bans|rule|status
+jabali update            apt-refresh
+jabali user              2fa-reset|create|delete|list|password|rename|
+                         reprovision|ssh-forwarding|suspend|unsuspend
+jabali user-token        list|mint|revoke
+jabali version           # Print Jabali version, commit, and runtime info
 ```
+<!-- END generated -->
 
 `jabali domain create` takes `--web-enabled` / `--manage-dns` / `--mail`
 (independent per-domain services), and `jabali system restore --from-tar`
@@ -539,7 +608,9 @@ auto-discovery (Thunderbird, Outlook) keeps working.
 
 ## Documentation
 
-See the [`docs/`](docs/) directory for detailed guides:
+The user and admin guides are online at
+[jabali-panel.com/docs](https://jabali-panel.com/docs/). See the
+[`docs/`](docs/) directory for detailed guides:
 
 - [Conventions](docs/CONVENTIONS.md) — repo-wide patterns (route families,
   SearchableTable, Drawer for create+edit, icon shim, list envelope, rate
