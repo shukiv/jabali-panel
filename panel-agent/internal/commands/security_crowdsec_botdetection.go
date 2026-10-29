@@ -324,18 +324,21 @@ func botDetectionApplyOff(ctx context.Context, geoMode string, countries []strin
 
 // botExemptOpts feeds RenderBotExempt the panel host + webmail allowlist that
 // jabali-appsec uses (so the built-in exemptions match the on_match allowlist)
-// PLUS the operator's per-domain opt-out list (both from the panel reconciler's
-// state files; missing → the safe default of no exemption).
+// PLUS the operator's per-domain opt-out list and per-path opt-outs (all from
+// the panel reconciler's state files; missing or unreadable → the safe default
+// of no exemption).
 func botExemptOpts(scope string) appseccfg.Opts {
 	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
 	exemptHosts, _ := appseccfg.LoadBotExemptHosts(appseccfg.BotExemptHostsPath)
 	includeHosts, _ := appseccfg.LoadBotIncludeHosts(appseccfg.BotIncludeHostsPath)
+	pathExclusions, _ := appseccfg.LoadBotExemptPaths(appseccfg.BotExemptPathsPath)
 	return appseccfg.Opts{
-		PanelHost:       appsecPanelHost(),
-		WebmailHosts:    webmailHosts,
-		BotScope:        scope,
-		BotExemptHosts:  exemptHosts,
-		BotIncludeHosts: includeHosts,
+		PanelHost:         appsecPanelHost(),
+		WebmailHosts:      webmailHosts,
+		BotScope:          scope,
+		BotExemptHosts:    exemptHosts,
+		BotIncludeHosts:   includeHosts,
+		BotPathExclusions: pathExclusions,
 	}
 }
 
