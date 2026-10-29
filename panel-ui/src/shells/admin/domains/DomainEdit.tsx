@@ -17,6 +17,7 @@ import type { Domain } from "../../../components/domains/types";
 import { DomainEmailSection } from "./DomainEmailSection";
 import { DomainMailProviderSection } from "./DomainMailProviderSection";
 import { DomainIPACLSection } from "./DomainIPACLSection";
+import { DomainBotExclusionSection } from "./DomainBotExclusionSection";
 import { DomainDirectoryPrivacySection } from "./DomainDirectoryPrivacySection";
 import { DomainListenIPSection } from "./DomainListenIPSection";
 import { DomainMailboxesSection } from "./DomainMailboxesSection";
@@ -289,6 +290,15 @@ export const DomainEdit = () => {
             domainId={domain.id}
             rateLimitRPS={domain.rate_limit_rps ?? 0}
             connectionLimit={domain.connection_limit ?? 0}
+          />
+        </div>
+        <div>
+          <Typography.Title level={5}>
+            Bot detection: paths that skip the challenge
+          </Typography.Title>
+          <DomainBotExclusionSection
+            domainId={domain.id}
+            domainName={domain.name}
           />
         </div>
         <div>
