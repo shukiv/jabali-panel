@@ -120,7 +120,12 @@ func sortedExclusions(list []Exclusion) []Exclusion {
 // the raw request URI, and CrowdSec parses it as a URL, so two forms would
 // carry the exclusion to a path nginx serves elsewhere: a path with ".."
 // ("/excluded/../other"), and one that parses with an authority
-// ("//other/excluded/" has path "/excluded/"). Neither matches.
+// ("//other/excluded/" has path "/excluded/"). Neither matches. CrowdSec
+// decodes the path once, and a proxied app may decode it again, so a path that
+// still holds an encoded dot ("/excluded/%252e%252e/other" is
+// "/excluded/%2e%2e/other" here) does not match either, as TraversalGuard
+// refuses it for the CRS-id exclusions. Any other "%" left, as in a file named
+// "50%off.pdf", still matches.
 func RenderRuleExclusions(list []Exclusion) string {
 	sorted := sortedExclusions(RuleNameExclusions(list))
 	if len(sorted) == 0 {
@@ -149,7 +154,7 @@ func RenderRuleExclusions(list []Exclusion) string {
 			fmt.Fprintf(&b, " # %s\n", note)
 		}
 		filter := `IsInBand == true && req.Host == "` + host + `" && req.URL.Host == "" && req.URL.Path startsWith "` + uri +
-			`" && !(req.URL.Path contains "..")`
+			`" && !(req.URL.Path contains "..") && !(req.URL.Path matches "(?i)%(2e|u002e)")`
 		b.WriteString(" - filter: '" + strings.ReplaceAll(filter, "'", "''") + "'\n")
 		b.WriteString("   apply:\n")
 		b.WriteString(`    - RemoveInBandRuleByName("` + strings.TrimSpace(e.RuleID) + `")` + "\n")
