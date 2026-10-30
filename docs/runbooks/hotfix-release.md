@@ -124,11 +124,20 @@ git log --oneline -1 stable
    hotfix commit is a cherry-pick from main. A `Hotfix-only:` commit is
    dropped from main here, which is what that line means.
 
+8. **Add the changelog entry.** Every move of `stable` gets one in
+   `CHANGELOG.md`, the hotfix included. Generate it from the commit the
+   previous entry names, put it above the newest entry, and merge it to main
+   through a normal PR:
+
+   ```
+   tools/changelog-entry.sh <previous entry's commit> stable --hotfix
+   ```
+
 ### Rollback
 
 Servers never move backwards, so moving `stable` back does not undo a hotfix
 on a server that already installed it. To undo it, revert the fix on main and
-ship the revert as a new hotfix (steps 1–7).
+ship the revert as a new hotfix (steps 1–8).
 
 ## Verification
 
