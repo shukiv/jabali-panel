@@ -19,14 +19,16 @@ const BaseDomain = "jabalihosted.com"
 // a DNS-rebinding lure at worst. Go's stdlib (IsPrivate/IsLoopback/
 // IsLinkLocalUnicast/IsGlobalUnicast) catches RFC1918, loopback, link-local,
 // multicast, and unspecified — but MISSES CGNAT (100.64/10), Class E (240/4),
-// "this network" (0/8), TEST-NET (RFC5737), benchmarking (198.18/15), and the
-// IETF protocol block (192.0.0/24). We refuse all of them explicitly.
+// "this network" (0/8), TEST-NET (RFC5737), benchmarking (198.18/15), the IETF
+// protocol block (192.0.0/24), and the retired 6to4 relay block (192.88.99/24).
+// We refuse all of them explicitly.
 var bogonV4 = func() []*net.IPNet {
 	cidrs := []string{
 		"0.0.0.0/8",       // "this network" (RFC 1122)
 		"100.64.0.0/10",   // CGNAT / carrier-grade NAT (RFC 6598) — not internet-routable
 		"192.0.0.0/24",    // IETF protocol assignments (RFC 6890)
 		"192.0.2.0/24",    // TEST-NET-1 (RFC 5737)
+		"192.88.99.0/24",  // retired 6to4 relay anycast (RFC 7526)
 		"198.18.0.0/15",   // benchmarking (RFC 2544)
 		"198.51.100.0/24", // TEST-NET-2 (RFC 5737)
 		"203.0.113.0/24",  // TEST-NET-3 (RFC 5737)

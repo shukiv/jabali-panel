@@ -11,7 +11,7 @@ func TestLabelFromIP(t *testing.T) {
 		want    string
 		wantErr bool
 	}{
-		{"45.79.1.2", "45-79-1-2", false},          // ordinary public v4
+		{"45.79.1.2", "45-79-1-2", false},           // ordinary public v4
 		{"182.54.236.100", "182-54-236-100", false}, // the hostsclick box
 		{"192.168.100.165", "", true},               // RFC1918 — rebinding lure
 		{"10.0.3.14", "", true},                     // RFC1918
@@ -27,6 +27,12 @@ func TestLabelFromIP(t *testing.T) {
 		{"203.0.113.9", "", true},                   // TEST-NET-3 (bogus)
 		{"198.18.0.1", "", true},                    // benchmarking
 		{"255.255.255.255", "", true},               // broadcast
+		{"224.0.0.1", "", true},                     // multicast lower edge
+		{"239.255.255.250", "", true},               // multicast upper edge
+		{"192.88.99.1", "", true},                   // retired 6to4 relay (RFC 7526)
+		{"192.88.99.254", "", true},                 // 6to4 relay upper edge
+		{"192.88.98.255", "192-88-98-255", false},   // just below the 6to4 block
+		{"192.88.100.1", "192-88-100-1", false},     // just above the 6to4 block
 		{"2001:db8::1", "", true},                   // v6 not in v1
 	}
 	for _, tc := range tests {
