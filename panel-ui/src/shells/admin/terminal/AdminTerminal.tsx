@@ -38,6 +38,7 @@ export function AdminTerminal() {
     if (!gate.enabled || !hostRef.current) return;
     let disposed = false;
     let ws: WebSocket | null = null;
+    let failed = false;
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
@@ -84,12 +85,13 @@ export function AdminTerminal() {
         };
         ws.onerror = () => {
           if (!disposed) {
+            failed = true;
             setStatus("error");
             setErrMsg("WebSocket error — see browser console / panel-api logs.");
           }
         };
         ws.onclose = () => {
-          if (!disposed && status !== "error") setStatus("closed");
+          if (!disposed && !failed) setStatus("closed");
         };
 
         term.onData((d) => {
