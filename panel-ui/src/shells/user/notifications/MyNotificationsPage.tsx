@@ -12,7 +12,7 @@
 // Routing is a matrix: the server hands back a labelled catalog of the events
 // that fire for this user (GET .../event-catalog), and for each the tenant picks
 // which of their channels should receive it — no raw event-kind typing.
-import { useMemo, useState } from "react";
+import { useMemo, useState, type JSX } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Empty, Popconfirm, Select, Space, Table, Tag, Typography } from "antd";

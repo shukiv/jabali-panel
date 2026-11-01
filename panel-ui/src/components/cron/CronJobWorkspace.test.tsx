@@ -51,6 +51,8 @@ vi.mock("../../shells/user/cron/CreateCronModal", () => ({
 import { AdminCronList } from "../../shells/admin/cron/AdminCronList";
 import { UserCronList } from "../../shells/user/cron/UserCronList";
 
+import type { JSX } from "react";
+
 type Row = {
   id: string;
   user_id: string;

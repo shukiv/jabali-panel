@@ -19,6 +19,8 @@ import { ExclamationCircleOutlined, WarningOutlined } from "@icons";
 import { useNavigate } from "react-router";
 import { useServerHealth } from "../hooks/useServerStatus";
 
+import type { JSX } from "react";
+
 // poll cadence — matches NotificationBell. Keep <60s so an operator
 // who just fixed a disk doesn't stare at a stale red badge. A page with a
 // faster cadence (Server Status, Dashboard) wins while it is mounted.

@@ -8,7 +8,7 @@
 // Security: tokens entered here are assembled into the config IN THE BROWSER and
 // are never sent to or stored by the panel. The generated config is a secret —
 // treat the copied text / downloaded file like a password.
-import { useMemo, useState } from "react";
+import { useMemo, useState, type JSX } from "react";
 import {
   Alert,
   Button,

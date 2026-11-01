@@ -11,7 +11,7 @@
 // "wait, what was that secret?" support ticket.
 
 import { useTranslation } from "react-i18next";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type JSX } from "react";
 import { Alert, Button, Card, Checkbox, Form, Input, InputNumber, Modal, Popconfirm, Radio, Space, Table, Tag, Tooltip, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import type { ColumnsType } from "antd/es/table";

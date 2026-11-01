@@ -18,7 +18,7 @@
 // under the page's heading: the figures and the search in a strip, the rail
 // and the section below, and the long introduction folded to its title.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { Alert, Button, Card, Collapse, Empty, Input, Select, Space, Spin, Tag, Tooltip, Typography, Grid, theme } from "antd";
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
 import { ApiOutlined, LinkOutlined, DownloadOutlined, LockOutlined, SearchOutlined } from "@icons";

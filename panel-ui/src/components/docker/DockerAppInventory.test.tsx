@@ -98,6 +98,8 @@ vi.mock("../../shells/admin/docker-apps/MaintenanceTab", () => ({
 import { AdminDockerAppsPage } from "../../shells/admin/docker-apps/AdminDockerAppsPage";
 import { UserDockerAppsPage } from "../../shells/user/docker-apps/UserDockerAppsPage";
 
+import type { JSX } from "react";
+
 const makeApp = (over: Partial<InstalledApp>): InstalledApp => ({
   id: "j1",
   user_id: "u1",

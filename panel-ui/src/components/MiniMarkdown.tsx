@@ -6,7 +6,7 @@
 // for a docs page nobody loads in production, mirroring APIDocsPage's own
 // reasoning). Scoped to our own controlled spec text. Builds React nodes only —
 // no dangerouslySetInnerHTML — so there is no HTML-injection surface.
-import type { ReactNode } from "react";
+import type { ReactNode, JSX } from "react";
 import { Typography } from "antd";
 
 // renderInline handles **bold** and `code` within a line of text.

@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type JSX } from "react";
 import { Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dropdown, Input, Table, Tag, Button, Empty, Space, Tooltip, Typography, Modal, Descriptions } from "antd";
