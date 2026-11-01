@@ -111,7 +111,7 @@ test.describe("admin migrations — CreateMigrationWizard (M35.1)", () => {
     // Step 1: WHM is the default radio — click Next.
     await expect(page.getByText(/pick the source panel type/i)).toBeVisible();
     await page.getByRole("button", { name: /next: connection/i }).click();
-    expect(draftBody).not.toBeNull();
+    await expect.poll(() => draftBody).not.toBeNull();
     expect(draftBody!.source_kind).toBe("whm_pkgacct");
     expect(draftBody!.state).toBe("draft");
 
