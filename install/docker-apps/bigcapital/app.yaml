@@ -1,7 +1,7 @@
 slug: bigcapital
 name: Bigcapital
 tags: ["Accounting", "ERP"]
-version: "0.25.42"
+version: "0.25.45"
 description: |
   Open-source accounting and financial management — invoicing, expenses,
   banking, inventory, and financial reports for small businesses. A
@@ -21,7 +21,7 @@ retired: "the MinIO images it stores attachments in are no longer published, so 
 # Primary image (drives the server + migration services). The webapp,
 # envoy, mariadb, redis, minio and gotenberg images are pinned in the
 # compose template; keep the webapp tag in sync with this version on bump.
-image_channel: bigcapitalhq/server:v0.25.42@sha256:246843cd5fc2ce4ad486693f4f814464547941a924a31f500fe1aec46341df45
+image_channel: bigcapitalhq/server:v0.25.45@sha256:dbedc06ad149726910bf86ca337acf4e435b7cc2e5ac3dcb8e1c60a876a3ddc0
 update_mode: manual
 
 resources:

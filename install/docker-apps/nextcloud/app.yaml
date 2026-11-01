@@ -2,7 +2,7 @@ slug: nextcloud
 popularity: 100
 name: Nextcloud
 tags: ["File sharing"]
-version: "35.0.1"
+version: "35.0.2"
 # Release track (GH #1956): Nextcloud upgrades one major at a time. Update
 # moves a 34 install to 35, and a 33 install to 34 first; a 34 install keeps
 # the 34 image on an env or domain edit.
@@ -17,7 +17,7 @@ icon: icon.svg
 upstream: https://github.com/nextcloud/server
 documentation: https://docs.nextcloud.com/
 
-image_channel: nextcloud:35-apache@sha256:f4e0ee28ac9e54cad6e04e148489d79a609acba86dfbff69c8f666d50f96e414
+image_channel: nextcloud:35-apache@sha256:e0b1a2af52c82c07b7a0e8e59878bd8769e704447734d5d238a836982f51b9c8
 held_tracks:
   - track: "34"
     version: "34.0.4"

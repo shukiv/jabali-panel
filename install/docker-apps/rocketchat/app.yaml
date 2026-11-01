@@ -2,7 +2,7 @@ slug: rocketchat
 popularity: 68
 name: Rocket.Chat
 tags: ["Communication"]
-version: "8.8.1"
+version: "8.9.0"
 description: |
   Self-hosted team chat / collaboration platform — channels, DMs, voice/
   video, file sharing, and integrations. Two services: the Rocket.Chat
@@ -14,7 +14,7 @@ icon: icon.svg
 upstream: https://github.com/RocketChat/Rocket.Chat
 documentation: https://docs.rocket.chat/
 
-image_channel: rocketchat/rocket.chat:8.8.1@sha256:95eabcfef9cb83b1feaace8c68f96d0201fbd9873462394dbf8a33618b7f9f03
+image_channel: rocketchat/rocket.chat:8.9.0@sha256:295f7b2c38fc3542024dc404f887eb2e13276b66e5854d31d86bcd069f6ce6dc
 update_mode: manual
 # The MongoDB 6.0 copy reads mongo/, so the old containers must be stopped
 # before the new ones start.

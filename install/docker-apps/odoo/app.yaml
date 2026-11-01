@@ -18,7 +18,7 @@ icon: icon.svg
 upstream: https://github.com/odoo/odoo
 documentation: https://www.odoo.com/documentation/20.0/
 
-image_channel: odoo:20.0@sha256:cdd83e8359b3e8c357895d476396c05021fed9975bf420f353bab25fcaed1533
+image_channel: odoo:20.0@sha256:d5e3a26baa044867c826dddc09058f10e2582706bf83c146ea04fea889720c76
 held_tracks:
   - track: "19"
     version: "19.0"
