@@ -137,7 +137,7 @@ REPO_DIR="${JABALI_REPO_DIR:-/opt/jabali-panel}"
 # owns /etc/resolv.conf and pdns-recursor recurses through 1.1.1.1 +
 # 9.9.9.9 via UDP.
 DNS_FORWARDER="${JABALI_DNS_FORWARDER:-}"
-GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"
+GO_VERSION="${JABALI_GO_VERSION:-1.26.10}"
 # SHA-256 of the pinned Go tarballs, from https://go.dev/dl/?mode=json.
 # Pinned HERE rather than in install/ because install_go runs BEFORE
 # clone_or_update_repo — on a fresh install $REPO_DIR does not exist yet, so a
@@ -147,8 +147,8 @@ GO_VERSION="${JABALI_GO_VERSION:-1.26.8}"
 # Bump together with GO_VERSION. An unpinned version (JABALI_GO_VERSION
 # override, or the CDN-gap fallback) verifies against go.dev's published
 # checksum instead — see install_go.
-GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b}"
-GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-211ffced9dcb9633a55eac6364816ec0ddd951389a740e88fa8b3337971bdda0}"
+GO_SHA256_AMD64="${JABALI_GO_SHA256_AMD64:-ccfe7ae822d2c2f41f4fe7c956199967a4dac22d0ee0d2b2bfdb440aab3b20c5}"
+GO_SHA256_ARM64="${JABALI_GO_SHA256_ARM64:-3f4227ce7b206a513e794f1393adb473a07b46e94d18bd15d1c684bbb7319797}"
 GO_ROOT="${JABALI_GO_ROOT:-/usr/local/go}"
 SERVICE_USER="${JABALI_SERVICE_USER:-jabali}"
 SERVICE_NAME="${JABALI_SERVICE_NAME:-jabali-panel}"
