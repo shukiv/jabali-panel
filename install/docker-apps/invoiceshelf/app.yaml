@@ -1,7 +1,7 @@
 slug: invoiceshelf
 name: InvoiceShelf
 tags: ["Accounting", "Billing"]
-version: "2.4.6"
+version: "2.4.7"
 description: |
   Open-source, self-hosted invoicing and estimates for freelancers and
   small businesses (a maintained fork of Crater). Clients, invoices,
@@ -12,7 +12,7 @@ icon: icon.svg
 upstream: https://github.com/InvoiceShelf/InvoiceShelf
 documentation: https://docs.invoiceshelf.com/
 
-image_channel: invoiceshelf/invoiceshelf:2.4.6@sha256:3cefda59e53ea027b52cd142b5339683afecaec3463db7c1af8462a661db6019
+image_channel: invoiceshelf/invoiceshelf:2.4.7@sha256:599dc6aa9d7303c9ae0d099397817c7f6002cd6f7af099bc90511d5eae4e9cd2
 update_mode: manual
 # Builds its public URL from the install's domain and does not start
 # without one.

@@ -1,7 +1,7 @@
 slug: romm
 name: RomM
 tags: ["Games", "Media", "Library"]
-version: "5.3.1"
+version: "5.4.1"
 description: |
   Self-hosted ROM manager and player with IGDB/MobyGames metadata.
   App container (bundled Redis) + MariaDB. Mount your ROM library
@@ -10,7 +10,7 @@ icon: icon.svg
 upstream: https://github.com/rommapp/romm
 documentation: https://docs.romm.app/
 
-image_channel: rommapp/romm:5@sha256:0d66b4ea152a237c7f24b95e87459f46d3c596a7c0b35a82f26bc971487278b3
+image_channel: rommapp/romm:5@sha256:8677fb7b81b1d3db20b849e989a1dadc2a11159e51eb34a2acdcb01102274edf
 update_mode: manual
 
 resources:

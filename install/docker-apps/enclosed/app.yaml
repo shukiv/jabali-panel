@@ -2,7 +2,7 @@ slug: enclosed
 tenant_installable: true
 name: Enclosed
 tags: ["Developer tools"]
-version: "1.16.0"
+version: "1.16.1"
 description: |
   Minimalist, open-source web app for sending private and encrypted
   notes and files. Zero-knowledge: content is end-to-end encrypted in
@@ -15,7 +15,7 @@ documentation: https://docs.enclosed.cc
 
 # Stable tag; the panel pins the digest at install time and tracks
 # updates separately (update_mode: manual).
-image_channel: corentinth/enclosed:1.16.0@sha256:d1e78c34ae7027c0c7b7a9ba67f352520049b9f260560fb8a0b3b1c55488cdc8
+image_channel: corentinth/enclosed:1.16.1@sha256:e65f73b085823ceeab1a39c515614c1a24e9b5c69b8e1221d3d7071a4f8bc4a8
 update_mode: manual
 
 resources:

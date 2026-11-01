@@ -1,7 +1,7 @@
 slug: answer
 name: Apache Answer
 tags: ["Forum"]
-version: "2.0.2"
+version: "2.0.3"
 description: |
   Open-source Q&A platform (Stack Overflow-style) from the Apache Software
   Foundation. Questions, answers, voting, tags, reputation, badges, and admin
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/apache/answer
 documentation: https://answer.apache.org/
 
-image_channel: apache/answer:2.0.2@sha256:a0d71b0e30a5c8d3eda31184abc64dbebccb6dd3e229aab1f7e332b41ade54f7
+image_channel: apache/answer:2.0.3@sha256:0863470d8293294b899f8b39a373df6d6250c3f3e412ea0e483924b41e23428f
 update_mode: manual
 tenant_installable: true
 

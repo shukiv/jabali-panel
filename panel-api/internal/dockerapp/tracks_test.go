@@ -178,11 +178,11 @@ func TestCatalogTracks_ShippedLabels(t *testing.T) {
 		{"odoo", "19.0", "19.0"},
 		{"odoo", "20.0", "20.0"},
 		{"nextcloud", "33.0.5", "34.0.4"},
-		{"nextcloud", "34.0.2", "35.0.1"},
-		{"nextcloud", "34.0.3", "35.0.1"},
-		{"gitea", "1.26.2", "28.1.0"},
-		{"gitea", "1.27.1", "28.1.0"},
-		{"gitea", "1.27.3", "28.1.0"},
+		{"nextcloud", "34.0.2", "35.0.2"},
+		{"nextcloud", "34.0.3", "35.0.2"},
+		{"gitea", "1.26.2", "28.3.0"},
+		{"gitea", "1.27.1", "28.3.0"},
+		{"gitea", "1.27.3", "28.3.0"},
 	} {
 		e, ok := cat.Get(tc.slug)
 		if !ok {

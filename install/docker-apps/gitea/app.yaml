@@ -2,7 +2,7 @@ slug: gitea
 popularity: 82
 name: Gitea
 tags: ["Developer tools"]
-version: "28.1.0"
+version: "28.3.0"
 # Release track (GH #1956): new installs get Gitea 28. Update moves a 1.27 or
 # 1.26 install to 28; Gitea migrates its database on start. Until then a 1.27
 # install keeps its own image on an env or domain edit.
@@ -17,7 +17,7 @@ icon: icon.svg
 upstream: https://github.com/go-gitea/gitea
 documentation: https://docs.gitea.com/
 
-image_channel: gitea/gitea:28.1@sha256:f505a0d3a41323b786e05942fc7a4075e07ae7c169fd9485649aa55ee543a21a
+image_channel: gitea/gitea:28.3@sha256:8967bf9deaf3c5c4adae13519436dc1b20c646ac83fe37ae810c933a1045227d
 held_tracks:
   - track: "1.27"
     version: "1.27.3"

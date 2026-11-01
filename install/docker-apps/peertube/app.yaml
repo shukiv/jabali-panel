@@ -2,7 +2,7 @@ slug: peertube
 popularity: 30
 name: PeerTube
 tags: ["Media", "Video", "Streaming"]
-version: "8.3.1"
+version: "8.3.2"
 description: |
   Decentralized, federated (ActivityPub) video platform. App container
   + PostgreSQL + Redis. Email is disabled by default; configure SMTP
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/Chocobozzz/PeerTube
 documentation: https://docs.joinpeertube.org/
 
-image_channel: chocobozzz/peertube:v8.3.1-trixie@sha256:5e6e1bc34ac126c3393e3152e71c82f8607aba282659cff9e15efdff3cfbfc91
+image_channel: chocobozzz/peertube:v8.3.2-trixie@sha256:11e41ed2467458fbd161bf93a48986a8cbb2cc38b88b7a1be9e69f91ffb32060
 update_mode: manual
 # Builds its public URL from the install's domain and does not start
 # without one.
