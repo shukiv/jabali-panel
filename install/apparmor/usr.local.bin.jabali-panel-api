@@ -263,6 +263,7 @@ profile jabali-panel flags=(attach_disconnected) {
   # Connect upstreams.
   /run/jabali/                 r,
   /run/jabali/agent.sock       rw,
+  /run/jabali/agent-pty.sock   rw,
   /run/jabali-kratos/          r,
   /run/jabali-kratos/**        rw,
   /run/jabali-bulwark/         r,
