@@ -3,7 +3,7 @@ popularity: 55
 tenant_installable: true
 name: FreshRSS
 tags: ["Productivity"]
-version: "1.30.0"
+version: "1.30.4"
 description: |
   Self-hosted RSS / Atom feed aggregator. Lightweight, extensible
   via plugins, multi-user. Single container, SQLite by default.
@@ -11,7 +11,7 @@ icon: icon.svg
 upstream: https://github.com/FreshRSS/FreshRSS
 documentation: https://freshrss.github.io/FreshRSS/
 
-image_channel: freshrss/freshrss:1.30.0@sha256:258b8edfc8a76a61f60d2d6a14d8f8d12495d78abf38646a2137612dfa264a21
+image_channel: freshrss/freshrss:1.30.4@sha256:af44385229541bee24aa9148d0ff8f3b40e095373c63a2c0f74e09a27d3c59df
 update_mode: manual
 
 resources:

@@ -2,7 +2,7 @@ slug: onlyoffice
 popularity: 44
 name: ONLYOFFICE Docs
 tags: ["Productivity", "File sharing"]
-version: "9.4.0"
+version: "10.0.0"
 description: >-
   ONLYOFFICE Document Server: online editors for documents, spreadsheets, and
   presentations (OOXML-native), used standalone or as the editing backend for
@@ -13,7 +13,7 @@ icon: icon.svg
 upstream: https://github.com/ONLYOFFICE/DocumentServer
 documentation: https://helpcenter.onlyoffice.com/installation/docs-developer-index.aspx
 
-image_channel: onlyoffice/documentserver:9.4.0@sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b
+image_channel: onlyoffice/documentserver:10.0.0@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3
 update_mode: manual
 
 resources:
