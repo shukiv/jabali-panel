@@ -5,7 +5,7 @@
 // and runs an optional live test update. No new backend — it drives the
 // existing GET /nic/update shim (api/ddns.go).
 import { useTranslation } from "react-i18next";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type JSX } from "react";
 import { Alert, Button, Input, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { KeyOutlined, ThunderboltOutlined } from "@icons";

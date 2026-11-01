@@ -890,7 +890,7 @@ const RuleBuilder = ({
   // GH #1624 UX: index of the rule just added via Add Rule — its row flashes for
   // ~1.5s so the user spots it at the bottom of a long list. null = no flash.
   const [highlightIdx, setHighlightIdx] = useState<number | null>(null);
-  const highlightTimer = useRef<ReturnType<typeof setTimeout>>();
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(highlightTimer.current), []);
   // Scroll a freshly added rule into view — it appends to the bottom (nginx
   // first-match order is significant, so never prepend), which can be off-screen
