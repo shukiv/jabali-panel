@@ -39,14 +39,14 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **UFW** | Debian | Port baseline only (IP decisions live in CrowdSec) |
 | **nftables** | Debian | Per-user egress (cgroup v2 vmap) |
 | **Linux Malware Detect (LMD)** | 2.0.1 (GitHub) | On-demand malware scanner — native HEX + YARA |
-| **YARA-X** (`yr` binary) | 1.20.0 (GitHub) | Pattern matching for LMD + the async mail scanner |
+| **YARA-X** (`yr` binary) | 1.22.1 (GitHub) | Pattern matching for LMD + the async mail scanner |
 
 ## Apps / tooling
 
 | Component | Version | Role |
 |---|---|---|
 | **phpMyAdmin** | 5.2.3 | MariaDB web UI with single-use SSO (`sso.php`) |
-| **Adminer** | 6.1.1 | Lighter DB web UI + `jabali-sso-plugin.php` |
+| **Adminer** | 6.2.0 | Lighter DB web UI + `jabali-sso-plugin.php` |
 | **WP-CLI** | 2.12.0 | WordPress automation |
 | **GoAccess** | Debian | nginx log analyzer |
 | **restic** | Debian | Backup engine (deduplicated, encrypted, multi-destination) |
@@ -62,15 +62,15 @@ systemd, `systemd-container`, `systemd-resolved` (gated under `JABALI_DNS_FORWAR
 | Library | Version | Purpose |
 |---|---|---|
 | **React** | 18.3.1 | SPA |
-| **Ant Design** | 6.3.6 | Component library |
+| **Ant Design** | 6.6.8 | Component library |
 | `@ant-design/icons` | 6.1.1 | Icons |
-| **TanStack Query** (`@tanstack/react-query`) | 5.99 | API state |
-| **react-router** | 7.1.1 | Routing |
-| **axios** | 1.7.9 | HTTP client |
+| **TanStack Query** (`@tanstack/react-query`) | 5.105 | API state |
+| **react-router** | 7.18 | Routing |
+| **axios** | 1.21 | HTTP client |
 | **Monaco Editor** (`@monaco-editor/react`) | 4.7 | In-browser code editor (File Manager) |
 | **xterm.js** + addon-fit | 6.0 / 0.11 | Web terminal |
 | `@dnd-kit/core` + `sortable` + `utilities` | 6.3 / 10 / 3.2 | Drag-and-drop |
-| `lucide-react` + `react-icons` | 1.9 / 5.6 | Extra icons |
+| `lucide-react` + `react-icons` | 1.66 / 5.6 | Extra icons |
 | `micro-key-producer` | 0.8.5 | Browser-side key generation |
 | `@fontsource/inter` | 5.2.8 | Self-hosted font |
 | Vite 6 / TypeScript 5.7 / Vitest 3.2 / Playwright 1.59 / Testing Library | — | Build + test toolchain |

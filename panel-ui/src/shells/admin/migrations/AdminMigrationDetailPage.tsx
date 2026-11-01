@@ -102,12 +102,19 @@ export const AdminMigrationDetailPage = () => {
   const queryClientForStream = useQueryClient();
   const stream = useMigrationStream(id ?? null);
   useEffect(() => {
-    if (stream.data && id) {
-      queryClientForStream.setQueryData<DetailResponse>(
-        ["admin-migrations", id],
-        stream.data,
-      );
-    }
+    if (!stream.data || !id) return;
+    const key = ["admin-migrations", id];
+    const snapshot = stream.data;
+    let superseded = false;
+    // A REST reply still in flight is older than this snapshot. Cancel it
+    // first, or it lands afterwards and puts the older state back. The cancels
+    // can settle out of order, so a newer snapshot drops this write.
+    void queryClientForStream.cancelQueries({ queryKey: key }).then(() => {
+      if (!superseded) queryClientForStream.setQueryData<DetailResponse>(key, snapshot);
+    });
+    return () => {
+      superseded = true;
+    };
   }, [stream.data, id, queryClientForStream]);
 
   const detail = useQuery<DetailResponse>({

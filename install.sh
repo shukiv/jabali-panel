@@ -8916,7 +8916,7 @@ install_adminer() {
   # other install.sh pin (phpMyAdmin, Stalwart, Kratos, …). Bump this one line,
   # then `scripts/deps-check.sh --refresh-sha adminer_version` to re-capture the
   # checksum.
-  local adminer_version="6.1.1"
+  local adminer_version="6.2.0"
   local adminer_dir="/var/www/jabali-adminer"
   local adminer_url="https://github.com/vrana/adminer/releases/download/v${adminer_version}/adminer-${adminer_version}.php"
   local adminer_stamp="${adminer_dir}/.adminer-version"
@@ -12058,8 +12058,8 @@ install_malware_stack() {
   # YARA-X (the `yr` binary) — Rust rewrite of YARA, full module support
   # including the `hash` module that libclamav YARA can't load. maldet
   # 2.0.1+ prefers `yr` over libyara when both are present.
-  local YARAX_VERSION="1.21.0"
-  local YARAX_SHA256="01585181e8979e36ac10ab123fcf8921cf8ba879bf942916413e091e18d64852"
+  local YARAX_VERSION="1.22.1"
+  local YARAX_SHA256="c0ff80408d57b94f8348b9b19b5c70fb03e6471e7fdd761c97e0b4876804eecf"
   if ! command -v yr >/dev/null 2>&1 || \
      [[ "$(yr --version 2>/dev/null | awk '{print $2}')" != "$YARAX_VERSION" ]]; then
     local tmp_yrx
@@ -12205,7 +12205,7 @@ YARA_EX
   # scripts/deps-check.sh in the monthly deps issue). signature-base has
   # no tagged releases, so the pin is a commit SHA. Pin bumps require a
   # PR review, same as LMD_VERSION/LMD_SHA256.
-  local SIGBASE_COMMIT="94a1c48d7ab499879287ff611dfe7f9c56376030" # 2026-09-08 "refactor: disabled old rule"
+  local SIGBASE_COMMIT="36ab70428fc5b52701b7ee6107c853ff019ed759" # 2026-10-29 "Merge pull request #432 from marius-benthin/fix-yara-ids"
   #
   # Custom YARA scanner picks up rules via the maldet 2.0.1 drop-in dir
   # at /usr/local/maldetect/sigs/custom.yara.d/. We symlink:
@@ -15010,7 +15010,7 @@ _install_stalwart_binary() {
 # speaks the v0.16 JMAP management API, used by install.sh bootstrap and
 # the reconciler. Idempotent against version reported by --version.
 _install_stalwart_cli() {
-  local cli_version="1.0.13"
+  local cli_version="1.0.14"
   local cli_binary="/usr/local/bin/stalwart-cli"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-cli-${arch}.tar.xz"
