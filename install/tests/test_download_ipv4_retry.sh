@@ -56,7 +56,7 @@ run() {
   : > "$calls"
   rm -f "$tmp/out"
   set +e
-  curl_ipv4_retry -fsSL -o "$tmp/out" "https://dl.google.com/go/go1.26.8.linux-amd64.tar.gz"
+  curl_ipv4_retry -fsSL -o "$tmp/out" "https://dl.google.com/go/go1.26.10.linux-amd64.tar.gz"
   rc=$?
   set -e
   ncalls=$(wc -l < "$calls")

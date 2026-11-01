@@ -7,7 +7,7 @@ go 1.26.0
 // build-local-and-scp deploy path), and the newer installer Go otherwise.
 // Keep it equal to GO_VERSION in install.sh and in the CI workflows
 // (TestGoToolchainPinsAgree checks this).
-toolchain go1.26.8
+toolchain go1.26.10
 
 require (
 	github.com/BurntSushi/toml v1.6.0

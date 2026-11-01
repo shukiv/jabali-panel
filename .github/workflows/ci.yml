@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  GO_VERSION: "1.26.8"
+  GO_VERSION: "1.26.10"
   NODE_VERSION: "20"
 
 jobs:
@@ -107,7 +107,7 @@ jobs:
   migrations:
     uses: ./.github/workflows/migrations-gate.yml
     with:
-      go-version: "1.26.8"
+      go-version: "1.26.10"
 
   govulncheck:
     name: govulncheck (Go stdlib + deps)

@@ -18,7 +18,7 @@ on:
         description: Go toolchain version (keep in step with the callers' GO_VERSION).
         required: false
         type: string
-        default: "1.26.8"
+        default: "1.26.10"
       ref:
         description: Commit to test. Empty means the commit that started the run; release-hotfix.yml passes the hotfix commit.
         required: false
