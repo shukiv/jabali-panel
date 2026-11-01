@@ -18,7 +18,7 @@ Databases are shown in a **tabbed view** (MariaDB and PostgreSQL side by side).
 - **Create database** — pick the engine, name (`<user>_<suffix>` prefix enforced by `db_admin` policies), default DB user.
 - **Create DB user** — username + password (shown once). The agent provisions the user with `GRANT ALL ON <user>_*.* TO …`. For PostgreSQL, a DB-user granted to a database gets usable schema access, not just a bare `CONNECT`.
 - **phpMyAdmin SSO** (MariaDB) — single-use, short-TTL **SSO Token** (CONTEXT.md). Click "Open phpMyAdmin" → land authenticated as the DB user.
-- **Adminer SSO** (PostgreSQL) — same single-use SSO flow into **Adminer** (6.1.1, with a ported SSO plugin).
+- **Adminer SSO** (PostgreSQL) — same single-use SSO flow into **Adminer** (6.2.0, with a ported SSO plugin).
 
 ### Per-database Backup / Restore
 

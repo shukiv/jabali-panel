@@ -206,7 +206,7 @@ describe("DomainPHPSettingsPanel (GH #1543)", () => {
     const memory = document.querySelectorAll(".ant-select")[1];
     const clear = memory.querySelector(".ant-select-clear");
     expect(clear).not.toBeNull();
-    fireEvent.mouseDown(clear as Element);
+    fireEvent.click(clear as Element);
     await vi.waitFor(() => {
       expect(memory.querySelector(".ant-select-content-has-value")).toBeNull();
       expect(memory.textContent).toContain("256M (Default)");
@@ -431,7 +431,7 @@ describe("DomainPHPSettingsPanel security settings (GH #1701 Slice 3)", () => {
     // A permitted change: clear the stored timezone.
     const clear = item("Timezone").querySelector(".ant-select-clear");
     expect(clear).not.toBeNull();
-    fireEvent.mouseDown(clear as Element);
+    fireEvent.click(clear as Element);
     fireEvent.click(screen.getByRole("button", { name: "Save Changes" }));
     await waitFor(() => expect(mocked.patch).toHaveBeenCalledTimes(1));
     expect(mocked.patch.mock.calls[0][1]).toMatchObject({

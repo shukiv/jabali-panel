@@ -114,7 +114,7 @@ user-uploaded media is served without going through the WSGI/ASGI worker.
 ## Database admin tooling
 
 MariaDB databases open in **phpMyAdmin**; PostgreSQL databases open in
-**Adminer** (6.1.1, with a ported single-sign-on plugin).
+**Adminer** (6.2.0, with a ported single-sign-on plugin).
 See [Databases](./databases.md).
 
 ## CLI
