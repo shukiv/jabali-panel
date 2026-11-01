@@ -135,7 +135,6 @@ export function AdminTerminal() {
       }
       term.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gate.enabled]);
 
   if (gate.isLoading) {
