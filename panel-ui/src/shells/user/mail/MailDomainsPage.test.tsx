@@ -133,6 +133,24 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     expect(mocked.post).not.toHaveBeenCalled();
   });
 
+  // Since PR #2350 mail for a mail-off domain no longer arrives here, so the
+  // confirm says so and names the mailboxes left (kept, but no new mail).
+  it("Disable confirm names the mailboxes left and what stops", async () => {
+    renderPage();
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+    await openRowMenu(onRow, "Disable");
+    expect(await screen.findByText(/3 mailboxes on on\.test are kept/)).toBeInTheDocument();
+    expect(screen.getByText(/no longer arrives on this server/)).toBeInTheDocument();
+    expect(mocked.delete).not.toHaveBeenCalled();
+  });
+
+  it("Disable confirm uses the singular for one mailbox", async () => {
+    renderPage();
+    const suspRow = (await screen.findByText("susp.test")).closest("tr") as HTMLElement;
+    await openRowMenu(suspRow, "Disable");
+    expect(await screen.findByText(/1 mailbox on susp\.test is kept/)).toBeInTheDocument();
+  });
+
   it("deletes mail via the ⋯ menu → type-to-confirm → POST /domains/:id/email/purge", async () => {
     renderPage();
     const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;

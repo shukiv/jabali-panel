@@ -45,6 +45,7 @@ import { feedback } from "../../../lib/feedback";
 import { useServerCapabilities } from "../../../hooks/useServerCapabilities";
 import { UserDomainDrawer } from "../domains/UserDomainDrawer";
 import { MailDNSRecordsModal } from "../../../components/mail/MailDNSRecordsModal";
+import { mailAwayContent } from "../../../components/mail/mailAwayConfirm";
 
 interface MailDomainRow {
   id: string;
@@ -115,8 +116,14 @@ export function MailDomainsPage() {
   const confirmDisable = (row: MailDomainRow) => {
     feedback.modal.confirm({
       title: `Disable mail for ${row.name}?`,
-      content:
-        "Incoming mail stops and the managed mail DNS records are removed. Mailboxes are kept — re-enabling from the Domains page restores service.",
+      // Since PR #2350 mail for the domain no longer arrives here; say so and
+      // name the mailboxes left (kept, but no new mail for them).
+      content: mailAwayContent({
+        domainLabel: row.name,
+        mailboxCount: row.mailbox_count,
+        dnsRemoved: true,
+        footer: "Turning mail back on from the Domains page restores delivery.",
+      }),
       okText: "Disable",
       okButtonProps: { danger: true },
       onOk: () => disableMail(row),

@@ -20,6 +20,7 @@ import {
   type DomainEmailDNSHint,
 } from "../../../hooks/useMailboxes";
 import { useOneQuery } from "../../../hooks/useQueries";
+import { countDomainMailboxes, mailAwayContent } from "../../../components/mail/mailAwayConfirm";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
 
@@ -116,7 +117,31 @@ export const DomainEmailSection = ({ domainId }: Props) => {
     }
   };
 
+  // Turning email off: since PR #2350 mail for the domain no longer arrives
+  // here, so ask first while mailboxes are left (or the count can't be read).
   const onFlip = async (next: boolean) => {
+    if (next) {
+      await applyFlip(true);
+      return;
+    }
+    setFlipping(true);
+    const count = await countDomainMailboxes(domainId);
+    setFlipping(false);
+    if (count === 0) {
+      await applyFlip(false);
+      return;
+    }
+    const name = data?.domain_name ?? "this domain";
+    feedback.modal.confirm({
+      title: `Turn off email for ${name}?`,
+      content: mailAwayContent({ domainLabel: name, mailboxCount: count, dnsRemoved: true }),
+      okText: "Turn off email",
+      okButtonProps: { danger: true },
+      onOk: () => applyFlip(false),
+    });
+  };
+
+  const applyFlip = async (next: boolean) => {
     setFlipping(true);
     try {
       if (next) {
