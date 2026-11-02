@@ -52,7 +52,11 @@ def load(n): return json.load(open(os.path.join(d, n)))
 def save(n, v): json.dump(v, open(os.path.join(d, n), "w"))
 def body():
     assert "--stdin" in args, "payload not on stdin"
-    return json.loads(sys.stdin.read())
+    b = json.loads(sys.stdin.read())
+    # Stalwart 0.16 stores a Sieve script without its trailing newline.
+    if isinstance(b.get("contents"), str):
+        b["contents"] = b["contents"].rstrip("\n")
+    return b
 op, obj = args[0], args[1]
 if op == "get" and obj == "MtaOutboundStrategy": print(json.dumps(load("outbound.json")))
 elif op == "get" and obj == "MtaStageRcpt": print(json.dumps(load("rcpt.json")))

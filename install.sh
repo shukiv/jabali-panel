@@ -14744,7 +14744,8 @@ try:
     if not mine:
         cli_run("create", "SieveSystemScript", "--stdin", payload={"name": NS, "isActive": True, "contents": SIEVE})
         changed.append("sieve")
-    elif mine[0].get("contents") != SIEVE or mine[0].get("isActive") is not True:
+    # Stalwart stores the script without its trailing newline.
+    elif (mine[0].get("contents") or "").rstrip() != SIEVE.rstrip() or mine[0].get("isActive") is not True:
         cli_run("update", "SieveSystemScript", mine[0]["id"], "--stdin", payload={"contents": SIEVE, "isActive": True})
         changed.append("sieve")
     # The RCPT refusal before the route, so the route never sends a domain's
