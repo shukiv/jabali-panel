@@ -348,6 +348,12 @@ type Reconciler struct {
 	// converged to the agent (GH #648) — see dkim2_reconcile.go.
 	dkim2Mu      sync.Mutex
 	dkim2Applied map[string]bool
+	// mailElsewhereSum / mailElsewhereAt: the list of domains whose mail is
+	// off or hosted elsewhere last synced to the mail server, and when — see
+	// mail_elsewhere_reconcile.go.
+	mailElsewhereMu  sync.Mutex
+	mailElsewhereSum string
+	mailElsewhereAt  time.Time
 	// errorPagesHash caches the last content hash synced to
 	// /var/www/jabali-errors so the per-tick reconcile only calls the
 	// agent when an admin actually edits an error template.
@@ -1089,6 +1095,12 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// cred file for the jabali-sendmail shim. Fingerprint-gated noop in
 	// steady state; doubles as the fleet backfill after `jabali update`.
 	r.reconcileSendmailCreds(ctx)
+
+	// The mail server must not act as the mail server for a domain whose
+	// email is off or hosted by another provider: mail for it goes to its MX.
+	// After the sendmail pass, which may have just registered the domain.
+	// List-hash gated, with a resync every ten minutes.
+	r.reconcileMailElsewhere(ctx)
 
 	// GH #2056: website mail through the local mail server or the smarthost
 	// relay; in smarthost mode the relay's sender list follows the sites.
