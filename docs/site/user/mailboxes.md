@@ -1,6 +1,6 @@
 # Mailboxes
 
-**Mail** → a domain → **Mailboxes**. The list and lifecycle of mail accounts in your domains.
+**Mail Domains** → a domain → **Accounts**. The list and lifecycle of mail accounts in your domains.
 
 ## Per-row data
 
