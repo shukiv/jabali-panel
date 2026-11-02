@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -20,7 +21,7 @@ import (
 func newPythonAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "python-app",
-		Short: "Manage Python apps (admin-only)",
+		Short: "Manage Python and Node.js apps (admin-only)",
 	}
 	cmd.AddCommand(
 		newPythonAppListCmd(),
@@ -65,7 +66,7 @@ func pythonAppRepoFromDB() repository.PythonAppRepository {
 func newPythonAppListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List Python apps",
+		Short:   "List Python and Node.js apps",
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			apps, err := pythonAppRepoFromDB().ListAll(context.Background())
@@ -79,12 +80,20 @@ func newPythonAppListCmd() *cobra.Command {
 				if a.LoopbackPort != nil {
 					port = fmt.Sprintf("%d", *a.LoopbackPort)
 				}
-				fmt.Fprintf(w, "%s\t%s\tpy%s/%s\t%s\t%s\t%s\n",
-					a.ID, a.Name, a.PythonVersion, a.AppType, a.BaseURI, port, a.Status)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
+					a.ID, a.Name, pythonAppRuntimeLabel(a), a.BaseURI, port, a.Status)
 			}
 			return w.Flush()
 		},
 	}
+}
+
+// pythonAppRuntimeLabel is an app's RUNTIME column in `python-app list`.
+func pythonAppRuntimeLabel(a *models.PythonApp) string {
+	if a.Runtime == "node" {
+		return fmt.Sprintf("node%s/%s", a.PythonVersion, a.AppType)
+	}
+	return fmt.Sprintf("py%s/%s", a.PythonVersion, a.AppType)
 }
 
 func newPythonAppControlCmd(verb, short string) *cobra.Command {
