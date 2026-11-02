@@ -409,8 +409,8 @@ jabali docker            disable|enable|enable-tenant|status
 jabali docker-app        backup-create|backups|catalog|delete|edit|env|exec|
                          install|list|logs|maintenance|patch|rebuild|restart|
                          restore|start|status|stop|update
-jabali domain            bandwidth|browse|catchall|chown|create|delete|
-                         dir-privacy|disable|disclaimer|email-disable|
+jabali domain            bandwidth|bot-exclusion|browse|catchall|chown|create|
+                         delete|dir-privacy|disable|disclaimer|email-disable|
                          email-dkim-rotate|email-enable|enable|fix-perms|
                          htaccess-preview|ip-acl|list|mta-sts|ownership|
                          php-settings|php-version|prune-orphans|set|show|
