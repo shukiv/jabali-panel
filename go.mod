@@ -1,13 +1,13 @@
 module git.jabali-panel.com/shukivaknin/jabali2
 
-go 1.26.0
+go 1.27.0
 
 // JAB-383: pin a minimum toolchain so no build ships an outdated stdlib.
 // GOTOOLCHAIN=auto uses this when the local go is older (e.g. the
 // build-local-and-scp deploy path), and the newer installer Go otherwise.
 // Keep it equal to GO_VERSION in install.sh and in the CI workflows
 // (TestGoToolchainPinsAgree checks this).
-toolchain go1.26.10
+toolchain go1.27.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
