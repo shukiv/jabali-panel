@@ -14658,10 +14658,10 @@ print(sys.argv[1] if sys.argv[1] in sql else (sql[0] if sql else ""))' "$auth_di
 # key_exists() reads Stalwart's memory. A SQL lookup was tried first and
 # rejected: with the database unreachable the expressions failed, Stalwart fell
 # back to its built-in route, and unauthenticated mail to such a domain was
-# accepted and relayed to its MX (drill on 0.16.15, 2026-11-02).
+# accepted and relayed to its MX (drill on 0.16.24, 2026-11-02).
 #
 # Route, schedule and RCPT script changes take effect only after a Stalwart
-# restart (ReloadSettings is not enough, verified on 0.16.15);
+# restart (ReloadSettings is not enough, verified on 0.16.24);
 # _install_stalwart_apply_plan restarts Stalwart right after this runs, on a
 # fresh install and on every `jabali update`. There is no apply-plan entry:
 # the plan only creates objects once, so this converger is the single writer
@@ -14706,7 +14706,7 @@ WANT_SCHEDULE = {"match": {"0": {"if": ELSEWHERE, "then": "'remote'"},
                            "3": {"if": "source == 'report'", "then": "'report'"}}, "else": "'remote'"}
 WANT_SCRIPT = {"match": {"0": {"if": "is_empty(authenticated_as) && " + ELSEWHERE, "then": "'" + NS + "'"}},
                "else": "false"}
-# Stalwart 0.16's shipped values.
+# Stalwart's shipped values (read from 0.16.24, the pinned STALWART_VERSION).
 SHIPPED_ROUTE = {"match": {"0": {"if": LOCAL, "then": "'local'"}}, "else": "'mx'"}
 SHIPPED_SCHEDULE = {"match": {"0": {"if": LOCAL, "then": "'local'"},
                               "1": {"if": "source == 'dsn'", "then": "'dsn'"},
