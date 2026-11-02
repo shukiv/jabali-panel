@@ -10,6 +10,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../../../apiClient";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
+import { countDomainMailboxes, mailAwayContent } from "../../../components/mail/mailAwayConfirm";
+import { useDomainEmail } from "../../../hooks/useMailboxes";
 
 type Props = {
   domainId: string;
@@ -59,6 +61,36 @@ export const DomainMailProviderSection = ({
     onError: () => feedback.message.error("Failed to update mail provider"),
   });
 
+  // Moving mail away from Jabali: since PR #2350 mail for the domain no longer
+  // arrives here, so ask first while mailboxes are left (or the count can't be
+  // read). Not when the domain already had another provider or email off:
+  // nothing changes for its mailboxes then. Unknown email state counts as on.
+  const { data: emailState } = useDomainEmail(domainId);
+  const [checking, setChecking] = useState(false);
+  const onSave = async () => {
+    const wasHere =
+      (!mailProvider || mailProvider === "jabali") && (emailState?.email_enabled ?? true);
+    if (!wasHere || provider === "jabali") {
+      mut.mutate();
+      return;
+    }
+    setChecking(true);
+    const count = await countDomainMailboxes(domainId);
+    setChecking(false);
+    if (count === 0) {
+      mut.mutate();
+      return;
+    }
+    feedback.modal.confirm({
+      title: "Move this domain's mail away from this server?",
+      content: mailAwayContent({ domainLabel: "this domain", mailboxCount: count }),
+      okText: "Change provider",
+      okButtonProps: { danger: true },
+      // onError already shows the toast; keep the rejection out of the console.
+      onOk: () => mut.mutateAsync().catch(() => undefined),
+    });
+  };
+
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
       <CollapsibleAlert
@@ -101,7 +133,7 @@ export const DomainMailProviderSection = ({
         />
       )}
       <Space>
-        <Button type="primary" loading={mut.isPending} onClick={() => mut.mutate()}>
+        <Button type="primary" loading={mut.isPending || checking} onClick={() => void onSave()}>
           Save mail provider
         </Button>
       </Space>

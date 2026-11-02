@@ -65,7 +65,10 @@ server stops acting as the domain's mail server:
   `550 5.7.1`: the domain's mail is received by its own MX, not here.
 - Mailboxes left on the domain are kept. They still sign in, keep the mail
   they have and can send, but new mail for them goes to the domain's MX, so
-  move their mail before switching provider.
+  move their mail before switching provider. While mailboxes are left, the
+  panel asks first, and says how many, before it turns email off (the
+  domain's Email switch, or Disable on Mail Domains) or saves another mail
+  provider.
 - The website's own mail (PHP `mail()`) keeps working: it signs in as the
   domain's send-only `noreply@`.
 
