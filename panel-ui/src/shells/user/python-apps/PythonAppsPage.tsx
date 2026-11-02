@@ -245,11 +245,7 @@ export function PythonAppsPage() {
         style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
       >
         <Typography.Title level={3} style={{ margin: 0 }}>
-<<<<<<< HEAD
-          <CodeOutlined /> Python Apps
-=======
-          {t(appManagerNavLabel(pythonOn, nodeOn))}
->>>>>>> de24b9557 (Panel UI: create Node.js apps, and the admin's Node.js Apps switch)
+          <CodeOutlined /> {t(appManagerNavLabel(pythonOn, nodeOn))}
         </Typography.Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => openCreate()}>
           Create app
