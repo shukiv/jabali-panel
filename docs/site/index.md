@@ -7,7 +7,7 @@ Jabali is an open-source Linux web-hosting control panel. Go agent + React UI, M
 **Sites & domains**
 - Add hosted domains with per-domain PHP version, listen IP, SSL, DNSSEC, redirects and aliases.
 - Per-domain Let's Encrypt issuance (HTTP-01) — reconciler handles renewal.
-- One-click WordPress install / delete / clone, plus 14 other apps (Moodle, Drupal, Joomla, NextCloud, MediaWiki, PrestaShop, OpenCart, phpBB, Matomo, MyBB, Pixelfed, Mautic, Mahara, SuiteCRM).
+- One-click WordPress install / delete / clone, plus 15 other apps (Drupal, Joomla, MediaWiki, DokuWiki, phpBB, Flarum, OpenCart, PrestaShop, Moodle, ITFlow, InvoiceShelf, OpenEMR, osTicket, Nextcloud, PrivateBin).
 
 **Email**
 - Stalwart-based mail server (SMTP submission/relay/MTA + JMAP + IMAP) with per-user mailboxes, forwarders, autoresponders, catch-all, server-side disclaimer, shared folders, and live logs.

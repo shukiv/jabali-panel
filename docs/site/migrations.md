@@ -10,7 +10,7 @@ own read-only CLI, then rebuilds destination-side).
 
 | Source | Format | Status |
 |---|---|---|
-| **cPanel** | `cpmove-<user>.tar.gz` or live SSH | ✅ — preserves MySQL users + bcrypt password hashes (so migrated apps keep working); see "preserve cpanel MySQL users + password hashes" commit. |
+| **cPanel** | `cpmove-<user>.tar.gz` or live SSH | ✅ — each database gets its own database user with a new password, and common app configs are pointed at it. With **Carry over source passwords**, the source's MySQL users and password hashes come across too. See [cPanel migration](admin/cpanel-migration.md). |
 | **DirectAdmin** | DA backup tarball or live SSH | ✅ — see `docs/user/directadmin-migration.astro` (legacy) for source-side prep notes. |
 | **Hestia** | Hestia `v-backup-user` tarball (`<user>.<ts>.tar[.gz]`) or live SSH | ✅ — files, DBs, DNS (incl. SRV + CAA), and apps (e.g. Nextcloud) restore end-to-end; the account Contact Name (FNAME/LNAME) carries onto the user. Mail is the Exim→Stalwart subset (see below). |
 | **WHM** | WHM-level dump (multiple `cpmove`s in one) | 🟡 — same caveats as cPanel per-user. |
@@ -33,7 +33,7 @@ own read-only CLI, then rebuilds destination-side).
 
 ### cPanel
 
-- MySQL passwords are bcrypt in cPanel ≥ 11.96; Jabali stores the bcrypt hash directly in MariaDB so user apps keep authenticating without password reset.
+- MySQL users: each restored database gets its own user, `<user>_<database>`, with a new password, and WordPress, Joomla, Drupal, Magento and ITFlow configs are pointed at it. With **Carry over source passwords** (`--preserve-source-state`), the source's MySQL users are recreated with their original password hash, so app configs keep their credentials.
 - Email accounts: cPanel uses Dovecot+Exim, Jabali uses Stalwart. Passwords reset to a generated value (printed in the migration report) — operator must communicate the new passwords to mailbox owners, or set "force first-login password reset" so users self-serve.
 - DKIM keys: imported.
 - DNSSEC: not migrated automatically (key formats differ); re-enable per-domain in Jabali.

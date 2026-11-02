@@ -19,10 +19,10 @@ Reached from **Hosting Packages → Create**. Defines a new bundle of quotas and
 - **CPU percentage** — soft limit across all CPUs (100% = one full core; 200% = two cores).
 - **Tasks max** — upper bound on the number of processes the user may have running.
 
-## Request rate (per-vhost)
+## Request rate
 
-- **Requests per second** — used in nginx `limit_req_zone …` for the user's vhosts.
-- **Burst** — short-term allowance above the steady-state rate.
+Packages don't set request rate limits. The admin sets them per domain; see
+[Resource limits](../resource-limits.md).
 
 ## Caps
 
@@ -54,16 +54,12 @@ On submit, a single `INSERT` against `packages`. No reconciler action is needed 
 ```bash
 jabali package create \
   --name "Starter" \
-  --slug starter \
-  --disk-quota-mib 5120 \
-  --bandwidth-quota-gib 100 \
-  --memory-limit-mib 512 \
-  --cpu-pct 25 \
-  --tasks-max 200 \
-  --req-per-sec 30 \
-  --req-burst 60 \
-  --max-domains 2 \
-  --max-mailboxes 10 \
-  --max-databases 3 \
-  --max-cron-jobs 5
+  --disk-mb 5120 \
+  --bw-mb 102400 \
+  --memory-mb 512 \
+  --cpu 25 \
+  --max-tasks 200 \
+  --domains 2 \
+  --emails 10 \
+  --databases 3
 ```

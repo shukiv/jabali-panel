@@ -61,19 +61,20 @@ systemd, `systemd-container`, `systemd-resolved` (gated under `JABALI_DNS_FORWAR
 
 | Library | Version | Purpose |
 |---|---|---|
-| **React** | 18.3.1 | SPA |
+| **React** + `react-dom` | 19.3 | SPA |
 | **Ant Design** | 6.6.8 | Component library |
-| `@ant-design/icons` | 6.1.1 | Icons |
+| `@ant-design/icons` | 6.3 | Icons |
 | **TanStack Query** (`@tanstack/react-query`) | 5.105 | API state |
 | **react-router** | 7.18 | Routing |
 | **axios** | 1.21 | HTTP client |
-| **Monaco Editor** (`@monaco-editor/react`) | 4.7 | In-browser code editor (File Manager) |
+| **CodeMirror** (`codemirror` + `@codemirror/*`) | 6 | In-browser code editor (File Manager) |
+| **i18next** + `react-i18next` | 26.6 / 17.1 | UI strings |
 | **xterm.js** + addon-fit | 6.0 / 0.11 | Web terminal |
 | `@dnd-kit/core` + `sortable` + `utilities` | 6.3 / 10 / 3.2 | Drag-and-drop |
-| `lucide-react` + `react-icons` | 1.66 / 5.6 | Extra icons |
-| `micro-key-producer` | 0.8.5 | Browser-side key generation |
-| `@fontsource/inter` | 5.2.8 | Self-hosted font |
-| Vite 6 / TypeScript 5.7 / Vitest 3.2 / Playwright 1.59 / Testing Library | — | Build + test toolchain |
+| `lucide-react` | 1.66 | Extra icons |
+| `micro-key-producer` | 0.8.6 | Browser-side key generation |
+| `@fontsource/inter` | 5.3 | Self-hosted font |
+| Vite 6 / TypeScript 5.7 / Vitest 3.2 / Playwright 1.63 / Testing Library | — | Build + test toolchain |
 
 ## Go libraries (direct dependencies in `go.mod`)
 
