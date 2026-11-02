@@ -13974,7 +13974,7 @@ install_notify_template() {
 # STALWART_VERSION is the single pin for the Stalwart Mail server binary,
 # consumed by both install_stalwart (fresh install) and upgrade_stalwart_binary
 # (the jabali update path). Bump here + install/stalwart.sha256 together.
-STALWART_VERSION="0.16.24"
+STALWART_VERSION="0.16.27"
 
 # _stalwart_refuse_downgrade reports whether the installed Stalwart ($1, as
 # parsed from `stalwart --version`) is NEWER than STALWART_VERSION, and warns
@@ -14706,7 +14706,8 @@ WANT_SCHEDULE = {"match": {"0": {"if": ELSEWHERE, "then": "'remote'"},
                            "3": {"if": "source == 'report'", "then": "'report'"}}, "else": "'remote'"}
 WANT_SCRIPT = {"match": {"0": {"if": "is_empty(authenticated_as) && " + ELSEWHERE, "then": "'" + NS + "'"}},
                "else": "false"}
-# Stalwart's shipped values (read from 0.16.24, the pinned STALWART_VERSION).
+# Stalwart's shipped values (read from 0.16.24; unchanged in 0.16.27, the
+# pinned STALWART_VERSION).
 SHIPPED_ROUTE = {"match": {"0": {"if": LOCAL, "then": "'local'"}}, "else": "'mx'"}
 SHIPPED_SCHEDULE = {"match": {"0": {"if": LOCAL, "then": "'local'"},
                               "1": {"if": "source == 'dsn'", "then": "'dsn'"},
