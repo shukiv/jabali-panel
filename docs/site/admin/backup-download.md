@@ -30,7 +30,7 @@ A download is named for the account and the time the backup was made (UTC), for 
 
 ## What the tarball does *not* contain*
 
-- Cleartext mailbox passwords (only the Argon2id hashes).
+- Cleartext mailbox passwords (only their password hashes).
 - Linux account passwords (passwords are not stored — SSH key auth only).
 - Database root password (admin-scope; per-DB user passwords are included if requested).
 
