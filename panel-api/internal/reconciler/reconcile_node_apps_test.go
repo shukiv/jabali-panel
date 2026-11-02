@@ -24,6 +24,10 @@ type applyCall struct {
 type recordingAppAgent struct{ calls []applyCall }
 
 func (a *recordingAppAgent) Call(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
+	// The pass ends with the orphan-unit sweep. It isn't what these tests check.
+	if method == "app.python.list_units" {
+		return json.Marshal(map[string]any{"app_ids": []string{}})
+	}
 	a.calls = append(a.calls, applyCall{method, params.(map[string]any)})
 	return json.Marshal(map[string]any{"active": true, "unit": "jabali-app-x.service"})
 }
