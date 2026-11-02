@@ -287,7 +287,7 @@ func newPythonAppCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&name, "name", "", "app name (required)")
 	cmd.Flags().StringVar(&domainID, "domain-id", "", "domain id to mount on (or use --domain)")
 	cmd.Flags().StringVar(&domain, "domain", "", "domain name to mount on (resolved to its id)")
-	cmd.Flags().StringVar(&runtime, "runtime", "python", "python|node (ADR-0175)")
+	cmd.Flags().StringVar(&runtime, "runtime", "python", "python|node")
 	cmd.Flags().StringVar(&pyVersion, "python-version", "", "Python version, e.g. 3.12 (required for --runtime python)")
 	cmd.Flags().StringVar(&nodeVersion, "node-version", cliNodeVersion, "Node.js major for --runtime node (only "+cliNodeVersion+")")
 	cmd.Flags().StringVar(&appType, "app-type", "wsgi", "wsgi|asgi; for --runtime node: node (default) or npm")

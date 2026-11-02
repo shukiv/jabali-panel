@@ -4811,7 +4811,7 @@ jabali python-app create [flags]
 - `--name` — app name (required)
 - `--node-version` — Node.js major for --runtime node (only 22) (default `22`)
 - `--python-version` — Python version, e.g. 3.12 (required for --runtime python)
-- `--runtime` — python|node (ADR-0175) (default `python`)
+- `--runtime` — python|node (default `python`)
 
 #### `jabali python-app delete`
 

@@ -113,7 +113,7 @@ user-uploaded media is served without going through the WSGI/ASGI worker.
 
 ## Node.js apps
 
-Node.js apps (ADR-0175) run on the Application Manager next to Python apps,
+Node.js apps run on the Application Manager next to Python apps,
 without Docker. They are off until an administrator turns them on in
 **Server Settings → Apps** (`node_apps_enabled`, or
 `jabali settings set node_apps_enabled=true`). Turning them on installs
