@@ -50,7 +50,7 @@
     "codemirror": "^6.0.2",
     "i18next": "^26.6.0",
     "lucide-react": "^1.66.0",
-    "micro-key-producer": "^0.8.6",
+    "micro-key-producer": "^0.10.2",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-i18next": "^17.1.10",
