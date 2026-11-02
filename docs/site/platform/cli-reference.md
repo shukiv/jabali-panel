@@ -4784,7 +4784,7 @@ jabali php-defense status
 
 ### `jabali python-app`
 
-Manage Python apps (admin-only)
+Manage Python and Node.js apps (admin-only)
 
 ```
 jabali python-app
@@ -4859,7 +4859,7 @@ jabali python-app frameworks
 
 #### `jabali python-app list`
 
-List Python apps
+List Python and Node.js apps
 
 ```
 jabali python-app list
