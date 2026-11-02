@@ -453,6 +453,15 @@ export const userNavGroups: NavGroup[] = [
   },
 ];
 
+/** The label of the Application Manager's entry (key "python-apps"), which
+ * names the runtimes that are on (ADR-0175: Python and Node.js apps share
+ * the page). */
+export function appManagerNavLabel(python: boolean, node: boolean): string {
+  if (node && python) return "nav.user.python-node-apps";
+  if (node) return "nav.user.node-apps";
+  return "nav.user.python-apps";
+}
+
 /** The group that owns a userNav leaf key, or undefined for a standalone
  * entry such as Dashboard. */
 export function navGroupForKey(key: string): NavGroup | undefined {

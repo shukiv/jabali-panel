@@ -2,7 +2,8 @@
 // loads the current env via GET /python-apps/:id, and saves through the
 // existing PUT /python-apps/:id/env contract (full-set replace). Values are
 // masked by default (deliberate per-field reveal) and the drawer states that a
-// restart is required for changes to take effect.
+// restart is required for changes to take effect. A Node.js app (ADR-0175)
+// cannot set PORT or HOST: the panel sets them to the app's loopback port.
 import { Alert, App, Button, Drawer, Form, Input, Space, Typography } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@icons";
 import { useEffect, useState } from "react";
@@ -82,6 +83,15 @@ export function PythonAppEnvDrawer({
         message="A restart is required"
         description="Saving replaces the app's full environment. Restart the app (Restart action) for the new values to take effect."
       />
+      {app?.runtime === "node" && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="PORT and HOST are set by the panel"
+          description="The app listens on its own loopback port, which the panel passes in PORT and HOST. NODE_ENV is production unless you set it here."
+        />
+      )}
       <Alert
         type="warning"
         showIcon
@@ -106,6 +116,12 @@ export function PythonAppEnvDrawer({
                       {
                         pattern: /^[A-Za-z_][A-Za-z0-9_]*$/,
                         message: "KEY must be A-Z a-z 0-9 _ (not starting with a digit)",
+                      },
+                      {
+                        validator: (_, v?: string) =>
+                          app?.runtime === "node" && ["PORT", "HOST"].includes((v ?? "").trim())
+                            ? Promise.reject(new Error("The panel sets PORT and HOST"))
+                            : Promise.resolve(),
                       },
                     ]}
                     style={{ marginBottom: 0 }}
