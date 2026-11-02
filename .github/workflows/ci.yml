@@ -35,7 +35,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.27.3"
   NODE_VERSION: "20"
 
 jobs:
@@ -107,7 +107,7 @@ jobs:
   migrations:
     uses: ./.github/workflows/migrations-gate.yml
     with:
-      go-version: "1.26.10"
+      go-version: "1.27.3"
 
   govulncheck:
     name: govulncheck (Go stdlib + deps)
@@ -218,8 +218,9 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - name: Install OSV-Scanner
-        # v2.6.0 and later need Go 1.27; this job builds with GO_VERSION.
-        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.5.1
+        # Needs a Go at least as new as osv-scanner's go.mod (1.27.0 for v2.7.0);
+        # this job builds it with GO_VERSION.
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
       - name: Scan base and head
         env:
           BASE: ${{ github.event.pull_request.base.sha }}

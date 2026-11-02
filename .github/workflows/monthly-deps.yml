@@ -17,7 +17,7 @@ permissions:
   issues: write
 
 env:
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.27.3"
   NODE_VERSION: "20"
 
 jobs:
