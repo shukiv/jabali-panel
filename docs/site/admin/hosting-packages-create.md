@@ -38,7 +38,7 @@ Reached from **Hosting Packages → Create**. Defines a new bundle of quotas and
 
 ## Applications
 
-- **Allowed applications** — subset of the 15-app registry the user may install one-click. Disabled apps remain installable by the admin on the user's behalf.
+- **Allowed applications** — subset of the 16-app registry the user may install one-click. Disabled apps remain installable by the admin on the user's behalf.
 
 ## Egress
 

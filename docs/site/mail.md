@@ -8,7 +8,7 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 - Authentication: per-mailbox password, bcrypt-hashed in the panel's database. Stalwart reads it through a read-only SQL directory, so the password is changed in the panel: **Rotate password** on the mailbox (Mail → a domain → Mailboxes), by the account owner or an admin. Webmail's password change is refused.
 - Quota: per-mailbox MiB, enforced by Stalwart.
-- Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from `/jabali-panel/mail/mailboxes` uses the self-deleting `jabali-sso-*.php` file (not the earlier magic-link/mu-plugin approach, which failed).
+- Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from a mailbox (Mail Domains → a domain → Accounts) uses the self-deleting `jabali-sso-*.php` file (not the earlier magic-link/mu-plugin approach, which failed).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
 - Autoconfig / autodiscover: Apple `mobileconfig`, Thunderbird `autoconfig.xml`, Outlook `autodiscover.xml` (see [platform/mail-autoconfig.md](./platform/mail-autoconfig.md)).
 - Calendars + contacts: the mail vhost serves CalDAV / CardDAV and `/.well-known/caldav|carddav`, and the `_caldavs._tcp` / `_carddavs._tcp` SRV records point clients at it, so mail apps find a mailbox's calendars and contacts on their own. The panel no longer shows per-mailbox DAV URLs; an external-DNS domain gets the two SRV records in its mail DNS record list.
@@ -27,10 +27,11 @@ Stalwart API keys are not available to mailboxes: `install_stalwart_apply` disab
 
 ## Mail Domains
 
-Mail is organised **per domain**, not as one flat page. `/jabali-panel/mail`
-lists your **Mail Domains** — sortable, with SSL + Status columns, a live queue
-count, per-domain Enable / Disable, breadcrumbs, and a **Create Mail Domain**
-button. Click a domain to drill into its accounts and settings.
+Mail is organised **per domain**, not as one flat page. `/jabali-panel/mail-domains`
+lists your **Mail Domains**: the domains with mail on, sortable, with an SSL
+column, a live queue count, Disable and Delete in each row's menu, and a
+**Create Mail Domain** button. Click a domain to drill into its accounts and
+settings. Old `/jabali-panel/mail` links land here.
 
 Per-domain tabs:
 

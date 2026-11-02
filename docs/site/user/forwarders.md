@@ -1,6 +1,6 @@
 # Forwarders
 
-`/jabali-panel/mail/forwarders`. Forward mail addressed to one address to one or more destinations.
+Mail Domains → a domain → Forwarders (`/jabali-panel/mail-domains/<domain id>/forwarders`). Forward mail addressed to one address to one or more destinations.
 
 ## Forwarder vs. mailbox
 

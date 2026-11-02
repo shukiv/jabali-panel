@@ -17,7 +17,7 @@ Comprehensive English docs for the current (Go) generation of Jabali Panel. Desi
 | [mail.md](./mail.md) | Stalwart mail stack, mailboxes, deliverability. |
 | [php.md](./php.md) | Per-user pools, version management, extensions. |
 | [wordpress.md](./wordpress.md) | 1-click WP install / clone / admin SSO. |
-| [applications.md](./applications.md) | 15-app registry, install pipeline. |
+| [applications.md](./applications.md) | 16-app registry, install pipeline. |
 | [files.md](./files.md) | In-panel AntD File Manager. |
 | [sftp.md](./sftp.md) | SFTP via OpenSSH `Match Group`, sandboxed SSH shell (M13 bubblewrap), SSH key vault. |
 | [cron.md](./cron.md) | systemd-user timers + command allowlist. |

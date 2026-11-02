@@ -32,7 +32,7 @@ For each profile, the page shows:
 
 ## Automatic enforce
 
-A daily timer, `jabali-apparmor-flip-mature.timer`, runs `jabali apparmor flip-mature`. It switches a profile on its list (`jabali-panel`, `jabali-agent`, `jabali-bulwark`, `jabali-kratos`, `stalwart-mail`) from complain to enforce once the profile has had no violations for 7 days.
+A daily timer, `jabali-apparmor-flip-mature.timer`, runs `jabali apparmor flip-mature`. It switches a profile on its list (`jabali-panel`, `jabali-agent`, `jabali-bulwark`, `jabali-kratos`, `stalwart-mail`) from complain to enforce once the profile has had no violations for 7 days. Only a loaded profile is switched. No profile ships for `jabali-agent` or `jabali-kratos` (see [Shipped profiles](#shipped-profiles)), so in practice the timer switches `jabali-panel`, `jabali-bulwark` and `stalwart-mail`.
 
 A violation is a `DENIED` event, or the `ALLOWED` event a complain-mode profile logs for each access it would deny. The command reads them from the audit log (`/var/log/audit/audit.log` and its rotations) and from the journal. A profile that is still violating stays in complain mode, and `journalctl -u jabali-apparmor-flip-mature` shows its events. `jabali-fpm-app` and `jabali-sendmail` are never switched automatically.
 

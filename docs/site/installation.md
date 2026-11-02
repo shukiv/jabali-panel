@@ -33,7 +33,7 @@ The installer is idempotent — safe to re-run. It writes drop-ins, never overwr
 | Variable | Effect |
 |---|---|
 | `JABALI_DNS_FORWARDER=<ip>` | Force pdns-recursor to forward `.` to this resolver (use when outbound :53/udp is blocked). Installer also rewrites `/etc/resolv.conf` to point at the same IP and masks systemd-resolved. |
-| `JABALI_PANEL_HOSTNAME=<fqdn>` | Pre-seed Server Settings → Panel Hostname so the Let's Encrypt cert and Stalwart primary mail domain land on the right FQDN from first boot. |
+| `JABALI_HOSTNAME=<fqdn>` | The server's hostname, same as `--hostname <fqdn>`; skips the prompt. The installer sets the system hostname to it and uses it for the server's own DNS zone and the panel's primary mail domain. |
 | `JABALI_SKIP_*` (various) | Skip individual install steps. Generally avoid — supported only for debugging. |
 
 ## Choosing modules
@@ -89,7 +89,7 @@ If `docker`, `docker_apps` or `postgres` fails to install, the installer warns a
 5. Installs Kratos, and with `mail` Bulwark (Node SPA bridge), on Unix sockets — no TCP `:4433/:4434/:3000` exposure.
 6. Builds `jabali-panel-api` (Go) and `jabali-agent` (Go), writes systemd units, starts services.
 7. Runs DB migrations.
-8. Issues an admin one-time-login URL.
+8. Prints the panel URL, the admin username and a generated password.
 
 ## Post-install
 
