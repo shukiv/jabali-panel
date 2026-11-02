@@ -87,12 +87,27 @@ func (pl pythonBuildPlan) needed() bool {
 // build, or a cached requirements failure inside its backoff, comes back as
 // the error.
 func pythonAppBuildStep(p pythonAppApplyParams, appRoot, venv, server, stateDir string) (pythonBuildState, error) {
+	var pl pythonBuildPlan
+	plan := func() (bool, error) {
+		var err error
+		pl, err = planPythonBuild(p, appRoot, venv, server, stateDir)
+		return err == nil && pl.needed(), err
+	}
+	run := func(ctx context.Context) error { return runPythonBuild(ctx, p, pl) }
+	return appBuildStep(p.AppID, p.Username, plan, run)
+}
+
+// appBuildStep is the build lifecycle every app runtime shares (ADR-0175):
+// one build per app in pythonBuilds, behind the per-account and box-wide
+// slots. plan decides, outside the lock, whether a build is needed; run does
+// it in the background, as the owning user.
+func appBuildStep(appID, username string, plan func() (bool, error), run func(ctx context.Context) error) (pythonBuildState, error) {
 	pythonBuilds.Lock()
-	if b, ok := pythonBuilds.m[p.AppID]; ok {
+	if b, ok := pythonBuilds.m[appID]; ok {
 		defer pythonBuilds.Unlock()
 		select {
 		case <-b.done:
-			delete(pythonBuilds.m, p.AppID)
+			delete(pythonBuilds.m, appID)
 			if b.err != nil {
 				return pythonBuildNotNeeded, b.err
 			}
@@ -103,30 +118,31 @@ func pythonAppBuildStep(p pythonAppApplyParams, appRoot, venv, server, stateDir 
 	}
 	pythonBuilds.Unlock()
 
-	// Planning reads the tenant's requirements.txt, so it runs outside the
-	// lock: a slow read must not hold up every other app's apply.
-	pl, err := planPythonBuild(p, appRoot, venv, server, stateDir)
+	// Planning reads the tenant's files (requirements.txt, package.json), so
+	// it runs outside the lock: a slow read must not hold up every other
+	// app's apply.
+	needed, err := plan()
 	if err != nil {
 		return pythonBuildNotNeeded, err
 	}
-	if !pl.needed() {
+	if !needed {
 		return pythonBuildNotNeeded, nil
 	}
 
 	pythonBuilds.Lock()
 	defer pythonBuilds.Unlock()
-	if _, ok := pythonBuilds.m[p.AppID]; ok {
+	if _, ok := pythonBuilds.m[appID]; ok {
 		return pythonBuildRunning, nil // another call started it meanwhile
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), pythonBuildTimeout)
-	b := &pythonBuild{done: make(chan struct{}), cancel: cancel, username: p.Username}
-	pythonBuilds.m[p.AppID] = b
-	userSlot := pythonUserSlot(p.Username)
+	b := &pythonBuild{done: make(chan struct{}), cancel: cancel, username: username}
+	pythonBuilds.m[appID] = b
+	userSlot := pythonUserSlot(username)
 	go func() {
 		defer cancel()
 		defer close(b.done)
 		notStarted := func() {
-			b.err = &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "python app build did not start: " + ctx.Err().Error()}
+			b.err = &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "app build did not start: " + ctx.Err().Error()}
 		}
 		select {
 		case userSlot <- struct{}{}:
@@ -142,7 +158,7 @@ func pythonAppBuildStep(p pythonAppApplyParams, appRoot, venv, server, stateDir 
 			notStarted()
 			return
 		}
-		b.err = runPythonBuild(ctx, p, pl)
+		b.err = run(ctx)
 	}()
 	return pythonBuildRunning, nil
 }
