@@ -419,17 +419,18 @@ func insertOneMailboxRow(
 	//   flag on, no hash -> nothing portable existed to carry. A cPanel
 	//                       system-account mailbox authenticates against
 	//                       /etc/shadow, so ~/etc/<domain>/shadow holds no
-	//                       entry for it; non-bcrypt schemes are dropped for
-	//                       the same reason (Stalwart cannot verify them).
+	//                       entry for it; a hash Stalwart can't verify
+	//                       ({PLAIN}, unknown scheme) is dropped too.
 	//                       Re-running changes nothing.
 	return []string{mailboxLockoutNotice(localPart, domainName, preserveCreds)}
 }
 
 // loadSourceMailPasswords reads a HestiaCP dovecot passwd-file at
-// <domainDir>/conf/passwd and returns local_part → bcrypt hash (with any
-// {SCHEME} tag stripped). Only bcrypt variants Stalwart's SQL directory can
-// verify ($2a/$2b/$2y) are returned; SHA-CRYPT / plaintext / unknown schemes are
-// dropped so the caller falls back to a fresh password + the lockout notice.
+// <domainDir>/conf/passwd and returns local_part → crypt hash (with any
+// {SCHEME} tag stripped). Only hashes Stalwart can verify are returned (see
+// normalizeSourceMailHash: bcrypt, SHA-512/256/MD5-crypt, Argon2, PBKDF2,
+// scrypt, SHA-1-crypt); plaintext / unknown schemes are dropped so the caller
+// falls back to a fresh password + the lockout notice.
 // Missing or unreadable file → empty map (cPanel, which has no such file, and
 // any source without per-mailbox hashes simply get fresh passwords). Line
 // format: <local>:{BLF-CRYPT}$2y$05$…:<uid>:<gid>:…
@@ -460,7 +461,7 @@ func loadSourceMailPasswords(domainDir string) map[string]string {
 
 // listSourceMailAccounts returns EVERY local_part in a HestiaCP dovecot
 // passwd-file at <domainDir>/conf/passwd, regardless of hash scheme. Unlike
-// loadSourceMailPasswords (which drops non-bcrypt hashes it can't preserve),
+// loadSourceMailPasswords (which drops hashes Stalwart can't verify),
 // this is the authoritative ACCOUNT LIST: a mailbox row must exist for every
 // source account even when its Maildir hasn't materialized yet (GH #327) or its
 // password can't be carried. Missing/unreadable file → nil (cPanel has no such
