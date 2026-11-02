@@ -39,13 +39,13 @@ Most steps complete within five seconds; PHP pool and nginx vhost converge on th
 ## CLI
 
 ```bash
-jabali user create \
-  --username alice \
+printf '%s\n' "$PASSWORD" | jabali user create alice \
   --email alice@example.com \
-  --display-name "Alice Smith" \
-  --role user \
-  --package standard \
-  --primary-domain alicesite.com
+  --name-first Alice \
+  --name-last Smith \
+  --password-stdin
 ```
 
-Omit `--password` to auto-generate.
+A password of at least 10 characters is required: `--password-stdin` reads it
+from standard input, or pass `--password`. Add `--admin` for an administrator.
+The CLI has no flag for the package or a first domain; set them in the panel.

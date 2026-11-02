@@ -1,6 +1,6 @@
 # Email
 
-`/jabali-panel/mail/mailboxes` (plus tabs). The mail surface for your domains.
+`/jabali-panel/mail-domains`, then a domain: tabs Accounts, Forwarders, Groups, Shared Folders, Shared Resources, Settings, Logs and Statistics. The mail surface for your domains.
 
 ## Tabs
 

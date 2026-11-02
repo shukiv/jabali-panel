@@ -1,6 +1,6 @@
 # Autoresponders
 
-`/jabali-panel/mail/autoresponders`. Vacation-style automatic replies per mailbox.
+Mail Domains → a domain → Accounts → a mailbox. Vacation-style automatic replies per mailbox.
 
 ## Per-autoresponder fields
 

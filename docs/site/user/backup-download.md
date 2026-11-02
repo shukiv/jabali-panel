@@ -27,7 +27,7 @@ The download is named for your account and the time the backup was made (UTC), f
 
 ## What the tarball does *not* contain
 
-- Clear-text mailbox passwords (only the Argon2id hashes).
+- Clear-text mailbox passwords (only their password hashes).
 - SSH private keys (only the authorized_keys file).
 - Database root password (you do not have it).
 

@@ -57,4 +57,4 @@ Per-install toggle. When on, the panel runs `wp core update && wp plugin update 
 
 ## Other apps
 
-Same wizard pattern works for: Moodle, Drupal, Joomla, NextCloud, MediaWiki, PrestaShop, OpenCart, phpBB, Matomo, MyBB, Pixelfed, Mautic, Mahara, SuiteCRM. See [applications.md](./applications.md).
+Same wizard pattern works for the other 15 apps: Drupal, Joomla, MediaWiki, DokuWiki, phpBB, Flarum, OpenCart, PrestaShop, Moodle, ITFlow, InvoiceShelf, OpenEMR, osTicket, Nextcloud and PrivateBin. See [applications.md](./applications.md).

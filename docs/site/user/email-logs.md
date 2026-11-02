@@ -1,6 +1,6 @@
 # Email Logs (User)
 
-`/jabali-panel/mail/logs`. Live tail of inbound and outbound mail for your domains.
+Mail Domains → a domain → Logs (`/jabali-panel/mail-domains/<domain id>/logs`). Live tail of inbound and outbound mail for that domain.
 
 ## Columns
 

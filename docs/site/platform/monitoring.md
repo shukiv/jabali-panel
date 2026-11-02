@@ -30,18 +30,15 @@ jabali audit verify                    # check the hash chain for tampering
 
 Use for: human-attention-needed alerts in real time.
 
-## 3. Metrics
+## 3. Health and server status
 
-`GET /metrics` (Prometheus). Buckets:
+The panel has no `/metrics` endpoint and no Prometheus exporter. An external
+monitor polls the endpoints in [Health Monitor](health-monitor.md):
+`GET /health` and `GET /health/agent` (no sign-in), and the automation
+endpoints `GET /api/v1/automation/status` (scope `read:status`) and
+`GET /api/v1/automation/server-status` (scope `read:metrics`).
 
-- HTTP: `panel_http_requests_total{path,method,status}`, `panel_http_request_duration_seconds{path}`.
-- Reconciler: `panel_reconciler_ticks_total{result}`, `panel_reconciler_tick_duration_seconds`, per-converger tick counts.
-- Agent: `agent_calls_total{action,result}`, `agent_call_duration_seconds{action}`.
-- Notifications: `notifications_dispatched_total{channel,result}`, queue depth.
-- Backups: `backup_run_duration_seconds{destination,kind}`, `backup_bytes_total{destination}`.
-- SSL: `ssl_certs_expiring_soon`, `ssl_renewals_total{result}`.
-
-Use for: time-series dashboards (Grafana) + alertmanager rules.
+Use for: uptime checks and fleet dashboards.
 
 ## Tail-the-logs alternative
 

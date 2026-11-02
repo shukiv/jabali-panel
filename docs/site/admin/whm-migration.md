@@ -30,7 +30,7 @@ Resellers are flattened: each reseller-owned account becomes a panel user with n
 1. Generate the WHM dump on the source server.
 2. Upload to the destination — large dumps go via SCP into `/var/lib/jabali/migrations/incoming/`.
 3. **Analyze** the dump. Review the package mapping; create new panel packages if the suggested mapping is wrong.
-4. **Restore**. The pipeline iterates per-account, sequential by default. Pass `--parallel N` to run N accounts at a time on a beefy destination host.
+4. **Restore**. The pipeline restores the dump account by account.
 5. After completion, review the per-account failures (if any) and re-run individual cPanel pipelines for them.
 
 ## Bandwidth-staging notes
