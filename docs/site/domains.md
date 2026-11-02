@@ -23,6 +23,15 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 | **Statistics** | Requests and bandwidth per day and visitors by country for the last 7, 30 or 90 days, from the nightly access-log count (country only on hosts with CrowdSec's GeoLite2 database). Same tab for the admin (Edit Domain) and the tenant (Web Domain page); see [Domains (User) → Statistics](user/domains.md#statistics). |
 | **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check; ports come from a shared loopback-port allocator so two tenants can't collide. |
 
+**Keep a reverse-proxied app running.** The panel allocates the port and nginx
+proxies the domain to it, but the process listening on the port is the
+account's own. Only that account can open the port; another account's
+connections are dropped. While the process is stopped, though, the port is
+free, and any process that starts listening on it receives the domain's
+requests. Run the app so that it is restarted as soon as it exits, rather
+than once from a shell, with `nohup` or from an `@reboot` cron job. Python
+apps and Docker apps are started and restarted by the panel.
+
 ## Domain lifecycle
 
 ```
