@@ -36,6 +36,9 @@ A CrowdSec 1.8 AppSec **bot-detection challenge** is available, **off by default
 - **Per-domain opt-in** (`scope=selected`): turn the challenge on for chosen
   domains only.
 - **Per-domain opt-out**: exclude a specific domain from the challenge.
+- **Per-path opt-out**: an admin lists paths of a domain, such as an API or a
+  webhook, that skip the challenge; the WAF and IP bans still apply to them.
+  See [AppSec → Paths that skip the challenge](./admin/appsec.md#paths-that-skip-the-challenge).
 - **Tenant self-service**: a tenant can toggle bot detection on **their own**
   domains without an admin.
 

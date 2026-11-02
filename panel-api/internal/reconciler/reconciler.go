@@ -294,6 +294,9 @@ type Reconciler struct {
 	// rebind pass is skipped entirely (lets existing test harnesses
 	// pass without touching the new repo).
 	managedIPs repository.ManagedIPRepository
+	// GH #2328 — paths of a domain that skip the bot-detection challenge.
+	// Optional; when nil the per-path state file is left as it is.
+	botChallengeExclusions repository.BotChallengeExclusionRepository
 	// M30.2.x — backup destinations. Optional; reconciler purges the
 	// legacy /etc/jabali-panel/restic-repo.password once every row
 	// has been migrated to per-destination password_enc.
@@ -702,6 +705,14 @@ func (r *Reconciler) WithDNSRepos(dnsZones repository.DNSZoneRepository, dnsReco
 // ip.bind; rows that exceed their retry budget flip to degraded=TRUE.
 func (r *Reconciler) WithManagedIPs(repo repository.ManagedIPRepository) *Reconciler {
 	r.managedIPs = repo
+	return r
+}
+
+// WithBotChallengeExclusions registers the per-path bot-challenge opt-outs
+// (GH #2328). reconcileBotChallengeExempt then writes them to the agent's
+// state file every pass.
+func (r *Reconciler) WithBotChallengeExclusions(repo repository.BotChallengeExclusionRepository) *Reconciler {
+	r.botChallengeExclusions = repo
 	return r
 }
 

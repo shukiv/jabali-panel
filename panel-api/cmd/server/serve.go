@@ -490,6 +490,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		deps.MailCredentials = mailcreds.Sweeper{Registry: stalwartClient, Logins: mailLogins}
 		deps.BWDaily = repository.NewBWDailyRepository(sharedDB)
 		deps.DomainIPACLs = repository.NewDomainIPACLRepository(sharedDB)
+		deps.BotChallengeExclusions = repository.NewBotChallengeExclusionRepository(sharedDB) // GH #2328
 		deps.WebDomainAliases = repository.NewWebDomainAliasRepository(sharedDB)
 		deps.DomainDirectoryPrivacy = repository.NewDomainDirectoryPrivacyRepository(sharedDB)
 		// M35: migration importers — Step 1 wires the repo only.
@@ -637,6 +638,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// agent's domain.create payload; agent renders nginx directives
 		// inside the server block.
 		rec.WithDomainIPACLs(deps.DomainIPACLs)
+		// GH #2328: per-path bot-challenge opt-outs → the agent's state file.
+		rec.WithBotChallengeExclusions(deps.BotChallengeExclusions)
 		// GH #1625: reconciler threads a domain's aliases into agent's
 		// domain.create server_name + the cert SAN set on every converge.
 		rec.WithWebDomainAliases(deps.WebDomainAliases)
