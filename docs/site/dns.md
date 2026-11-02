@@ -79,6 +79,11 @@ Operator-authored apex mail records are replaced when a provider is selected
 DKIM for Microsoft 365 / Google is published only when you supply the token;
 MX / SPF / autodiscover are automatic.
 
+With any provider but Jabali mail, this server's mail server no longer treats
+the domain as its own: mail the server sends to it goes to the domain's MX,
+and mail for it that arrives without signing in is refused. See
+[Mail off, or mail hosted elsewhere](./mail.md#mail-off-or-mail-hosted-elsewhere).
+
 ## Custom DNS templates
 
 A **custom DNS template** is a named, admin-defined set of DNS records that is

@@ -14633,6 +14633,150 @@ print(sys.argv[1] if sys.argv[1] in sql else (sql[0] if sql else ""))' "$auth_di
   _ok "Stalwart Directory query fields converged (id=${sql_dir_id})"
 }
 
+# converge_stalwart_mail_elsewhere [jmap_port] [admin_token] — stop Stalwart
+# acting as the mail server for a domain whose email is off or hosted by
+# another provider (Google Workspace, Microsoft 365, a custom template, none).
+#
+# Stalwart treats every domain in its registry as local, and a domain stays
+# registered while any account on it is left: every domain keeps a send-only
+# noreply@ for its website's mail. So mail from this server to a domain whose
+# mail moved to Google (a contact form, another tenant) was refused with
+# "Mailbox does not exist" instead of being sent to Google.
+#
+# The panel's reconciler lists those domains to the agent (mail.elsewhere.sync),
+# which keeps one key per domain in the in-memory lookup "jabali-mail-elsewhere"
+# and sets allowRelaying on the domain. This converger sets what reads that
+# lookup:
+#   - MtaOutboundStrategy route: a registered domain in the lookup goes 'mx'
+#     (its real MX, like any remote domain); other registered domains 'local';
+#     everything else 'mx'. schedule: the same split, 'remote' for the lookup.
+#   - MtaStageRcpt script: unauthenticated mail to a domain in the lookup runs
+#     the system Sieve script "jabali-mail-elsewhere", which refuses it with
+#     550 5.7.1. allowRelaying (needed so a site's authenticated mail to an
+#     address with no mailbox here is accepted) would otherwise accept it.
+#
+# key_exists() reads Stalwart's memory. A SQL lookup was tried first and
+# rejected: with the database unreachable the expressions failed, Stalwart fell
+# back to its built-in route, and unauthenticated mail to such a domain was
+# accepted and relayed to its MX (drill on 0.16.24, 2026-11-02).
+#
+# Route, schedule and RCPT script changes take effect only after a Stalwart
+# restart (ReloadSettings is not enough, verified on 0.16.24);
+# _install_stalwart_apply_plan restarts Stalwart right after this runs, on a
+# fresh install and on every `jabali update`. There is no apply-plan entry:
+# the plan only creates objects once, so this converger is the single writer
+# (ADR-0073 pattern), for fresh installs and existing boxes alike.
+#
+# The three expressions are written only while each one is Stalwart's shipped
+# value or one this converger wrote (it names the lookup). If an operator
+# changed any of them, none is written and a warning says so: the agent then
+# never turns allowRelaying on, because the RCPT refusal is not in place.
+# Returns 1 when it could not converge.
+converge_stalwart_mail_elsewhere() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping the routing for domains whose mail is hosted elsewhere"
+    return 1
+  fi
+
+  _log "converging Stalwart routing for domains whose mail is off or hosted elsewhere"
+  local out rc=0
+  out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    python3 - "$cli" 2>&1 <<'PY'
+import json, subprocess, sys
+
+cli = sys.argv[1]
+NS = "jabali-mail-elsewhere"
+LOCAL = "is_local_domain(rcpt_domain)"
+ELSEWHERE = LOCAL + " && key_exists('" + NS + "', rcpt_domain)"
+SIEVE = 'require ["reject"];\nreject "550 5.7.1 Mail for this domain is not handled by this server.";\n'
+
+WANT_ROUTE = {"match": {"0": {"if": ELSEWHERE, "then": "'mx'"},
+                        "1": {"if": LOCAL, "then": "'local'"}}, "else": "'mx'"}
+WANT_SCHEDULE = {"match": {"0": {"if": ELSEWHERE, "then": "'remote'"},
+                           "1": {"if": LOCAL, "then": "'local'"},
+                           "2": {"if": "source == 'dsn'", "then": "'dsn'"},
+                           "3": {"if": "source == 'report'", "then": "'report'"}}, "else": "'remote'"}
+WANT_SCRIPT = {"match": {"0": {"if": "is_empty(authenticated_as) && " + ELSEWHERE, "then": "'" + NS + "'"}},
+               "else": "false"}
+# Stalwart's shipped values (read from 0.16.24, the pinned STALWART_VERSION).
+SHIPPED_ROUTE = {"match": {"0": {"if": LOCAL, "then": "'local'"}}, "else": "'mx'"}
+SHIPPED_SCHEDULE = {"match": {"0": {"if": LOCAL, "then": "'local'"},
+                              "1": {"if": "source == 'dsn'", "then": "'dsn'"},
+                              "2": {"if": "source == 'report'", "then": "'report'"}}, "else": "'remote'"}
+SHIPPED_SCRIPT = {"match": {}, "else": "false"}
+
+
+def cli_run(*args, payload=None):
+    r = subprocess.run([cli, *args], input=None if payload is None else json.dumps(payload),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("stalwart-cli %s failed: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:300]))
+    return r.stdout
+
+
+def ours(value):
+    return "key_exists('" + NS + "'" in json.dumps(value)
+
+
+try:
+    outbound = json.loads(cli_run("get", "MtaOutboundStrategy", "--json"))
+    rcpt = json.loads(cli_run("get", "MtaStageRcpt", "--json"))
+    current = {"route": (outbound.get("route"), SHIPPED_ROUTE, WANT_ROUTE),
+               "schedule": (outbound.get("schedule"), SHIPPED_SCHEDULE, WANT_SCHEDULE),
+               "script": (rcpt.get("script"), SHIPPED_SCRIPT, WANT_SCRIPT)}
+    custom = [k for k, (have, shipped, _) in current.items() if have != shipped and not ours(have)]
+    if custom:
+        print("CUSTOM " + ",".join(custom))
+        sys.exit(3)
+
+    changed = []
+    # The Sieve script first: the RCPT script names it.
+    rows = [json.loads(l) for l in cli_run("query", "SieveSystemScript", "--json", "--fields", "name,contents,isActive").splitlines() if l.strip()]
+    mine = [r for r in rows if r.get("name") == NS]
+    if not mine:
+        cli_run("create", "SieveSystemScript", "--stdin", payload={"name": NS, "isActive": True, "contents": SIEVE})
+        changed.append("sieve")
+    # Stalwart stores the script without its trailing newline.
+    elif (mine[0].get("contents") or "").rstrip() != SIEVE.rstrip() or mine[0].get("isActive") is not True:
+        cli_run("update", "SieveSystemScript", mine[0]["id"], "--stdin", payload={"contents": SIEVE, "isActive": True})
+        changed.append("sieve")
+    # The RCPT refusal before the route, so the route never sends a domain's
+    # mail out while unauthenticated mail for it is still accepted.
+    if current["script"][0] != WANT_SCRIPT:
+        cli_run("update", "MtaStageRcpt", "--stdin", payload={"script": WANT_SCRIPT})
+        changed.append("rcpt")
+    patch = {k: current[k][2] for k in ("route", "schedule") if current[k][0] != current[k][2]}
+    if patch:
+        cli_run("update", "MtaOutboundStrategy", "--stdin", payload=patch)
+        changed.extend(sorted(patch))
+    print("CHANGED " + ",".join(changed) if changed else "UNCHANGED")
+except Exception as e:  # noqa: BLE001 - report any failure to the shell
+    print("ERROR %s" % e)
+    sys.exit(1)
+PY
+  )" || rc=$?
+  case "$rc:$out" in
+    0:UNCHANGED*)
+      _ok "Stalwart routing for domains hosted elsewhere already in place" ;;
+    0:CHANGED*)
+      _ok "Stalwart routing for domains hosted elsewhere converged (${out#CHANGED }); takes effect at the Stalwart restart" ;;
+    3:CUSTOM*)
+      _warn "Stalwart ${out#CUSTOM } changed by hand — not converging the routing for domains whose mail is hosted elsewhere; mail from this server to them stays local"
+      return 1 ;;
+    *)
+      _warn "Stalwart routing for domains hosted elsewhere not converged: ${out}"
+      return 1 ;;
+  esac
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -14793,6 +14937,9 @@ _install_stalwart_apply_plan() {
   # them directly here on every install/update run, regardless of
   # skip_apply, so the live config tracks the template.
   converge_stalwart_directory_queries "$jmap_port" "$admin_token" || true
+  # Domains whose mail is off or hosted elsewhere: their mail goes to their
+  # MX. Needs the restart at the end of this function.
+  converge_stalwart_mail_elsewhere "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`

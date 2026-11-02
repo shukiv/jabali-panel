@@ -51,6 +51,30 @@ A domain can have **just its mail torn down while the web domain stays** —
 deletes mailboxes, forwarders, DKIM, and the Stalwart domain entry
 without removing the vhost or DNS zone.
 
+### Mail off, or mail hosted elsewhere
+
+When a domain's email is off, or its mail provider is anything but Jabali
+(Google Workspace, Microsoft 365, No mail, or a custom DNS template), this
+server stops acting as the domain's mail server:
+
+- Mail sent from this server to the domain (a contact form, a WordPress
+  notification, another account on the server) goes to the domain's MX, like
+  mail to any other domain. It is no longer delivered here, or refused with
+  "Mailbox does not exist".
+- Mail for the domain that arrives without signing in is refused with
+  `550 5.7.1`: the domain's mail is received by its own MX, not here.
+- Mailboxes left on the domain are kept. They still sign in, keep the mail
+  they have and can send, but new mail for them goes to the domain's MX, so
+  move their mail before switching provider.
+- The website's own mail (PHP `mail()`) keeps working: it signs in as the
+  domain's send-only `noreply@`.
+
+The panel applies a change within a minute. The mail server's routing for
+these domains is set up by the installer, so an existing server gets it at
+its next `jabali update`. If the mail server's outbound route, queue schedule
+or recipient-stage script was changed by hand, the update leaves them as they
+are and prints a warning, and such domains stay local.
+
 ## Mail groups
 
 A mail group is an address on a domain whose members are mailboxes on the same domain. **Mail → Groups** creates one; there are two types, fixed at creation. A group cannot take a mailbox's address, and a mailbox cannot take a group's (see [One owner per address](./user/mailboxes.md#one-owner-per-address)).

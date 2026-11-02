@@ -53,3 +53,20 @@ func DeriveMailFlags(provider string) (emailEnabled, skipAutoSAN bool) {
 	}
 	return false, true
 }
+
+// MailHostedElsewhere reports whether this server must NOT act as the mail
+// server for a domain: email is off, or the mail provider is anything but
+// Jabali (an empty provider is a row from before the enum and means Jabali).
+//
+// The mail server keeps such a domain in its registry while any account on it
+// is left (every domain has a send-only noreply@ for its website's mail), and
+// a registered domain counts as local. The reconciler lists these domains to
+// the agent (mail.elsewhere.sync), which keeps them in Stalwart's in-memory
+// lookup "jabali-mail-elsewhere": the installer's route sends mail for them to
+// their MX, and unauthenticated mail for them is refused.
+func MailHostedElsewhere(emailEnabled bool, provider string) bool {
+	if !emailEnabled {
+		return true
+	}
+	return provider != "" && provider != MailProviderJabali
+}
