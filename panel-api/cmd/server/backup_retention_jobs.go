@@ -48,12 +48,19 @@ type resticSnapshot struct {
 	Paths    []string  `json:"paths"`
 }
 
-// retentionPolicy is a schedule's keep_daily/weekly/monthly; 0 = rule unset.
+// retentionPolicy is a schedule's keep_daily/weekly/monthly and
+// keep_within_days; 0 = rule unset.
 type retentionPolicy struct {
 	Daily, Weekly, Monthly int
+	// WithinDays keeps every backup from the last N days, counted back from
+	// the newest complete backup (restic's --keep-within). It is an account's
+	// "Days to keep" (GH #2300).
+	WithinDays int
 }
 
-func (p retentionPolicy) empty() bool { return p.Daily <= 0 && p.Weekly <= 0 && p.Monthly <= 0 }
+func (p retentionPolicy) empty() bool {
+	return p.Daily <= 0 && p.Weekly <= 0 && p.Monthly <= 0 && p.WithinDays <= 0
+}
 
 // retentionJob is every snapshot of one backup job in one series.
 type retentionJob struct {
@@ -221,6 +228,20 @@ func planJobRetention(snaps []resticSnapshot, p retentionPolicy) jobRetentionPla
 			ranks[i] = j.rank()
 		}
 		keep := keepByPolicyRanked(jobTimes(counted), ranks, p)
+		if p.WithinDays > 0 && len(counted) > 0 {
+			// From the newest complete backup, so failed runs can't move the
+			// window past the complete ones; else from the newest of all.
+			ref := newestComplete
+			if ref.IsZero() {
+				ref = counted[0].Time
+			}
+			cutoff := ref.AddDate(0, 0, -p.WithinDays)
+			for i, j := range counted {
+				if j.Time.After(cutoff) {
+					keep[i] = true
+				}
+			}
+		}
 		for i, j := range counted {
 			if keep[i] {
 				plan.Keep = append(plan.Keep, j)

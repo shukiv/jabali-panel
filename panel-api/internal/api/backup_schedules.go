@@ -77,16 +77,17 @@ type scheduleDTO struct {
 	// Content is what each run backs up (full / files / database / folders).
 	// Cadence is set on an account's own schedule, which runs on that interval
 	// instead of cron_expr (GH #2246); "" = a cron schedule.
-	Content      string                 `json:"content"`
-	Cadence      string                 `json:"cadence"`
-	Enabled      bool                   `json:"enabled"`
-	KeepDaily    *int                   `json:"keep_daily,omitempty"`
-	KeepWeekly   *int                   `json:"keep_weekly,omitempty"`
-	KeepMonthly  *int                   `json:"keep_monthly,omitempty"`
-	LastRunAt    *string                `json:"last_run_at,omitempty"`
-	NextRunAt    *string                `json:"next_run_at,omitempty"`
-	NextFirings  []string               `json:"next_firings,omitempty"`
-	Destinations []backupDestinationDTO `json:"destinations,omitempty"`
+	Content        string                 `json:"content"`
+	Cadence        string                 `json:"cadence"`
+	Enabled        bool                   `json:"enabled"`
+	KeepDaily      *int                   `json:"keep_daily,omitempty"`
+	KeepWeekly     *int                   `json:"keep_weekly,omitempty"`
+	KeepMonthly    *int                   `json:"keep_monthly,omitempty"`
+	KeepWithinDays *int                   `json:"keep_within_days,omitempty"`
+	LastRunAt      *string                `json:"last_run_at,omitempty"`
+	NextRunAt      *string                `json:"next_run_at,omitempty"`
+	NextFirings    []string               `json:"next_firings,omitempty"`
+	Destinations   []backupDestinationDTO `json:"destinations,omitempty"`
 }
 
 func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) scheduleDTO {
@@ -98,6 +99,7 @@ func toScheduleDTO(s *models.BackupSchedule, dests []models.BackupDestination) s
 		Content:   models.NormalizeBackupContent(s.Content),
 		Cadence:   s.Cadence,
 		KeepDaily: s.KeepDaily, KeepWeekly: s.KeepWeekly, KeepMonthly: s.KeepMonthly,
+		KeepWithinDays: s.KeepWithinDays,
 	}
 	if s.LastRunAt != nil {
 		v := s.LastRunAt.Format(time.RFC3339)
@@ -171,6 +173,7 @@ type createScheduleRequest struct {
 	KeepDaily      *int     `json:"keep_daily"`
 	KeepWeekly     *int     `json:"keep_weekly"`
 	KeepMonthly    *int     `json:"keep_monthly"`
+	KeepWithinDays *int     `json:"keep_within_days"`
 	DestinationIDs []string `json:"destination_ids"`
 }
 
@@ -200,6 +203,7 @@ func (h *backupScheduleHandler) create(c *gin.Context) {
 		KeepDaily:           req.KeepDaily,
 		KeepWeekly:          req.KeepWeekly,
 		KeepMonthly:         req.KeepMonthly,
+		KeepWithinDays:      req.KeepWithinDays,
 		DestinationIDs:      req.DestinationIDs,
 	})
 	if err != nil {
@@ -242,12 +246,13 @@ func (h *backupScheduleHandler) createForAccount(c *gin.Context, req createSched
 		enabled = *req.Enabled
 	}
 	s, err := backupscheduleops.CreateForAccount(c.Request.Context(), h.leafDeps(), backupscheduleops.AccountScheduleInput{
-		UserID:        users[0],
-		Content:       req.Content,
-		Cadence:       req.Cadence,
-		DestinationID: dest,
-		KeepDaily:     req.KeepDaily,
-		Enabled:       enabled,
+		UserID:         users[0],
+		Content:        req.Content,
+		Cadence:        req.Cadence,
+		DestinationID:  dest,
+		KeepDaily:      req.KeepDaily,
+		KeepWithinDays: req.KeepWithinDays,
+		Enabled:        enabled,
 	})
 	if err != nil {
 		writeScheduleOpError(c, err, "db_create")
@@ -304,7 +309,7 @@ func writeScheduleOpError(c *gin.Context, err error, dbErrCode string) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "destination_required", "detail": err.Error()})
 	case errors.Is(err, backupscheduleops.ErrOneDestination):
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "one_destination", "detail": err.Error()})
-	case errors.Is(err, backupscheduleops.ErrKeepOutOfRange):
+	case errors.Is(err, backupscheduleops.ErrKeepOutOfRange), errors.Is(err, backupscheduleops.ErrKeepDaysOutOfRange):
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "keep_out_of_range", "detail": err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": dbErrCode})
@@ -320,6 +325,7 @@ type updateScheduleRequest struct {
 	KeepDaily           *int      `json:"keep_daily"`
 	KeepWeekly          *int      `json:"keep_weekly"`
 	KeepMonthly         *int      `json:"keep_monthly"`
+	KeepWithinDays      *int      `json:"keep_within_days"`
 	DestinationIDs      *[]string `json:"destination_ids"`
 	UserIDs             *[]string `json:"user_ids"`
 }
@@ -353,6 +359,7 @@ func (h *backupScheduleHandler) update(c *gin.Context) {
 		KeepDaily:           req.KeepDaily,
 		KeepWeekly:          req.KeepWeekly,
 		KeepMonthly:         req.KeepMonthly,
+		KeepWithinDays:      req.KeepWithinDays,
 		DestinationIDs:      req.DestinationIDs,
 		UserIDs:             req.UserIDs,
 	})

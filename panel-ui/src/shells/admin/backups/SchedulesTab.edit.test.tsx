@@ -44,7 +44,8 @@ const TENANT_ROW = {
   content: "database",
   cadence: "every_6h",
   enabled: true,
-  keep_daily: 3,
+  // The account's "Days to keep" (GH #2300).
+  keep_within_days: 3,
   destinations: [DEST],
 };
 
@@ -158,7 +159,7 @@ describe("SchedulesTab, an account's own schedule (GH #2246)", () => {
       content: "files",
       cadence: "hourly",
       destination_ids: ["d1"],
-      keep_daily: 3,
+      keep_within_days: 3,
       enabled: true,
     });
   });
@@ -248,7 +249,7 @@ describe("SchedulesTab, the admin adds an account's own schedule (GH #2246)", ()
       content: "database",
       cadence: "every_12h",
       destination_ids: ["d1"],
-      keep_daily: null,
+      keep_within_days: null,
       enabled: true,
     });
   });
@@ -299,5 +300,25 @@ describe("SchedulesTab, hourly admin schedules (GH #2246)", () => {
     const alert = within(drawer).getByRole("alert");
     expect(alert.textContent).toContain("0 3 * 1 *");
     expect(alert.textContent).toContain("Saving replaces it");
+  });
+});
+
+describe("SchedulesTab, an account's cron-timed schedule keeps days (GH #2300)", () => {
+  it("shows and saves Days to keep, not the admin's daily count", async () => {
+    mockLists([
+      { ...ADMIN_ROW, id: "s-own", user_id: "u1", user_ids: ["u1"], cron_expr: "0 4 * * *", keep_within_days: 5 },
+    ]);
+    const drawer = await openEdit("0 4 * * *");
+    expect(await within(drawer).findByText("Days to keep")).toBeTruthy();
+    expect(within(drawer).queryByText("Keep last N daily backups")).toBeNull();
+    await waitFor(() => expect((drawer.querySelector("#keep") as HTMLInputElement).value).toBe("5"));
+    fireEvent.change(drawer.querySelector("#keep") as HTMLInputElement, { target: { value: "6" } });
+    fireEvent.click(within(drawer).getByRole("button", { name: /^Save$/ }));
+
+    await waitFor(() => expect(mocked.patch).toHaveBeenCalled());
+    const [, body] = mocked.patch.mock.calls[0];
+    expect(body.keep_within_days).toBe(6);
+    expect(body).not.toHaveProperty("keep_daily");
+    expect(body).not.toHaveProperty("keep_weekly");
   });
 });
