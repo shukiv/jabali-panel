@@ -41,8 +41,19 @@ type DmarcReport struct {
 	ReportID       string                   `json:"reportId"`
 	PolicyDomain   string                   `json:"policyDomain"`
 	DateRangeBegin time.Time                `json:"dateRangeBegin"`
+	DateRangeStart time.Time                `json:"dateRangeStart"`
 	DateRangeEnd   time.Time                `json:"dateRangeEnd"`
 	Records        IndexedList[DmarcRecord] `json:"records"`
+}
+
+// Start is the beginning of the report's date range. Stalwart 0.16 names the
+// field dateRangeBegin and 1.0 names it dateRangeStart; a report carries one
+// of them.
+func (r DmarcReport) Start() time.Time {
+	if !r.DateRangeBegin.IsZero() {
+		return r.DateRangeBegin
+	}
+	return r.DateRangeStart
 }
 
 // DmarcRecord is one <record>: a source IP, how many messages it sent, and

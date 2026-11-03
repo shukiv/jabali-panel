@@ -212,6 +212,30 @@ func TestDmarcIngest_StoresTheRecordsOfARealStalwartReport(t *testing.T) {
 	}
 }
 
+// Stalwart 1.0 renamed the report's dateRangeBegin to dateRangeStart. The
+// same report under the new name is stored the same way, not skipped as a
+// report without a date range.
+func TestDmarcIngest_ReadsStalwart10DateRangeStart(t *testing.T) {
+	client, pub := newFakeReports(), &capturingPublisher{}
+	obj := fixture(t, "DmarcExternalReport", "v10")
+	rep := obj["report"].(map[string]any)
+	rep["dateRangeStart"] = rep["dateRangeBegin"]
+	delete(rep, "dateRangeBegin")
+	client.add(t, "DmarcExternalReport", obj)
+	repo := &fakeDmarcRepo{}
+	d := dmarcDeps(client, pub)
+	d.DMARCAggregate = repo
+
+	mailDmarcIngestPass(context.Background(), d, newReportIngest("DmarcExternalReport"))
+
+	if len(repo.rows) != 2 {
+		t.Fatalf("%d rows stored, want 2 (the 1.0 report was skipped)", len(repo.rows))
+	}
+	if want := time.Date(2025, 9, 28, 0, 0, 0, 0, time.UTC); !repo.rows[0].WindowStart.Equal(want) {
+		t.Fatalf("window start = %v, want %v", repo.rows[0].WindowStart, want)
+	}
+}
+
 // A receiver sends one report per domain for the same day, and sends a
 // report again after a delivery retry. Each domain's report is stored once.
 func TestDmarcIngest_OneReportPerDomainForTheSameDay(t *testing.T) {

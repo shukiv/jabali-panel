@@ -56,7 +56,7 @@ func mailDmarcImportOne(ctx context.Context, d Deps, raw json.RawMessage) (*dmar
 	}
 	domain := reportDomain(rep.Report.PolicyDomain)
 	reporter := clip(defaultStr(rep.Report.OrgName, rep.From), 253)
-	start, end := rep.Report.DateRangeBegin.UTC(), rep.Report.DateRangeEnd.UTC()
+	start, end := rep.Report.Start().UTC(), rep.Report.DateRangeEnd.UTC()
 	if domain == "" || reporter == "" || start.IsZero() || end.IsZero() {
 		d.Log.Warn("dmarc-ingest: report without a domain, reporter or date range, skipped", "id", rep.ID)
 		return nil, nil
