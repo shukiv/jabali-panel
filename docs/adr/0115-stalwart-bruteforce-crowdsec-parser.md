@@ -190,6 +190,10 @@ Files this ADR commits us to creating in the follow-up PR:
       tracer config + disables auto-ban categories
     - `install_crowdsec_jabali_stalwart_scenarios()` — drops the
       vendored files into `/etc/crowdsec/{parsers,scenarios,acquis.d}/`
+    - `converge_crowdsec_jabali_parsers()` — run by `jabali update`
+      (`provision_new_software`): rewrites the parser and acquis files
+      that differ from the repo; scenarios stay seed-only, so a
+      sensitivity preset survives
 - `panel-agent/internal/commands/security_crowdsec_sensitivity.go`
   — extend preset writer to override the five new scenario capacities
 

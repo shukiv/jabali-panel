@@ -11715,6 +11715,24 @@ install_crowdsec_jabali_kratos_scenarios() {
   fi
 }
 
+# converge_crowdsec_jabali_parsers — the `jabali update` path for Jabali's own
+# CrowdSec parsers and acquisition files. The two installers above rewrite
+# those when they differ from the repo and only seed scenarios (the
+# sensitivity presets rewrite scenarios at runtime). Only a fresh install and
+# the security module install ran them, so a parser fix never reached an
+# installed host. Stalwart 1.0 writes auth.failed with its fields in a new
+# order: a host that moves to 1.0 with the old parser stops banning mail
+# brute force. provision_new_software calls this, so it also runs when an
+# older panel binary drives the update. No-op without CrowdSec.
+converge_crowdsec_jabali_parsers() {
+  command -v cscli >/dev/null 2>&1 || return 0
+  install_crowdsec_jabali_stalwart_scenarios \
+    || _warn "CrowdSec: could not refresh the Stalwart mail parser; mail brute-force bans may miss Stalwart's log lines until the next 'jabali update'"
+  install_crowdsec_jabali_kratos_scenarios \
+    || _warn "CrowdSec: could not refresh the panel sign-in parser; the next 'jabali update' tries again"
+  return 0
+}
+
 install_crowdsec_jabali_scenarios() {
   # Seed jabali-owned CrowdSec scenarios that target the panel itself.
   # Three rules:
@@ -18199,6 +18217,11 @@ EOF
     systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec 2>/dev/null || true
     _ok "crowdsec sshd acquis updated — counts only the SSH server's own lines"
   fi
+
+  # Jabali's own CrowdSec parsers and acquisition files (Stalwart, panel
+  # sign-in): rewritten when they differ from the repo. See
+  # converge_crowdsec_jabali_parsers.
+  converge_crowdsec_jabali_parsers
 
   # M33 malware stack — re-run on every update so drop-in conf changes
   # (inotify_docroot, monitor unit, custom YARA rules) propagate to
