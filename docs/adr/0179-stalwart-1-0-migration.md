@@ -26,7 +26,12 @@ On the first drill on the test box, the module repair saw Stalwart stopped for
 the final copy and installed and started 0.16 in the middle of it.
 
 The code that talks to Stalwart was made to work on both versions first:
-- #2359: the CrowdSec parser.
+- #2359: the CrowdSec parser. A host only gets a new parser if
+  `jabali update` writes it. `provision_new_software` now runs
+  `converge_crowdsec_jabali_parsers`, ahead of the migration step. Before
+  that, only a fresh install or the security module install wrote Jabali's
+  CrowdSec parsers. The rehearsal on the test box (0.16.24 → 1.0.2 by a real
+  update) found this: the box would have kept its old parser on 1.0.
 - #2360: Domain `enable`, metric names, DMARC `dateRangeStart`.
 - #2361: the recipient cache flush.
 - #2362: the delivery log at debug.
