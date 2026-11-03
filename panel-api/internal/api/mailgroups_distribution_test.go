@@ -18,9 +18,10 @@ import (
 
 type mgGroupsFake struct {
 	repository.MailGroupRepository
-	group       *models.MailGroup
-	memberIDs   []string // current mail_group_members rows
-	deliverable []string // members that can receive mail
+	group        *models.MailGroup
+	memberIDs    []string // current mail_group_members rows
+	memberEmails []string // their addresses
+	deliverable  []string // members that can receive mail
 
 	setMembersCalled    bool
 	addMemberCalled     bool
@@ -32,7 +33,9 @@ type mgGroupsFake struct {
 func (f *mgGroupsFake) FindByID(context.Context, string) (*models.MailGroup, error) {
 	return f.group, nil
 }
-func (f *mgGroupsFake) ListMemberEmails(context.Context, string) ([]string, error) { return nil, nil }
+func (f *mgGroupsFake) ListMemberEmails(context.Context, string) ([]string, error) {
+	return f.memberEmails, nil
+}
 func (f *mgGroupsFake) ListMemberMailboxIDs(context.Context, string) ([]string, error) {
 	return f.memberIDs, nil
 }

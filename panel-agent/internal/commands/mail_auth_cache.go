@@ -100,7 +100,11 @@ func flushesMailAuthCache(h Handler) Handler {
 
 // mail.auth_cache.flush — the panel calls it after a change that must end a
 // mailbox's logins at once and that no other agent verb carries: a mailbox
-// disabled, or (GH #1816) a domain sent back to pending. Takes no parameters.
+// disabled, or (GH #1816) a domain sent back to pending. It also calls it
+// after an address is taken away (an alias deleted, a group member removed, a
+// catch-all changed): Stalwart 1.0 caches recipient lookups and kept taking
+// mail for a deleted alias until the caches were dropped (seen on 1.0.2).
+// Takes no parameters.
 func mailAuthCacheFlushHandler(ctx context.Context, _ json.RawMessage) (any, error) {
 	if err := mailAuthCache.request(ctx); err != nil {
 		return nil, err
