@@ -189,7 +189,7 @@ func fetchMetrics(ctx context.Context, secret string) (map[string]float64, int, 
 // gauge samples and dropping histograms (and their _bucket/_sum/_count
 // series). Labelled samples keep the bare name and sum across label sets.
 func parsePrometheusText(r io.Reader) (map[string]float64, error) {
-	keep := map[string]bool{}
+	types := map[string]string{}
 	out := map[string]float64{}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -201,7 +201,7 @@ func parsePrometheusText(r io.Reader) (map[string]float64, error) {
 		if strings.HasPrefix(line, "# TYPE ") {
 			fields := strings.Fields(line)
 			if len(fields) == 4 {
-				keep[fields[2]] = fields[3] == "counter" || fields[3] == "gauge"
+				types[fields[2]] = fields[3]
 			}
 			continue
 		}
@@ -217,16 +217,41 @@ func parsePrometheusText(r io.Reader) (map[string]float64, error) {
 			name = name[:i]
 		}
 		name = strings.TrimSpace(name)
-		if !keep[name] {
+		typ := types[name]
+		if typ != "counter" && typ != "gauge" {
 			continue
 		}
 		v, err := strconv.ParseFloat(valStr, 64)
 		if err != nil {
 			continue
 		}
-		out[name] += v
+		out[stalwartMetricName(name, typ)] += v
 	}
 	return out, sc.Err()
+}
+
+// stalwartMetricName returns the name the panel stores and reads for an
+// exporter series. Those are Stalwart 0.16's names (message_ingest_ham,
+// smtp_active_connections, ...). Stalwart 1.0 prefixes every name with
+// "stalwart_", adds "_total" to counters and renamed three gauges (seen on
+// 1.0.2), so its names are mapped back; a 0.16 name passes through.
+func stalwartMetricName(name, typ string) string {
+	n, ok := strings.CutPrefix(name, "stalwart_")
+	if !ok {
+		return name
+	}
+	if typ == "counter" {
+		n = strings.TrimSuffix(n, "_total")
+	}
+	switch n {
+	case "domains":
+		return "domain_count"
+	case "users":
+		return "user_count"
+	case "server_memory_bytes":
+		return "server_memory"
+	}
+	return n
 }
 
 func init() {

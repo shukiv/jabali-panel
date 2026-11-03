@@ -48,6 +48,58 @@ func TestParsePrometheusText(t *testing.T) {
 	}
 }
 
+// Stalwart 1.0's exporter, as 1.0.2 writes it: "stalwart_" on every name,
+// "_total" on counters, and domains/users/server_memory_bytes renamed.
+const sampleExposition10 = `# HELP stalwart_auth_success_total Authentication successful
+# TYPE stalwart_auth_success_total counter
+stalwart_auth_success_total 1
+# TYPE stalwart_message_ingest_ham_total counter
+stalwart_message_ingest_ham_total 7
+# TYPE stalwart_queue_authenticated_message_queued_total counter
+stalwart_queue_authenticated_message_queued_total 2
+# TYPE stalwart_delivery_completed_total counter
+stalwart_delivery_completed_total 9
+# TYPE stalwart_server_memory_bytes gauge
+stalwart_server_memory_bytes 102477824
+# TYPE stalwart_users gauge
+stalwart_users 23
+# TYPE stalwart_domains gauge
+stalwart_domains 74
+# TYPE stalwart_smtp_active_connections gauge
+stalwart_smtp_active_connections 4
+# TYPE stalwart_imap_request_time_seconds histogram
+stalwart_imap_request_time_seconds_bucket{le="0.5"} 3
+stalwart_imap_request_time_seconds_sum 0.2
+stalwart_imap_request_time_seconds_count 3
+`
+
+// The panel stores and reads 0.16's names (MailStatsTab, the weekly digest),
+// so a 1.0 sample must come out under the same names.
+func TestParsePrometheusText_Stalwart10Names(t *testing.T) {
+	m, err := parsePrometheusText(strings.NewReader(sampleExposition10))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	want := map[string]float64{
+		"auth_success":                       1,
+		"message_ingest_ham":                 7,
+		"queue_authenticated_message_queued": 2,
+		"delivery_completed":                 9,
+		"server_memory":                      102477824,
+		"user_count":                         23,
+		"domain_count":                       74,
+		"smtp_active_connections":            4,
+	}
+	for k, v := range want {
+		if m[k] != v {
+			t.Errorf("%s = %v, want %v", k, m[k], v)
+		}
+	}
+	if len(m) != len(want) {
+		t.Errorf("got %d series %v, want %d (histograms dropped, no stalwart_ names left)", len(m), m, len(want))
+	}
+}
+
 // statsTestServer speaks both /jmap and /metrics/prometheus. The exporter
 // starts "off" (404) when enabledAtStart is false and turns on after a
 // jabali-stalwart restart, mirroring the real mount-at-boot behaviour.

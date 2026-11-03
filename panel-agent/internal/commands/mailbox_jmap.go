@@ -417,7 +417,10 @@ func accountDestroy(ctx context.Context, id string) error {
 // schema.json.gz (ADR-0045 §Schema-pull):
 //
 //   - name: string
-//   - isEnabled: bool
+//   - the enabled flag is left out: Stalwart 0.16 calls it isEnabled and 1.0
+//     calls it enable, and 1.0 refuses the old name ("Invalid property").
+//     Both create the domain enabled when it is missing (checked on 0.16.27
+//     and 1.0.2).
 //   - directoryId: nullable objectId (omitted → uses Authentication.directoryId)
 //   - dkimManagement: x:DkimManagement (tagged-enum object, variants
 //     {"@type":"Manual"} or {"@type":"Automatic", ...props}). We use
@@ -438,7 +441,6 @@ func createDomain(ctx context.Context, name string) (string, error) {
 		"create": map[string]any{
 			"#d1": map[string]any{
 				"name":                  name,
-				"isEnabled":             true,
 				"dkimManagement":        map[string]any{"@type": "Manual"},
 				"dnsManagement":         map[string]any{"@type": "Manual"},
 				"certificateManagement": map[string]any{"@type": "Manual"},
