@@ -15800,7 +15800,10 @@ PY
 
   # --- 5. switch -------------------------------------------------------------
   _STWM_PHASE=switching
-  if ! { mv "$store" "$old_store" && mv "$new_store" "$store" \
+  # The tool creates the copy's directory 0755 and its files 0644; only the
+  # directory's mode keeps other local users out of the mail store, so it gets
+  # install_stalwart's 0750 before it goes live.
+  if ! { chmod 0750 "$new_store" && mv "$store" "$old_store" && mv "$new_store" "$store" \
          && mv "$STALWART_OPT_DIR" "$old_opt" && mv "$new_opt" "$STALWART_OPT_DIR"; }; then
     _err "Stalwart migration: moving the stores into place failed; switching back to $STALWART_SOURCE_VERSION"
     return 1

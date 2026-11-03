@@ -153,6 +153,9 @@ expect "success: Stalwart stopped first, before the final copy" "$(grep -m1 -n '
 expect "success: marker held while the tool ran" "$(sort -u "$T/marker.log" | paste -sd' ')" held
 expect "success: binary" "$(serving_version)" "$STALWART_VERSION"
 expect "success: store" "$(store_is)" final
+# The tool leaves the copy's directory 0755 over 0644 files: other local
+# users would read the mail store.
+expect "success: store directory mode" "$(stat -c %a "$STALWART_STORE_DIR")" 750
 expect "success: 0.16 store kept" "$(cat "$STALWART_STORE_DIR-0.16/CURRENT")" "0.16 data"
 expect "success: 0.16 binary kept" "$("$STALWART_OPT_DIR-0.16/stalwart")" "$STALWART_SOURCE_VERSION"
 expect "success: spam rules carried over" "$(cat "$STALWART_OPT_DIR/share/spam-filter-rules.json.gz" 2>/dev/null)" rules

@@ -49,16 +49,20 @@ step stopped:
 
 When the warning says 1.0 did not start and the host was switched back:
 - Stalwart serves 0.16 again.
-- The failed copy is at `/var/lib/stalwart-1.0.failed-<time>`.
+- The failed copy is at `/var/lib/stalwart-1.0.failed-<time>`, and its binary
+  at `/opt/stalwart-1.0.failed-<time>`.
 - Mail that 1.0 accepted in those seconds is in that copy.
 - Later updates do not try again (they warn that a copy was switched back).
 
 Find the cause with `journalctl -u jabali-stalwart`. To try again, move away the
-failed copy and the state directory:
+failed copy and the state directory (each under its own name: the store and
+the binary directories share a base name), then update:
 
 ```sh
-mkdir -p /root/.trash
-mv /var/lib/stalwart-1.0.failed-* /var/lib/jabali-stalwart-migrate /root/.trash/
+mkdir -p /root/.trash/stalwart-1.0-failed
+mv /var/lib/jabali-stalwart-migrate /root/.trash/stalwart-1.0-failed/state
+mv /var/lib/stalwart-1.0.failed-* /root/.trash/stalwart-1.0-failed/store
+mv /opt/stalwart-1.0.failed-* /root/.trash/stalwart-1.0-failed/bin
 jabali update
 ```
 
@@ -86,9 +90,17 @@ into a new 0.16 store with `stalwart-migrate rollback`:
 - Before you start, let 1.0's queue drain.
 
 Either way, later updates do not migrate the host again: they warn that a
-completed copy was switched back. To migrate again once the cause is fixed,
-move `/var/lib/jabali-stalwart-migrate` and the 1.0 copy to `/root/.trash/`
-and run `jabali update`.
+completed copy was switched back. To migrate again once the cause is fixed:
+
+```sh
+mkdir -p /root/.trash/stalwart-1.0-rolled-back
+mv /var/lib/jabali-stalwart-migrate /root/.trash/stalwart-1.0-rolled-back/state
+mv /var/lib/stalwart-1.0.rolled-back /root/.trash/stalwart-1.0-rolled-back/store
+mv /opt/stalwart-1.0.rolled-back /root/.trash/stalwart-1.0-rolled-back/bin
+jabali update
+```
+
+Mail delivered to 0.16 after the rollback is copied again by that update.
 
 ## Remove the 0.16 copy
 
@@ -96,8 +108,9 @@ Once the host has run on 1.0 for a while (a week is plenty) and mail works,
 the 0.16 store and binary are no longer a rollback path:
 
 ```sh
-mkdir -p /root/.trash
-mv /var/lib/stalwart-0.16 /opt/stalwart-0.16 /root/.trash/
+mkdir -p /root/.trash/stalwart-0.16
+mv /var/lib/stalwart-0.16 /root/.trash/stalwart-0.16/store
+mv /opt/stalwart-0.16 /root/.trash/stalwart-0.16/bin
 ```
 
 Keep `/var/lib/jabali-stalwart-migrate`: it is small and records what was
