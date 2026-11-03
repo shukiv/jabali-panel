@@ -88,6 +88,59 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
         }
       />
 
+      {adding ? (
+        <Form<CreateACLInput>
+          form={form}
+          layout="inline"
+          onFinish={onAdd}
+          initialValues={{ action: "allow", priority: 100 }}
+        >
+          <Form.Item
+            label={t("domainipaclsection.cidr")}
+            name="cidr"
+            rules={[{ required: true, message: "Required" }]}
+          >
+            <Input placeholder="203.0.113.0/24" style={{ width: 180 }} />
+          </Form.Item>
+          <Form.Item
+            label={t("domainipaclsection.action")}
+            name="action"
+            rules={[{ required: true }]}
+          >
+            <Select options={ACTION_OPTIONS} style={{ width: 100 }} />
+          </Form.Item>
+          <Form.Item label={t("domainipaclsection.priority")} name="priority">
+            <InputNumber min={0} max={9999} style={{ width: 90 }} />
+          </Form.Item>
+          <Form.Item label={t("domainipaclsection.comment")} name="comment">
+            <Input style={{ width: 200 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button
+                type="primary"
+                htmlType="submit"
+                loading={create.isPending}
+              >
+                Add
+              </Button>
+              <Button
+                onClick={() => {
+                  form.resetFields();
+                  setAdding(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      ) : (
+        <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>
+          Add rule
+        </Button>
+      )}
+
       <Table<DomainIPACL>
         dataSource={rows}
         rowKey="id"
@@ -146,59 +199,6 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
           )}
         />
       </Table>
-
-      {adding ? (
-        <Form<CreateACLInput>
-          form={form}
-          layout="inline"
-          onFinish={onAdd}
-          initialValues={{ action: "allow", priority: 100 }}
-        >
-          <Form.Item
-            label={t("domainipaclsection.cidr")}
-            name="cidr"
-            rules={[{ required: true, message: "Required" }]}
-          >
-            <Input placeholder="203.0.113.0/24" style={{ width: 180 }} />
-          </Form.Item>
-          <Form.Item
-            label={t("domainipaclsection.action")}
-            name="action"
-            rules={[{ required: true }]}
-          >
-            <Select options={ACTION_OPTIONS} style={{ width: 100 }} />
-          </Form.Item>
-          <Form.Item label={t("domainipaclsection.priority")} name="priority">
-            <InputNumber min={0} max={9999} style={{ width: 90 }} />
-          </Form.Item>
-          <Form.Item label={t("domainipaclsection.comment")} name="comment">
-            <Input style={{ width: 200 }} />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button
-                type="primary"
-                htmlType="submit"
-                loading={create.isPending}
-              >
-                Add
-              </Button>
-              <Button
-                onClick={() => {
-                  form.resetFields();
-                  setAdding(false);
-                }}
-              >
-                Cancel
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      ) : (
-        <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>
-          Add rule
-        </Button>
-      )}
     </Space>
   );
 };

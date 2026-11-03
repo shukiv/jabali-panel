@@ -115,52 +115,6 @@ export const DomainDirectoryPrivacySection = ({
         }
       />
 
-      <Table<DirectoryPrivacyRule>
-        dataSource={rows}
-        rowKey="id"
-        pagination={false}
-        size="small"
-        scroll={{ x: "max-content" }}
-        locale={{ emptyText: "No protected directories." }}
-        expandable={{
-          expandedRowRender: (rule) => (
-            <DirectoryPrivacyCredentialsTable
-              domainId={domainId}
-              ruleId={rule.id}
-            />
-          ),
-        }}
-      >
-        <Table.Column<DirectoryPrivacyRule>
-          title={t("domaindirectoryprivacysection.path")}
-          dataIndex="path"
-          render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
-        />
-        <Table.Column<DirectoryPrivacyRule>
-          title={t("domaindirectoryprivacysection.authentication_name")}
-          dataIndex="realm"
-        />
-        <Table.Column<DirectoryPrivacyRule>
-          title=""
-          width={80}
-          render={(_, r) => (
-            <Popconfirm
-              title={t("domaindirectoryprivacysection.delete_this_rule_and_all_its_credentials")}
-              onConfirm={() => onDeleteRule(r.id)}
-              okText={t("domaindirectoryprivacysection.delete")}
-              okButtonProps={{ danger: true }}
-            >
-              <Button
-                size="small"
-                type="primary"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Popconfirm>
-          )}
-        />
-      </Table>
-
       {adding ? (
         <Form<NewRuleForm>
           form={form}
@@ -245,6 +199,52 @@ export const DomainDirectoryPrivacySection = ({
           Add protected directory
         </Button>
       )}
+
+      <Table<DirectoryPrivacyRule>
+        dataSource={rows}
+        rowKey="id"
+        pagination={false}
+        size="small"
+        scroll={{ x: "max-content" }}
+        locale={{ emptyText: "No protected directories." }}
+        expandable={{
+          expandedRowRender: (rule) => (
+            <DirectoryPrivacyCredentialsTable
+              domainId={domainId}
+              ruleId={rule.id}
+            />
+          ),
+        }}
+      >
+        <Table.Column<DirectoryPrivacyRule>
+          title={t("domaindirectoryprivacysection.path")}
+          dataIndex="path"
+          render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
+        />
+        <Table.Column<DirectoryPrivacyRule>
+          title={t("domaindirectoryprivacysection.authentication_name")}
+          dataIndex="realm"
+        />
+        <Table.Column<DirectoryPrivacyRule>
+          title=""
+          width={80}
+          render={(_, r) => (
+            <Popconfirm
+              title={t("domaindirectoryprivacysection.delete_this_rule_and_all_its_credentials")}
+              onConfirm={() => onDeleteRule(r.id)}
+              okText={t("domaindirectoryprivacysection.delete")}
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                size="small"
+                type="primary"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Popconfirm>
+          )}
+        />
+      </Table>
       <DomainPathBrowserModal
         domainId={domainId}
         open={browserOpen}
@@ -299,40 +299,6 @@ const DirectoryPrivacyCredentialsTable = ({
 
   return (
     <Space direction="vertical" style={{ width: "100%" }} size="small">
-      <Table<DirectoryPrivacyCredential>
-        dataSource={rows}
-        rowKey="id"
-        loading={isLoading}
-        pagination={false}
-        size="small"
-        locale={{
-          emptyText: "No users — directory is locked (deny by default).",
-        }}
-      >
-        <Table.Column<DirectoryPrivacyCredential>
-          title={t("domaindirectoryprivacysection.username")}
-          dataIndex="username"
-        />
-        <Table.Column<DirectoryPrivacyCredential>
-          title=""
-          width={80}
-          render={(_, c) => (
-            <Popconfirm
-              title={t("domaindirectoryprivacysection.delete_this_user")}
-              onConfirm={() => onDelete(c.id)}
-              okText={t("domaindirectoryprivacysection.delete")}
-              okButtonProps={{ danger: true }}
-            >
-              <Button
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Popconfirm>
-          )}
-        />
-      </Table>
-
       {adding ? (
         <Form<CreateCredentialInput>
           form={form}
@@ -392,6 +358,40 @@ const DirectoryPrivacyCredentialsTable = ({
           Add user
         </Button>
       )}
+
+      <Table<DirectoryPrivacyCredential>
+        dataSource={rows}
+        rowKey="id"
+        loading={isLoading}
+        pagination={false}
+        size="small"
+        locale={{
+          emptyText: "No users — directory is locked (deny by default).",
+        }}
+      >
+        <Table.Column<DirectoryPrivacyCredential>
+          title={t("domaindirectoryprivacysection.username")}
+          dataIndex="username"
+        />
+        <Table.Column<DirectoryPrivacyCredential>
+          title=""
+          width={80}
+          render={(_, c) => (
+            <Popconfirm
+              title={t("domaindirectoryprivacysection.delete_this_user")}
+              onConfirm={() => onDelete(c.id)}
+              okText={t("domaindirectoryprivacysection.delete")}
+              okButtonProps={{ danger: true }}
+            >
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Popconfirm>
+          )}
+        />
+      </Table>
     </Space>
   );
 };

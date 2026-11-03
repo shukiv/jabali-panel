@@ -276,38 +276,32 @@ export const DomainEdit = () => {
   const securityTab = {
     key: "security",
     label: "Security",
+    // Each setting is its own titled small card, so a section's Add button
+    // and list read as one unit, apart from the next setting (GH #2328).
     children: (
       <Space direction="vertical" style={{ width: "100%" }} size="large">
-        <div>
-          <Typography.Title level={5} style={{ marginTop: 0 }}>
-            IP Allow / Deny
-          </Typography.Title>
+        <Card size="small" title="IP Allow / Deny">
           <DomainIPACLSection domainId={domain.id} />
-        </div>
-        <div>
-          <Typography.Title level={5}>Rate limits</Typography.Title>
+        </Card>
+        <Card size="small" title="Rate limits">
           <DomainRateLimitSection
             domainId={domain.id}
             rateLimitRPS={domain.rate_limit_rps ?? 0}
             connectionLimit={domain.connection_limit ?? 0}
           />
-        </div>
-        <div>
-          <Typography.Title level={5}>
-            Bot detection: paths that skip the challenge
-          </Typography.Title>
+        </Card>
+        <Card size="small" title="Bot detection: paths that skip the challenge">
           <DomainBotExclusionSection
             domainId={domain.id}
             domainName={domain.name}
           />
-        </div>
-        <div>
-          <Typography.Title level={5}>Directory Privacy</Typography.Title>
+        </Card>
+        <Card size="small" title="Directory Privacy">
           <DomainDirectoryPrivacySection
             domainId={domain.id}
             domainName={domain.name}
           />
-        </div>
+        </Card>
       </Space>
     ),
   };

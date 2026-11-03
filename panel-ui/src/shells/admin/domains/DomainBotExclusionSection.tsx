@@ -80,6 +80,52 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
         }
       />
 
+      {adding ? (
+        <Form<CreateBotExclusionInput> form={form} layout="inline" onFinish={onAdd}>
+          <Form.Item
+            label="Path"
+            name="path_prefix"
+            rules={[
+              { required: true, message: "Required" },
+              { pattern: /^\s*\//, message: "Starts with /" },
+            ]}
+          >
+            <Input placeholder="/api/webhook" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item label="Methods" name="methods">
+            <Select
+              mode="multiple"
+              allowClear
+              options={METHOD_OPTIONS}
+              placeholder="Any"
+              style={{ minWidth: 160 }}
+            />
+          </Form.Item>
+          <Form.Item label="Note" name="note">
+            <Input style={{ width: 200 }} />
+          </Form.Item>
+          <Form.Item>
+            <Space>
+              <Button type="primary" htmlType="submit" loading={create.isPending}>
+                Add
+              </Button>
+              <Button
+                onClick={() => {
+                  form.resetFields();
+                  setAdding(false);
+                }}
+              >
+                Cancel
+              </Button>
+            </Space>
+          </Form.Item>
+        </Form>
+      ) : (
+        <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>
+          Add path
+        </Button>
+      )}
+
       <Table<DomainBotExclusion>
         dataSource={rows}
         rowKey="id"
@@ -136,52 +182,6 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
           )}
         />
       </Table>
-
-      {adding ? (
-        <Form<CreateBotExclusionInput> form={form} layout="inline" onFinish={onAdd}>
-          <Form.Item
-            label="Path"
-            name="path_prefix"
-            rules={[
-              { required: true, message: "Required" },
-              { pattern: /^\s*\//, message: "Starts with /" },
-            ]}
-          >
-            <Input placeholder="/api/webhook" style={{ width: 220 }} />
-          </Form.Item>
-          <Form.Item label="Methods" name="methods">
-            <Select
-              mode="multiple"
-              allowClear
-              options={METHOD_OPTIONS}
-              placeholder="Any"
-              style={{ minWidth: 160 }}
-            />
-          </Form.Item>
-          <Form.Item label="Note" name="note">
-            <Input style={{ width: 200 }} />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit" loading={create.isPending}>
-                Add
-              </Button>
-              <Button
-                onClick={() => {
-                  form.resetFields();
-                  setAdding(false);
-                }}
-              >
-                Cancel
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      ) : (
-        <Button icon={<PlusOutlined />} onClick={() => setAdding(true)}>
-          Add path
-        </Button>
-      )}
     </Space>
   );
 };
