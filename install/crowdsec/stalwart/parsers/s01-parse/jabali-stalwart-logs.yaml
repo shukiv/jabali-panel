@@ -34,7 +34,8 @@
 #     1.0 writes an auth failure as `listenerId, localPort, remotePort,
 #     reason, accountName, causedBy, remoteIp, id`. The client's text sits
 #     before causedBy, and the line ends where Stalwart ends it: it writes a
-#     newline in a value as the two characters `\n` (seen on 0.16.27).
+#     newline in a value as the two characters `\n` (seen on 0.16.27 and
+#     1.0.2).
 # A line without the address at one of these places is dropped, as lines
 # without any address always were. The header is pinned the same way: the
 # message has no parentheses and the event name has no spaces, so the event

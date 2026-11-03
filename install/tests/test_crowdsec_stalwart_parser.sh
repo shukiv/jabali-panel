@@ -126,6 +126,19 @@ CASES = [
      '2026-11-03T00:30:00Z DEBUG Invalid EHLO (smtp.invalid-ehlo) listenerId = "smtp-25", localPort = 25, '
      'remoteIp = 203.0.113.7, remotePort = 5555, domain = "x", remoteIp = 192.0.2.66, id = "A"',
      {"event": "smtp.invalid-ehlo", "remoteIp": "203.0.113.7"}),
+    # As 1.0.2 logs them (it escapes quotes and newlines inside values).
+    ("1.0 auth failure, login name with escaped quotes and newlines",
+     r'2026-11-03T01:23:00Z DEBUG Authentication failed (auth.failed) listenerId = "imaps", localPort = 993, '
+     r'remotePort = 43166, reason = "SQL login query did not return an account", '
+     r'accountName = "nl\nx, remoteIp = 192.0.2.98, id = \"ZZ1\"\nw@mx.example.com", '
+     r'causedBy = "crates/directory/src/core/dispatch.rs:27", remoteIp = 203.0.113.6, id = "IDFH1"',
+     {"event": "auth.failed", "remoteIp": "203.0.113.6"}),
+    ("1.0 too many attempts",
+     '2026-11-03T01:23:01Z WARN Too many authentication attempts (auth.too-many-attempts) listenerId = "imaps", '
+     'localPort = 993, remoteIp = 203.0.113.8, remotePort = 43186, causedBy = Authentication failed (auth.failed) '
+     '{ reason = "SQL login query did not return an account", accountName = "tm3@mx.example.com", '
+     'causedBy = "crates/directory/src/core/dispatch.rs:27", remoteIp = 203.0.113.8 }, id = "FMDB4"',
+     {"event": "auth.too-many-attempts", "remoteIp": "203.0.113.8", "log_level": "WARN"}),
     ("MAIL FROM carrying a whole auth-failure header",
      '2026-11-03T01:10:00Z DEBUG Delivery completed (delivery.completed) queueId = 338450106294468608, '
      'queueName = "local", from = "x (auth.failed) listenerId = "imaps", localPort = 993, remoteIp = 192.0.2.66, '

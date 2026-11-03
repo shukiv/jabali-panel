@@ -235,8 +235,9 @@ the feed without any error:
   `cscli explain` on 0.16.27 and 1.0.2 lines, on 2000 real log lines,
   and with a live failed IMAP login on a 0.16.27 box; regression test
   `install/tests/test_crowdsec_stalwart_parser.sh`.
-- **Open for the 1.0 switch:** the end-of-line position is safe only
-  while Stalwart writes a newline inside a value as `\n` (seen on
-  0.16.27). The 1.0 drill checks this before the switch. `auth.error`
-  and `auth.too-many-attempts` count only when 1.0 writes the address at
-  the start; their 1.0 shape is checked in the same drill.
+- **The end-of-line position** is safe only while Stalwart writes a
+  newline inside a value as `\n`: seen on 0.16.27 and on 1.0.2 (a 1.0.2
+  copy of the test box's store, run in its own network namespace).
+  `auth.too-many-attempts` has the address at the start on 1.0.2.
+  `auth.error` was not seen; it counts only when 1.0 writes the address
+  at the start, and the 1.0 drill checks its shape.
