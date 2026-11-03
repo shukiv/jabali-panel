@@ -13,10 +13,10 @@
 #     reads them via the journal acquis below).
 #   - Grok now applies to Line.Raw directly — no intermediate syslog
 #     stage required.
-#   - Protocol-mapping reflects the listenerId names jabali sets in
-#     its Stalwart apply plan (smtp-25, smtp-submissions-465,
-#     smtp-submission-587, imaps, internal-loopback) — not the bu5hm4nn
-#     upstream sample names ("smtp", "submission", "submissions").
+#   - Protocol-mapping covers the listenerId names a jabali host logs:
+#     Stalwart's own listeners (smtp, submissions, imaps, pop3s, sieve)
+#     and the apply plan's (smtp-25, smtp-submissions-465,
+#     smtp-submission-587, imap-993, jmap-loopback, internal-loopback).
 #   - The client address is read only where Stalwart itself puts it, and
 #     the line is dropped when it is not there (see below). The other
 #     fields are read one by one, wherever they sit.
@@ -129,15 +129,19 @@ statics:
   - parsed: local_port
     expression: evt.Parsed.localPort
 
-  # Map jabali listenerId names to a stable protocol token the
-  # scenarios can filter on. jabali ships these listener IDs out of
-  # its Stalwart apply plan; matching them up explicitly is more
-  # readable than a regex.
+  # Map listenerId names to a stable protocol token for the alert's
+  # metadata (no scenario filters on it). Port 25, 465, 993, 995 and 4190
+  # are served by Stalwart's own listeners (smtp, submissions, imaps,
+  # pop3s, sieve on [::]); the apply plan's 0.0.0.0 listeners (smtp-25,
+  # smtp-submissions-465, imap-993) serve only where [::] doesn't cover
+  # IPv4. 587 and the loopback HTTP listeners are the plan's only.
+  # Matching them up explicitly is more readable than a regex.
   - meta: protocol
     expression: |
-      evt.Parsed.listenerId in ["smtp-25", "smtp-submissions-465", "smtp-submission-587"] ? "smtp" :
-      evt.Parsed.listenerId in ["imaps", "imap", "imaptls"] ? "imap" :
-      evt.Parsed.listenerId == "internal-loopback" ? "http" :
+      evt.Parsed.listenerId in ["smtp", "submissions", "smtp-25", "smtp-submissions-465", "smtp-submission-587"] ? "smtp" :
+      evt.Parsed.listenerId in ["imaps", "imap", "imaptls", "imap-993"] ? "imap" :
+      evt.Parsed.listenerId in ["pop3s", "pop3"] ? "pop3" :
+      evt.Parsed.listenerId in ["jmap-loopback", "internal-loopback"] ? "http" :
       evt.Parsed.listenerId == "sieve" ? "managesieve" :
       "unknown"
 
