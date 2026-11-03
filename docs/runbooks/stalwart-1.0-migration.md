@@ -46,6 +46,29 @@ step stopped:
 | `the final copy failed` | The final copy failed; 0.16 was started again | Read `jabali-migrate.log` and `final-report.txt` |
 | `MB free` | Not enough disk for a second copy | Free space, then run `jabali update` |
 | `another install run` | An install was running | Run `jabali update` again later |
+| `mount point or a symlink` | The store is on its own disk | See [Hosts the update doesn't migrate](#hosts-the-update-doesnt-migrate) |
+| `blob store` (a type) | Blobs are kept outside the data store | See [Hosts the update doesn't migrate](#hosts-the-update-doesnt-migrate) |
+| `could not read Stalwart's blob store setting` | Stalwart wasn't running, or didn't answer | Start it, then run `jabali update` |
+
+## Hosts the update doesn't migrate
+
+The update moves a store only in Jabali's own layout: a plain directory at
+`/var/lib/stalwart`, with Stalwart's blobs inside it (the default blob
+store). It checks this before it copies anything or stops mail. A host in
+another layout stays on 0.16.27, mail keeps working, and every update warns
+again:
+- **The store is a mount point**, as in "Mail storage on another disk" in
+  `docs/site/mail.md`. The switch renames `/var/lib/stalwart`, and a mount
+  point can't be renamed.
+- **The store is a symlink.** The free-space check would measure the link,
+  and the copy would go on the disk under `/var/lib`.
+- **The blob store is set to a directory, S3 or another store.** Those blobs
+  are outside the copy, and both stores would name the same blob location.
+
+Such a host can be moved by hand with `stalwart-migrate`, following upstream's
+README (stalwartlabs/stalwart-migrate), with a `--target-path-map` for every
+path the store uses. Moving the data back into Jabali's layout first, then
+running `jabali update`, needs room for two copies of the store.
 
 When the warning says 1.0 did not start and the host was switched back:
 - Stalwart serves 0.16 again.

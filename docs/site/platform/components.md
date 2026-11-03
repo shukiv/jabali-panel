@@ -10,7 +10,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 |---|---|---|---|
 | **jabali-panel** | this repo | Go + Gin HTTP panel API; serves the React SPA; the only writer to the panel DB | AGPL-3.0 |
 | **jabali-agent** | this repo | Root-privileged process; performs every privileged host operation over `/run/jabali/agent.sock` | AGPL-3.0 |
-| **Stalwart Mail** | 0.16.27 | SMTP + IMAP + JMAP + mailbox store (single binary) | AGPL-3.0 |
+| **Stalwart Mail** | 1.0.2 | SMTP + IMAP + JMAP + mailbox store (single binary) | AGPL-3.0 |
 | **Bulwark** | 1.19.1 (GitHub release tarball) | Node + Next.js standalone JMAP webmail on `mail.<domain>`, plus autoconfig / autodiscover and the magic-link bridge | own |
 | **Ory Kratos** | 26.2.0 | Identity (login, 2FA, recovery); Unix sockets only | Apache-2.0 |
 | **nginx** | Debian native | Reverse-proxy + per-vhost server. Sury-nginx purged defensively | BSD-2 |
@@ -23,7 +23,7 @@ Version pins shown are the values in `install.sh` at the time of writing. Run `j
 | **CrowdSec** | packagecloud | IP-trust source + AppSec WAF + bouncers | MIT |
 | **certbot** | Debian | Let's Encrypt issuance and renewal | Apache-2.0 |
 
-`jabali update` moves Stalwart up to the version in this table, never down. A server that already runs a newer Stalwart, installed by hand, keeps it, and the update prints a warning. Jabali is tested with the version in the table.
+`jabali update` moves Stalwart up to the version in this table, never down. A server that already runs a newer Stalwart, installed by hand, keeps it, and the update prints a warning. Jabali is tested with the version in the table. A server on Stalwart 0.16 moves to 1.0 by copying its mail data into a new store: see [Mail → Moving to Stalwart 1.0](../mail.md#moving-to-stalwart-10).
 
 ## Security stack
 

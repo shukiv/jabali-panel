@@ -65,11 +65,20 @@ sleep() { :; }
 systemctl() {
   printf '%s\n' "$*" >>"$T/systemctl.log"
   case "$1" in
-    is-active) cat "$T/unit-state" 2>/dev/null || echo active ;;
+    is-active)
+      # FAKE_STOPPED: Stalwart was not running when the update came.
+      if [[ -n "${FAKE_STOPPED:-}" ]]; then echo inactive; return 3; fi
+      cat "$T/unit-state" 2>/dev/null || echo active ;;
   esac
   return 0
 }
-curl() { cat "$T/jmap-code" 2>/dev/null || echo 200; }
+# JMAP: 0.16 answers before the switch; after it (the store stamped as 1.x)
+# a case can set what 1.0 answers in jmap-code.
+curl() {
+  if [[ -f "$STALWART_STORE_STAMP" ]]; then cat "$T/jmap-code" 2>/dev/null || echo 200; else echo 200; fi
+}
+# FAKE_MOUNTPOINT: the store is a mount point (mail on its own disk).
+mountpoint() { [[ -n "${FAKE_MOUNTPOINT:-}" ]]; }
 install_stalwart_apply() { printf 'apply\n' >>"$T/systemctl.log"; }
 # The 1.0 binary "download": a fake binary reporting the version.
 _fetch_stalwart_release() {
@@ -118,6 +127,17 @@ exit 0
 EOF
 chmod +x "$tmp/migrate/$STALWART_MIGRATE_VERSION/stalwart-migrate"
 
+# The fake stalwart-cli answers `get BlobStore` as 0.16.27 and 1.0.2 do;
+# FAKE_BLOB sets another blob store type, FAKE_BLOB=fail fails the call.
+cat >"$tmp/stalwart-cli" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1 $2" == "get BlobStore" ]] || { echo "fake cli: unexpected $*" >&2; exit 2; }
+[[ "${FAKE_BLOB:-}" == fail ]] && exit 1
+printf '{"@type":"%s","id":"singleton"}\n' "${FAKE_BLOB:-Default}"
+EOF
+chmod +x "$tmp/stalwart-cli"
+export JABALI_STALWART_CLI="$tmp/stalwart-cli"
+
 # box: a 0.16.27 host. Store with a 0.16 marker, binary in /opt with share/.
 box() {
   rm -rf "$tmp/var" "$tmp/etc" "$tmp/opt" "$tmp/bin" "$tmp/state" "$tmp/installer.pid" \
@@ -129,7 +149,7 @@ box() {
   chmod +x "$tmp/opt/stalwart/stalwart"
   echo rules >"$tmp/opt/stalwart/share/spam-filter-rules.json.gz"
   ln -s "$tmp/opt/stalwart/stalwart" "$STALWART_BIN_LINK"
-  unset FAKE_FAIL_AT FAKE_TERM_AT
+  unset FAKE_FAIL_AT FAKE_TERM_AT FAKE_MOUNTPOINT FAKE_BLOB FAKE_STOPPED
 }
 run_migration() { local rc=0; migrate_stalwart_to_v1 || rc=$?; echo "$rc"; }
 expect() { [[ "$2" == "$3" ]] || { echo "FAIL: $1: got '$2', want '$3'"; fail=1; }; }
@@ -149,7 +169,7 @@ untouched() { # <case>: 0.16 serves its own store, nothing switched, marker gone
 box
 expect "success: rc" "$(run_migration)" 0
 expect "success: tool calls" "$(cut -d' ' -f1-2 "$T/tool.log" | paste -sd'|')" "prepare --non-interactive|run --source|run --source|run --final"
-expect "success: Stalwart stopped first, before the final copy" "$(grep -m1 -n 'stop jabali' "$T/systemctl.log" | cut -d: -f1)" 1
+expect "success: Stalwart stopped first, before the final copy" "$(grep -v '^is-active' "$T/systemctl.log" | grep -m1 -n 'stop jabali' | cut -d: -f1)" 1
 expect "success: marker held while the tool ran" "$(sort -u "$T/marker.log" | paste -sd' ')" held
 expect "success: binary" "$(serving_version)" "$STALWART_VERSION"
 expect "success: store" "$(store_is)" final
@@ -231,6 +251,40 @@ expect "marker held: rc (skipped)" "$(run_migration)" 2
 expect "marker held: tool runs" "$(tool_runs)" 0
 expect "marker held: marker left to its owner" "$(cut -d' ' -f1 "$INSTALLER_MARKER" 2>/dev/null)" "$other"
 kill "$other" 2>/dev/null || true
+
+# 14-18. Layouts the migration can't copy or switch: skipped before anything
+# runs, mail never stopped, with a warning saying why.
+# skipped <case> <warning text>
+skipped() {
+  expect "$1: rc (skipped)" "$(run_migration)" 2
+  expect "$1: tool runs" "$(tool_runs)" 0
+  expect "$1: Stalwart stopped" "$(stopped)" 0
+  untouched "$1"
+  grep -q -- "$2" "$T/msgs" 2>/dev/null || { echo "FAIL: $1: no warning saying '$2'"; fail=1; }
+}
+
+# Mail on its own disk, mounted at the store: a mount point can't be renamed.
+box; export FAKE_MOUNTPOINT=1
+skipped "store is a mount point" "mount point"
+
+# The store is a symlink to another disk: du would measure the link, and the
+# copy would land on the disk under /var/lib.
+box; mkdir -p "$tmp/disk"; mv "$STALWART_STORE_DIR" "$tmp/disk/stalwart"; ln -s "$tmp/disk/stalwart" "$STALWART_STORE_DIR"
+skipped "store is a symlink" "symlink"
+rm -rf "$tmp/disk"
+
+# Blobs in a store of their own (a directory or S3) are outside the copy.
+box; export FAKE_BLOB=FileSystem
+skipped "blob store outside the data store" "FileSystem blob store"
+
+box; export FAKE_BLOB=fail
+skipped "blob store setting unreadable" "blob store setting"
+
+# Stalwart not running: the setting can't be read, and the migration must not
+# start it.
+box; export FAKE_STOPPED=1
+skipped "Stalwart not running" "blob store setting"
+if grep -q '^start' "$T/systemctl.log"; then echo "FAIL: Stalwart not running: the migration started it"; fail=1; fi
 
 if ((fail)); then
   exit 1

@@ -55,6 +55,15 @@ The code that talks to Stalwart was made to work on both versions first:
    - **Checks.** `config.json` names the local RocksDB store. No copy from an
      earlier migration is in the way. There is free space for 1.5× the store
      plus 1 GB.
+   - **Layout checks.** The switch renames the store directory, so the store
+     must be a plain directory. A mount point (mail on its own disk, the
+     layout `docs/site/mail.md` describes) can't be renamed. A symlink
+     measures as nothing to `du`, so the copy would land on the disk under
+     `/var/lib`. The blob store must be Stalwart's default (blobs in the data
+     store): a blob store elsewhere would be named by both stores. The
+     setting is read from the running 0.16 (`get BlobStore`, same answer on
+     0.16.27 and 1.0.2). Each of these skips the migration: the host stays
+     on 0.16.27, and the update warns.
    - **Marker and lock.** It holds `/run/jabali-installer.pid` itself (the
      update path does not), so the module repair waits. It also holds the
      Stalwart install lock.

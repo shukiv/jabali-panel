@@ -267,6 +267,29 @@ Stalwart keeps all mail, message bodies included, in `/var/lib/stalwart`. To put
 
 If Stalwart's blob store already points at a path outside `/var/lib/stalwart`, that path needs three things: a `ReadWritePaths=` and a `RequiresMountsFor=` line in a drop-in like the one above, and a rule in `/etc/apparmor.d/local/usr.local.bin.stalwart-mail` (see [AppArmor → Custom rules](./admin/apparmor.md#custom-rules)). The system backup doesn't include that path.
 
+A server set up either way isn't moved to Stalwart 1.0 by `jabali update`: see [Moving to Stalwart 1.0](#moving-to-stalwart-10).
+
+## Moving to Stalwart 1.0
+
+Stalwart 1.0 can't open a 0.16 mail store. So `jabali update` moves a server from 0.16 to 1.0 by copying the data with Stalwart's migration tool:
+
+1. A server on a 0.16 release older than 0.16.27 first gets 0.16.27, the release the tool copies from.
+2. The tool copies the mail into a new store beside `/var/lib/stalwart` while 0.16 keeps serving. This needs free space for about one and a half times the store, plus 1 GB.
+3. Stalwart stops for the final copy, about half a minute on a small server, and starts again on 1.0. If 1.0 doesn't come up, the update switches back to 0.16.
+4. The 0.16 store stays at `/var/lib/stalwart-0.16`, and its binary at `/opt/stalwart-0.16`, so the server can be switched back. Remove them once mail works on 1.0.
+
+After the move:
+- Mail apps that signed in with OAuth sign in again once. Apps that use a password aren't affected.
+- Calendar and contact apps fetch their data again once.
+- Search in mail is incomplete until Stalwart has rebuilt its index.
+- A mailbox that turned on encryption at rest itself has to turn it on again.
+
+The update moves only Jabali's own layout. The server stays on 0.16, keeps working, and the update says why in these cases:
+- `/var/lib/stalwart` is a mount point or a symlink (see [Mail storage on another disk](#mail-storage-on-another-disk));
+- the blob store points outside `/var/lib/stalwart`.
+
+Moving such a server needs the migration tool run by hand.
+
 ## Architecture choices
 
 - **DB-as-truth, reconciler-converged.** Mailboxes / forwarders / autoresponders are panel-DB rows; Stalwart's JMAP API is called by the agent on every change.

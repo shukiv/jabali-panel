@@ -15784,6 +15784,38 @@ PY
     _warn "Stalwart migration skipped: $STALWART_CONFIG does not name the RocksDB store at $store, the layout Jabali installs -- see docs/runbooks/stalwart-1.0-migration.md"
     return 2
   fi
+  # The switch renames the store directory, so it must be a plain directory.
+  # A mount point (mail on its own disk, docs/site/mail.md) can't be renamed,
+  # and a symlink measures as nothing below, so the copy would fill the disk
+  # under /var/lib.
+  if [[ -L "$store" ]] || mountpoint -q "$store" 2>/dev/null; then
+    _warn "Stalwart migration skipped: $store is a mount point or a symlink (mail on its own disk), which the migration can't switch. Stalwart stays on $STALWART_SOURCE_VERSION -- see docs/runbooks/stalwart-1.0-migration.md"
+    return 2
+  fi
+  # Only blobs kept in the data store (Stalwart's default, and Jabali's
+  # layout) are inside the copy. A blob store elsewhere (a directory, S3)
+  # would be named by both the 0.16 and the 1.0 store. The setting is read
+  # from the running 0.16 (same answer on 0.16.27 and 1.0.2); a Stalwart that
+  # isn't running, or a setting that can't be read, skips too.
+  local blob_type=""
+  if systemctl is-active --quiet jabali-stalwart >/dev/null 2>&1 && _stwm_wait_jmap 60; then
+    blob_type="$(STALWART_URL="http://127.0.0.1:8446" STALWART_USER="admin" \
+      STALWART_PASSWORD="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null)" \
+      "${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}" get BlobStore --json 2>/dev/null \
+      | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin).get("@type", ""))
+except Exception:
+    print("")' 2>/dev/null)"
+  fi
+  if [[ "$blob_type" != Default ]]; then
+    if [[ -n "$blob_type" ]]; then
+      _warn "Stalwart migration skipped: Stalwart keeps its blobs in a $blob_type blob store, outside the data store the migration copies. Stalwart stays on $STALWART_SOURCE_VERSION -- see docs/runbooks/stalwart-1.0-migration.md"
+    else
+      _warn "Stalwart migration skipped: could not read Stalwart's blob store setting (is jabali-stalwart running?). Stalwart stays on $STALWART_SOURCE_VERSION; run 'jabali update' again once it runs"
+    fi
+    return 2
+  fi
   if [[ -e "$old_store" || -e "$old_opt" ]]; then
     _warn "Stalwart migration skipped: $old_store or $old_opt is left from an earlier migration -- see docs/runbooks/stalwart-1.0-migration.md"
     return 2
