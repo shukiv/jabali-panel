@@ -14778,6 +14778,90 @@ PY
   esac
 }
 
+# converge_stalwart_stdout_tracer — makes sure Stalwart writes its events to
+# stdout at debug level. systemd puts stdout in the journal, CrowdSec reads the
+# journal (acquis.d/jabali-stalwart.yaml), and the Stalwart scenarios (mail
+# login brute force, user enumeration, SMTP and HTTP scans) ban from those
+# lines. Failed logins (auth.failed) are debug events, so a tracer at info
+# gives the scenarios nothing.
+#
+# The apply plan creates this tracer, but the plan only runs on a fresh
+# install, and the tracer entry was added to it on 2026-06-03 (#178). Boxes
+# installed before that have no Stdout tracer, so CrowdSec has never seen a
+# Stalwart line on them. This converger adds it there and puts it back if it
+# was disabled or lowered. Debug and trace both carry the debug events, so
+# either is left alone. ansi must stay off: colour codes break the parser.
+#
+# A new or changed tracer takes effect at the Stalwart restart that
+# _install_stalwart_apply_plan does right after the convergers.
+# Returns 1 when it could not converge.
+converge_stalwart_stdout_tracer() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping the Stalwart log feed for CrowdSec"
+    return 1
+  fi
+
+  _log "converging the Stalwart log feed for CrowdSec (Stdout tracer at debug)"
+  local out rc=0
+  out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    python3 - "$cli" 2>&1 <<'PY'
+import json, subprocess, sys
+
+cli = sys.argv[1]
+# The same tracer the apply plan creates (#jabali-mail-bf-stdout).
+WANT = {"@type": "Stdout", "enable": True, "level": "debug",
+        "lossy": False, "ansi": False, "buffered": False}
+FIX = {"enable": True, "level": "debug", "ansi": False}
+OK_LEVELS = ("debug", "trace")
+
+
+def cli_run(*args, payload=None):
+    r = subprocess.run([cli, *args], input=None if payload is None else json.dumps(payload),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("stalwart-cli %s failed: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:300]))
+    return r.stdout
+
+
+def good(t):
+    return t.get("enable") is True and t.get("level") in OK_LEVELS and t.get("ansi") is not True
+
+
+try:
+    rows = [json.loads(l) for l in cli_run("query", "Tracer", "--json", "--fields", "@type,enable,level,ansi").splitlines() if l.strip()]
+    stdout = [r for r in rows if r.get("@type") == "Stdout"]
+    if any(good(t) for t in stdout):
+        print("UNCHANGED")
+    elif stdout:
+        cli_run("update", "Tracer", stdout[0]["id"], "--stdin", payload=FIX)
+        print("CHANGED updated")
+    else:
+        cli_run("create", "Tracer", "--stdin", payload=WANT)
+        print("CHANGED created")
+except Exception as e:  # noqa: BLE001 - report any failure to the shell
+    print("ERROR %s" % e)
+    sys.exit(1)
+PY
+  )" || rc=$?
+  case "$rc:$out" in
+    0:UNCHANGED*)
+      _ok "Stalwart log feed for CrowdSec already in place" ;;
+    0:CHANGED*)
+      _ok "Stalwart log feed for CrowdSec ${out#CHANGED } (Stdout tracer at debug); takes effect at the Stalwart restart" ;;
+    *)
+      _warn "Stalwart log feed for CrowdSec not converged: ${out} — CrowdSec cannot ban mail login brute force"
+      return 1 ;;
+  esac
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -14941,6 +15025,9 @@ _install_stalwart_apply_plan() {
   # Domains whose mail is off or hosted elsewhere: their mail goes to their
   # MX. Needs the restart at the end of this function.
   converge_stalwart_mail_elsewhere "$jmap_port" "$admin_token" || true
+  # Stalwart's events on stdout at debug, for CrowdSec. Needs the restart at
+  # the end of this function.
+  converge_stalwart_stdout_tracer "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`
