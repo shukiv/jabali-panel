@@ -1,0 +1,36 @@
+# Jabali's answers to the questions of Stalwart's migration tool
+# (stalwart-migrate prepare/run) when a host's mail data moves from Stalwart
+# 0.16 to 1.0. migrate_stalwart_to_v1 in install.sh copies this file into the
+# migration's state directory before `prepare --non-interactive`. A question
+# this file does not answer (a setting Jabali never makes, such as an OIDC
+# directory or an AI model) stops the migration there, and the host stays on
+# 0.16 until someone looks (docs/runbooks/stalwart-1.0-migration.md).
+#
+# The answers are the tool's recommended ones. Checked against a Jabali host
+# in the test box drill of 2026-11-03.
+
+version = 1
+
+# Every category: the host keeps all of its data. The queue, scheduled tasks
+# and spam models are copied by the final run only, with 0.16 stopped.
+[global.categories]
+include = ["settings", "principals", "mail", "calendars", "contacts", "files", "sieve", "identities", "push_subscriptions", "spam_samples", "reports", "archive", "spam_model", "queue", "tasks", "telemetry"]
+
+# 1.0 rejects an OAuth client_id it has no registration for. Jabali's webmail
+# signs in without OAuth, so accepting the change breaks nothing of Jabali's;
+# mail apps that used OAuth sign in again after the switch.
+[instance.oauth_registration."x:OidcProvider"]
+action = "accept"
+
+# Roles get the permissions 1.0 adds next to the ones they already grant
+# (IMAP/JMAP metadata, connected OAuth applications).
+[global.new_permissions]
+action = "grant"
+
+# Settings still at a 0.16 default that changed in 1.0: keep the 0.16
+# behaviour where the change would alter it (Pyzor, the SQL login query, the
+# log file prefix, ...), adopt the 1.0 default elsewhere. Cache sizes are then
+# set by install.sh (converge_stalwart_cache_sizes).
+[global.changed_defaults]
+policy = "recommended"
+overrides = {}

@@ -13974,7 +13974,28 @@ install_notify_template() {
 # STALWART_VERSION is the single pin for the Stalwart Mail server binary,
 # consumed by both install_stalwart (fresh install) and upgrade_stalwart_binary
 # (the jabali update path). Bump here + install/stalwart.sha256 together.
-STALWART_VERSION="0.16.27"
+STALWART_VERSION="1.0.2"
+
+# Stalwart 1.0 cannot open a 0.16 data store: a 0.16 host moves to 1.0 by
+# copying its data with Stalwart's migration tool (migrate_stalwart_to_v1),
+# never by swapping the binary. STALWART_SOURCE_VERSION is the 0.16 release the
+# tool requires as its source (checksum: install/stalwart-0.16.sha256); a 0.16
+# host on an older release is brought to it first. STALWART_MIGRATE_VERSION
+# pins the tool (install/stalwart-migrate.sha256). See ADR-0179 and
+# docs/runbooks/stalwart-1.0-migration.md.
+STALWART_SOURCE_VERSION="0.16.27"
+STALWART_MIGRATE_VERSION="1.0.5"
+STALWART_STORE_DIR=/var/lib/stalwart
+STALWART_CONFIG=/etc/stalwart/config.json
+STALWART_OPT_DIR=/opt/stalwart
+STALWART_BIN_LINK=/usr/local/bin/stalwart
+# Which Stalwart major wrote the store ("1"). Written whenever a 1.x binary is
+# in place; absent on every store written before Jabali installed 1.0.
+STALWART_STORE_STAMP=/etc/jabali-panel/stalwart-store.generation
+# The migration's working state (answers, progress, reports). It must lie
+# outside every store, and Stalwart's rollback reads it, so it is kept.
+STALWART_MIGRATE_STATE=/var/lib/jabali-stalwart-migrate
+STALWART_MIGRATE_DIR=/opt/stalwart-migrate
 
 # _stalwart_refuse_downgrade reports whether the installed Stalwart ($1, as
 # parsed from `stalwart --version`) is NEWER than STALWART_VERSION, and warns
@@ -14011,6 +14032,77 @@ _stalwart_plan_for_version() {
   fi
 }
 
+# _stalwart_store_major — which Stalwart major the data in STALWART_STORE_DIR
+# belongs to: "empty" (nothing there yet), "1" (STALWART_STORE_STAMP says so),
+# or "0" (data and no stamp: every store written before Jabali installed 1.0).
+_stalwart_store_major() {
+  if [[ -z "$(ls -A "$STALWART_STORE_DIR" 2>/dev/null)" ]]; then
+    echo empty
+  elif [[ "$(cat "$STALWART_STORE_STAMP" 2>/dev/null)" == 1 ]]; then
+    echo 1
+  else
+    echo 0
+  fi
+}
+
+# _stalwart_mark_store_v1 — records that the store belongs to Stalwart 1.x.
+# Called wherever a 1.x binary is in place: by the invariant below, its store
+# is a 1.x store.
+_stalwart_mark_store_v1() {
+  [[ "$(cat "$STALWART_STORE_STAMP" 2>/dev/null)" == 1 ]] && return 0
+  # mkdir -p, not install -d -m: never change the mode of an existing
+  # /etc/jabali-panel (it holds secrets).
+  mkdir -p "$(dirname "$STALWART_STORE_STAMP")"
+  printf '1\n' >"$STALWART_STORE_STAMP"
+  chmod 0644 "$STALWART_STORE_STAMP"
+}
+
+# _stalwart_next_step <installed version, or anything unparsed> — the step
+# that brings this host toward STALWART_VERSION. The invariant: a 1.x binary
+# never starts on a 0.16 store. Prints one of:
+#   pin      install STALWART_VERSION: an older 1.x, or no binary that can be
+#            read and the store is empty or a 1.x store
+#   source   install STALWART_SOURCE_VERSION: a 0.16 store and a 0.x binary
+#            older than the source, or no binary that can be read
+#   migrate  a 0.x binary at (or past) the source version: the data has to be
+#            copied by stalwart-migrate before 1.x can run
+# The caller has handled "already at the pin" and "newer than the pin".
+_stalwart_next_step() {
+  local installed="$1"
+  if [[ "$installed" =~ ^([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+    if (( BASH_REMATCH[1] >= 1 )); then
+      echo pin
+    elif dpkg --compare-versions "$installed" ge "$STALWART_SOURCE_VERSION"; then
+      echo migrate
+    else
+      echo source
+    fi
+    return 0
+  fi
+  case "$(_stalwart_store_major)" in
+    0) echo source ;;
+    *) echo pin ;;
+  esac
+}
+
+# _stalwart_installed_version — the version `stalwart --version` reports for
+# STALWART_BIN_LINK, "absent" without one, "unknown" when it cannot be read.
+_stalwart_installed_version() {
+  local v
+  [[ -x "$STALWART_BIN_LINK" ]] || { echo absent; return 0; }
+  v="$("$STALWART_BIN_LINK" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  echo "${v:-unknown}"
+}
+
+# _stalwart_restart_if_active <version> — puts a just-installed binary live.
+_stalwart_restart_if_active() {
+  if systemctl is-active --quiet jabali-stalwart 2>/dev/null; then
+    systemctl restart jabali-stalwart \
+      || _warn "jabali-stalwart restart failed after binary upgrade — check 'journalctl -u jabali-stalwart'"
+    _ok "jabali-stalwart restarted on Stalwart $1"
+  fi
+}
+
 # upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
 # server binary (GH #525). install.sh's full install_stalwart runs on fresh
 # installs only; the update path re-copies the unit + push-cert but never
@@ -14022,28 +14114,71 @@ _stalwart_plan_for_version() {
 # binary goes live. Idempotent — a no-op when already at STALWART_VERSION, and
 # when the installed binary is newer (_stalwart_refuse_downgrade). Mirrors how
 # install_kratos / _install_bulwark self-upgrade on update.
+#
+# A 0.16 host is the exception (_stalwart_next_step): it is brought to
+# STALWART_SOURCE_VERSION and its data is then copied to a 1.0 store by
+# migrate_stalwart_to_v1. This is the ONLY place that starts the migration: it
+# runs from `jabali update`, which an admin starts or the stable channel's
+# auto-update runs. install_stalwart (also run unattended, by the panel's
+# module repair) never migrates.
 upgrade_stalwart_binary() {
-  local stalwart_binary="/usr/local/bin/stalwart"
-  if [[ -x "$stalwart_binary" ]]; then
-    local installed
-    installed=$("$stalwart_binary" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
-    if [[ "$installed" == "$STALWART_VERSION" ]]; then
-      _ok "Stalwart already at $STALWART_VERSION"
-      return 0
-    fi
-    if _stalwart_refuse_downgrade "$installed"; then
-      return 0
-    fi
-    _log "upgrading Stalwart $installed -> $STALWART_VERSION"
-  else
-    _log "installing Stalwart $STALWART_VERSION (binary absent)"
+  local installed
+  installed="$(_stalwart_installed_version)"
+  if [[ "$installed" == "$STALWART_VERSION" ]]; then
+    _stalwart_mark_store_v1
+    _ok "Stalwart already at $STALWART_VERSION"
+    return 0
   fi
-  _install_stalwart_binary "$STALWART_VERSION"
-  if systemctl is-active --quiet jabali-stalwart 2>/dev/null; then
-    systemctl restart jabali-stalwart \
-      || _warn "jabali-stalwart restart failed after binary upgrade — check 'journalctl -u jabali-stalwart'"
-    _ok "jabali-stalwart restarted on Stalwart $STALWART_VERSION"
+  if _stalwart_refuse_downgrade "$installed"; then
+    [[ "$installed" =~ ^[1-9] ]] && _stalwart_mark_store_v1
+    return 0
   fi
+  case "$(_stalwart_next_step "$installed")" in
+    pin)
+      _log "upgrading Stalwart $installed -> $STALWART_VERSION"
+      _install_stalwart_binary "$STALWART_VERSION"
+      _stalwart_mark_store_v1
+      _stalwart_restart_if_active "$STALWART_VERSION"
+      ;;
+    source)
+      _log "upgrading Stalwart $installed -> $STALWART_SOURCE_VERSION, the release Stalwart's migration to $STALWART_VERSION starts from"
+      _install_stalwart_binary "$STALWART_SOURCE_VERSION" "${REPO_DIR}/install/stalwart-0.16.sha256"
+      _stalwart_restart_if_active "$STALWART_SOURCE_VERSION"
+      migrate_stalwart_to_v1 || return 1
+      ;;
+    migrate)
+      migrate_stalwart_to_v1 || return 1
+      ;;
+  esac
+}
+
+# _install_stalwart_binary_step_for <installed version, "absent" or "unknown">
+# — install_stalwart's binary step when the installed binary is neither the
+# pin nor newer. Same routing as upgrade_stalwart_binary, except that a 0.16
+# host is never migrated here: install_stalwart also runs unattended (the
+# panel's module repair runs `install.sh --install-module mail`). Such a host
+# stays on 0.16 (brought to STALWART_SOURCE_VERSION when older) until the next
+# `jabali update` copies its data.
+_install_stalwart_binary_step_for() {
+  local installed="$1"
+  case "$(_stalwart_next_step "$installed")" in
+    pin)
+      if [[ "$installed" == absent ]]; then
+        _log "installing Stalwart $STALWART_VERSION"
+      else
+        _warn "upgrading Stalwart $installed -> $STALWART_VERSION"
+      fi
+      _install_stalwart_binary "$STALWART_VERSION"
+      _stalwart_mark_store_v1
+      ;;
+    source)
+      _warn "installing Stalwart $STALWART_SOURCE_VERSION over $installed: this host's mail data is still in Stalwart 0.16's format; the next 'jabali update' moves it to $STALWART_VERSION"
+      _install_stalwart_binary "$STALWART_SOURCE_VERSION" "${REPO_DIR}/install/stalwart-0.16.sha256"
+      ;;
+    migrate)
+      _warn "keeping Stalwart $installed: this host's mail data is still in Stalwart 0.16's format; the next 'jabali update' moves it to $STALWART_VERSION"
+      ;;
+  esac
 }
 
 install_stalwart() {
@@ -14135,12 +14270,14 @@ install_stalwart() {
     installed_version=$("$stalwart_binary" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || echo "unknown")
     if [[ "$installed_version" == "$stalwart_version" ]]; then
       _ok "Stalwart $stalwart_version already installed"
+      _stalwart_mark_store_v1
     elif ! _stalwart_refuse_downgrade "$installed_version"; then
-      _warn "upgrading Stalwart $installed_version -> $stalwart_version"
-      _install_stalwart_binary "$stalwart_version"
+      _install_stalwart_binary_step_for "$installed_version"
+    elif [[ "$installed_version" =~ ^[1-9] ]]; then
+      _stalwart_mark_store_v1
     fi
   else
-    _install_stalwart_binary "$stalwart_version"
+    _install_stalwart_binary_step_for absent
   fi
 
   # stalwart-cli is the v0.16 management surface (ADR-0045). Install
@@ -15371,15 +15508,40 @@ print(u[0]["id"] if u else "")' 2>/dev/null || true)"
   _die "Stalwart did not come up on :8446 after restart — check 'journalctl -u jabali-stalwart'"
 }
 
-# _install_stalwart_binary is a private helper: download the release
-# tarball, verify SHA-256 against install/stalwart.sha256, extract, symlink.
+# _install_stalwart_binary <version> [sha file] is a private helper: fetch the
+# release into /opt/stalwart (_fetch_stalwart_release) and symlink it. The sha
+# file defaults to install/stalwart.sha256 (STALWART_VERSION's);
+# STALWART_SOURCE_VERSION's is install/stalwart-0.16.sha256.
 _install_stalwart_binary() {
   local version="$1"
+  local sha_file="${2:-${REPO_DIR}/install/stalwart.sha256}"
+  local new_dir="/opt/stalwart.new"
+  _fetch_stalwart_release "$version" "$new_dir" "$sha_file"
+
+  rm -rf /opt/stalwart.prev
+  if [[ -d /opt/stalwart ]]; then
+    mv /opt/stalwart /opt/stalwart.prev
+  fi
+  mv "$new_dir" /opt/stalwart
+  local bin_in_tar
+  bin_in_tar="$(find /opt/stalwart -maxdepth 2 -type f -name stalwart | head -n1)"
+  ln -sfn "$bin_in_tar" /usr/local/bin/stalwart
+  rm -rf /opt/stalwart.prev
+  _ok "Stalwart $version installed at /opt/stalwart (symlinked to /usr/local/bin/stalwart)"
+}
+
+# _fetch_stalwart_release <version> <dir> <sha file> — downloads Stalwart
+# <version>, checks it against <sha file> and unpacks it into <dir> (replaced
+# if it exists), with the binary executable. Touches nothing else: the caller
+# decides when <dir> goes live. _dies on any failure.
+_fetch_stalwart_release() {
+  local version="$1"
+  local new_dir="$2"
+  local sha_file="$3"
   local arch="x86_64-unknown-linux-gnu"
   local tarball="stalwart-${arch}.tar.gz"
   local tarball_path="/tmp/${tarball}"
   local url="https://github.com/stalwartlabs/stalwart/releases/download/v${version}/${tarball}"
-  local sha_file="${REPO_DIR}/install/stalwart.sha256"
 
   _log "downloading Stalwart $version from GitHub"
   if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused --speed-limit 1024 --speed-time 30 "$url" -o "$tarball_path"; then
@@ -15414,7 +15576,6 @@ _install_stalwart_binary() {
   # the 256 MB binary charged against its POSIX disk quota, immediately
   # putting them over limit. Force root:root on extraction so the
   # binary always lives outside any hosting user's quota scope.
-  local new_dir="/opt/stalwart.new"
   rm -rf "$new_dir"
   install -d -m 0755 -o root -g root "$new_dir"
   tar -xzf "$tarball_path" -C "$new_dir" --strip-components=0 --no-same-owner
@@ -15432,18 +15593,298 @@ _install_stalwart_binary() {
     _die "Stalwart binary not found in tarball at $new_dir"
   fi
   chmod 0755 "$bin_in_tar"
+}
 
-  rm -rf /opt/stalwart.prev
-  if [[ -d /opt/stalwart ]]; then
-    mv /opt/stalwart /opt/stalwart.prev
+# _fetch_stalwart_migrate — puts Stalwart's migration tool, pinned at
+# STALWART_MIGRATE_VERSION and checked against install/stalwart-migrate.sha256,
+# at /opt/stalwart-migrate/<version>/stalwart-migrate. The standard build: the
+# one that matches Stalwart's official server binaries. Returns 1 on failure.
+_fetch_stalwart_migrate() {
+  local version="$STALWART_MIGRATE_VERSION"
+  local dir="${STALWART_MIGRATE_DIR}/${version}"
+  local sha_file="${REPO_DIR}/install/stalwart-migrate.sha256"
+  local archive="stalwart-migrate-x86_64-unknown-linux-gnu.tar.xz"
+  local url="https://github.com/stalwartlabs/stalwart-migrate/releases/download/v${version}/${archive}"
+  [[ -x "${dir}/stalwart-migrate" ]] && return 0
+  if ! command -v xz >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq xz-utils >/dev/null 2>&1 \
+      || { _warn "cannot install xz-utils, needed to unpack Stalwart's migration tool"; return 1; }
   fi
-  mv "$new_dir" /opt/stalwart
-  # Recompute the path under its final location — $bin_in_tar still
-  # points at the old /opt/stalwart.new tree.
-  bin_in_tar="$(find /opt/stalwart -maxdepth 2 -type f -name stalwart | head -n1)"
-  ln -sfn "$bin_in_tar" /usr/local/bin/stalwart
-  rm -rf /opt/stalwart.prev
-  _ok "Stalwart $version installed at /opt/stalwart (symlinked to /usr/local/bin/stalwart)"
+  local tmp expected actual
+  tmp="$(mktemp -d)" || return 1
+  if ! curl_ipv4_retry -fsSL --connect-timeout 20 --retry 3 --retry-delay 5 --retry-connrefused \
+       --speed-limit 1024 --speed-time 30 "$url" -o "${tmp}/${archive}"; then
+    rm -rf "$tmp"; _warn "failed to download Stalwart's migration tool from $url"; return 1
+  fi
+  expected="$(awk '/^[[:space:]]*#/ || NF==0 { next } { print $1; exit }' "$sha_file" 2>/dev/null)"
+  actual="$(sha256sum "${tmp}/${archive}" | awk '{print $1}')"
+  if [[ -z "$expected" || "$expected" != "$actual" ]]; then
+    rm -rf "$tmp"; _warn "Stalwart's migration tool SHA-256 mismatch. Expected: ${expected:-<none in $sha_file>}, got: $actual"; return 1
+  fi
+  install -d -m 0755 -o root -g root "${tmp}/x"
+  if ! tar -xJf "${tmp}/${archive}" -C "${tmp}/x" --no-same-owner; then
+    rm -rf "$tmp"; _warn "cannot unpack $archive"; return 1
+  fi
+  local bin
+  bin="$(find "${tmp}/x" -maxdepth 3 -type f -name stalwart-migrate | head -n1)"
+  if [[ -z "$bin" ]]; then
+    rm -rf "$tmp"; _warn "stalwart-migrate not found in $archive"; return 1
+  fi
+  install -d -m 0755 -o root -g root "$dir"
+  install -m 0755 -o root -g root "$bin" "${dir}/stalwart-migrate"
+  rm -rf "$tmp"
+}
+
+# migrate_stalwart_to_v1 — copies a 0.16 host's mail data into a Stalwart 1.0
+# store with Stalwart's migration tool (stalwart-migrate), then switches the
+# host to 1.0. Called only by upgrade_stalwart_binary (see there), with the
+# installed binary at STALWART_SOURCE_VERSION. Runs in a subshell, with its own
+# traps and without install.sh's exit-on-error: every failure is handled here,
+# because one in the wrong place would leave mail stopped.
+#
+# The steps, and what a failure at each one leaves:
+#   1. Checks: config.json names the local RocksDB store (Jabali's layout: the
+#      mail itself is inside it), no copy from an earlier migration is in the
+#      way, and the disk holds a second copy. Nothing changed.
+#   2. Holds the installer marker, so the panel's module repair waits (in the
+#      first drill it started 0.16 in the middle of the copy), and the
+#      Stalwart install lock.
+#   3. Fetches the tool and the 1.0 binary (not live yet), writes Jabali's
+#      answers (install/stalwart/migrate-answers.toml), runs `prepare`, then
+#      two `run`s while 0.16 serves mail. Nothing changed for users; the next
+#      update resumes the copy where it stopped.
+#   4. Stops Stalwart and runs `run --final`: it copies the last changes and
+#      verifies a sample of accounts. On failure 0.16 is started again.
+#   5. Switches: the 0.16 store and binary move to <dir>-0.16, the copy and the
+#      1.0 binary take their places, Stalwart starts. When 1.0 does not come
+#      up, the switch is undone and 0.16 is started again.
+#   6. Runs the Stalwart convergers (install_stalwart_apply) against 1.0.
+# The 0.16 store, binary and the tool's state stay for a rollback; see
+# docs/runbooks/stalwart-1.0-migration.md.
+migrate_stalwart_to_v1() {
+  (
+    trap - ERR
+    set +e
+    _stwm_run
+  )
+}
+
+# State of a migration in progress, for its EXIT and signal traps. The traps
+# run in migrate_stalwart_to_v1's subshell, so these never reach the caller.
+_STWM_PHASE=idle
+_STWM_OWN_MARKER=0
+
+_stwm_run() {
+  local store="$STALWART_STORE_DIR" new_store="${STALWART_STORE_DIR}-1.0" old_store="${STALWART_STORE_DIR}-0.16"
+  local new_opt="${STALWART_OPT_DIR}-1.0.new" old_opt="${STALWART_OPT_DIR}-0.16"
+  local state="$STALWART_MIGRATE_STATE"
+  local tool="${STALWART_MIGRATE_DIR}/${STALWART_MIGRATE_VERSION}/stalwart-migrate"
+  local log="${state}/jabali-migrate.log"
+
+  _log "moving this host's mail data from Stalwart $STALWART_SOURCE_VERSION to $STALWART_VERSION (stalwart-migrate $STALWART_MIGRATE_VERSION)"
+
+  # --- 1. checks ---------------------------------------------------------
+  if ! python3 - "$STALWART_CONFIG" "$store" <<'PY'
+import json, os, sys
+c = json.load(open(sys.argv[1]))
+ok = isinstance(c, dict) and c.get("@type") == "RocksDb" \
+    and os.path.normpath(str(c.get("path", ""))) == os.path.normpath(sys.argv[2])
+sys.exit(0 if ok else 1)
+PY
+  then
+    _warn "Stalwart migration skipped: $STALWART_CONFIG does not name the RocksDB store at $store, the layout Jabali installs -- see docs/runbooks/stalwart-1.0-migration.md"
+    return 1
+  fi
+  if [[ -e "$old_store" || -e "$old_opt" ]]; then
+    _warn "Stalwart migration skipped: $old_store or $old_opt is left from an earlier migration -- see docs/runbooks/stalwart-1.0-migration.md"
+    return 1
+  fi
+  # A completed final copy that was switched back: the tool refuses to write
+  # into it again, and the failure needs a look before another try.
+  if [[ -f "${state}/jabali-final-done" ]]; then
+    _warn "Stalwart migration skipped: an earlier migration completed its copy and was switched back -- see docs/runbooks/stalwart-1.0-migration.md before trying again"
+    return 1
+  fi
+  if [[ -e "$new_store" && ! -d "$state" ]]; then
+    _warn "Stalwart migration skipped: $new_store exists without the migration's state in $state -- move it away, then run 'jabali update' again"
+    return 1
+  fi
+  local used copied avail need
+  used="$(du -sb "$store" 2>/dev/null | awk '{print $1}')"
+  copied="$(du -sb "$new_store" 2>/dev/null | awk '{print $1}')"
+  avail="$(df -B1 --output=avail "$(dirname "$store")" 2>/dev/null | tail -n1 | tr -d ' ')"
+  if ! [[ "$used" =~ ^[0-9]+$ && "$avail" =~ ^[0-9]+$ ]]; then
+    _warn "Stalwart migration skipped: cannot measure $store or the free space beside it"
+    return 1
+  fi
+  [[ "$copied" =~ ^[0-9]+$ ]] || copied=0
+  need=$(( used * 3 / 2 + 1073741824 - copied ))
+  if (( avail < need )); then
+    _warn "Stalwart migration skipped: it needs $(( need >> 20 )) MB free beside $store for the copy, $(( avail >> 20 )) MB are free. Stalwart stays on $STALWART_SOURCE_VERSION; free space, then run 'jabali update' again"
+    return 1
+  fi
+  local owner
+  owner="$(id -u jabali-mail 2>/dev/null):$(id -g jabali-mail 2>/dev/null)"
+  if ! [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]]; then
+    _warn "Stalwart migration skipped: no jabali-mail user"
+    return 1
+  fi
+
+  # --- 2. marker and lock --------------------------------------------------
+  local lockfd
+  if exec {lockfd}>/run/lock/jabali-stalwart-install.lock && command -v flock >/dev/null 2>&1; then
+    flock -w 600 "$lockfd" || { _warn "Stalwart migration skipped: another Stalwart install holds its lock"; return 1; }
+  fi
+  if _installer_marker_held_by_other; then
+    _warn "Stalwart migration skipped: another install run is in progress; the next 'jabali update' runs it"
+    return 1
+  fi
+  if [[ ! -f "$INSTALLER_MARKER" ]]; then
+    mark_installer_running
+    _STWM_OWN_MARKER=1
+  fi
+  trap '_stwm_on_exit' EXIT
+  trap '_warn "Stalwart migration interrupted"; exit 1' TERM INT HUP
+
+  # --- 3. copy while 0.16 serves ------------------------------------------
+  _STWM_PHASE=copying
+  _fetch_stalwart_migrate || return 1
+  _fetch_stalwart_release "$STALWART_VERSION" "$new_opt" "${REPO_DIR}/install/stalwart.sha256"
+  install -d -m 0700 -o root -g root "$state" || return 1
+  install -m 0600 -o root -g root "${REPO_DIR}/install/stalwart/migrate-answers.toml" "${state}/answers.toml" || return 1
+  # The target config names the same path as the live one: 1.0 runs with the
+  # unchanged config.json once the copy is in place. --target-path-map makes
+  # the tool write the copy beside it.
+  install -m 0600 -o root -g root "$STALWART_CONFIG" "${state}/target-config.json" || return 1
+  local -a common=(--source "$STALWART_CONFIG" --state "$state")
+  local -a copy=("${common[@]}" --target "${state}/target-config.json"
+                 --target-path-map "${store}=${new_store}" --owner "$owner" --log-format text)
+  printf '\n=== %s migrate %s -> %s\n' "$(date -u '+%F %T')" "$STALWART_SOURCE_VERSION" "$STALWART_VERSION" >>"$log"
+  if ! "$tool" prepare --non-interactive "${common[@]}" >>"$log" 2>&1; then
+    _warn "Stalwart migration stopped at 'prepare' (open question or unsupported setting); Stalwart stays on $STALWART_SOURCE_VERSION. Report: ${state}/prepare-report.txt, log: $log"
+    return 1
+  fi
+  local pass
+  for pass in 1 2; do
+    _log "copying mail data to the Stalwart $STALWART_VERSION store (pass $pass, Stalwart $STALWART_SOURCE_VERSION keeps serving)"
+    if ! "$tool" run "${copy[@]}" >>"$log" 2>&1; then
+      _warn "Stalwart migration stopped while copying (pass $pass); Stalwart stays on $STALWART_SOURCE_VERSION and the next 'jabali update' resumes the copy. Log: $log"
+      return 1
+    fi
+  done
+
+  # --- 4. final copy, Stalwart stopped --------------------------------------
+  _log "stopping Stalwart for the final copy"
+  _STWM_PHASE=stopped
+  if ! systemctl stop jabali-stalwart; then
+    _warn "cannot stop jabali-stalwart; Stalwart migration stopped"
+    return 1
+  fi
+  if ! "$tool" run --final --yes "${copy[@]}" >>"$log" 2>&1; then
+    _warn "Stalwart migration: the final copy failed; starting Stalwart $STALWART_SOURCE_VERSION again. Log: $log"
+    return 1
+  fi
+  : >"${state}/jabali-final-done"
+
+  # --- 5. switch -------------------------------------------------------------
+  _STWM_PHASE=switching
+  if ! { mv "$store" "$old_store" && mv "$new_store" "$store" \
+         && mv "$STALWART_OPT_DIR" "$old_opt" && mv "$new_opt" "$STALWART_OPT_DIR"; }; then
+    _err "Stalwart migration: moving the stores into place failed; switching back to $STALWART_SOURCE_VERSION"
+    return 1
+  fi
+  # The spam-filter rules file lives beside the binary (apply plan: file://).
+  [[ -d "${old_opt}/share" ]] && cp -a "${old_opt}/share" "${STALWART_OPT_DIR}/"
+  ln -sfn "$(find "$STALWART_OPT_DIR" -maxdepth 2 -type f -name stalwart | head -n1)" "$STALWART_BIN_LINK"
+  _stalwart_mark_store_v1
+  _STWM_PHASE=starting
+  systemctl start jabali-stalwart
+  if ! _stwm_wait_jmap 180; then
+    if [[ "$(systemctl is-active jabali-stalwart 2>/dev/null)" != active ]]; then
+      _err "Stalwart $STALWART_VERSION did not start on the copied data; switching back to $STALWART_SOURCE_VERSION. Mail it accepted meanwhile stays in the copy. Log: journalctl -u jabali-stalwart"
+      _STWM_PHASE=switching
+      return 1
+    fi
+    _STWM_PHASE=done
+    _warn "Stalwart $STALWART_VERSION is running but not answering on :8446 yet; left running. Check 'journalctl -u jabali-stalwart'"
+    return 1
+  fi
+  _STWM_PHASE=done
+  _ok "Stalwart $STALWART_VERSION serving this host's mail. The $STALWART_SOURCE_VERSION store stays at $old_store and its binary at $old_opt until removed (docs/runbooks/stalwart-1.0-migration.md). Final report: ${state}/final-report.txt"
+
+  # --- 6. convergers against 1.0 ----------------------------------------------
+  if ! ( set -Eeuo pipefail; trap '__on_err' ERR; install_stalwart_apply ); then
+    _warn "Stalwart convergers failed after the migration; the next 'jabali update' runs them again"
+  fi
+  return 0
+}
+
+# _stwm_wait_jmap <seconds> — waits for Stalwart's JMAP on :8446 (any HTTP
+# answer below 500, like _install_stalwart_apply_plan).
+_stwm_wait_jmap() {
+  local i code
+  for (( i = 0; i < $1; i++ )); do
+    code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 http://127.0.0.1:8446/jmap/session 2>/dev/null || true)"
+    [[ "$code" =~ ^[234][0-9][0-9]$ ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# _stwm_on_exit — the migration's EXIT trap: puts Stalwart 0.16 back when the
+# migration ends with mail stopped, and releases the installer marker.
+_stwm_on_exit() {
+  local old_store="${STALWART_STORE_DIR}-0.16" old_opt="${STALWART_OPT_DIR}-0.16" ts
+  case "$_STWM_PHASE" in
+    stopped)
+      systemctl start jabali-stalwart || _err "jabali-stalwart did not start again -- check 'journalctl -u jabali-stalwart'"
+      ;;
+    starting)
+      # Interrupted while 1.0 was coming up: a 1.0 that answers may already
+      # have taken mail, so it is left running.
+      if _stwm_wait_jmap 5; then
+        _warn "Stalwart migration interrupted after Stalwart $STALWART_VERSION started; it is left running. The next 'jabali update' runs the convergers"
+      else
+        _STWM_PHASE=switching
+        _stwm_on_exit
+        return
+      fi
+      ;;
+    switching)
+      ts="$(date +%s)"
+      systemctl stop jabali-stalwart 2>/dev/null
+      if [[ -d "$old_store" ]]; then
+        [[ -e "$STALWART_STORE_DIR" ]] && mv "$STALWART_STORE_DIR" "${STALWART_STORE_DIR}-1.0.failed-${ts}"
+        mv "$old_store" "$STALWART_STORE_DIR"
+      fi
+      if [[ -d "$old_opt" ]]; then
+        [[ -e "$STALWART_OPT_DIR" ]] && mv "$STALWART_OPT_DIR" "${STALWART_OPT_DIR}-1.0.failed-${ts}"
+        mv "$old_opt" "$STALWART_OPT_DIR"
+      fi
+      ln -sfn "$(find "$STALWART_OPT_DIR" -maxdepth 2 -type f -name stalwart | head -n1)" "$STALWART_BIN_LINK"
+      rm -f "$STALWART_STORE_STAMP"
+      systemctl start jabali-stalwart || _err "jabali-stalwart did not start again -- check 'journalctl -u jabali-stalwart'"
+      _err "Stalwart is back on $STALWART_SOURCE_VERSION; the failed $STALWART_VERSION copy is at ${STALWART_STORE_DIR}-1.0.failed-${ts}"
+      ;;
+  esac
+  _STWM_PHASE=idle
+  if (( _STWM_OWN_MARKER )); then
+    clear_installer_marker
+    _STWM_OWN_MARKER=0
+  fi
+}
+
+# _installer_marker_held_by_other — INSTALLER_MARKER names a live process other
+# than this shell (same test as panel-agent's serverInstallerMarker check).
+_installer_marker_held_by_other() {
+  local mpid mstart stat
+  local -a fields
+  [[ -r "$INSTALLER_MARKER" ]] || return 1
+  read -r mpid mstart <"$INSTALLER_MARKER" 2>/dev/null || return 1
+  [[ "$mpid" =~ ^[0-9]+$ && "$mpid" != "$$" ]] || return 1
+  stat="$(cat "/proc/${mpid}/stat" 2>/dev/null)" || return 1
+  read -r -a fields <<<"${stat##*) }"
+  [[ "${fields[19]:-}" == "$mstart" ]]
 }
 
 # _install_stalwart_cli downloads + verifies the stalwart-cli release

@@ -16,6 +16,7 @@ than ten minutes to remember how, it's runbook-worthy.
 | [security-advisory.md](security-advisory.md) | Every server must act on a security fix within the hour: publish an advisory in the feed servers check hourly. |
 | [hotfix-release.md](hotfix-release.md) | A fix must reach stable servers before the monthly promotion: hotfix branch, prebuilt release, promote, merge back, changelog entry. |
 | [m49-audit-log.md](m49-audit-log.md) | Audit-log integrity verify / a chain break, unsealed-backlog recovery, retention pruning, incident querying (M49 / ADR-0106). |
+| [stalwart-1.0-migration.md](stalwart-1.0-migration.md) | A host's mail moves from Stalwart 0.16 to 1.0 at `jabali update`: checking it, a migration that stopped, rollback, removing the 0.16 copy (ADR-0179). |
 
 ## Runbook template
 

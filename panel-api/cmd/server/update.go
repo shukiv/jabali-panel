@@ -1863,6 +1863,10 @@ fi
 			// when already at the pinned STALWART_VERSION or on a newer one (it
 			// never downgrades), else it downloads + checksum-verifies +
 			// atomically swaps the binary and restarts jabali-stalwart.
+			// On a Stalwart 0.16 host it instead copies the mail data into a
+			// Stalwart 1.0 store (migrate_stalwart_to_v1, ADR-0179): mail stops
+			// for the final copy only, and any failure leaves 0.16 serving.
+			// This step is the only place that migration starts.
 			// Non-fatal — a host that can't upgrade keeps
 			// running the old binary rather than failing the whole update.
 			installSh := repoDir + "/install.sh"

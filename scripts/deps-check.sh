@@ -37,6 +37,7 @@ INSTALL_SH="$REPO_DIR/install.sh"
 #                  prints the manual capture command instead).
 MANIFEST=(
   "STALWART_VERSION|stalwartlabs/stalwart|v|install/stalwart.sha256|https://github.com/stalwartlabs/stalwart/releases/download/v{V}/stalwart-x86_64-unknown-linux-gnu.tar.gz"
+  "STALWART_MIGRATE_VERSION|stalwartlabs/stalwart-migrate|v|install/stalwart-migrate.sha256|https://github.com/stalwartlabs/stalwart-migrate/releases/download/v{V}/stalwart-migrate-x86_64-unknown-linux-gnu.tar.xz"
   "cli_version|stalwartlabs/cli|v|install/stalwart-cli.sha256|-"
   "bulwark_version|bulwarkmail/webmail||install/bulwark.sha256|-"
   "kratos_version|ory/kratos|v|install/kratos.sha256|https://github.com/ory/kratos/releases/download/v{V}/kratos_{V}-linux_64bit.tar.gz"

@@ -1,17 +1,15 @@
-# Stalwart Mail Server v0.16.27 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
-# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27
-# Captured 2026-11-02 from the GitHub release artifact; matches the digest
-# GitHub publishes for the asset. 0.16.27 is a drop-in binary replacement
-# within v0.16.x -- upstream says "replace the binary", no config migration.
-# It is also the release Stalwart's migration tool to 1.0 requires as source.
-# (The 0.16.19 MySQL key-column note does not apply: our store is RocksDB.)
+# Stalwart Mail Server v1.0.2 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
+# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v1.0.2
+# Captured 2026-11-03 from the GitHub release artifact; matches the digest
+# GitHub publishes for the asset.
 #
-# Stalwart v0.16.x replaced its REST API with a JMAP management API
-# (see ADR-0041 + plan #1). SQL directory is supported against MariaDB
-# provided filter queries match on full email addresses (see ADR-0042).
+# 1.0 cannot open a 0.16 data store: a 0.16 host reaches 1.0 through
+# migrate_stalwart_to_v1 (Stalwart's migration tool), never through a binary
+# swap. The 0.16 release the migration starts from has its own checksum file,
+# install/stalwart-0.16.sha256. See ADR-0179.
 #
 # To capture on a version bump:
 #   curl -sSL https://github.com/stalwartlabs/stalwart/releases/download/v<x.y.z>/stalwart-x86_64-unknown-linux-gnu.tar.gz | sha256sum
 # install.sh `_die`s if the placeholder PLACEHOLDER_CAPTURE_ON_FIRST_DEPLOY
 # survives — matches the DokuWiki/MediaWiki tarball precedent.
-3d4548053e7130cdc6288134e28aecc5004f22549cc52a1dbda0ca48ff0b301a  stalwart-x86_64-unknown-linux-gnu.tar.gz
+10bd375d4541e2ffbafdfd5d97d8aa1a5c188438fd8700fbd6f076ee0fc2f24f  stalwart-x86_64-unknown-linux-gnu.tar.gz
