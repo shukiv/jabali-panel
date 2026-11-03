@@ -13992,6 +13992,25 @@ _stalwart_refuse_downgrade() {
   return 0
 }
 
+# _stalwart_plan_for_version <stalwart version> — filter (stdin to stdout)
+# that fits the rendered apply plan to the Stalwart it is applied to. The
+# template carries Stalwart 1.0's property names. 1.0 renamed exactly one of
+# the properties the plan sets: NetworkListener tlsImplicit -> implicitTls
+# (Stalwart's own 0.16 -> 1.0 schema comparison; a fresh 1.0.2 store took the
+# whole plan with 0 failures, 2026-11-03). A 0.16 server rejects the new name,
+# so a 0.x version gets the old one back; 1.x keeps the template as it is. A
+# version that could not be read counts as STALWART_VERSION, the one install.sh
+# puts in place.
+_stalwart_plan_for_version() {
+  local version="${1:-}"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || version="$STALWART_VERSION"
+  if [[ "$version" =~ ^0\. ]]; then
+    sed -e 's/"implicitTls"/"tlsImplicit"/g'
+  else
+    cat
+  fi
+}
+
 # upgrade_stalwart_binary is the jabali-update entry point for the Stalwart
 # server binary (GH #525). install.sh's full install_stalwart runs on fresh
 # installs only; the update path re-copies the unit + push-cert but never
@@ -14213,8 +14232,13 @@ EOF
   if [[ ! -f "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" ]]; then
     _die "Stalwart apply plan template not found at ${REPO_DIR}/install/stalwart/apply-plan.json.tmpl"
   fi
+  # The template uses Stalwart 1.0's property names; the plan for a 0.16
+  # binary gets the old ones back (_stalwart_plan_for_version).
+  local plan_stalwart_version
+  plan_stalwart_version="$(/usr/local/bin/stalwart --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
   sed -e "s|{{\.MariaDBPassword}}|${stalwart_db_pass}|g" \
-    "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" >"$stalwart_apply_plan"
+    "${REPO_DIR}/install/stalwart/apply-plan.json.tmpl" \
+    | _stalwart_plan_for_version "$plan_stalwart_version" >"$stalwart_apply_plan"
   chown root:jabali-mail "$stalwart_apply_plan"
   chmod 0640 "$stalwart_apply_plan"
   if grep -q '{{\..*}}' "$stalwart_apply_plan"; then
@@ -14936,6 +14960,110 @@ PY
   esac
 }
 
+# stalwart_cache_sizes_mb <MemoryHigh MB> — prints "<messages> <messagesLarge>
+# <groupwareLarge>", the sizes in MB for Stalwart 1.0's three big caches.
+#
+# Stalwart 1.0 raised its cache defaults: all caches together may hold 1549 MB
+# where 0.16.27's held 190 MB (both read from a running server, 2026-11-03).
+# Most of the rise is three caches: messages 50 -> 320 MB, and the new
+# messagesLarge and groupwareLarge at 512 MB each. Jabali bounds Stalwart's
+# memory (bound_stalwart_memory: MemoryMax is 768 MB on a 2 GB host), so at
+# those defaults a busy server on a small host would fill its caches up to the
+# hard limit and be OOM-killed inside its own cgroup.
+#
+# The three together get 35% of MemoryHigh, split in the defaults' proportion
+# (320:512:512), and never more than the defaults. MemoryHigh is at least
+# 512 MB, so the smallest host still gets 42 / 68 / 68 MB; from MemoryHigh
+# 3840 MB (about a 16 GB host) up, the defaults stand. Pure arithmetic.
+stalwart_cache_sizes_mb() {
+  local high_mb="$1" budget
+  budget=$((high_mb * 35 / 100))
+  if (( budget >= 1344 )); then
+    printf '320 512 512\n'
+    return 0
+  fi
+  printf '%s %s %s\n' "$((320 * budget / 1344))" "$((512 * budget / 1344))" "$((512 * budget / 1344))"
+}
+
+# converge_stalwart_cache_sizes — sets Stalwart 1.0's messages, messagesLarge
+# and groupwareLarge caches (x:Cache) to stalwart_cache_sizes_mb for this
+# host's RAM. Stalwart 0.16 has no messagesLarge, so a server whose Cache lacks
+# it is left alone (0.16's own sizes are small). Takes effect at the Stalwart
+# restart that _install_stalwart_apply_plan does right after the convergers.
+# Returns 1 when it could not converge.
+converge_stalwart_cache_sizes() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  local meminfo="${JABALI_MEMINFO:-/proc/meminfo}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping the cache sizes"
+    return 1
+  fi
+  local mem_kb mem_mb high_mb max_mb
+  mem_kb=$(awk '/^MemTotal:/ {print $2}' "$meminfo" 2>/dev/null || echo 0)
+  mem_mb=$(( ${mem_kb:-0} / 1024 ))
+  if (( mem_mb <= 0 )); then
+    _warn "cannot read MemTotal — skipping the Stalwart cache sizes"
+    return 1
+  fi
+  read -r high_mb max_mb < <(stalwart_mem_bounds_mb "$mem_mb")
+  local sizes
+  sizes="$(stalwart_cache_sizes_mb "$high_mb")"
+
+  _log "converging the Stalwart cache sizes (MemoryHigh ${high_mb} MB)"
+  local out rc=0
+  out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    python3 - "$cli" "$sizes" 2>&1 <<'PY'
+import json, subprocess, sys
+
+cli = sys.argv[1]
+want = dict(zip(("messages", "messagesLarge", "groupwareLarge"),
+                (int(x) * 1024 * 1024 for x in sys.argv[2].split())))
+
+
+def cli_run(*args, payload=None):
+    r = subprocess.run([cli, *args], input=None if payload is None else json.dumps(payload),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("stalwart-cli %s failed: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:300]))
+    return r.stdout
+
+
+try:
+    cur = json.loads(cli_run("get", "Cache", "--json"))
+    if "messagesLarge" not in cur:
+        print("V016")
+    else:
+        patch = {k: v for k, v in want.items() if cur.get(k) != v}
+        if patch:
+            cli_run("update", "Cache", "singleton", "--stdin", payload=patch)
+        print("CHANGED" if patch else "UNCHANGED")
+except Exception as e:  # noqa: BLE001 - report any failure to the shell
+    print("ERROR %s" % e)
+    sys.exit(1)
+PY
+  )" || rc=$?
+  local human
+  human="$(awk '{print "messages " $1 " MB, messagesLarge " $2 " MB, groupwareLarge " $3 " MB"}' <<<"$sizes")"
+  case "$rc:$out" in
+    0:UNCHANGED*)
+      _ok "Stalwart cache sizes already set (${human})" ;;
+    0:V016*)
+      _ok "Stalwart 0.16 — its cache sizes are left as they are" ;;
+    0:CHANGED*)
+      _ok "Stalwart cache sizes set (${human}); take effect at the Stalwart restart" ;;
+    *)
+      _warn "Stalwart cache sizes not converged: ${out}"
+      return 1 ;;
+  esac
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -15104,6 +15232,9 @@ _install_stalwart_apply_plan() {
   converge_stalwart_stdout_tracer "$jmap_port" "$admin_token" || true
   # The delivery log at debug: Stalwart 1.0 logs delivery.completed at debug.
   converge_stalwart_delivery_tracer_level "$jmap_port" "$admin_token" || true
+  # Stalwart 1.0's big caches sized to the memory bound. Needs the restart at
+  # the end of this function.
+  converge_stalwart_cache_sizes "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`
