@@ -23,10 +23,11 @@ rather than pin-and-hope.
   the parser keys off the jabali acquis label.
 - Grok now applies to `Line.Raw` directly — no intermediate syslog
   parser stage required.
-- Protocol mapping rewritten for jabali listener IDs
-  (`smtp-25`, `smtp-submissions-465`, `smtp-submission-587`, `imaps`,
-  `internal-loopback`) instead of upstream's sample names (`smtp`,
-  `submission`, `submissions`).
+- Protocol mapping covers the listener IDs a jabali host logs:
+  Stalwart's own (`smtp`, `submissions`, `imaps`, `pop3s`, `sieve`,
+  which serve 25/465/993/995/4190) and the apply plan's (`smtp-25`,
+  `smtp-submissions-465`, `smtp-submission-587`, `imap-993`,
+  `jmap-loopback`, `internal-loopback`). No scenario filters on it.
 - Works on Stalwart 0.16 and 1.0 (2026-11-03). Upstream's single
   pattern wants `localPort, remoteIp, remotePort` in that order;
   Stalwart 1.0 puts `remoteIp` at the end of an auth failure, so none

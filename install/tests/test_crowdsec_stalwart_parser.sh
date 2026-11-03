@@ -26,7 +26,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 python3 - install/crowdsec/stalwart/parsers/s01-parse/jabali-stalwart-logs.yaml <<'PY'
-import re, sys
+import json, re, sys
 import yaml
 
 doc = yaml.safe_load(open(sys.argv[1]))
@@ -223,6 +223,40 @@ def no_child_ip(node):
 
 
 no_child_ip(doc)
+
+# The protocol label: every listener a jabali host logs maps to its protocol.
+# Ports 25/465/993/995/4190 are served by Stalwart's own listeners (names as
+# a 1.0.2 test box lists them); the apply plan's names come from the template.
+RULE = re.compile(r'^evt\.Parsed\.listenerId (?:in \[(.*)\]|== "([^"]+)") \? "(\w+)" :$')
+rules, default = [], None
+for ln in (statics.get("protocol") or "").strip().splitlines():
+    ln = ln.strip()
+    m = RULE.match(ln)
+    if m:
+        names = re.findall(r'"([^"]+)"', m.group(1)) if m.group(1) is not None else [m.group(2)]
+        rules.append((names, m.group(3)))
+    elif re.fullmatch(r'"\w+"', ln):
+        default = ln.strip('"')
+    else:
+        fail.append("protocol expression line not understood: %r" % ln)
+
+
+def protocol(lid):
+    for names, p in rules:
+        if lid in names:
+            return p
+    return default
+
+
+expect = {"smtp": "smtp", "submissions": "smtp", "imaps": "imap", "pop3s": "pop3", "sieve": "managesieve"}
+tmpl = open("install/stalwart/apply-plan.json.tmpl").read().replace("{{.MariaDBPassword}}", "x")
+for op in json.loads(tmpl):
+    if op.get("object") == "x:NetworkListener":
+        for l in op["value"].values():
+            expect[l["name"]] = l["protocol"]
+for lid, want in sorted(expect.items()):
+    if protocol(lid) != want:
+        fail.append("listener %s: protocol %r, want %r" % (lid, protocol(lid), want))
 
 for f in fail:
     print("FAIL: " + f)
