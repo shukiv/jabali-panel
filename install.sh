@@ -15211,6 +15211,80 @@ PY
   esac
 }
 
+# converge_stalwart_smtp25_tls — turns TLS on for the apply plan's port 25
+# listener ("smtp-25", 0.0.0.0:25), so that port 25 offers STARTTLS whichever
+# listener serves it.
+#
+# Stalwart seeds its own "smtp" listener on [::]:25 with TLS on. Where IPv6
+# works, that one binds first and serves IPv4 too; the plan's smtp-25 fails
+# with "Address already in use" and never serves. On a kernel without IPv6
+# (ipv6.disable=1) [::] can't bind, so smtp-25 is the listener on port 25. The
+# plan created it with useTls false, and a listener without TLS offers no
+# STARTTLS (checked on 1.0.2, 2026-11-03), so mail from other servers arrived
+# unencrypted. The plan now creates it with TLS on; this fixes the listener on
+# hosts installed before. Only that listener is changed. Takes effect at the
+# Stalwart restart that _install_stalwart_apply_plan does after the convergers.
+# Returns 1 when it could not converge.
+converge_stalwart_smtp25_tls() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping TLS on the port 25 listener"
+    return 1
+  fi
+
+  _log "converging TLS on the Stalwart port 25 listener (smtp-25)"
+  local out rc=0
+  out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    python3 - "$cli" 2>&1 <<'PY'
+import json, subprocess, sys
+
+cli = sys.argv[1]
+
+
+def cli_run(*args, payload=None):
+    r = subprocess.run([cli, *args], input=None if payload is None else json.dumps(payload),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("stalwart-cli %s failed: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:300]))
+    return r.stdout
+
+
+try:
+    rows = [json.loads(l) for l in cli_run("query", "NetworkListener", "--json", "--fields",
+                                           "name,protocol,useTls").splitlines() if l.strip()]
+    mine = [r for r in rows if r.get("name") == "smtp-25" and r.get("protocol") == "smtp"]
+    if not mine:
+        print("ABSENT")
+    else:
+        off = [r for r in mine if r.get("useTls") is not True]
+        for r in off:
+            cli_run("update", "NetworkListener", r["id"], "--stdin", payload={"useTls": True})
+        print("CHANGED" if off else "UNCHANGED")
+except Exception as e:  # noqa: BLE001 - report any failure to the shell
+    print("ERROR %s" % e)
+    sys.exit(1)
+PY
+  )" || rc=$?
+  case "$rc:$out" in
+    0:UNCHANGED*)
+      _ok "Stalwart port 25 listener already offers STARTTLS" ;;
+    0:ABSENT*)
+      _ok "Stalwart has no smtp-25 listener — nothing to change" ;;
+    0:CHANGED*)
+      _ok "Stalwart port 25 listener (smtp-25) offers STARTTLS from the Stalwart restart" ;;
+    *)
+      _warn "TLS on the Stalwart port 25 listener not converged: ${out}"
+      return 1 ;;
+  esac
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -15382,6 +15456,9 @@ _install_stalwart_apply_plan() {
   # Stalwart 1.0's big caches sized to the memory bound. Needs the restart at
   # the end of this function.
   converge_stalwart_cache_sizes "$jmap_port" "$admin_token" || true
+  # STARTTLS on the plan's port 25 listener, which serves port 25 where IPv6
+  # is off. Needs the restart at the end of this function.
+  converge_stalwart_smtp25_tls "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`
