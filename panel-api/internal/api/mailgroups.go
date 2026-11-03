@@ -558,6 +558,9 @@ func (h *mailGroupHandler) setMembers(c *gin.Context) {
 		})
 	}
 	_ = dom
+	if len(removed) > 0 {
+		flushMailCaches(ctx, h.cfg.Agent, "mail group member removal")
+	}
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"member_count": len(desiredIDs)}})
 }
 
@@ -650,6 +653,7 @@ func (h *mailGroupHandler) removeMember(c *gin.Context) {
 			"remove_emails": []string{mb.EmailCached},
 		})
 	}
+	flushMailCaches(ctx, h.cfg.Agent, "mail group member removal")
 	c.Status(http.StatusNoContent)
 }
 
@@ -688,6 +692,7 @@ func (h *mailGroupHandler) delete(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	flushMailCaches(ctx, h.cfg.Agent, "mail group delete")
 	c.Status(http.StatusNoContent)
 }
 

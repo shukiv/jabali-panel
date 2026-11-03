@@ -33,8 +33,13 @@ func (h *domainCatchallHandler) catchallPush(ctx context.Context, cmd string, pa
 	}
 	agentCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_, err := h.cfg.Agent.Call(agentCtx, cmd, params)
-	return err
+	if _, err := h.cfg.Agent.Call(agentCtx, cmd, params); err != nil {
+		return err
+	}
+	// The catch-all decides where mail for unknown addresses goes; drop
+	// Stalwart's cached lookups so the change applies at once.
+	flushMailCaches(ctx, h.cfg.Agent, cmd)
+	return nil
 }
 
 // RegisterDomainCatchallRoutes registers catch-all endpoints.

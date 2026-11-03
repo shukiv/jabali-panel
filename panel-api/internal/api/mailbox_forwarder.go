@@ -336,6 +336,9 @@ func (h *forwarderHandler) del(c *gin.Context) {
 	// A failed re-converge on delete leaves a stale redirect, but 204 carries
 	// no body to surface it; the slog.Warn inside applyForwarders records it.
 	_ = h.applyForwarders(ctx, mb, dom)
+	// Stalwart 1.0 would go on taking mail for a deleted alias until its
+	// caches are dropped.
+	flushMailCaches(ctx, h.cfg.Agent, "forwarder delete")
 	c.JSON(http.StatusNoContent, nil)
 }
 
