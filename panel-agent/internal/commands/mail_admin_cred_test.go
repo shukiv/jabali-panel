@@ -20,21 +20,97 @@ func withAdminCredFixtures(t *testing.T, envBody string) (tokenPath, envPath str
 	if err := os.WriteFile(envPath, []byte(envBody), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	oldTok, oldEnv := stalwartAdminTokenFile, stalwartEnvFile
+	oldTok, oldEnv, oldBw := stalwartAdminTokenFile, stalwartEnvFile, bulwarkEnvFile
 	stalwartAdminTokenFile, stalwartEnvFile = tokenPath, envPath
-	t.Cleanup(func() { stalwartAdminTokenFile, stalwartEnvFile = oldTok, oldEnv })
+	// No webmail unless a test writes this file.
+	bulwarkEnvFile = filepath.Join(dir, "bulwark.env")
+	t.Cleanup(func() { stalwartAdminTokenFile, stalwartEnvFile, bulwarkEnvFile = oldTok, oldEnv, oldBw })
 	return tokenPath, envPath
 }
 
 func stubRestarts(t *testing.T) *[]string {
 	t.Helper()
 	var calls []string
-	oldR, oldS, oldV := restartServiceFunc, scheduleRestartFunc, verifyStalwartAuthFunc
+	oldR, oldT, oldS, oldV := restartServiceFunc, tryRestartServiceFunc, scheduleRestartFunc, verifyStalwartAuthFunc
 	restartServiceFunc = func(_ context.Context, unit string) error { calls = append(calls, "restart:"+unit); return nil }
+	tryRestartServiceFunc = func(_ context.Context, unit string) error { calls = append(calls, "try-restart:"+unit); return nil }
 	scheduleRestartFunc = func(_ context.Context, unit string) error { calls = append(calls, "schedule:"+unit); return nil }
 	verifyStalwartAuthFunc = func(_ context.Context, _, _ string) bool { return true }
-	t.Cleanup(func() { restartServiceFunc, scheduleRestartFunc, verifyStalwartAuthFunc = oldR, oldS, oldV })
+	t.Cleanup(func() {
+		restartServiceFunc, tryRestartServiceFunc, scheduleRestartFunc, verifyStalwartAuthFunc = oldR, oldT, oldS, oldV
+	})
 	return &calls
+}
+
+// Webmail's "log in as this user" signs in to Stalwart with the same admin
+// secret (BULWARK_STALWART_MASTER_PASSWORD), so a rotate must update that
+// copy and restart webmail, or the feature fails until the next update.
+func TestMailAdminCred_RotateUpdatesWebmailCopy(t *testing.T) {
+	withAdminCredFixtures(t, "STALWART_RECOVERY_ADMIN=admin:OLDTOKEN==\n")
+	calls := stubRestarts(t)
+	bwBody := "# webmail\nBULWARK_JWT_AUTH_SECRET=jwt-keep\nBULWARK_STALWART_MASTER_USER=admin\nBULWARK_STALWART_MASTER_PASSWORD=OLDTOKEN==\nSESSION_SECRET=sess-keep\n"
+	if err := os.WriteFile(bulwarkEnvFile, []byte(bwBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := mailAdminCredHandler(context.Background(), json.RawMessage(`{"action":"rotate"}`))
+	if err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	r := raw.(adminCredResponse)
+
+	got, _ := os.ReadFile(bulwarkEnvFile)
+	if !strings.Contains(string(got), "\nBULWARK_STALWART_MASTER_PASSWORD="+r.Password+"\n") {
+		t.Fatalf("webmail copy not updated to the new secret:\n%s", got)
+	}
+	if strings.Contains(string(got), "OLDTOKEN==") {
+		t.Fatalf("webmail copy still holds the old secret:\n%s", got)
+	}
+	for _, keep := range []string{"# webmail", "BULWARK_JWT_AUTH_SECRET=jwt-keep", "BULWARK_STALWART_MASTER_USER=admin", "SESSION_SECRET=sess-keep"} {
+		if !strings.Contains(string(got), keep) {
+			t.Fatalf("webmail env dropped %q:\n%s", keep, got)
+		}
+	}
+	if fi, _ := os.Stat(bulwarkEnvFile); fi.Mode().Perm() != 0o640 {
+		t.Fatalf("webmail env mode = %o, want 640", fi.Mode().Perm())
+	}
+	if !strings.Contains(strings.Join(*calls, ","), "try-restart:jabali-webmail") {
+		t.Fatalf("webmail not restarted after its secret changed: %v", *calls)
+	}
+}
+
+func TestMailAdminCred_RotateWithoutWebmail(t *testing.T) {
+	withAdminCredFixtures(t, "STALWART_RECOVERY_ADMIN=admin:OLDTOKEN==\n")
+	calls := stubRestarts(t)
+
+	if _, err := mailAdminCredHandler(context.Background(), json.RawMessage(`{"action":"rotate"}`)); err != nil {
+		t.Fatalf("rotate without webmail: %v", err)
+	}
+	if _, err := os.Stat(bulwarkEnvFile); !os.IsNotExist(err) {
+		t.Fatalf("rotate created a webmail env file on a host without webmail (stat err %v)", err)
+	}
+	if strings.Contains(strings.Join(*calls, ","), "jabali-webmail") {
+		t.Fatalf("webmail touched on a host without webmail: %v", *calls)
+	}
+}
+
+func TestMailAdminCred_RotateWebmailWithoutMasterKey(t *testing.T) {
+	withAdminCredFixtures(t, "STALWART_RECOVERY_ADMIN=admin:OLDTOKEN==\n")
+	calls := stubRestarts(t)
+	bwBody := "PORT=3000\nSESSION_SECRET=sess-keep\n"
+	if err := os.WriteFile(bulwarkEnvFile, []byte(bwBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := mailAdminCredHandler(context.Background(), json.RawMessage(`{"action":"rotate"}`)); err != nil {
+		t.Fatalf("rotate: %v", err)
+	}
+	if got, _ := os.ReadFile(bulwarkEnvFile); string(got) != bwBody {
+		t.Fatalf("webmail env without the master key was changed:\n%s", got)
+	}
+	if strings.Contains(strings.Join(*calls, ","), "jabali-webmail") {
+		t.Fatalf("webmail restarted although its env did not change: %v", *calls)
+	}
 }
 
 func TestMailAdminCred_Reveal(t *testing.T) {
@@ -90,6 +166,10 @@ func TestMailAdminCred_RotateRollbackOnVerifyFail(t *testing.T) {
 	envBody := "STALWART_RECOVERY_ADMIN=admin:OLDTOKEN==\n"
 	tokenPath, envPath := withAdminCredFixtures(t, envBody)
 	calls := stubRestarts(t)
+	bwBody := "BULWARK_STALWART_MASTER_PASSWORD=OLDTOKEN==\n"
+	if err := os.WriteFile(bulwarkEnvFile, []byte(bwBody), 0o640); err != nil {
+		t.Fatal(err)
+	}
 	// verify fails -> handler must revert env + leave token file untouched.
 	verifyStalwartAuthFunc = func(_ context.Context, _, _ string) bool { return false }
 
@@ -110,6 +190,13 @@ func TestMailAdminCred_RotateRollbackOnVerifyFail(t *testing.T) {
 	joined := strings.Join(*calls, ",")
 	if strings.Count(joined, "restart:jabali-stalwart") != 2 || strings.Contains(joined, "schedule:jabali-panel") {
 		t.Fatalf("unexpected restart sequence: %v", *calls)
+	}
+	// webmail keeps the old, still-valid secret
+	if got, _ := os.ReadFile(bulwarkEnvFile); string(got) != bwBody {
+		t.Fatalf("webmail env changed although the rotate was reverted:\n%s", got)
+	}
+	if strings.Contains(joined, "jabali-webmail") {
+		t.Fatalf("webmail restarted although the rotate was reverted: %v", *calls)
 	}
 }
 

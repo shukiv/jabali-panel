@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -23,8 +24,10 @@ import (
 // per-call, and panel-api caches the env value at boot. So a rotate must:
 //   1. write a new token to /etc/jabali-panel/stalwart-admin.token,
 //   2. rewrite the STALWART_RECOVERY_ADMIN line in stalwart.env,
-//   3. restart jabali-stalwart so it accepts the new password, and
-//   4. restart jabali-panel so it refreshes its boot-cached copy.
+//   3. restart jabali-stalwart so it accepts the new password,
+//   4. update webmail's copy (BULWARK_STALWART_MASTER_PASSWORD in
+//      bulwark.env) and restart webmail if it runs, and
+//   5. restart jabali-panel so it refreshes its boot-cached copy.
 //
 // The jabali-panel restart is scheduled a few seconds out (systemd-run) so the
 // in-flight panel-api request that triggered this verb can return the new
@@ -37,9 +40,17 @@ import (
 var (
 	stalwartAdminTokenFile = "/etc/jabali-panel/stalwart-admin.token"
 	stalwartEnvFile        = "/etc/jabali-panel/stalwart.env"
+	// bulwarkEnvFile holds webmail's copy of the same secret: webmail's
+	// "log in as this user" signs in to Stalwart as this admin, and
+	// install.sh (_install_bulwark_impersonate_secrets) copies the token
+	// into it as BULWARK_STALWART_MASTER_PASSWORD.
+	bulwarkEnvFile = "/etc/jabali-panel/bulwark.env"
 )
 
-const stalwartRecoveryAdminKey = "STALWART_RECOVERY_ADMIN="
+const (
+	stalwartRecoveryAdminKey = "STALWART_RECOVERY_ADMIN="
+	bulwarkMasterPasswordKey = "BULWARK_STALWART_MASTER_PASSWORD="
+)
 
 // restartServiceFunc / scheduleRestartFunc are vars so tests don't shell out.
 var (
@@ -47,6 +58,16 @@ var (
 		out, err := execCommandContext(ctx, "systemctl", "restart", unit).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("systemctl restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))
+		}
+		return nil
+	}
+	// tryRestartServiceFunc restarts a unit only when it is running
+	// (`systemctl try-restart`), so a rotate never starts webmail on a host
+	// where it is off.
+	tryRestartServiceFunc = func(ctx context.Context, unit string) error {
+		out, err := execCommandContext(ctx, "systemctl", "try-restart", unit).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("systemctl try-restart %s: %v: %s", unit, err, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}
@@ -171,6 +192,17 @@ func mailAdminCredHandler(ctx context.Context, params json.RawMessage) (any, err
 			rollback()
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: werr.Error()}
 		}
+		// Webmail's copy of the same secret. Left alone, "log in as this
+		// user" fails until the next `jabali update` re-syncs it. Not fatal:
+		// the rotation has succeeded, and the old secret is dead either way.
+		if changed, berr := replaceEnvValue(bulwarkEnvFile, bulwarkMasterPasswordKey, newTok); berr != nil {
+			slog.Warn("mail.admin_cred rotate: webmail's copy of the Stalwart admin secret was not updated; the next `jabali update` re-syncs it",
+				"file", bulwarkEnvFile, "error", berr)
+		} else if changed {
+			if rerr := tryRestartServiceFunc(ctx, "jabali-webmail"); rerr != nil {
+				slog.Warn("mail.admin_cred rotate: webmail restart failed; it uses the new secret at its next restart", "error", rerr)
+			}
+		}
 		// panel-api caches the env value at boot — bounce it shortly AFTER we
 		// return, so this response (carrying the new password) isn't lost.
 		// Non-fatal if scheduling fails: panel-api keeps the stale cred until
@@ -271,6 +303,37 @@ func rewriteRecoveryAdmin(path, user, tok string) error {
 		_ = os.Chown(path, uid, gid)
 	}
 	return nil
+}
+
+// replaceEnvValue sets key (which ends in "=") to value in a KEY=VALUE env
+// file, keeping every other line, the owner and mode 0640. It reports
+// whether the file changed: a missing file or a file without the key is left
+// as it is (no webmail on this host, or webmail not yet wired for "log in as
+// this user").
+func replaceEnvValue(path, key, value string) (bool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // operator-owned path; 0640 on disk
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	lines := strings.Split(string(data), "\n")
+	found := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), key) {
+			lines[i] = key + value
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, nil
+	}
+	if err := writeFilePreservingOwner(path, []byte(strings.Join(lines, "\n"))); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func init() {
