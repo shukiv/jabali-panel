@@ -10,6 +10,11 @@
 # parsed, and it never captured accountName (the user-enumeration scenario
 # counts distinct account names).
 #
+# The client address (what every scenario bans) must come only from where
+# Stalwart puts it, never from a quoted value a client chose (login name, EHLO
+# domain, sender address): with such values shaped like extra keys, the line
+# keeps the real address or is dropped.
+#
 # This runs the parser's node tree over real line shapes with a small grok
 # evaluator (Python regexes for the grok macros the parser uses). The tree was
 # also checked with `cscli explain` on a test box, on 0.16.27 and 1.0.2 lines.
@@ -43,12 +48,20 @@ def collect_syntax(node):
         collect_syntax(c)
 
 
-def compile_grok(p):
+def expand(p, depth=0):
+    # Macros may use other macros (STALWART_FRONT_IP holds %{IP:ip_front}).
+    if depth > 10:
+        raise ValueError("grok macro nesting too deep")
+
     def sub(m):
         name, field = m.group(1), m.group(2)
-        body = MACROS[name]
+        body = expand(MACROS[name], depth + 1)
         return "(?P<%s>%s)" % (field, body) if field else "(?:%s)" % body
-    return re.compile(re.sub(r"%\{(\w+)(?::(\w+))?\}", sub, p))
+    return re.sub(r"%\{(\w+)(?::(\w+))?\}", sub, p)
+
+
+def compile_grok(p):
+    return re.compile(expand(p))
 
 
 def run(node, line, parsed):
@@ -100,12 +113,53 @@ CASES = [
     # A line without a client address is dropped: every scenario groups by it.
     ("delivery line without a client address",
      '2026-11-03T00:26:26Z DEBUG Delivery completed (delivery.completed) queueId = 1, queueName = "local"', None),
+    # Client-chosen values shaped like Stalwart's own keys.
+    ("0.16 auth failure, login name carrying a second address",
+     V016.replace('accountName = "nobody-drill@mx.example.com"',
+                  'accountName = "q", remoteIp = 192.0.2.99, z = "w@mx.example.com"'),
+     {"event": "auth.failed", "remoteIp": "203.0.113.5"}),
+    ("1.0 auth failure, login name carrying an address and an id",
+     V10.replace('accountName = "nobody-drill@mx.example.com"',
+                 'accountName = "q", remoteIp = 192.0.2.99, id = "ZZ1"'),
+     {"event": "auth.failed", "remoteIp": "203.0.113.6"}),
+    ("EHLO domain carrying an address and an id at the end of the line",
+     '2026-11-03T00:30:00Z DEBUG Invalid EHLO (smtp.invalid-ehlo) listenerId = "smtp-25", localPort = 25, '
+     'remoteIp = 203.0.113.7, remotePort = 5555, domain = "x", remoteIp = 192.0.2.66, id = "A"',
+     {"event": "smtp.invalid-ehlo", "remoteIp": "203.0.113.7"}),
+    ("MAIL FROM carrying a whole auth-failure header",
+     '2026-11-03T01:10:00Z DEBUG Delivery completed (delivery.completed) queueId = 338450106294468608, '
+     'queueName = "local", from = "x (auth.failed) listenerId = "imaps", localPort = 993, remoteIp = 192.0.2.66, '
+     'remotePort = 1, y"@evil.example", to = ["postmaster@mx.example.com"], size = 112, total = 1, elapsed = 0ms', None),
+    ("line ending in client text shaped like the auth-failure tail",
+     '2026-11-03T00:26:26Z DEBUG Delivery completed (delivery.completed) queueId = 1, from = "a", '
+     'remoteIp = 192.0.2.66, id = "B"', None),
 ]
+
+PICK = re.compile(r'^evt\.Parsed\.(\w+) != "" \? evt\.Parsed\.\1 : evt\.Parsed\.(\w+)$')
+COPY = re.compile(r'^evt\.Parsed\.(\w+)$')
+
+
+def apply_parsed_statics(parsed):
+    """The parser's `parsed:` statics, in order, for the two expression forms
+    it uses: `evt.Parsed.a != "" ? evt.Parsed.a : evt.Parsed.b` and
+    `evt.Parsed.a`. A missing field reads as "", as in CrowdSec."""
+    for s in doc.get("statics") or []:
+        if not s.get("parsed"):
+            continue
+        e = (s.get("expression") or "").strip()
+        m = PICK.match(e)
+        if m:
+            parsed[s["parsed"]] = parsed.get(m.group(1)) or parsed.get(m.group(2), "")
+        elif COPY.match(e):
+            parsed[s["parsed"]] = parsed.get(COPY.match(e).group(1), "")
+
 
 fail = []
 for label, line, want in CASES:
     parsed = {}
     ok = run(doc, line, parsed)
+    if ok:
+        apply_parsed_statics(parsed)
     if want is None:
         if ok:
             fail.append("%s: parsed, want dropped (%r)" % (label, parsed))
@@ -132,11 +186,30 @@ def inner(node):
 
 inner(doc)
 
-# The scenarios key on these.
-statics = {s.get("meta") or s.get("parsed"): s.get("expression") for s in doc.get("statics") or []}
-for meta, expr in (("source_ip", "evt.Parsed.remoteIp"), ("account_name", "evt.Parsed.accountName")):
+# The scenarios key on these. The two merges come first: the statics after
+# them read the merged values.
+st = doc.get("statics") or []
+merges = [(s.get("parsed"), s.get("expression")) for s in st[:2]]
+want_merges = [("event", 'evt.Parsed.event != "" ? evt.Parsed.event : evt.Parsed.event_tail'),
+               ("remoteIp", 'evt.Parsed.ip_front != "" ? evt.Parsed.ip_front : evt.Parsed.ip_tail')]
+if merges != want_merges:
+    fail.append("first two statics are %r, want %r" % (merges, want_merges))
+statics = {s.get("meta") or s.get("parsed"): s.get("expression") for s in st}
+for meta, expr in (("source_ip", "evt.Parsed.remoteIp"), ("account_name", "evt.Parsed.accountName"),
+                   ("log_type", "evt.Parsed.event")):
     if statics.get(meta) != expr:
         fail.append("static %s is %r, want %r" % (meta, statics.get(meta), expr))
+# Only the root's own pattern may set the address: a child grok capturing it
+# could read it out of client text.
+def no_child_ip(node):
+    for c in node.get("nodes") or []:
+        p = (c.get("grok") or {}).get("pattern", "")
+        if re.search(r"%\{IP:", p) or "remoteIp" in re.findall(r"%\{\w+:(\w+)\}", p):
+            fail.append("a child node captures the client address: %s" % p)
+        no_child_ip(c)
+
+
+no_child_ip(doc)
 
 for f in fail:
     print("FAIL: " + f)

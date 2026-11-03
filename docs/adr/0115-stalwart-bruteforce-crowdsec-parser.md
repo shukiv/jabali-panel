@@ -223,9 +223,20 @@ the feed without any error:
   install and update.
 - **Field order.** Stalwart does not keep the order of the fields after
   `(event)`, and 1.0 moves `remoteIp` to the end of an auth failure. The
-  parser now reads each field on its own, so the same parser works on
-  0.16 and 1.0. It also captures `accountName`, `details` and `path`,
-  which the user-enumeration and HTTP-scan scenarios read. Checked with
-  `cscli explain` on 0.16.27 and 1.0.2 lines and with a live failed
-  IMAP login on a 0.16.27 box; regression test
+  client address, which every scenario bans, is read only from a fixed
+  position Stalwart writes before any client text: right after
+  `listenerId, localPort` at the start of the list, or, for
+  `auth.failed`, at the end of the line before `id`. The header is
+  pinned so the event name is always Stalwart's. Quoted values can hold
+  any client text, so they never decide where a key is; a line without
+  the address at a fixed position is dropped. The other fields are read
+  one by one, and `accountName`, `details` and `path` are now captured
+  (the user-enumeration and HTTP-scan scenarios read them). Checked with
+  `cscli explain` on 0.16.27 and 1.0.2 lines, on 2000 real log lines,
+  and with a live failed IMAP login on a 0.16.27 box; regression test
   `install/tests/test_crowdsec_stalwart_parser.sh`.
+- **Open for the 1.0 switch:** the end-of-line position is safe only
+  while Stalwart writes a newline inside a value as `\n` (seen on
+  0.16.27). The 1.0 drill checks this before the switch. `auth.error`
+  and `auth.too-many-attempts` count only when 1.0 writes the address at
+  the start; their 1.0 shape is checked in the same drill.

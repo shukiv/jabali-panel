@@ -27,14 +27,18 @@ rather than pin-and-hope.
   (`smtp-25`, `smtp-submissions-465`, `smtp-submission-587`, `imaps`,
   `internal-loopback`) instead of upstream's sample names (`smtp`,
   `submission`, `submissions`).
-- Fields after `(event)` are read one by one, in any order (2026-11-03).
-  Upstream's single pattern wants `localPort, remoteIp, remotePort` in
-  that order; Stalwart 1.0 puts `remoteIp` near the end of an auth
-  failure, so none parsed. The root grok now splits the line into header
-  and key = value list and requires `remoteIp` in it; one wrapper node
-  holds a node per field. `accountName`, `details` and `path` are now
-  captured (the user-enumeration and HTTP-scan scenarios read them; the
-  old pattern never set them). Regression test:
+- Works on Stalwart 0.16 and 1.0 (2026-11-03). Upstream's single
+  pattern wants `localPort, remoteIp, remotePort` in that order;
+  Stalwart 1.0 puts `remoteIp` at the end of an auth failure, so none
+  parsed. The root pattern now pins the header (the event name is
+  Stalwart's) and reads the client address only from a fixed position:
+  right after `listenerId, localPort` at the start of the list, or, for
+  `auth.failed`, at the end of the line before `id`. A line without the
+  address at one of those places is dropped. Quoted values can hold any
+  client text, so they never decide where a key is. The other fields are
+  read one by one by child nodes; `accountName`, `details` and `path` are
+  now captured (the user-enumeration and HTTP-scan scenarios read them;
+  the old pattern never set them). Regression test:
   `install/tests/test_crowdsec_stalwart_parser.sh`.
 
 ### Acquis (`acquis.d/jabali-stalwart.yaml`)
