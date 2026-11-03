@@ -14862,6 +14862,80 @@ PY
   esac
 }
 
+# converge_stalwart_delivery_tracer_level — keeps the delivery Log tracer
+# (prefix "delivery", the file Mail > Logs and the per-domain Sent counts
+# read) at debug. Stalwart 1.0 made delivery.completed a debug event, so a
+# tracer at info drops every "delivered" row there. Its include-only event list
+# keeps the file to its four events at any level: at debug, 0.16.27 wrote the
+# same lines per message as at info (checked on the test box, 2026-11-03).
+#
+# The apply plan creates the tracer on a fresh install and the agent creates
+# it when Mail > Logs is first opened (ensureDeliveryTracer); this raises the
+# level on every install and update, so mail is logged before anyone opens the
+# page. Debug and trace are both left alone. A box without the tracer is left
+# to those two. Takes effect at the Stalwart restart that
+# _install_stalwart_apply_plan does right after the convergers.
+# Returns 1 when it could not converge.
+converge_stalwart_delivery_tracer_level() {
+  local jmap_port="${1:-8446}"
+  local admin_token="${2:-}"
+  local cli="${JABALI_STALWART_CLI:-/usr/local/bin/stalwart-cli}"
+  if [[ -z "$admin_token" ]]; then
+    admin_token="$(cat /etc/jabali-panel/stalwart-admin.token 2>/dev/null || true)"
+  fi
+  if [[ -z "$admin_token" ]]; then
+    _warn "Stalwart admin token missing — skipping the delivery log level"
+    return 1
+  fi
+
+  _log "converging the Stalwart delivery log level (debug)"
+  local out rc=0
+  out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
+    STALWART_USER="admin" \
+    STALWART_PASSWORD="$admin_token" \
+    python3 - "$cli" 2>&1 <<'PY'
+import json, subprocess, sys
+
+cli = sys.argv[1]
+OK_LEVELS = ("debug", "trace")
+
+
+def cli_run(*args, payload=None):
+    r = subprocess.run([cli, *args], input=None if payload is None else json.dumps(payload),
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError("stalwart-cli %s failed: %s" % (" ".join(args[:2]), (r.stderr or r.stdout).strip()[:300]))
+    return r.stdout
+
+
+try:
+    rows = [json.loads(l) for l in cli_run("query", "Tracer", "--json", "--fields", "@type,prefix,level").splitlines() if l.strip()]
+    mine = [r for r in rows if r.get("@type") == "Log" and r.get("prefix") == "delivery"]
+    if not mine:
+        print("ABSENT")
+    else:
+        low = [r for r in mine if r.get("level") not in OK_LEVELS]
+        for r in low:
+            cli_run("update", "Tracer", r["id"], "--stdin", payload={"level": "debug"})
+        print("CHANGED" if low else "UNCHANGED")
+except Exception as e:  # noqa: BLE001 - report any failure to the shell
+    print("ERROR %s" % e)
+    sys.exit(1)
+PY
+  )" || rc=$?
+  case "$rc:$out" in
+    0:UNCHANGED*)
+      _ok "Stalwart delivery log already at debug" ;;
+    0:ABSENT*)
+      _ok "Stalwart delivery log not set up yet — the agent creates it at debug when Mail > Logs is opened" ;;
+    0:CHANGED*)
+      _ok "Stalwart delivery log raised to debug; takes effect at the Stalwart restart" ;;
+    *)
+      _warn "Stalwart delivery log level not converged: ${out}"
+      return 1 ;;
+  esac
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -15028,6 +15102,8 @@ _install_stalwart_apply_plan() {
   # Stalwart's events on stdout at debug, for CrowdSec. Needs the restart at
   # the end of this function.
   converge_stalwart_stdout_tracer "$jmap_port" "$admin_token" || true
+  # The delivery log at debug: Stalwart 1.0 logs delivery.completed at debug.
+  converge_stalwart_delivery_tracer_level "$jmap_port" "$admin_token" || true
 
   # SpamSettings convergence — same pattern as the Directory query-field
   # convergence above. The base apply-plan's `update x:SpamSettings`
