@@ -1,0 +1,10 @@
+# Stalwart Mail Server v0.16.27 SHA-256 checksum for stalwart-x86_64-unknown-linux-gnu.tar.gz
+# Source: https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27
+# Captured 2026-11-02 from the GitHub release artifact; matches the digest
+# GitHub publishes for the asset.
+#
+# STALWART_SOURCE_VERSION in install.sh: the 0.16 release Stalwart's migration
+# tool requires as its source. A 0.16 host on an older release is brought to
+# it (a drop-in binary replacement within 0.16.x) before its data is copied to
+# 1.0. Frozen: there is no later 0.16 to move to. See ADR-0179.
+3d4548053e7130cdc6288134e28aecc5004f22549cc52a1dbda0ca48ff0b301a  stalwart-x86_64-unknown-linux-gnu.tar.gz

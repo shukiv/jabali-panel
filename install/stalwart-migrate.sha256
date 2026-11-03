@@ -1,0 +1,13 @@
+# stalwart-migrate v1.0.5 SHA-256 checksum for stalwart-migrate-x86_64-unknown-linux-gnu.tar.xz
+# Source: https://github.com/stalwartlabs/stalwart-migrate/releases/tag/v1.0.5
+# Captured 2026-11-03 from the GitHub release artifact; matches the digest
+# GitHub publishes for the asset.
+#
+# Stalwart's tool that copies a 0.16 store into a new 1.0 store
+# (migrate_stalwart_to_v1 in install.sh, STALWART_MIGRATE_VERSION). The
+# standard build: upstream names it the one for Stalwart's official server
+# binaries ("-oss" is for servers built without the enterprise feature).
+#
+# To capture on a version bump:
+#   scripts/deps-check.sh --refresh-sha STALWART_MIGRATE_VERSION
+c2e19c16c689c9dbec10cda3912a041196852997548e79d2d0924d4be9e5d9a4  stalwart-migrate-x86_64-unknown-linux-gnu.tar.xz
