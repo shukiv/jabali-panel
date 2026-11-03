@@ -6,7 +6,7 @@ Admin-side view of the per-subdirectory Basic Auth feature. User-facing copy liv
 
 Admin: `/jabali-admin/domains/edit/:id` → **Security** tab → **Directory Privacy**. The form is the same as the tenant view.
 
-Tenant: `/jabali-panel/domains/edit/:id` → **Security** tab → **Directory Privacy**.
+Tenant: **Web Domains** → a domain → **Directory Privacy** tab (`/jabali-panel/domains/:id/directory-privacy`).
 
 ## What ships on disk
 

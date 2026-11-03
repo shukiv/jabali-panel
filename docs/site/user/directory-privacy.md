@@ -1,6 +1,6 @@
 # Directory Privacy
 
-Domains → Edit → **Security** tab → **Directory Privacy**. Per-subdirectory HTTP Basic Auth (the cPanel "Directory Privacy" equivalent).
+**Web Domains** → a domain → **Directory Privacy** tab. Per-subdirectory HTTP Basic Auth (the cPanel "Directory Privacy" equivalent). Admins find the same section under Domains → Edit → **Security** tab.
 
 ## What it does
 
@@ -10,15 +10,17 @@ Credentials are hashed with bcrypt and never read back. Multiple credential pair
 
 ## Adding a rule
 
-1. Open Domains → pick the domain → **Security** tab → **Directory Privacy** section.
-2. Click **Add rule**.
+1. Open **Web Domains** → pick the domain → **Directory Privacy** tab.
+2. Click **Add protected directory**, above the list.
 3. **Path** — relative to the site docroot.
    - `/` protects the whole site.
    - `/staging/` protects only the `staging` subdirectory.
-   - Use the **folder picker** to browse the docroot tree instead of typing.
+   - Click **Browse** to pick a folder from the docroot tree instead of typing.
 4. **Authentication name** — the realm string shown in the browser popup ("Sign in to <name>").
-5. **Credentials** — at least one `username` + `password` pair. Add more pairs to allow more accounts under the same realm.
-6. **Save**.
+5. **Username** and **Password** — the first account allowed in. The password needs at least 8 characters.
+6. Click **Create**.
+
+To allow more accounts under the same realm, expand the rule's row in the list and click **Add user**.
 
 The reconciler applies the change within seconds.
 
