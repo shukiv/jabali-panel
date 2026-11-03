@@ -206,3 +206,26 @@ Files this ADR commits us to creating in the follow-up PR:
    ban in cscli decisions within ~6s.
 5. Smoke-test the disable: confirm Stalwart's `auto-ban` panel in
    its admin UI shows "0/1d" for all four categories post-install.
+
+## Amendment 2026-11-03 — field order and the tracer on older boxes
+
+What shipped differs from the plan above in two places, and both broke
+the feed without any error:
+
+- **The tracer.** The feed is a Stdout tracer at debug level (journal,
+  `acquis.d/jabali-stalwart.yaml`), not a Log tracer at warn: Stalwart
+  0.16's Log tracer wrote nothing, and auth failures are debug events.
+  The apply plan creates the tracer, but only on a fresh install, and
+  the entry was added on 2026-06-03 (#178). Boxes installed before that
+  never had it, so CrowdSec saw no Stalwart line on them.
+  `converge_stalwart_stdout_tracer` in install.sh now creates it, or puts
+  back `enable`, `level` (debug or trace) and `ansi = false`, on every
+  install and update.
+- **Field order.** Stalwart does not keep the order of the fields after
+  `(event)`, and 1.0 moves `remoteIp` to the end of an auth failure. The
+  parser now reads each field on its own, so the same parser works on
+  0.16 and 1.0. It also captures `accountName`, `details` and `path`,
+  which the user-enumeration and HTTP-scan scenarios read. Checked with
+  `cscli explain` on 0.16.27 and 1.0.2 lines and with a live failed
+  IMAP login on a 0.16.27 box; regression test
+  `install/tests/test_crowdsec_stalwart_parser.sh`.

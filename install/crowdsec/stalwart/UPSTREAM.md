@@ -4,7 +4,8 @@ Source: <https://github.com/bu5hm4nn/crowdsec-stalwart>
 License: MIT (see `LICENSE`)
 Forked: 2026-06-03
 Forked-at-commit: HEAD of `main` as of 2026-06-03 (upstream had 2 commits total, no releases)
-Tested-against: Stalwart 0.16.6, CrowdSec 1.7.8
+Tested-against: Stalwart 0.16.6, CrowdSec 1.7.8; parser re-checked on
+Stalwart 0.16.27 and 1.0.2 lines with `cscli explain` (2026-11-03)
 
 ## Why we vendor
 
@@ -26,6 +27,15 @@ rather than pin-and-hope.
   (`smtp-25`, `smtp-submissions-465`, `smtp-submission-587`, `imaps`,
   `internal-loopback`) instead of upstream's sample names (`smtp`,
   `submission`, `submissions`).
+- Fields after `(event)` are read one by one, in any order (2026-11-03).
+  Upstream's single pattern wants `localPort, remoteIp, remotePort` in
+  that order; Stalwart 1.0 puts `remoteIp` near the end of an auth
+  failure, so none parsed. The root grok now splits the line into header
+  and key = value list and requires `remoteIp` in it; one wrapper node
+  holds a node per field. `accountName`, `details` and `path` are now
+  captured (the user-enumeration and HTTP-scan scenarios read them; the
+  old pattern never set them). Regression test:
+  `install/tests/test_crowdsec_stalwart_parser.sh`.
 
 ### Acquis (`acquis.d/jabali-stalwart.yaml`)
 - Switched from `source: file` + `filenames: /logs/stalwart/stalwart.log.*`
@@ -34,6 +44,10 @@ rather than pin-and-hope.
   silently no-ops even with AppArmor widened; Stdout + journal is the
   only ingest path we've confirmed actually emits structured lines
   (live-verified on puzzle 2026-06-03).
+- The Stdout tracer that feeds the journal is kept in place by
+  `converge_stalwart_stdout_tracer` in install.sh on every install and
+  update (2026-11-03). The apply plan only creates it on a fresh install,
+  so boxes installed before 2026-06-03 never had it.
 
 ### Scenarios (`scenarios/jabali-stalwart-*.yaml`)
 - Names prefixed with `jabali/` (e.g. `jabali/stalwart-auth-bf`)

@@ -17,22 +17,74 @@
 #     its Stalwart apply plan (smtp-25, smtp-submissions-465,
 #     smtp-submission-587, imaps, internal-loopback) — not the bu5hm4nn
 #     upstream sample names ("smtp", "submission", "submissions").
+#   - The fields after `(event)` are read one by one, wherever they sit.
+#     Stalwart does not keep their order: 0.16 writes
+#       listenerId, localPort, remoteIp, remotePort, details, accountName, ...
+#     and 1.0 writes an auth failure as
+#       listenerId, localPort, remotePort, reason, accountName, causedBy, remoteIp, ...
+#     The old single pattern wanted `localPort, remoteIp, remotePort` in that
+#     order, so on 1.0 no auth failure parsed and no mail brute-force ban
+#     fired. It also never captured accountName, so the user-enumeration
+#     scenario (distinct on account_name) saw one empty name.
+#
+# How the tree runs: the root grok splits the line into the header and the
+# key = value list (`kv`). Its one child is a wrapper whose own children each
+# pull one field out of `kv`. A node set to `onsuccess: next_stage` stops at
+# its first successful child, so the root (which must stay `next_stage`: with
+# `continue` the event never leaves s01-parse) has a single child, and the
+# wrapper keeps the default `continue` so every field node runs.
+#
+# The root only matches a line whose list holds `remoteIp = `. Lines without a
+# client address (delivery, queue, store events) are dropped here, as they
+# were when the single pattern required remoteIp: the Stdout tracer runs at
+# debug, so most lines are of that kind. A filter on a child node would not do
+# it: a filtered-out child leaves its parent successful.
 
 name: jabali/stalwart-logs
 description: "Parse jabali-stalwart structured logs from journalctl"
 
 filter: "evt.Line.Labels.type == 'stalwart'"
 onsuccess: next_stage
+pattern_syntax:
+  STALWART_KV_WITH_IP: '.*\bremoteIp = .*'
+grok:
+  # Optional syslog-style prefix: journal source (jabali-stalwart
+  # acquis -> systemd journalctl) hands lines like
+  #   `Jun 03 23:29:26 puzzle.example stalwart[1234]: <message>`
+  # to the parser; file-source / cscli explain hand the structured
+  # message directly. The `(?:[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+:\s+)?`
+  # head eats the optional prefix so the regex matches both shapes.
+  pattern: '^(?:[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+:\s+)?%{TIMESTAMP_ISO8601:timestamp} %{LOGLEVEL:log_level} %{DATA:message} \(%{DATA:event}\) %{STALWART_KV_WITH_IP:kv}$'
+  apply_on: Line.Raw
 nodes:
-  - grok:
-      # Optional syslog-style prefix: journal source (jabali-stalwart
-      # acquis -> systemd journalctl) hands lines like
-      #   `Jun 03 23:29:26 puzzle.example stalwart[1234]: <message>`
-      # to the parser; file-source / cscli explain hand the structured
-      # message directly. The `(?:[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+:\s+)?`
-      # head eats the optional prefix so the regex matches both shapes.
-      pattern: '^(?:[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+:\s+)?%{TIMESTAMP_ISO8601:timestamp} %{LOGLEVEL:log_level} %{DATA:message} \(%{DATA:event}\) listenerId = "?%{DATA:listenerId}"?, localPort = %{INT:localPort}, remoteIp = "?%{IP:remoteIp}"?, remotePort = %{INT:remotePort}(?:, %{GREEDYDATA:extra})?$'
-      apply_on: Line.Raw
+  - nodes:
+      - grok:
+          pattern: '(?:^|, )listenerId = "?%{DATA:listenerId}"?(?:,|$)'
+          apply_on: kv
+      - grok:
+          pattern: '(?:^|, )localPort = %{INT:localPort}(?:,|$)'
+          apply_on: kv
+      - grok:
+          pattern: '(?:^|, )remotePort = %{INT:remotePort}(?:,|$)'
+          apply_on: kv
+      - grok:
+          pattern: '(?:^|, )accountName = "%{DATA:accountName}"(?:,|$)'
+          apply_on: kv
+      - grok:
+          pattern: '(?:^|, )domain = "%{DATA:domain}"(?:,|$)'
+          apply_on: kv
+      # http-scan matches on details and path.
+      - grok:
+          pattern: '(?:^|, )details = "%{DATA:details}"(?:,|$)'
+          apply_on: kv
+      - grok:
+          pattern: '(?:^|, )path = "%{DATA:path}"(?:,|$)'
+          apply_on: kv
+      # remoteIp is the field every scenario groups by. 0.16 writes it twice
+      # on an auth failure (same address both times); the first one is taken.
+      - grok:
+          pattern: '(?:^|, )remoteIp = "?%{IP:remoteIp}"?(?:,|$)'
+          apply_on: kv
 
 statics:
   - meta: service
