@@ -47,7 +47,7 @@ fn() { awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{$" {p=1} p {print} p && /^\}$/ {
 
 for f in _stalwart_refuse_downgrade _stalwart_store_major _stalwart_mark_store_v1 \
          _stalwart_next_step _stalwart_installed_version _stalwart_restart_if_active \
-         _install_stalwart_binary_step_for upgrade_stalwart_binary; do
+         _install_stalwart_binary_step_for _stalwart_migrate_status upgrade_stalwart_binary; do
   src=$(fn "$f")
   if [[ -z "$src" ]]; then
     echo "FAIL: $f() not found in install.sh"
@@ -77,7 +77,7 @@ _log() { :; }
 _ok() { :; }
 _warn() { printf '%s\n' "$*" >>"$tmp/warnings"; }
 _install_stalwart_binary() { printf '%s\n' "$1" >>"$tmp/installed"; }
-migrate_stalwart_to_v1() { printf 'migrate\n' >>"$tmp/installed"; }
+migrate_stalwart_to_v1() { printf 'migrate\n' >>"$tmp/installed"; return "${FAKE_MIGRATE_RC:-0}"; }
 systemctl() { return 1; }
 
 cat >"$tmp/stalwart.fake" <<'EOF'
@@ -160,6 +160,12 @@ if [[ -f "$tmp/stamp" ]]; then
   echo "FAIL: a 0.16 store was stamped as a 1.x store"
   fail=1
 fi
+
+# The update step's result: a migration skipped by its checks (2: it said why,
+# nothing changed) is not an update failure; a failed one (1) is.
+FAKE_MIGRATE_RC=2 check upgrade_stalwart_binary "$STALWART_SOURCE_VERSION" v0 migrate
+rc=0; FAKE_STALWART_VERSION="$STALWART_SOURCE_VERSION" FAKE_MIGRATE_RC=1 upgrade_stalwart_binary || rc=$?
+[[ "$rc" != 0 ]] || { echo "FAIL: a failed migration returned success from upgrade_stalwart_binary"; fail=1; }
 
 if ((fail)); then
   exit 1

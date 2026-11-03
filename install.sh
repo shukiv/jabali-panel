@@ -14144,12 +14144,22 @@ upgrade_stalwart_binary() {
       _log "upgrading Stalwart $installed -> $STALWART_SOURCE_VERSION, the release Stalwart's migration to $STALWART_VERSION starts from"
       _install_stalwart_binary "$STALWART_SOURCE_VERSION" "${REPO_DIR}/install/stalwart-0.16.sha256"
       _stalwart_restart_if_active "$STALWART_SOURCE_VERSION"
-      migrate_stalwart_to_v1 || return 1
+      _stalwart_migrate_status
       ;;
     migrate)
-      migrate_stalwart_to_v1 || return 1
+      _stalwart_migrate_status
       ;;
   esac
+}
+
+# _stalwart_migrate_status — runs migrate_stalwart_to_v1 and maps its result
+# for the update: 0 migrated; 2 skipped by a check (it said why, 0.16 keeps
+# serving, nothing changed), which is not an update failure; 1 failed.
+_stalwart_migrate_status() {
+  local rc=0
+  migrate_stalwart_to_v1 || rc=$?
+  (( rc == 0 || rc == 2 )) && return 0
+  return 1
 }
 
 # _install_stalwart_binary_step_for <installed version, "absent" or "unknown">
@@ -15661,6 +15671,8 @@ _fetch_stalwart_migrate() {
 #   6. Runs the Stalwart convergers (install_stalwart_apply) against 1.0.
 # The 0.16 store, binary and the tool's state stay for a rollback; see
 # docs/runbooks/stalwart-1.0-migration.md.
+# Returns 0 when migrated, 2 when a check in step 1 or 2 skipped it (nothing
+# changed), 1 when it failed.
 migrate_stalwart_to_v1() {
   (
     trap - ERR
@@ -15693,21 +15705,21 @@ sys.exit(0 if ok else 1)
 PY
   then
     _warn "Stalwart migration skipped: $STALWART_CONFIG does not name the RocksDB store at $store, the layout Jabali installs -- see docs/runbooks/stalwart-1.0-migration.md"
-    return 1
+    return 2
   fi
   if [[ -e "$old_store" || -e "$old_opt" ]]; then
     _warn "Stalwart migration skipped: $old_store or $old_opt is left from an earlier migration -- see docs/runbooks/stalwart-1.0-migration.md"
-    return 1
+    return 2
   fi
   # A completed final copy that was switched back: the tool refuses to write
   # into it again, and the failure needs a look before another try.
   if [[ -f "${state}/jabali-final-done" ]]; then
     _warn "Stalwart migration skipped: an earlier migration completed its copy and was switched back -- see docs/runbooks/stalwart-1.0-migration.md before trying again"
-    return 1
+    return 2
   fi
   if [[ -e "$new_store" && ! -d "$state" ]]; then
     _warn "Stalwart migration skipped: $new_store exists without the migration's state in $state -- move it away, then run 'jabali update' again"
-    return 1
+    return 2
   fi
   local used copied avail need
   used="$(du -sb "$store" 2>/dev/null | awk '{print $1}')"
@@ -15715,29 +15727,29 @@ PY
   avail="$(df -B1 --output=avail "$(dirname "$store")" 2>/dev/null | tail -n1 | tr -d ' ')"
   if ! [[ "$used" =~ ^[0-9]+$ && "$avail" =~ ^[0-9]+$ ]]; then
     _warn "Stalwart migration skipped: cannot measure $store or the free space beside it"
-    return 1
+    return 2
   fi
   [[ "$copied" =~ ^[0-9]+$ ]] || copied=0
   need=$(( used * 3 / 2 + 1073741824 - copied ))
   if (( avail < need )); then
     _warn "Stalwart migration skipped: it needs $(( need >> 20 )) MB free beside $store for the copy, $(( avail >> 20 )) MB are free. Stalwart stays on $STALWART_SOURCE_VERSION; free space, then run 'jabali update' again"
-    return 1
+    return 2
   fi
   local owner
   owner="$(id -u jabali-mail 2>/dev/null):$(id -g jabali-mail 2>/dev/null)"
   if ! [[ "$owner" =~ ^[0-9]+:[0-9]+$ ]]; then
     _warn "Stalwart migration skipped: no jabali-mail user"
-    return 1
+    return 2
   fi
 
   # --- 2. marker and lock --------------------------------------------------
   local lockfd
   if exec {lockfd}>/run/lock/jabali-stalwart-install.lock && command -v flock >/dev/null 2>&1; then
-    flock -w 600 "$lockfd" || { _warn "Stalwart migration skipped: another Stalwart install holds its lock"; return 1; }
+    flock -w 600 "$lockfd" || { _warn "Stalwart migration skipped: another Stalwart install holds its lock"; return 2; }
   fi
   if _installer_marker_held_by_other; then
     _warn "Stalwart migration skipped: another install run is in progress; the next 'jabali update' runs it"
-    return 1
+    return 2
   fi
   if [[ ! -f "$INSTALLER_MARKER" ]]; then
     mark_installer_running

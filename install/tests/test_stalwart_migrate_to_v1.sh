@@ -200,21 +200,21 @@ expect "1.0 slow: store" "$(store_is)" final
 
 # 9. A completed copy that was switched back is not retried.
 box; mkdir -p "$STALWART_MIGRATE_STATE"; : >"$STALWART_MIGRATE_STATE/jabali-final-done"
-expect "switched back before: rc" "$(run_migration)" 1
+expect "switched back before: rc (skipped)" "$(run_migration)" 2
 expect "switched back before: tool runs" "$(tool_runs)" 0
 untouched "switched back before"
 
 # 10-12. Checks that skip the migration before anything runs.
 box; mkdir -p "$STALWART_STORE_DIR-0.16"
-expect "left-over 0.16 copy: rc" "$(run_migration)" 1
+expect "left-over 0.16 copy: rc (skipped)" "$(run_migration)" 2
 expect "left-over 0.16 copy: tool runs" "$(tool_runs)" 0
 
 box; printf '{"@type":"PostgreSql","host":"db"}\n' >"$STALWART_CONFIG"
-expect "not the local RocksDB store: rc" "$(run_migration)" 1
+expect "not the local RocksDB store: rc (skipped)" "$(run_migration)" 2
 expect "not the local RocksDB store: tool runs" "$(tool_runs)" 0
 
 box; FAKE_AVAIL=1048576
-expect "no disk for the copy: rc" "$(run_migration)" 1
+expect "no disk for the copy: rc (skipped)" "$(run_migration)" 2
 expect "no disk for the copy: tool runs" "$(tool_runs)" 0
 grep -q 'MB free' "$T/msgs" || { echo "FAIL: no disk for the copy: no warning naming the space"; fail=1; }
 unset FAKE_AVAIL
@@ -224,7 +224,7 @@ box
 command sleep 30 & other=$!
 read -r -a sf <<<"$(sed 's/^.*) //' "/proc/$other/stat")"
 printf '%s %s\n' "$other" "${sf[19]}" >"$INSTALLER_MARKER"
-expect "marker held: rc" "$(run_migration)" 1
+expect "marker held: rc (skipped)" "$(run_migration)" 2
 expect "marker held: tool runs" "$(tool_runs)" 0
 expect "marker held: marker left to its owner" "$(cut -d' ' -f1 "$INSTALLER_MARKER" 2>/dev/null)" "$other"
 kill "$other" 2>/dev/null || true
