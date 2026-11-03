@@ -406,6 +406,18 @@ func deliveryTracerEvents() map[string]any {
 	}
 }
 
+// deliveryTracerLevel is the delivery tracer's level. Stalwart 1.0 made
+// delivery.completed a debug event, so a tracer at info drops every
+// "delivered" row there. The include-only event list keeps the log to those
+// four events at any level: at debug, 0.16.27 wrote the same lines per message
+// as at info (checked on the test box, 2026-11-03).
+const deliveryTracerLevel = "debug"
+
+// deliveryTracerLevelOK reports whether a tracer at level logs debug events.
+func deliveryTracerLevelOK(level string) bool {
+	return level == "debug" || level == "trace"
+}
+
 // deliveryTracerBackfillOnce bounds the GH #1416 event back-fill — which ends
 // in a settings reload — to a single attempt per agent process. Belt against a
 // tracer whose `events` can't be read back in the shape we expect: without it,
@@ -426,18 +438,21 @@ func ensureDeliveryTracer(ctx context.Context) error {
 			var t struct {
 				ID     string          `json:"id"`
 				Prefix string          `json:"prefix"`
+				Level  string          `json:"level"`
 				Events map[string]bool `json:"events"`
 			}
 			if json.Unmarshal(raw, &t) != nil || t.Prefix != "delivery" {
 				continue
 			}
-			// Already carries the authenticated-send event — nothing to do.
-			if t.Events["queue.authenticated-message-queued"] {
+			// Already carries the authenticated-send event at a level that logs
+			// every event it includes — nothing to do.
+			if t.Events["queue.authenticated-message-queued"] && deliveryTracerLevelOK(t.Level) {
 				return nil
 			}
 			// GH #1416: a tracer provisioned before authenticated sends were
-			// tracked is stranded by the old "already provisioned → return" path.
-			// Patch the event set in place (once per process — see the Once).
+			// tracked is stranded by the old "already provisioned → return" path;
+			// a tracer at info drops delivery.completed on Stalwart 1.0. Patch
+			// the event set and level in place (once per process — see the Once).
 			id := t.ID
 			if id == "" && i < len(qr.IDs) {
 				id = qr.IDs[i]
@@ -450,7 +465,7 @@ func ensureDeliveryTracer(ctx context.Context) error {
 		}
 	}
 	args := map[string]any{"create": map[string]any{"jabali-delivery-log": map[string]any{
-		"@type": "Log", "enable": true, "level": "info",
+		"@type": "Log", "enable": true, "level": deliveryTracerLevel,
 		"path": mailLogDir, "prefix": mailLogPrefix, "rotate": "daily",
 		"ansi": false, "multiline": false, "lossy": false,
 		"eventsPolicy": "include",
@@ -467,7 +482,8 @@ func ensureDeliveryTracer(ctx context.Context) error {
 }
 
 // patchDeliveryTracerEvents rewrites an existing delivery tracer's include-only
-// event set to the current desired set (GH #1416 back-fill) and reloads.
+// event set (GH #1416 back-fill) and level to the current desired ones and
+// reloads.
 func patchDeliveryTracerEvents(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("delivery tracer missing id, cannot patch events")
@@ -475,6 +491,7 @@ func patchDeliveryTracerEvents(ctx context.Context, id string) error {
 	upd := map[string]any{"update": map[string]any{id: map[string]any{
 		"eventsPolicy": "include",
 		"events":       deliveryTracerEvents(),
+		"level":        deliveryTracerLevel,
 	}}}
 	var res jmapSetResult
 	if err := jmapCall(ctx, "x:Tracer/set", upd, &res); err != nil {
