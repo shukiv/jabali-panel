@@ -15794,7 +15794,9 @@ PY
     return 1
   fi
   # The spam-filter rules file lives beside the binary (apply plan: file://).
-  [[ -d "${old_opt}/share" ]] && cp -a "${old_opt}/share" "${STALWART_OPT_DIR}/"
+  if [[ -d "${old_opt}/share" ]]; then
+    mkdir -p "${STALWART_OPT_DIR}/share" && cp -a "${old_opt}/share/." "${STALWART_OPT_DIR}/share/"
+  fi
   ln -sfn "$(find "$STALWART_OPT_DIR" -maxdepth 2 -type f -name stalwart | head -n1)" "$STALWART_BIN_LINK"
   _stalwart_mark_store_v1
   _STWM_PHASE=starting
