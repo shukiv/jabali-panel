@@ -25,7 +25,8 @@ import (
 //   - a live CA certificate (Let's Encrypt or a custom one) is kept until it
 //     expires;
 //   - a current self-signed certificate for the names is left alone, with
-//     no reload and no Stalwart restart;
+//     no reload and no Stalwart restart, unless the caller asks for a new
+//     key (new_key);
 //   - anything else (missing, expired, other names) is replaced by a
 //     self-signed certificate for the names, with its own key. The
 //     hostname certificate's key is never shared with Stalwart.
@@ -43,6 +44,9 @@ type sslPanelMailSelfSignParams struct {
 	// Names are the certificate's DNS names, the first its CommonName
 	// (panelcert.MailNames).
 	Names []string `json:"names"`
+	// NewKey replaces a current self-signed cert too, with a new key
+	// (`jabali panel-cert new-key mail`). A live CA cert is still kept.
+	NewKey bool `json:"new_key,omitempty"`
 }
 
 type sslPanelMailSelfSignResponse struct {
@@ -129,14 +133,14 @@ func sslPanelMailSelfSignHandler(ctx context.Context, params json.RawMessage) (a
 	if err != nil {
 		data = nil
 	}
-	switch v := panelcert.CheckNames(data, names[0], names, time.Now()); v.Action {
-	case panelcert.KeepCA:
+	switch v := panelcert.CheckNames(data, names[0], names, time.Now()); {
+	case v.Action == panelcert.KeepCA:
 		return sslPanelMailSelfSignResponse{
 			Reason:    "preserved: cert issued by " + v.Issuer,
 			CertPath:  panelMailSelfSignCertPath,
 			ExpiresAt: v.NotAfter.UTC().Format(time.RFC3339),
 		}, nil
-	case panelcert.UpToDate:
+	case v.Action == panelcert.UpToDate && !p.NewKey:
 		return sslPanelMailSelfSignResponse{
 			Reason:    v.Reason,
 			CertPath:  panelMailSelfSignCertPath,

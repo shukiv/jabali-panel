@@ -50,12 +50,18 @@ import (
 //     nothing else would ever replace it.
 //   - No-churn: when the existing self-signed cert already covers the FQDN
 //     (CN + the hostname and mail.<hostname> SANs) and is unexpired, do
-//     nothing — no regenerate, no nginx reload, no panel restart.
+//     nothing — no regenerate, no nginx reload, no panel restart. Unless
+//     the caller asks for a new key (new_key): then it is replaced too.
 //   - SAN set identical to install.sh:
 //     [hostname, mail.hostname, localhost, 127.0.0.1, <ip>].
 type sslPanelSelfSignParams struct {
 	Hostname string `json:"hostname"`
 	IP       string `json:"ip,omitempty"`
+	// NewKey replaces a current self-signed cert too, with a new key, for an
+	// operator whose old key may have been copied (`jabali panel-cert
+	// new-key`). A live CA cert is still kept: Let's Encrypt gives it a new
+	// key at each renewal.
+	NewKey bool `json:"new_key,omitempty"`
 }
 
 type sslPanelSelfSignResponse struct {
@@ -159,15 +165,15 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 	if err != nil {
 		data = nil
 	}
-	switch v := panelcert.Check(data, p.Hostname, time.Now()); v.Action {
-	case panelcert.KeepCA:
+	switch v := panelcert.Check(data, p.Hostname, time.Now()); {
+	case v.Action == panelcert.KeepCA:
 		return sslPanelSelfSignResponse{
 			Regenerated: false,
 			Reason:      "preserved: cert issued by " + v.Issuer,
 			CertPath:    panelSelfSignCertPath,
 			ExpiresAt:   v.NotAfter.UTC().Format(time.RFC3339),
 		}, nil
-	case panelcert.UpToDate:
+	case v.Action == panelcert.UpToDate && !p.NewKey:
 		return sslPanelSelfSignResponse{
 			Regenerated: false,
 			Reason:      v.Reason,
@@ -250,17 +256,47 @@ func generatePanelSelfSignedCert(cn string, dnsSANs []string, ipSANs []net.IP, c
 	if err := os.MkdirAll(filepath.Dir(certPath), 0o755); err != nil {
 		return time.Time{}, fmt.Errorf("ensure cert dir: %w", err)
 	}
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644); err != nil {
-		return time.Time{}, fmt.Errorf("write cert: %w", err)
-	}
 	keyDER, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("marshal key: %w", err)
 	}
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
-		return time.Time{}, fmt.Errorf("write key: %w", err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if err := swapInPanelCertPair(certPath, certPEM, keyPath, keyPEM); err != nil {
+		return time.Time{}, err
 	}
 	return notAfter, nil
+}
+
+// swapInPanelCertPair writes both files beside the live ones, then renames
+// them into place one right after the other. Writing in place left a reader
+// (an nginx reload, a panel start) a truncated file or the new cert next to
+// the old key for as long as the second write took; now the old pair stays
+// whole until both new files exist. The key is staged 0600: the caller sets
+// its final owner and mode.
+func swapInPanelCertPair(certPath string, certPEM []byte, keyPath string, keyPEM []byte) error {
+	certTmp, keyTmp := certPath+".new", keyPath+".new"
+	cleanup := func() { _ = os.Remove(certTmp); _ = os.Remove(keyTmp) }
+	// A leftover from an interrupted run could carry a looser mode, which
+	// WriteFile keeps on an existing file: start from nothing.
+	cleanup()
+	if err := os.WriteFile(keyTmp, keyPEM, 0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("write key: %w", err)
+	}
+	if err := os.WriteFile(certTmp, certPEM, 0o644); err != nil {
+		cleanup()
+		return fmt.Errorf("write cert: %w", err)
+	}
+	if err := os.Rename(keyTmp, keyPath); err != nil {
+		cleanup()
+		return fmt.Errorf("install key: %w", err)
+	}
+	if err := os.Rename(certTmp, certPath); err != nil {
+		cleanup()
+		return fmt.Errorf("install cert (the new key is in place; run the command again): %w", err)
+	}
+	return nil
 }
 
 // applyPanelKeyOwnership sets the key to 0640 root:www-data (best-effort).

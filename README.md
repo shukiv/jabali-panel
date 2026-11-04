@@ -437,7 +437,7 @@ jabali notification      broadcast|channels|dlq|events|inbox
 jabali nspawn            build|list|prune
 jabali package           create|delete|edit|list
 jabali page-template     get|list|reset|set
-jabali panel-cert        issue|status|toggle
+jabali panel-cert        issue|new-key|status|toggle
 jabali panel-primary     ensure
 jabali pdns              backfill|dnssec
 jabali per-user-egress   approve|deny|flip-mature|get|requests|set-policy|
