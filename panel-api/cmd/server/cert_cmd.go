@@ -163,9 +163,10 @@ func newPanelCertIssueCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "issue [hostname|mail]",
 		Short: "Request (re)issuance of a panel certificate on the next reconcile pass",
-		Long: "Flips the cert to pending_acme so the reconciler issues it on the next " +
-			"tick (≤60s). Requires use-le already enabled (run `toggle --le=true` first); " +
-			"routability + ACME stay owned by the reconciler.",
+		Long: "Queues the cert so the reconciler issues it on the next tick (≤60s). " +
+			"Requires Let's Encrypt enabled for the panel (run `toggle --le=true` first; " +
+			"the hostname cert's setting covers both certs); routability + ACME stay " +
+			"owned by the reconciler.",
 		Args:    cobra.MaximumNArgs(1),
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -180,17 +181,25 @@ func newPanelCertIssueCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load %s panel cert: %w", kind, err)
 			}
-			if !row.UseLE {
-				return fmt.Errorf("%s panel cert has Let's Encrypt disabled — run `jabali panel-cert toggle %s --le=true` first", kind, kind)
+			// The hostname row's use_le governs both certs (GH #2166): the
+			// toggle writes only that row, so the mail row's own flag can be
+			// stale either way.
+			hostRow := row
+			if kind == models.PanelCertKindMail {
+				if hostRow, err = repo.GetByKind(ctx, models.PanelCertKindHostname); err != nil {
+					return fmt.Errorf("load hostname panel cert: %w", err)
+				}
 			}
-			row.Status = models.PanelCertStatusPendingACME
-			row.NextRetryAt = nil
+			if !hostRow.UseLE {
+				return fmt.Errorf("the panel has Let's Encrypt disabled — run `jabali panel-cert toggle --le=true` first")
+			}
+			row.QueueIssue(time.Now())
 			if err := repo.Upsert(ctx, row); err != nil {
 				cliAuditErr(ctx, "panel_cert.issue", "panel_certificate", kind, nil)
 				return fmt.Errorf("save panel cert: %w", err)
 			}
 			cliAuditOK(ctx, "panel_cert.issue", "panel_certificate", kind, nil)
-			fmt.Printf("%s panel cert queued for issuance (status=pending_acme; reconciler issues on the next pass, ≤60s)\n", kind)
+			fmt.Printf("%s panel cert queued for issuance (the reconciler issues it on the next pass, ≤60s)\n", kind)
 			return nil
 		},
 	}
