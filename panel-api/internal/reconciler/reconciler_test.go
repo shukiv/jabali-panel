@@ -414,6 +414,38 @@ func (e *notFoundErr) Is(err error) bool {
 type fakeDNSZoneRepo struct {
 	mu    sync.Mutex
 	zones map[string]*models.DNSZone
+
+	pushResultWrites int // SetPushResult calls (GH #2377)
+}
+
+func (f *fakeDNSZoneRepo) SetPushResult(_ context.Context, id string, pushedAt *time.Time, pushErr string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pushResultWrites++
+	z, ok := f.zones[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	z.LastPushError = nil
+	if pushErr != "" {
+		e := pushErr
+		z.LastPushError = &e
+	}
+	if pushedAt != nil {
+		t := *pushedAt
+		z.LastPushedAt = &t
+	}
+	return nil
+}
+
+func (f *fakeDNSZoneRepo) pushState(domainID string) (pushedAt *time.Time, pushErr *string, writes int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	z, err := f.findByDomainIDLocked(domainID)
+	if err != nil {
+		return nil, nil, f.pushResultWrites
+	}
+	return z.LastPushedAt, z.LastPushError, f.pushResultWrites
 }
 
 func (f *fakeDNSZoneRepo) Create(ctx context.Context, zone *models.DNSZone) error {

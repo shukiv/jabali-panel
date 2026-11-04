@@ -32,7 +32,44 @@ import { DNSZoneEnableButton } from "./DNSZoneEnableButton";
 import { SearchableTableStringQ } from "../SearchableTable";
 import { useTableURL } from "../../hooks/useTableURL";
 import { sorterToParams } from "../../utils/tableSorter";
-import { shortDate } from "../../utils/datetime";
+import { shortDate, shortDateTime } from "../../utils/datetime";
+
+// ZonePushStatusTag shows whether the DNS server holds a provisioned zone
+// (GH #2377). The tooltip carries the server's error for admins (the API sends
+// it to admins only) and a plain explanation for everyone.
+function ZonePushStatusTag({ record }: { record: DnsZoneRow }) {
+  const { t } = useTranslation();
+  const since = record.last_pushed_at ? shortDateTime(record.last_pushed_at) : null;
+  if (record.push_status === "failed") {
+    const lines = [t("dnszonesoverviewpage.push_failed_hint")];
+    if (since) lines.push(t("dnszonesoverviewpage.push_failed_still_has", { date: since }));
+    if (record.last_push_error) lines.push(record.last_push_error);
+    return (
+      <Tooltip
+        title={lines.map((line, i) => (
+          <div key={i}>{line}</div>
+        ))}
+      >
+        <Tag color="red">
+          {since ? t("dnszonesoverviewpage.push_failed_update") : t("dnszonesoverviewpage.push_failed")}
+        </Tag>
+      </Tooltip>
+    );
+  }
+  if (record.push_status === "pending") {
+    return (
+      <Tooltip title={t("dnszonesoverviewpage.push_pending_hint")}>
+        <Tag>{t("dnszonesoverviewpage.push_pending")}</Tag>
+      </Tooltip>
+    );
+  }
+  const tag = <Tag color="green">Provisioned</Tag>;
+  return since ? (
+    <Tooltip title={t("dnszonesoverviewpage.push_on_server_hint", { date: since })}>{tag}</Tooltip>
+  ) : (
+    tag
+  );
+}
 
 // DnsZoneRow is one row of the batched GET /dns/zones inventory (JAB-377):
 // the domain plus its provisioning state, record count, and effective TTL,
@@ -57,6 +94,13 @@ export interface DnsZoneRow {
   dns_disabled?: boolean;
   web_disabled?: boolean;
   email_enabled?: boolean;
+  // GH #2377: whether the DNS server holds the zone. `provisioned` only means
+  // the panel has a zone row, so zones the DNS server refused still read as in
+  // place. Absent when there is no zone row. last_push_error is set for admins
+  // only (raw server output).
+  push_status?: "on_server" | "failed" | "pending";
+  last_pushed_at?: string | null;
+  last_push_error?: string;
 }
 
 // DnsZoneInventoryAudience is the per-screen policy. Admin passes the
@@ -292,7 +336,7 @@ const ZoneTable = ({ audience }: { audience: DnsZoneInventoryAudience }) => {
                 // otherwise read as the same "Not provisioned".
                 <Tag color="orange">{t("dnszonesoverviewpage.dns_hosted_elsewhere")}</Tag>
               ) : record.provisioned ? (
-                <Tag color="green">Provisioned</Tag>
+                <ZonePushStatusTag record={record} />
               ) : (
                 <Tag>Not provisioned</Tag>
               )

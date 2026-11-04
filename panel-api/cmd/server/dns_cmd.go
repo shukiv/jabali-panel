@@ -334,12 +334,28 @@ func newDNSZoneListCmd() *cobra.Command {
 				return printJSON(zones)
 			}
 			tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-			fmt.Fprintln(tw, "NAME\tSERIAL\tENABLED\tID")
-			for _, z := range zones {
-				fmt.Fprintf(tw, "%s\t%d\t%v\t%s\n", z.Name, z.Serial, z.IsEnabled, z.ID)
+			fmt.Fprintln(tw, "NAME\tSERIAL\tENABLED\tON DNS SERVER\tID")
+			for i := range zones {
+				z := &zones[i]
+				fmt.Fprintf(tw, "%s\t%d\t%v\t%s\t%s\n", z.Name, z.Serial, z.IsEnabled, dnsZonePushLabel(z), z.ID)
 			}
 			return tw.Flush()
 		},
+	}
+}
+
+// dnsZonePushLabel says whether the DNS server holds the zone (GH #2377): a
+// zone row in the panel database is not proof that PowerDNS accepted it.
+func dnsZonePushLabel(z *models.DNSZone) string {
+	switch {
+	case z.PushFailed() && z.LastPushedAt != nil:
+		return "yes, last push failed"
+	case z.PushFailed():
+		return "no (push failed)"
+	case z.LastPushedAt != nil:
+		return "yes"
+	default:
+		return "pending"
 	}
 }
 
@@ -365,6 +381,13 @@ func newDNSZoneShowCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Zone %s  serial=%d  enabled=%v  id=%s\n",
 				zone.Name, zone.Serial, zone.IsEnabled, zone.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "On DNS server: %s\n", dnsZonePushLabel(zone))
+			if zone.LastPushedAt != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "Last accepted: %s\n", zone.LastPushedAt.UTC().Format(time.RFC3339))
+			}
+			if zone.PushFailed() {
+				fmt.Fprintf(cmd.OutOrStdout(), "Last push error: %s\n", *zone.LastPushError)
+			}
 			printDNSRecords(recs)
 			return nil
 		},

@@ -359,3 +359,42 @@ describe("DnsZoneInventory facet-state actions (GH #1611)", () => {
     expect(screen.queryByRole("menuitem", { name: /dnszonesoverviewpage.delete_domain/ })).not.toBeInTheDocument();
   });
 });
+
+// GH #2377 (johnnyq): after a migration every zone read "Provisioned" while
+// the DNS server had none of them. "Provisioned" only meant a panel row
+// existed; the status now follows what the DNS server accepted.
+describe("DnsZoneInventory zone status follows the DNS server (GH #2377)", () => {
+  const refused: DnsZoneRow = {
+    ...provisioned,
+    id: "f1",
+    name: "refused.tld",
+    dnssec_enabled: false,
+    push_status: "failed",
+    last_push_error: "Access denied for user 'pdns'",
+  };
+
+  it("a zone the DNS server refused does not read as Provisioned", () => {
+    table.items = [
+      refused,
+      { ...refused, id: "s1", name: "stale.tld", last_push_error: undefined, last_pushed_at: "2026-11-04T18:00:00Z" },
+      { ...provisioned, id: "p1", name: "pending.tld", dnssec_enabled: false, push_status: "pending" },
+      { ...provisioned, id: "o1", name: "onserver.tld", dnssec_enabled: false, push_status: "on_server", last_pushed_at: "2026-11-04T18:00:00Z" },
+    ];
+    renderPage(adminAudience);
+
+    expect(within(rowOf("refused.tld")).getByText("dnszonesoverviewpage.push_failed")).toBeInTheDocument();
+    expect(within(rowOf("refused.tld")).queryByText("Provisioned")).not.toBeInTheDocument();
+    expect(within(rowOf("stale.tld")).getByText("dnszonesoverviewpage.push_failed_update")).toBeInTheDocument();
+    expect(within(rowOf("pending.tld")).getByText("dnszonesoverviewpage.push_pending")).toBeInTheDocument();
+    expect(within(rowOf("onserver.tld")).getByText("Provisioned")).toBeInTheDocument();
+  });
+
+  it("the failed status's tooltip carries the server's error", async () => {
+    table.items = [refused];
+    renderPage(adminAudience);
+
+    fireEvent.mouseEnter(within(rowOf("refused.tld")).getByText("dnszonesoverviewpage.push_failed"));
+    expect(await screen.findByText("Access denied for user 'pdns'")).toBeInTheDocument();
+    expect(screen.getByText("dnszonesoverviewpage.push_failed_hint")).toBeInTheDocument();
+  });
+});

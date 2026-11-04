@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -25,6 +26,13 @@ type DNSZoneRepository interface {
 	// not-provisioned. Empty input returns nil without a query.
 	FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error)
 	ListAll(ctx context.Context) ([]models.DNSZone, error)
+	// SetPushResult records the outcome of one push of the zone to PowerDNS
+	// (GH #2377) and touches no other column, so it never races an edit made
+	// through Update. Success: pass the time and an empty error, and
+	// last_pushed_at is stamped while last_push_error is cleared. Failure:
+	// pass a nil time and the error, and last_pushed_at keeps the last time
+	// the server accepted the zone.
+	SetPushResult(ctx context.Context, id string, pushedAt *time.Time, pushErr string) error
 }
 
 // DNSRecordRepository covers dns_records. All mutations are scoped to a
@@ -65,6 +73,17 @@ func (r *dnsZoneRepo) Create(ctx context.Context, z *models.DNSZone) error {
 
 func (r *dnsZoneRepo) Update(ctx context.Context, z *models.DNSZone) error {
 	return r.db.WithContext(ctx).Save(z).Error
+}
+
+func (r *dnsZoneRepo) SetPushResult(ctx context.Context, id string, pushedAt *time.Time, pushErr string) error {
+	cols := map[string]any{"last_push_error": nil}
+	if pushErr != "" {
+		cols["last_push_error"] = pushErr
+	}
+	if pushedAt != nil {
+		cols["last_pushed_at"] = *pushedAt
+	}
+	return r.db.WithContext(ctx).Model(&models.DNSZone{}).Where("id = ?", id).UpdateColumns(cols).Error
 }
 
 func (r *dnsZoneRepo) Delete(ctx context.Context, id string) error {

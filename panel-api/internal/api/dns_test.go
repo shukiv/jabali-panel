@@ -396,6 +396,23 @@ func (m *mockDNSZoneRepo) ListAll(ctx context.Context) ([]models.DNSZone, error)
 	return zones, nil
 }
 
+func (m *mockDNSZoneRepo) SetPushResult(_ context.Context, id string, pushedAt *time.Time, pushErr string) error {
+	z, ok := m.zones[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	z.LastPushError = nil
+	if pushErr != "" {
+		e := pushErr
+		z.LastPushError = &e
+	}
+	if pushedAt != nil {
+		t := *pushedAt
+		z.LastPushedAt = &t
+	}
+	return nil
+}
+
 type mockDNSRecordRepo struct {
 	records map[string]*models.DNSRecord
 }

@@ -152,6 +152,38 @@ type dnsZoneInventoryRow struct {
 	DNSDisabled  bool `json:"dns_disabled"`
 	WebDisabled  bool `json:"web_disabled"`
 	EmailEnabled bool `json:"email_enabled"`
+
+	// GH #2377: whether the DNS server holds the zone, not only the panel
+	// database. One of the dnsZonePush* values; empty when the domain has no
+	// zone row.
+	PushStatus   string     `json:"push_status,omitempty"`
+	LastPushedAt *time.Time `json:"last_pushed_at,omitempty"`
+	// LastPushError is why the most recent push failed. Admin scope only: it
+	// is raw agent output (database user names, socket paths).
+	LastPushError string `json:"last_push_error,omitempty"`
+}
+
+const (
+	// dnsZonePushOnServer: the last push was accepted by the DNS server.
+	dnsZonePushOnServer = "on_server"
+	// dnsZonePushFailed: the most recent push failed. An earlier version may
+	// still be on the server; last_pushed_at says when it was accepted.
+	dnsZonePushFailed = "failed"
+	// dnsZonePushPending: no push recorded yet. The DNS module is off, the
+	// domain's ownership is not proven, the zone is disabled, or the zone has
+	// not been pushed since the panel started recording pushes.
+	dnsZonePushPending = "pending"
+)
+
+func dnsZonePushStatus(z *models.DNSZone) string {
+	switch {
+	case z.PushFailed():
+		return dnsZonePushFailed
+	case z.LastPushedAt != nil:
+		return dnsZonePushOnServer
+	default:
+		return dnsZonePushPending
+	}
 }
 
 // listZoneInventory serves GET /dns/zones — the batched DNS Zone overview
@@ -244,6 +276,11 @@ func (h *dnsHandler) listZoneInventory(c *gin.Context) {
 			if z, ok := zoneByDomain[rows[i].ID]; ok {
 				rows[i].Provisioned = true
 				rows[i].RecordCount = counts[z.ID]
+				rows[i].PushStatus = dnsZonePushStatus(&z)
+				rows[i].LastPushedAt = z.LastPushedAt
+				if claims.IsAdmin && z.PushFailed() {
+					rows[i].LastPushError = *z.LastPushError
+				}
 			}
 		}
 

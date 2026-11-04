@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -27,6 +28,9 @@ func (f *fakeDNSZoneRepo) FindByDomainID(context.Context, string) (*models.DNSZo
 	return nil, nil
 }
 func (f *fakeDNSZoneRepo) ListAll(context.Context) ([]models.DNSZone, error) { return nil, nil }
+func (f *fakeDNSZoneRepo) SetPushResult(context.Context, string, *time.Time, string) error {
+	return nil
+}
 func (f *fakeDNSZoneRepo) FindByDomainIDs(context.Context, []string) ([]models.DNSZone, error) {
 	return nil, nil
 }

@@ -2970,6 +2970,7 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	pushZoneName, ok := dnscompile.NormalizeName(zone.Name)
 	if !ok {
 		r.log.Error("dns.zone.upsert skipped: zone name not encodable", "zone", zone.Name)
+		r.recordDNSZonePush(ctx, zone, nil, errors.New("the zone name cannot be encoded for the DNS server"))
 		return
 	}
 
@@ -2986,9 +2987,13 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 		// converged.
 		r.log.Error("dns.zone.upsert failed", "zone", zone.Name, "err", err)
 		r.phaseFailed(ctx, PhaseDNSZone)
+		// GH #2377: put the failure on the zone row, where the DNS Zones
+		// page can show it, not only in the journal.
+		r.recordDNSZonePush(ctx, zone, nil, err)
 		return
 	}
 	r.phaseApplied(ctx, PhaseDNSZone, zone.ID, hash, now, d)
+	r.recordDNSZonePush(ctx, zone, &now, nil)
 }
 
 // linuxUserFromEmail derives the Linux username from an email address.

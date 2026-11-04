@@ -452,6 +452,13 @@
     "expiration": "Expiration",
     "no_dns_zones_yet_create_a_domain_to_manage_i": "No DNS zones yet — create a domain to manage its DNS",
     "owner": "Owner",
+    "push_failed": "Not on DNS server",
+    "push_failed_hint": "The DNS server did not accept this zone. The panel keeps retrying.",
+    "push_failed_still_has": "The DNS server still has the version from {{date}}.",
+    "push_failed_update": "Last update failed",
+    "push_on_server_hint": "Last accepted by the DNS server {{date}}",
+    "push_pending": "Pending",
+    "push_pending_hint": "Not sent to the DNS server yet.",
     "records": "Records",
     "ttl": "TTL",
     "zone_status": "Zone Status"
