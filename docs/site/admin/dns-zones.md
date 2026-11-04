@@ -13,6 +13,23 @@ One list of zones. Columns: domain name, owner, zone status, record count, TTL, 
   - **Delete zone** (or **Delete domain** for a DNS-only domain). A signed zone must be unsigned first.
 - A domain whose DNS is hosted elsewhere shows **Enable DNS** instead of a menu.
 
+### Zone status
+
+The status says whether the DNS server holds the zone, not only whether the panel has it:
+
+| Status | Meaning |
+|---|---|
+| **Provisioned** | The DNS server accepted the zone. Hover for when. |
+| **Pending** | The zone exists in the panel but has not been sent to the DNS server yet. This is normal for up to a minute after a domain is added. It stays this way while the DNS module is off, while the domain's ownership is unproven, or while the zone is disabled. |
+| **Not on DNS server** | The DNS server refused the zone. Hover to see its error. The panel keeps retrying, so the status changes once the cause is fixed. |
+| **Changes not on DNS server** | The DNS server holds an older version of the zone and refused the latest one. Hover for the error and the date of the version it holds. |
+| **Not provisioned** | The domain has no zone in the panel yet. |
+| **Hosted elsewhere** | DNS for the domain is turned off; it is served by another provider. |
+
+Tenants see the same statuses without the server's error text.
+
+`jabali dns zone list` shows the same state in its **ON DNS SERVER** column, and `jabali dns zone show <domain>` prints the last error.
+
 ## Adding a zone
 
 A zone is created automatically when a domain is added under [Domains](./domains.md). To host an additional zone that is not a panel domain (for example a partner zone you DNS for), use **Add zone** and supply the zone name plus the owning user.
