@@ -50,7 +50,7 @@ type orphanSweeper interface {
 // backend is unavailable. Overridable in tests. It must return an explicit nil
 // interface (not a typed nil *pdns.Client) so the handler's nil check works.
 var reapOrphansClient = func() orphanSweeper {
-	if cl := pdns.Default(); cl != nil {
+	if cl, err := pdns.Acquire(); err == nil {
 		return cl
 	}
 	return nil

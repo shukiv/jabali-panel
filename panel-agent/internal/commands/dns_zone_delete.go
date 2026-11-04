@@ -25,9 +25,9 @@ func dnsZoneDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 	if p.Zone == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "zone required"}
 	}
-	cl := pdns.Default()
-	if cl == nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "powerdns backend not available"}
+	cl, err := pdns.Acquire()
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 	if err := cl.DeleteZone(p.Zone); err != nil {
 		return nil, err

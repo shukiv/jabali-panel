@@ -66,12 +66,9 @@ func dnsZoneUpsertHandler(ctx context.Context, params json.RawMessage) (any, err
 	// Panel is expected to send the full desired record set; we don't
 	// reject empty. An empty zone still has its SOA — if panel sent
 	// nothing it's likely a bug, but that's panel's problem to catch.
-	cl := pdns.Default()
-	if cl == nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: "powerdns backend not available (install.sh may not have run install_powerdns)",
-		}
+	cl, err := pdns.Acquire()
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 
 	opts := pdns.UpsertZoneOptions{

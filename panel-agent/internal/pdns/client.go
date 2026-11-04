@@ -7,10 +7,12 @@ package pdns
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Client struct {
@@ -36,6 +38,67 @@ func SetDefault(c *Client) {
 	defaultMu.Lock()
 	defer defaultMu.Unlock()
 	defaultCl = c
+}
+
+// connectRetryInterval spaces out connection attempts while the backend is
+// unavailable, so a box without PowerDNS is not dialled on every DNS call.
+const connectRetryInterval = 10 * time.Second
+
+// Overridable in tests.
+var (
+	connectFn = ReadEnvAndConnect
+	nowFn     = time.Now
+)
+
+var (
+	lastConnectAt  time.Time // guarded by defaultMu
+	lastConnectErr error     // guarded by defaultMu
+)
+
+// Acquire returns the agent-wide client, connecting first when the agent has
+// none. The agent used to connect exactly once, at startup, and a failed
+// attempt left every dns.* call failing until the agent was restarted, even
+// after the cause went away (GH #2377). Causes that go away: after a reboot
+// the agent can start before MariaDB's socket exists, and a DNS module
+// installed after the agent started writes a pdns.env the agent never read.
+//
+// While the backend is unavailable, a new attempt is made at most once per
+// connectRetryInterval; in between, callers get the last attempt's error.
+// The error always starts with "powerdns backend not available", which the
+// panel matches on, and says why.
+func Acquire() (*Client, error) {
+	defaultMu.RLock()
+	cl := defaultCl
+	defaultMu.RUnlock()
+	if cl != nil {
+		return cl, nil
+	}
+
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultCl != nil {
+		return defaultCl, nil
+	}
+	now := nowFn()
+	if !lastConnectAt.IsZero() && now.Sub(lastConnectAt) < connectRetryInterval {
+		return nil, unavailable(lastConnectErr)
+	}
+	lastConnectAt = now
+	c, err := connectFn()
+	if err != nil {
+		lastConnectErr = err
+		return nil, unavailable(err)
+	}
+	defaultCl = c
+	lastConnectErr = nil
+	return c, nil
+}
+
+func unavailable(cause error) error {
+	if cause == nil {
+		return errors.New("powerdns backend not available")
+	}
+	return fmt.Errorf("powerdns backend not available: %w", cause)
 }
 
 // ReadEnvAndConnect parses /etc/jabali-panel/pdns.env, opens a MySQL
@@ -72,7 +135,9 @@ func ReadEnvAndConnect() (*Client, error) {
 	// the host-mutation daemon); a TCP loopback round-trip was overhead
 	// rather than capability. Format is the native go-sql-driver/mysql
 	// `user:pass@unix(/path)/db?...` form.
-	dsn := fmt.Sprintf("%s:%s@unix(/var/run/mysqld/mysqld.sock)/%s?parseTime=true&charset=utf8mb4",
+	// timeout bounds the dial: Acquire holds the client lock while it
+	// connects, and a hung MariaDB must not stall every DNS call.
+	dsn := fmt.Sprintf("%s:%s@unix(/var/run/mysqld/mysqld.sock)/%s?parseTime=true&charset=utf8mb4&timeout=5s",
 		user, pass, name)
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {

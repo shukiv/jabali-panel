@@ -28,6 +28,13 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("exec seam stub: " + err.Error())
 	}
+	// dns.* handlers connect to the PowerDNS database on demand (pdns.Acquire,
+	// GH #2377). Point them at an env file that does not exist, so a test run
+	// on a box with PowerDNS never writes to its real zones.
+	if err := os.Setenv("JABALI_PDNS_ENV_FILE", filepath.Join(dir, "absent-pdns.env")); err != nil {
+		panic("pdns env seam: " + err.Error())
+	}
+
 	stub := filepath.Join(dir, "noexec")
 	// The stub path is baked into argv (below), NOT into an env marker, so the
 	// 28 handlers that set cmd.Env cannot defeat it. `cat >/dev/null` drains any
