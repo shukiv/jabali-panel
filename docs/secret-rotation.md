@@ -28,8 +28,8 @@ JAB-351 proved `jabali-webmail` (broad `jabali` group) could read `0640 root:jab
 | Panel DB app-user password (`db-password` + `DATABASE_URL`) | `jabali secrets rotate db-app-user` ✅ | `jabali_panel_app@localhost` (the panel's own user, not root). ALTER USER → rewrite `db-password` + the `DATABASE_URL` line in `panel.env` → restart → verify the new credential. |
 | Kratos DB password + `secrets.cookie` / `secrets.default` (inlined in `kratos.yml`, `root:jabali 0640`) | `jabali secrets rotate kratos` ✅ | Replaces all three with no rollover (old values are exposed) and revokes every session — **signs every user out once**. See "Kratos — IN scope" below. |
 | `JWT_SECRET` (`panel.env`) | `jabali secrets rotate jwt` ✅ | Vestigial post-M20 (panel auth is Kratos; webmail SSO uses the separate `bulwark-jwt-auth.secret`). Rotating it is a safe near-noop; included only because it lived in the exposed file. |
-| `postgres.password` | `jabali db root-password --engine postgres` (existing) | Same exposure class (`root:jabali 0640`). Only if the Postgres engine is enabled on the host. |
-| MariaDB root password | `jabali db root-password --engine mariadb` (existing) | Break-glass root credential; socket auth preserved (ADR-0097). |
+| `postgres.password` | `jabali db root-password --engine postgres` (existing) | Same exposure class (`root:jabali 0640`). **Only if `/etc/jabali-panel/postgres.password` exists.** |
+| MariaDB root password (`mysql-root.password`, `root:jabali 0640`) | `jabali db root-password --engine mariadb` (existing) | Break-glass root credential; socket auth preserved (ADR-0097). **Only if `/etc/jabali-panel/mysql-root.password` exists.** `install.sh` never writes that file; only an earlier `db root-password` run does. Without it, root has Debian's default (`unix_socket` plus the unusable `invalid` hash), so there was no password to read, and running the command *adds* a working root password the host didn't have. |
 | Panel TLS key (`/etc/jabali/tls/panel.key`) | `jabali panel-cert …` reissue (existing) | Regenerate/reissue the panel cert; verify `/login` 200 after. |
 | Panel-mail TLS key (`/etc/jabali/tls/panel-mail.key`) | `jabali mail-cert …` reissue (existing) | Reconciler-managed (ADR-0105); reissue and let the mail-cert cascade settle. |
 | `JABALI_REDIS_PANEL_TOKEN` (`panel.env` + redis aclfile) | `jabali secrets rotate redis-panel-token` ✅ | Rotates **live**: `ACL SETUSER jabali_panel resetpass >…` on the running Redis (authing as jabali_panel with the old token), then rewrites `panel.env` + the aclfile `user jabali_panel` line (default + tenant `wp_*` lines preserved), then restarts panel and verifies. **Never `ACL LOAD` / restart Redis** — that wipes the runtime `wp_<osuser>` tenant ACL users until the reconciler recreates them. Rolls back the live password too on failure. |
@@ -44,6 +44,8 @@ JAB-351 proved `jabali-webmail` (broad `jabali` group) could read `0640 root:jab
 ### Out of scope
 
 DKIM keys (`root:jabali-sftp 0600`), tenant DB passwords, tenant Let's Encrypt lineage, and the Stalwart admin token (`jabali-mail`).
+
+`mailhook.token` (`root:jabali 0640`) was in the exposure class, but rotating it buys nothing. It only authenticates calls to the loopback disclaimer hook (`127.0.0.1:8462`, ADR-0143). That hook appends a domain's disclaimer text, which every outgoing message already shows, and reads the DB read-only. A copy lets a local process get disclaimers appended to its own message, nothing more.
 
 ### Kratos — IN scope (correction, 2026-09-26)
 
