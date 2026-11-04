@@ -31,11 +31,27 @@ type DNSZone struct {
 	// so the zone goes dark without losing its record set.
 	IsEnabled bool `gorm:"type:tinyint(1);not null;default:1" json:"is_enabled"`
 
+	// LastPushedAt is when PowerDNS last accepted this zone from the
+	// reconciler; nil means it never has (since the column was added).
+	// LastPushError is why the most recent push failed, nil once a push
+	// succeeds. Both are written only by DNSZoneRepository.SetPushResult
+	// (GH #2377). The error is raw agent output, so it is never put on the
+	// wire by default: handlers that may show it (admin scope) copy it out
+	// explicitly.
+	LastPushedAt  *time.Time `gorm:"type:datetime(6)" json:"last_pushed_at,omitempty"`
+	LastPushError *string    `gorm:"type:text" json:"-"`
+
 	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
 }
 
 func (DNSZone) TableName() string { return "dns_zones" }
+
+// PushFailed reports whether the most recent push of the zone to PowerDNS
+// failed.
+func (z *DNSZone) PushFailed() bool {
+	return z.LastPushError != nil && *z.LastPushError != ""
+}
 
 // DNSRecord is one resource record inside a DNSZone.
 //

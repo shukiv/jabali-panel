@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -39,6 +40,9 @@ func (f *memDNSZoneRepo) FindByDomainID(context.Context, string) (*models.DNSZon
 	return nil, repository.ErrNotFound
 }
 func (f *memDNSZoneRepo) ListAll(context.Context) ([]models.DNSZone, error) { return nil, nil }
+func (f *memDNSZoneRepo) SetPushResult(context.Context, string, *time.Time, string) error {
+	return nil
+}
 func (f *memDNSZoneRepo) FindByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DNSZone, error) {
 	var out []models.DNSZone
 	for _, id := range domainIDs {
