@@ -61,9 +61,11 @@ func saveRotateSeams(t *testing.T) {
 	t.Helper()
 	sql, restart, probe := rotateRunSQL, rotateRestartService, rotateProbeDBAppUser
 	health, redis, pdns := rotateProbePanelHealthy, rotateRedisSetPassword, rotateProbePdnsHealthy
+	agent := rotateProbeAgentHealthy
 	t.Cleanup(func() {
 		rotateRunSQL, rotateRestartService, rotateProbeDBAppUser = sql, restart, probe
 		rotateProbePanelHealthy, rotateRedisSetPassword, rotateProbePdnsHealthy = health, redis, pdns
+		rotateProbeAgentHealthy = agent
 	})
 }
 
@@ -435,6 +437,7 @@ func TestRotatePdns_HappyPath(t *testing.T) {
 	}
 	rotateRestartService = func(_ context.Context, unit string) error { order = append(order, "restart:"+unit); return nil }
 	rotateProbePdnsHealthy = func(_ context.Context, _ string) error { order = append(order, "probe"); return nil }
+	rotateProbeAgentHealthy = func(_ context.Context) error { order = append(order, "probe-agent"); return nil }
 
 	var out bytes.Buffer
 	if err := rotatePdns(context.Background(), &out, false); err != nil {
@@ -455,8 +458,10 @@ func TestRotatePdns_HappyPath(t *testing.T) {
 	if !strings.Contains(string(conf), "launch=gmysql") || !strings.Contains(string(conf), "gmysql-dbname=jabali_pdns") {
 		t.Errorf("conf siblings dropped:\n%s", conf)
 	}
-	if got := strings.Join(order, ","); got != "sql,restart:pdns,probe" {
-		t.Errorf("order = %q, want sql,restart:pdns,probe", got)
+	// jabali-agent opens its PowerDNS DB connection at start-up, so it must
+	// restart after the new password is live, or the panel's zone writes fail.
+	if got := strings.Join(order, ","); got != "sql,restart:pdns,probe,restart:jabali-agent,probe-agent" {
+		t.Errorf("order = %q, want sql,restart:pdns,probe,restart:jabali-agent,probe-agent", got)
 	}
 	if _, err := os.Stat(envPath + bakSuffix); !os.IsNotExist(err) {
 		t.Error("pdns.env .bak not purged")
@@ -467,14 +472,21 @@ func TestRotatePdns_UnhealthyRollsBack(t *testing.T) {
 	saveRotateSeams(t)
 	envPath, confPath := setupPdnsFixture(t)
 
-	var sqls []string
+	var sqls, restarts []string
 	rotateRunSQL = func(_ context.Context, sql string) error { sqls = append(sqls, sql); return nil }
-	rotateRestartService = func(_ context.Context, _ string) error { return nil }
+	rotateRestartService = func(_ context.Context, unit string) error { restarts = append(restarts, unit); return nil }
 	rotateProbePdnsHealthy = func(_ context.Context, _ string) error { return errors.New("pdns down") }
+	rotateProbeAgentHealthy = func(_ context.Context) error { return nil }
 
 	var out bytes.Buffer
 	if err := rotatePdns(context.Background(), &out, false); err == nil {
 		t.Fatal("expected error when pdns is unhealthy")
+	}
+	// A rolled-back rotation leaves the agent on the old (still valid) password.
+	for _, u := range restarts {
+		if u == "jabali-agent" {
+			t.Errorf("jabali-agent restarted although the rotation was rolled back: %v", restarts)
+		}
 	}
 	env, _ := os.ReadFile(envPath)
 	conf, _ := os.ReadFile(confPath)
@@ -483,6 +495,39 @@ func TestRotatePdns_UnhealthyRollsBack(t *testing.T) {
 	}
 	if len(sqls) != 2 || !strings.Contains(sqls[1], "'oldpdnspw'") {
 		t.Errorf("rollback ALTER did not restore old pw: %v", sqls)
+	}
+}
+
+// Once PowerDNS has the new password and the old one (the exposed value) is
+// dead, a failed agent restart must not roll the password back: it reports
+// the command to run instead.
+func TestRotatePdns_AgentRestartFailsKeepsNewPassword(t *testing.T) {
+	saveRotateSeams(t)
+	envPath, confPath := setupPdnsFixture(t)
+
+	var sqls []string
+	rotateRunSQL = func(_ context.Context, sql string) error { sqls = append(sqls, sql); return nil }
+	rotateRestartService = func(_ context.Context, unit string) error {
+		if unit == "jabali-agent" {
+			return errors.New("unit failed")
+		}
+		return nil
+	}
+	rotateProbePdnsHealthy = func(_ context.Context, _ string) error { return nil }
+	rotateProbeAgentHealthy = func(_ context.Context) error { return nil }
+
+	var out bytes.Buffer
+	err := rotatePdns(context.Background(), &out, false)
+	if err == nil || !strings.Contains(err.Error(), "systemctl restart jabali-agent") {
+		t.Fatalf("want an error naming the restart to run, got %v", err)
+	}
+	env, _ := os.ReadFile(envPath)
+	conf, _ := os.ReadFile(confPath)
+	if strings.Contains(string(env), "oldpdnspw") || strings.Contains(string(conf), "oldpdnspw") {
+		t.Errorf("old (exposed) pdns password restored after the agent restart failed:\nenv=%s\nconf=%s", env, conf)
+	}
+	if len(sqls) != 1 {
+		t.Errorf("want only the forward ALTER, got %d statements: %v", len(sqls), sqls)
 	}
 }
 

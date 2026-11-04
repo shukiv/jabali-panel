@@ -159,6 +159,16 @@ var rotateProbePdnsHealthy = func(ctx context.Context, password string) error {
 	return cmd.Run()
 }
 
+// rotateProbeAgentHealthy verifies jabali-agent came back after its restart and
+// stays up, and so does jabali-panel, which restarts with it
+// (Requires=jabali-agent).
+var rotateProbeAgentHealthy = func(ctx context.Context) error {
+	if err := pollUnitStableActive(ctx, "jabali-agent"); err != nil {
+		return err
+	}
+	return pollUnitStableActive(ctx, "jabali-panel")
+}
+
 // sqlSingleQuote renders a value as a MariaDB string literal body: backslash
 // first (MariaDB treats '\' as an escape unless NO_BACKSLASH_ESCAPES), then
 // single quotes doubled. Today's inputs are base64url (ids.NewSecret) and the
@@ -265,6 +275,7 @@ func rotatePdns(ctx context.Context, out io.Writer, dryRun bool) error {
 		fmt.Fprintf(out, "  3. rewrite gmysql-password in %s\n", confPath)
 		fmt.Fprintf(out, "  4. systemctl restart pdns\n")
 		fmt.Fprintf(out, "  5. verify pdns healthy + jabali_pdns authenticates; roll back on failure\n")
+		fmt.Fprintf(out, "  6. systemctl restart jabali-agent (it opens its PowerDNS DB connection at start-up; jabali-panel restarts with it)\n")
 		return nil
 	}
 
@@ -323,7 +334,20 @@ func rotatePdns(ctx context.Context, out io.Writer, dryRun bool) error {
 	_ = purgeBak(bakEnv)
 	_ = purgeBak(bakConf)
 	cliAuditOK(ctx, "secrets.rotate.pdns", "secret", "pdns", nil)
-	fmt.Fprintf(out, "Rotated PowerDNS DB password (pdns.env + gmysql conf); restarted pdns and verified.\n")
+
+	// 6. jabali-agent opens its PowerDNS DB connection once, at start-up, with
+	//    the password from pdns.env. Its open connections survive the ALTER,
+	//    but every new one is refused, so the panel's zone writes fail until
+	//    the agent restarts. Restart it now. The new password is already live
+	//    and the old one is the exposed value, so a failure here is reported,
+	//    not rolled back.
+	if err := rotateRestartService(ctx, "jabali-agent"); err != nil {
+		return fmt.Errorf("PowerDNS password rotated, but jabali-agent did not restart: %w; run: systemctl restart jabali-agent", err)
+	}
+	if err := rotateProbeAgentHealthy(ctx); err != nil {
+		return fmt.Errorf("PowerDNS password rotated, but jabali-agent or jabali-panel is not healthy after the restart: %w; check: systemctl status jabali-agent jabali-panel", err)
+	}
+	fmt.Fprintf(out, "Rotated PowerDNS DB password (pdns.env + gmysql conf); restarted pdns and jabali-agent and verified.\n")
 	return nil
 }
 
