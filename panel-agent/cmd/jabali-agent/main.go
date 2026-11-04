@@ -126,11 +126,12 @@ func main() {
 	}
 
 	// Initialize PowerDNS backend client. Non-fatal if unavailable — dev boxes
-	// may not have PowerDNS installed. Handlers will return a friendly error.
-	if cl, err := pdns.ReadEnvAndConnect(); err != nil {
-		log.Warn("pdns backend not available; dns.* commands will error", "err", err)
+	// may not have PowerDNS installed. dns.* handlers connect again on demand
+	// through pdns.Acquire (GH #2377), so a failure here (MariaDB not up yet
+	// after a reboot) no longer lasts until the agent is restarted.
+	if _, err := pdns.Acquire(); err != nil {
+		log.Warn("pdns backend not available yet; dns.* commands will retry", "err", err)
 	} else {
-		pdns.SetDefault(cl)
 		log.Info("pdns backend connected")
 		// Note: we hold the client for the process lifetime; no defer Close().
 	}
