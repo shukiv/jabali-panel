@@ -44,6 +44,19 @@ func callPanelMailSelfSignNewKey(t *testing.T, names ...string) sslPanelMailSelf
 	return resp
 }
 
+// The CLI (`jabali panel-cert new-key`, panelCertNewKeyRequest) sends
+// "new_key"; pin the name here so neither side can drift alone.
+func TestPanelSelfSignParams_NewKeyWireName(t *testing.T) {
+	var host sslPanelSelfSignParams
+	if err := json.Unmarshal([]byte(`{"hostname":"h.example.com","ip":"","new_key":true}`), &host); err != nil || !host.NewKey {
+		t.Fatalf("hostname params: new_key not read (%+v, %v)", host, err)
+	}
+	var mail sslPanelMailSelfSignParams
+	if err := json.Unmarshal([]byte(`{"names":["mail.h.example.com"],"new_key":true}`), &mail); err != nil || !mail.NewKey {
+		t.Fatalf("mail params: new_key not read (%+v, %v)", mail, err)
+	}
+}
+
 // assertPairMatches fails unless the cert and key on disk belong together.
 func assertPairMatches(t *testing.T, certPath, keyPath string) {
 	t.Helper()

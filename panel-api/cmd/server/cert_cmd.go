@@ -13,13 +13,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -46,7 +49,7 @@ func newPanelCertCmd() *cobra.Command {
 		Use:   "panel-cert",
 		Short: "Manage the panel's own TLS certificates (hostname + mail)",
 	}
-	cmd.AddCommand(newPanelCertStatusCmd(), newPanelCertToggleCmd(), newPanelCertIssueCmd())
+	cmd.AddCommand(newPanelCertStatusCmd(), newPanelCertToggleCmd(), newPanelCertIssueCmd(), newPanelCertNewKeyCmd())
 	return cmd
 }
 
@@ -190,6 +193,99 @@ func newPanelCertIssueCmd() *cobra.Command {
 			fmt.Printf("%s panel cert queued for issuance (status=pending_acme; reconciler issues on the next pass, ≤60s)\n", kind)
 			return nil
 		},
+	}
+}
+
+// newPanelCertNewKeyCmd replaces a self-signed panel certificate with a new
+// one, with a new key, now. The reconciler never does: a current self-signed
+// certificate is left alone so a tick never restarts the panel for nothing,
+// which also keeps a key that may have been copied. A certificate from Let's
+// Encrypt or another CA is kept (the agent refuses to replace a live one);
+// Let's Encrypt gives it a new key at each renewal.
+func newPanelCertNewKeyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "new-key [hostname|mail]",
+		Short: "Replace a self-signed panel certificate with a new one, with a new key",
+		Long: "Writes a new self-signed certificate and key for the hostname (default) or mail " +
+			"panel certificate now, then reloads nginx and restarts the panel (hostname) or the " +
+			"mail server (mail). Use it when the old key may have been copied. Browsers and mail " +
+			"apps ask you to accept the new certificate once. A certificate from Let's Encrypt " +
+			"or another CA is kept: Let's Encrypt gives it a new key at each renewal.",
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kind, err := panelCertKindArg(args)
+			if err != nil {
+				return err
+			}
+			// The mail kind restarts Stalwart, which can take a minute.
+			ctx, cancel := context.WithTimeout(cmd.Context(), 3*time.Minute)
+			defer cancel()
+			row, err := panelCertRepoFromDB().GetByKind(ctx, kind)
+			if err != nil {
+				return fmt.Errorf("load %s panel cert: %w", kind, err)
+			}
+			settings, err := repository.NewServerSettingsRepository(sharedDB).Get(ctx)
+			if err != nil {
+				return fmt.Errorf("load server settings: %w", err)
+			}
+			verb, params, err := panelCertNewKeyRequest(kind, row, settings)
+			if err != nil {
+				return err
+			}
+			raw, err := sharedAgent.Call(ctx, verb, params)
+			if err != nil {
+				cliAuditErr(ctx, "panel_cert.new_key", "panel_certificate", kind, nil)
+				return fmt.Errorf("replace the %s panel certificate: %w", kind, err)
+			}
+			var resp struct {
+				Regenerated bool   `json:"regenerated"`
+				Reason      string `json:"reason"`
+			}
+			if err := json.Unmarshal(raw, &resp); err != nil {
+				return fmt.Errorf("read the agent's answer: %w", err)
+			}
+			if resp.Regenerated {
+				cliAuditOK(ctx, "panel_cert.new_key", "panel_certificate", kind, nil)
+			}
+			fmt.Println(panelCertNewKeyMessage(kind, resp.Regenerated, resp.Reason))
+			return nil
+		},
+	}
+}
+
+// panelCertNewKeyRequest builds the agent call for kind: the hostname cert for
+// the panel hostname and its public IPv4 (the SANs install.sh gives it), the
+// mail cert for its mail names, exactly as the panel's own self-sign actions do.
+func panelCertNewKeyRequest(kind string, row *models.PanelCertificate, settings *models.ServerSettings) (string, map[string]any, error) {
+	if settings == nil || strings.TrimSpace(settings.Hostname) == "" {
+		return "", nil, fmt.Errorf("the panel hostname is not set (Settings → Server)")
+	}
+	if kind == models.PanelCertKindMail {
+		mailHost := ""
+		if row != nil {
+			mailHost = row.Hostname
+		}
+		return "ssl.panel.mail_selfsign", map[string]any{
+			"names":   panelcert.MailNames(mailHost, settings.Hostname),
+			"new_key": true,
+		}, nil
+	}
+	return "ssl.panel.selfsign", map[string]any{
+		"hostname": settings.Hostname,
+		"ip":       settings.PublicIPv4,
+		"new_key":  true,
+	}, nil
+}
+
+func panelCertNewKeyMessage(kind string, regenerated bool, reason string) string {
+	switch {
+	case regenerated && kind == models.PanelCertKindMail:
+		return "mail panel cert: a new self-signed certificate and key are in place; nginx reloaded and the mail server restarted. Mail apps and browsers ask you to accept the new certificate once."
+	case regenerated:
+		return "hostname panel cert: a new self-signed certificate and key are in place; nginx reloaded and the panel restarted. Browsers ask you to accept the new certificate once."
+	default:
+		return fmt.Sprintf("%s panel cert kept (%s). Let's Encrypt gives it a new key at each renewal.", kind, reason)
 	}
 }
 

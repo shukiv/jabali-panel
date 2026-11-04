@@ -4298,6 +4298,14 @@ Request (re)issuance of a panel certificate on the next reconcile pass
 jabali panel-cert issue [hostname|mail]
 ```
 
+#### `jabali panel-cert new-key`
+
+Replace a self-signed panel certificate with a new one, with a new key
+
+```
+jabali panel-cert new-key [hostname|mail]
+```
+
 #### `jabali panel-cert status`
 
 Show both panel certificates (hostname + mail)
