@@ -349,7 +349,7 @@ func newDNSZoneListCmd() *cobra.Command {
 func dnsZonePushLabel(z *models.DNSZone) string {
 	switch {
 	case z.PushFailed() && z.LastPushedAt != nil:
-		return "outdated (last push failed)"
+		return "yes, last push failed"
 	case z.PushFailed():
 		return "no (push failed)"
 	case z.LastPushedAt != nil:

@@ -22,7 +22,7 @@ func TestDNSZonePushLabel(t *testing.T) {
 		{"cleared error", models.DNSZone{LastPushError: &empty}, "pending"},
 		{"accepted", models.DNSZone{LastPushedAt: &at}, "yes"},
 		{"refused", models.DNSZone{LastPushError: &failed}, "no (push failed)"},
-		{"older copy on the server", models.DNSZone{LastPushedAt: &at, LastPushError: &failed}, "outdated (last push failed)"},
+		{"older copy on the server", models.DNSZone{LastPushedAt: &at, LastPushError: &failed}, "yes, last push failed"},
 	}
 	for _, c := range cases {
 		if got := dnsZonePushLabel(&c.zone); got != c.want {

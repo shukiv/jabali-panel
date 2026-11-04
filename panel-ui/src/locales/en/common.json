@@ -455,7 +455,7 @@
     "push_failed": "Not on DNS server",
     "push_failed_hint": "The DNS server did not accept this zone. The panel keeps retrying.",
     "push_failed_still_has": "The DNS server still has the version from {{date}}.",
-    "push_failed_update": "Changes not on DNS server",
+    "push_failed_update": "Last update failed",
     "push_on_server_hint": "Last accepted by the DNS server {{date}}",
     "push_pending": "Pending",
     "push_pending_hint": "Not sent to the DNS server yet.",
