@@ -174,6 +174,17 @@ type PanelCertificate struct {
 // "panel_certificates", which doesn't exist.
 func (PanelCertificate) TableName() string { return "panel_certificate" }
 
+// QueueIssue asks the reconciler for a Let's Encrypt issuance on its next
+// pass (`jabali panel-cert issue`). It is a retry that is due now, not
+// pending_acme: the reconciler marks pending_acme itself just before it
+// dispatches, so it reads a fresh pending_acme as another pass's issuance in
+// flight and leaves the row alone for 10 minutes.
+func (p *PanelCertificate) QueueIssue(now time.Time) {
+	due := now
+	p.Status = PanelCertStatusPendingACMERetry
+	p.NextRetryAt = &due
+}
+
 // SelfSignedState is what the hostname row shows in self-signed mode (Let's
 // Encrypt off, GH #2166) for the cert on disk, as panelcert.Check classified
 // it: issued, with that cert's expiry, for a CA cert kept until it expires;
