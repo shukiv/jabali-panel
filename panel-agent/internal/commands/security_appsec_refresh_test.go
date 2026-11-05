@@ -237,3 +237,19 @@ func TestAppSecRefresh_WaitsForAnotherWriter(t *testing.T) {
 func callRefreshErr() (any, error) {
 	return csAppSecRefreshHandler(context.Background(), nil)
 }
+
+// The agent's renders name the panel by the addresses jabali's default vhost
+// holds too, in the on_match allowlist and the bot-challenge exemption alike.
+func TestAppSecRenders_NameThePanelByItsAddresses(t *testing.T) {
+	refreshEnv(t, nil)
+	prev := appsecPanelAddrs
+	appsecPanelAddrs = func() []string { return []string{"203.0.113.5"} }
+	t.Cleanup(func() { appsecPanelAddrs = prev })
+
+	if body := renderJabaliAppsec("off", nil, "off", "all"); !strings.Contains(body, `"203.0.113.5", "203.0.113.5:8443"]`) {
+		t.Errorf("jabali-appsec does not name the panel's address:\n%s", body)
+	}
+	if body := appseccfg.RenderBotExempt(botExemptOpts("all")); !strings.Contains(body, `"203.0.113.5", "203.0.113.5:8443"]`) {
+		t.Errorf("the bot-challenge exemption does not name the panel's address:\n%s", body)
+	}
+}
