@@ -5,36 +5,41 @@
 // the "All Domains" aggregate row and its cross-domain open capability. The
 // page's card frames the tab, so the table sits in it directly (GH #2251).
 import { useState } from "react";
-import { Button, Space, Table } from "antd";
+import { Button, Space } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "../../../apiClient";
+import { fetchAllPages } from "../../../lib/fetchAllPages";
 import { LogStreamModal } from "../../../components/LogStreamModal";
+import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import {
   type DomainLogRow,
   ALL_DOMAINS_ROW,
+  DOMAIN_LOG_PAGINATION,
+  matchesDomainSearch,
 } from "../../../components/logs/domainLogStreams";
 import { useDomainLogStreams } from "../../../components/logs/useDomainLogStreams";
 import { buildDomainLogColumns } from "../../../components/logs/buildDomainLogColumns";
 
 export const DomainLogsTab = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [search, setSearch] = useState("");
   const streams = useDomainLogStreams();
 
-  const { data: domainsData, isLoading } = useQuery({
-    queryKey: ["domains", refreshTrigger],
-    queryFn: async () => {
-      const response = await apiClient.get("/domains");
-      return response.data;
-    },
+  // Every page: asked for no page size, /domains answers its first 20 rows,
+  // and the rest never showed here (GH #2381).
+  const { data: domains = [], isLoading } = useQuery({
+    queryKey: ["domains", "all", refreshTrigger],
+    queryFn: () => fetchAllPages<DomainLogRow>("/domains"),
   });
-
-  const domains: DomainLogRow[] = domainsData?.data || [];
 
   // Admin delta: the synthetic aggregate row, and the capability to open a
   // cross-domain stream on it. onOpenAggregate is what makes the aggregate
   // reachable here (and, by its absence, unreachable in the tenant scope).
-  const tableData: DomainLogRow[] = [ALL_DOMAINS_ROW, ...domains];
+  // The search narrows the domains only; the aggregate row stays on top.
+  const tableData: DomainLogRow[] = [
+    ALL_DOMAINS_ROW,
+    ...domains.filter((d) => matchesDomainSearch(d, search)),
+  ];
   const columns = buildDomainLogColumns({
     onOpenDomain: streams.openStream,
     onOpenAggregate: (logType) => streams.openStream(logType),
@@ -51,12 +56,14 @@ export const DomainLogsTab = () => {
         </Button>
       </Space>
 
-      <Table
+      <SearchableTableStringQ<DomainLogRow>
         columns={columns}
         dataSource={tableData}
         rowKey="id"
         loading={isLoading}
-        pagination={false}
+        searchPlaceholder="Search domains…"
+        onSearchChange={setSearch}
+        pagination={DOMAIN_LOG_PAGINATION}
         size="middle"
         scroll={{ x: "max-content" }}
       />

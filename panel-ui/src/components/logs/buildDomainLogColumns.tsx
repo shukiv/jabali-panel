@@ -60,7 +60,7 @@ export function buildDomainLogColumns(
       render: (name: string, record: DomainLogRow) => (
         <Space>
           <Text strong>{name}</Text>
-          <Text type="secondary">({record.status})</Text>
+          {record.status && <Text type="secondary">({record.status})</Text>}
         </Space>
       ),
     },
