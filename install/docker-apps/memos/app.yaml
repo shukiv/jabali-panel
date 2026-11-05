@@ -3,7 +3,13 @@ popularity: 34
 tenant_installable: true
 name: Memos
 tags: ["Productivity"]
-version: "0.31.0"
+version: "26.11.0"
+# Release track (GH #1956): Memos switched to calendar versions in 26.10.0 (YY.MM.N).
+# Update moves a 0.31 install to 26; a 0.30 or 0.29 install goes to 0.31 first,
+# which upstream requires before 26. A 0.31 install keeps the 0.31 image on an
+# env or domain edit.
+track: "26"
+update_from: ["0.31"]
 description: |
   Self-hosted, open-source note-taking platform. Lightweight, single
   container with SQLite by default. Markdown editor, tagging,
@@ -12,7 +18,12 @@ icon: icon.svg
 upstream: https://github.com/usememos/memos
 documentation: https://www.usememos.com/docs
 
-image_channel: neosmemo/memos:0.31.0@sha256:24c2707ddd8fbd2ceaa7a61ecab86a53cdcde640b24ce572b73da14b00b5785f
+image_channel: neosmemo/memos:26.11.0@sha256:087e7dc6b76b31fcd1107a5767398b2a310ced209adb791efd8760c745dc8034
+held_tracks:
+  - track: "0.31"
+    version: "0.31.0"
+    image_channel: neosmemo/memos:0.31.0@sha256:24c2707ddd8fbd2ceaa7a61ecab86a53cdcde640b24ce572b73da14b00b5785f
+    update_from: ["0.30", "0.29"]
 update_mode: manual
 
 resources:

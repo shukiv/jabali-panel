@@ -13,7 +13,7 @@ func TestAutoUpdate_StopFirstFollowsTheCatalog(t *testing.T) {
 	for slug, want := range map[string]bool{"rocketchat": true, "memos": false} {
 		r, ag, _ := gateReconciler(t, nil)
 		r.pollImageUpdate(context.Background(), &models.DockerApp{
-			ID: "a1", Slug: slug,
+			ID: "a1", Slug: slug, CatalogVersion: "0.31.0",
 			UpdateMode: models.DockerAppUpdateModeAuto, Status: models.DockerAppStatusRunning,
 		})
 		calls := ag.calls["docker_app.update"]

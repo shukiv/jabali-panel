@@ -124,7 +124,7 @@ func TestDispatchInstall_TenantFailsClosedWithoutOwner(t *testing.T) {
 
 func autoApp(uid *string) *models.DockerApp {
 	return &models.DockerApp{
-		ID: "a1", Slug: "memos", UserID: uid,
+		ID: "a1", Slug: "memos", UserID: uid, CatalogVersion: "0.31.0",
 		UpdateMode: models.DockerAppUpdateModeAuto, Status: models.DockerAppStatusRunning,
 	}
 }
