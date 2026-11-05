@@ -7,6 +7,7 @@
 // click-menu whose motion never settles under happy-dom. Inspecting the
 // element's props exercises every log type's onClick without a flaky DOM.
 import { describe, it, expect, vi } from "vitest";
+import { render } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { buildDomainLogColumns } from "./buildDomainLogColumns";
 import { ALL_DOMAINS_ROW, type DomainLogRow } from "./domainLogStreams";
@@ -94,5 +95,20 @@ describe("tenant scope — can NEVER open aggregate (AC2)", () => {
       ["goaccess", "d1"],
       ["php", "d1"],
     ]);
+  });
+});
+
+describe("Domain column (GH #2381)", () => {
+  const nameCell = (record: DomainLogRow) => {
+    const col = (buildDomainLogColumns({ onOpenDomain: vi.fn() }) as RenderCol[]).find((c) => c.key === "name");
+    return render(col!.render!(record.name, record, 0)).container.textContent;
+  };
+
+  it("shows no empty () for a domain the API sends without a status", () => {
+    expect(nameCell({ id: "d1", name: "example.com" } as DomainLogRow)).toBe("example.com");
+  });
+
+  it("still shows the aggregate row's (system)", () => {
+    expect(nameCell(ALL_DOMAINS_ROW)).toBe("All Domains(system)");
   });
 });

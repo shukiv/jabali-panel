@@ -16,9 +16,24 @@ export type LogType = "access" | "error" | "goaccess" | "php";
 export interface DomainLogRow {
   id: string;
   name: string;
-  status: string;
+  // Only the aggregate row sets it ("system"); /domains sends no status, and
+  // the column shows none rather than an empty "()" (GH #2381).
+  status?: string;
   aggregate?: boolean;
 }
+
+// The domain table's search: a case-insensitive match on the domain name.
+export function matchesDomainSearch(row: DomainLogRow, search: string): boolean {
+  return row.name.toLowerCase().includes(search.trim().toLowerCase());
+}
+
+// The domain table pages in the browser: both shells load every domain
+// (GH #2381), which on a big server is too long for one page.
+export const DOMAIN_LOG_PAGINATION = {
+  defaultPageSize: 50,
+  showSizeChanger: true,
+  hideOnSinglePage: true,
+} as const;
 
 // Modal titles, keyed by log type. Kept verbatim from the two shells so the
 // consolidated copy does not shift under either page (AC6).
