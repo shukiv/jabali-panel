@@ -14,10 +14,9 @@ var vhostPanelScope = func() (host string, addrs []string) {
 }
 
 // panelHostGuard is the Host pattern a domain's vhost refuses with 421: the
-// panel's names, bare and with its port (appseccfg.PanelHostPattern). AppSec
-// treats a request naming the panel as the panel's, and a domain bound to an
-// address of its own is that address's default server, so without this such
-// a request could reach the domain. "" for a vhost that serves the panel's own
+// panel's names, bare and with its port (appseccfg.PanelHostPattern). A
+// request naming the panel is the panel's, never a domain's, not even on an
+// address the domain has to itself. "" for a vhost that serves the panel's own
 // name (names holds every name in its server_name), and when the panel's name
 // cannot be read.
 func panelHostGuard(names ...string) string {

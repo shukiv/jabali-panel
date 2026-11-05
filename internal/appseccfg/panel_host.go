@@ -62,9 +62,7 @@ func PanelHostForms(host string, addrs []string) []string {
 
 // PanelHostPattern is an nginx regex (for `~*`) matching exactly the Host
 // values PanelHostForms lists, "" when there are none. A domain's vhost
-// refuses those: AppSec treats a request naming the panel as the panel's, and
-// a domain bound to an address of its own is that address's default server,
-// so such a request could otherwise reach it.
+// refuses those: a request naming the panel is never a domain's.
 func PanelHostPattern(host string, addrs []string) string {
 	forms := PanelHostForms(host, addrs)
 	if len(forms) == 0 {
