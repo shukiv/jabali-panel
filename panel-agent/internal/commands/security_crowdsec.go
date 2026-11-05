@@ -934,6 +934,8 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 	if (p.Mode == "allow" || p.Mode == "deny") && len(cleaned) == 0 {
 		return nil, csInvalidArg("mode " + p.Mode + " requires at least one country")
 	}
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	body := renderAppSecGeoblockRule(p.Mode, cleaned)
 	if err := os.MkdirAll("/etc/crowdsec/appsec-configs", 0o755); err != nil {
 		return nil, csInternal("mkdir appsec-configs", err)
@@ -2022,6 +2024,7 @@ func init() {
 	Default.Register("security.crowdsec.appsec.botdetection.get", csBotDetectionGetHandler)
 	Default.Register("security.crowdsec.appsec.botdetection.set", csBotDetectionSetHandler)
 	Default.Register("security.crowdsec.appsec.botdetection.refresh_exempt", csBotDetectionRefreshExemptHandler)
+	Default.Register("security.crowdsec.appsec.refresh", csAppSecRefreshHandler)
 	Default.Register("security.crowdsec.allowlists.list", csAllowlistsListHandler)
 	Default.Register("security.crowdsec.allowlists.add", csAllowlistsAddHandler)
 	Default.Register("security.crowdsec.allowlists.remove", csAllowlistsRemoveHandler)

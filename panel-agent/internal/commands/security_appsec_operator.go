@@ -59,6 +59,8 @@ func appsecOperatorApplyHandler(ctx context.Context, params json.RawMessage) (an
 		return appseccfg.OperatorApplyResult{Skipped: "crowdsec is not installed"}, nil
 	}
 
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	prevBefore, _ := readFileOK(appsecOperatorBeforePath)
 	beforeChanged, err := writeOperatorBeforeFile(appsecOperatorBeforePath,
 		appseccfg.RenderOperatorBeforeFile(p.Exclusions, p.HostModes))
