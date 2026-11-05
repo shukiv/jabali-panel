@@ -59,7 +59,10 @@ server {
 {{ else }}    listen [::]:443 ssl{{.HTTP2Param}};
 {{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
 {{ end }}    server_name {{.DomainName}};
-
+{{ if .PanelHostGuard }}    # A request naming the panel never reaches a domain, not even on the
+    # domain's own address (panelHostGuard).
+    if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
+{{ end }}
     ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
 
@@ -95,7 +98,10 @@ server {
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.DomainName}};
-
+{{ if .PanelHostGuard }}    # A request naming the panel never reaches a domain, not even on the
+    # domain's own address (panelHostGuard).
+    if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
+{{ end }}
     # ACME HTTP-01 webroot — served from the shared panel ACME root so a
     # public LE issuance (once the operator points DNS at this host)
     # validates. Harmless when DNS isn't public yet (self-signed
@@ -123,6 +129,9 @@ type dockerAppVhostApplyParams struct {
 	// HTTP/2 form per host nginx version (GH #292); set before render, not wire.
 	HTTP2Param     string `json:"-"`
 	HTTP2Directive string `json:"-"`
+	// PanelHostGuard: the Host pattern the vhost refuses (panelHostGuard);
+	// set before render, not wire.
+	PanelHostGuard string `json:"-"`
 }
 
 func dockerAppVhostPaths(domain string) (configPath, enabledPath string) {
@@ -156,6 +165,7 @@ func dockerAppVhostApplyHandler(ctx context.Context, params json.RawMessage) (an
 
 	h2 := nginxHTTP2()
 	p.HTTP2Param, p.HTTP2Directive = h2.Param, h2.Directive
+	p.PanelHostGuard = panelHostGuard(p.DomainName)
 	tmpl, err := template.New("dockerappvhost").Parse(dockerAppVhostTemplate)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("template parse: %v", err)}

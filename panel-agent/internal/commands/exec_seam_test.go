@@ -38,6 +38,9 @@ func TestMain(m *testing.M) {
 	// host's nginx holds too. A test box's must not reach the configs tests
 	// render.
 	appsecPanelAddrs = func() []string { return nil }
+	// The vhost renders refuse the panel's names. A test box's name must not
+	// reach the vhosts tests render.
+	vhostPanelScope = func() (string, []string) { return "", nil }
 
 	stub := filepath.Join(dir, "noexec")
 	// The stub path is baked into argv (below), NOT into an env marker, so the

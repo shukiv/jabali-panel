@@ -60,6 +60,21 @@ func PanelHostForms(host string, addrs []string) []string {
 	return out
 }
 
+// PanelHostPattern is an nginx regex (for `~*`) matching exactly the Host
+// values PanelHostForms lists, "" when there are none. A domain's vhost
+// refuses those: a request naming the panel is never a domain's.
+func PanelHostPattern(host string, addrs []string) string {
+	forms := PanelHostForms(host, addrs)
+	if len(forms) == 0 {
+		return ""
+	}
+	escaped := make([]string, len(forms))
+	for i, f := range forms {
+		escaped[i] = strings.ReplaceAll(f, ".", `\.`)
+	}
+	return "^(?:" + strings.Join(escaped, "|") + ")$"
+}
+
 // LocalPanelHost is this host's name, which is the panel's (M6.4).
 // `jabali-panel appsec render-config` and the agent both scope the panel-path
 // skips with it, so neither re-render undoes the other.

@@ -240,6 +240,9 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
     # URL's proxy sends this header; every other request is dropped with no
     # response (444), ACME challenges included.
     if ($http_x_jabali_preview_gate != "{{.OwnershipGate}}") { return 444; }
+{{ end }}{{end}}{{define "panelhostguard"}}{{ if .PanelHostGuard }}    # A request naming the panel never reaches a domain, not even on the
+    # domain's own address (panelHostGuard).
+    if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
 {{ end }}{{end}}{{define "servebody"}}{{ if .IsEnabled }}
     root {{.DocRoot}};
     # JAB-183: refuse to follow a symlink whose owner differs from the owner of
@@ -601,7 +604,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
-{{ template "ownershipgate" . }}{{ if .IsEnabled }}
+{{ template "panelhostguard" . }}{{ template "ownershipgate" . }}{{ if .IsEnabled }}
     # ACME HTTP-01 webroot. Must be a location block — a server-level
     # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
     # so a server-scoped redirect short-circuits every request
@@ -660,7 +663,7 @@ server {
     # unknown-directive error), the http2 on directive on >=1.25.1
     # (where the listen parameter is deprecated and warns every reload).
     server_name {{.Domain}} www.{{.Domain}}{{.ExtraServerNames}};
-{{ template "ownershipgate" . }}    ssl_certificate {{.SSLCertPath}};
+{{ template "panelhostguard" . }}{{ template "ownershipgate" . }}    ssl_certificate {{.SSLCertPath}};
     ssl_certificate_key {{.SSLKeyPath}};
     # JAB-69: modern TLS + Mozilla-intermediate ciphers (no 3DES/RC4/CBC-weak).
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -691,7 +694,7 @@ server {
 {{ end }}{{ if .ListenIPv6 }}    listen [{{.ListenIPv6}}]:80;
 {{ else }}    listen [::]:80;
 {{ end }}    server_name {{.PreviewHost}};
-{{ if .PreviewCertPath }}
+{{ template "panelhostguard" . }}{{ if .PreviewCertPath }}
     location / {
         return 301 https://$host$request_uri;
     }
@@ -704,7 +707,7 @@ server {
 {{ else }}    listen [::]:443 ssl{{.HTTP2Param}};
 {{ end }}{{ if .HTTP2Directive }}    {{.HTTP2Directive}}
 {{ end }}    server_name {{.PreviewHost}};
-    ssl_certificate {{.PreviewCertPath}};
+{{ template "panelhostguard" . }}    ssl_certificate {{.PreviewCertPath}};
     ssl_certificate_key {{.PreviewKeyPath}};
     ssl_protocols TLSv1.2 TLSv1.3;
 {{ end }}
@@ -748,6 +751,12 @@ server {
 }
 {{ end }}`
 
+// domainPanelHostGuard is panelHostGuard for a domain's vhost, whose names are
+// domain, www.domain and the alias names (aliasServerNames, space-joined).
+func domainPanelHostGuard(domain, aliasServerNames string) string {
+	return panelHostGuard(append([]string{domain, "www." + domain}, strings.Fields(aliasServerNames)...)...)
+}
+
 type vhostData struct {
 	Domain string
 	// ExtraServerNames (GH #1625) is the sanitized web-domain-alias
@@ -762,6 +771,7 @@ type vhostData struct {
 	// OwnershipGate: see domainCreateParams.OwnershipGate. Validated
 	// against ownershipGateRegex before it reaches the template.
 	OwnershipGate      string
+	PanelHostGuard     string // the Host pattern every server block refuses (panelHostGuard); "" for none
 	DocRoot            string
 	HasPHP             bool
 	PHPVersion         string
@@ -1322,6 +1332,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		PreviewKeyPath:             previewKeyPath,
 		PreviewUpstream:            previewUpstream,
 		OwnershipGate:              ownershipGate,
+		PanelHostGuard:             domainPanelHostGuard(domain, aliasServerNames),
 		HTTP2Param:                 h2.Param,
 		HTTP2Directive:             h2.Directive,
 		DocRoot:                    docRoot,

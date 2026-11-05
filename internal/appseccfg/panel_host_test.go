@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -104,5 +105,27 @@ server {
 	}
 	if got := DefaultServerAddrs(filepath.Join(t.TempDir(), "absent.conf")); got != nil {
 		t.Errorf("missing file: got %q, want none", got)
+	}
+}
+
+// The vhost guard matches exactly the Host values the AppSec scope names,
+// dots taken literally.
+func TestPanelHostPattern(t *testing.T) {
+	want := `^(?:panel\.example\.com|panel\.example\.com:8443|203\.0\.113\.5|203\.0\.113\.5:8443)$`
+	if got := PanelHostPattern("panel.example.com", []string{"203.0.113.5"}); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := PanelHostPattern(`x" || true`, nil); got != "" {
+		t.Errorf("invalid host: got %q, want none", got)
+	}
+	re := regexp.MustCompile("(?i)" + want)
+	for host, match := range map[string]bool{
+		"panel.example.com": true, "PANEL.example.com:8443": true, "203.0.113.5": true,
+		"panelxexample.com": false, "shop.panel.example.com": false, "panel.example.com:443": false,
+		"203.0.113.5:80": false, "203.0.113.50": false,
+	} {
+		if re.MatchString(host) != match {
+			t.Errorf("%q: match = %v, want %v", host, !match, match)
+		}
 	}
 }
