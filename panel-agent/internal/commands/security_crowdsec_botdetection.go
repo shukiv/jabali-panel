@@ -152,6 +152,10 @@ func readGeoblockState() (string, []string) {
 // appsecRulesDir is where the hub installs AppSec rules. A var for tests.
 var appsecRulesDir = appseccfg.AppsecRulesDir
 
+// appsecWebmailHostsPath is the panel reconciler's webmail host list. A var
+// for tests.
+var appsecWebmailHostsPath = appseccfg.WebmailHostsPath
+
 // renderJabaliAppsec is the call site for appseccfg.Render used by both the
 // geoblock and bot-detection handlers, so neither resets the other's header
 // marker. Webmail allowlist comes from the panel reconciler's state file
@@ -166,7 +170,7 @@ func renderJabaliAppsec(geoMode string, countries []string, botMode, botScope st
 // they do for `jabali appsec render-config`, so both writers load the same
 // rule sets.
 func renderJabaliAppsecWith(geoMode string, countries []string, botMode, botScope, panelHost string, rules []appseccfg.Exclusion) string {
-	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
+	webmailHosts, _ := appseccfg.LoadWebmailHosts(appsecWebmailHostsPath)
 	return appseccfg.Render(appseccfg.Opts{
 		Mode:           geoMode,
 		Countries:      countries,
@@ -328,7 +332,7 @@ func botDetectionApplyOff(ctx context.Context, geoMode string, countries []strin
 // the panel reconciler's state files; missing or unreadable → the safe default
 // of no exemption).
 func botExemptOpts(scope string) appseccfg.Opts {
-	webmailHosts, _ := appseccfg.LoadWebmailHosts(appseccfg.WebmailHostsPath)
+	webmailHosts, _ := appseccfg.LoadWebmailHosts(appsecWebmailHostsPath)
 	exemptHosts, _ := appseccfg.LoadBotExemptHosts(appseccfg.BotExemptHostsPath)
 	includeHosts, _ := appseccfg.LoadBotIncludeHosts(appseccfg.BotIncludeHostsPath)
 	pathExclusions, _ := appseccfg.LoadBotExemptPaths(appseccfg.BotExemptPathsPath)

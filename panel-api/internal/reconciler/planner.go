@@ -138,6 +138,10 @@ var (
 	// PhaseCrowdsecLists is the admin's extra IP blocklists in CrowdSec. One
 	// entry for the host; the interval is the daily refresh of each list.
 	PhaseCrowdsecLists = Phase{Name: "crowdsec.lists", AuditInterval: 24 * time.Hour}
+	// PhaseAppSecWebmail is the AppSec config re-rendered with the webmail
+	// host list (GH #2380). One entry for the host, keyed on the list; the
+	// interval repairs a config rendered since from another list.
+	PhaseAppSecWebmail = Phase{Name: "crowdsec.appsec_webmail", AuditInterval: domainReDispatchInterval}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

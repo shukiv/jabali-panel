@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -161,6 +162,15 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 		// exemption is still needed: CalDAV/CardDAV methods (PROPFIND,
 		// REPORT) otherwise trip CRS rule 911100.
 		webmailHosts = append(webmailHosts, "mail."+d.Name, "autoconfig."+d.Name, "autodiscover."+d.Name)
+		// GH #2380: the panel-primary mail vhost also answers an applied
+		// custom mail hostname (JAB-390), and Bulwark's JMAP URL points at
+		// it. Left out, AppSec inspected webmail there: an HTML message
+		// sent from it scored as XSS and banned the sender's IP.
+		if d.IsPanelPrimary {
+			if extra, ok := panelPrimaryExtraMailName(r.webmailSettings(ctx), d); ok {
+				webmailHosts = append(webmailHosts, extra)
+			}
+		}
 	}
 
 	// Write the AppSec webmail-allowlist state file every pass.
@@ -173,6 +183,8 @@ func (r *Reconciler) reconcileWebmailVhosts(ctx context.Context) {
 	// the previous allowlist on disk, which is the safe state.
 	if _, err := appseccfg.WriteWebmailHosts(webmailHostsPath, webmailHosts); err != nil {
 		r.log.Warn("webmail reconcile: write webmail-hosts.list", "err", err)
+	} else {
+		r.refreshAppSecConfig(ctx, webmailHosts)
 	}
 
 	// Ensure the Bulwark daemon itself is running whenever any tenant
@@ -208,7 +220,33 @@ func (r *Reconciler) keepMailChallengesWithoutSSL(ctx context.Context) {
 	}
 	if _, werr := appseccfg.WriteWebmailHosts(webmailHostsPath, nil); werr != nil {
 		r.log.Warn("webmail reconcile: clear webmail-hosts.list", "err", werr)
+	} else {
+		r.refreshAppSecConfig(ctx, nil)
 	}
+}
+
+// refreshAppSecConfig has the agent re-render the AppSec config from the
+// webmail host list just written (GH #2380). Before, only an update or a
+// geoblock, bot-detection or exclusion change did, so a new domain's webmail
+// stayed inspected until then. The ledger keys it on the list: it runs when
+// the list changes, after a panel restart, after a failed call, and on the
+// phase's audit interval. The agent compares before it writes, and without
+// AppSec set up it has nothing to do.
+func (r *Reconciler) refreshAppSecConfig(ctx context.Context, hosts []string) {
+	if r.agent == nil {
+		return
+	}
+	key := append([]string{}, hosts...)
+	sort.Strings(key)
+	_, _ = r.project(ctx, PhaseAppSecWebmail, "jabali-appsec", fingerprint(key), false, func() error {
+		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
+		defer cancel()
+		if _, err := r.agent.Call(callCtx, "security.crowdsec.appsec.refresh", map[string]any{}); err != nil {
+			r.log.Warn("webmail reconcile: refresh the AppSec config", "err", err)
+			return err
+		}
+		return nil
+	})
 }
 
 // convergeWebmailDaemon starts and enables the Bulwark daemon (on) or stops
