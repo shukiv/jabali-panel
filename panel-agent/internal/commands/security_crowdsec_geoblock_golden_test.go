@@ -15,13 +15,13 @@ import (
 func TestRenderAppSecGeoblockRule_Golden(t *testing.T) {
 	appsecGoldenEnv(t, "base-config.yaml", "crs.yaml", "crs-exclusion-plugin-wordpress.yaml")
 	off := renderAppSecGeoblockRule("off", nil)
-	host, _ := os.Hostname() // GH #706: admin allowlist is scoped to the panel host
+	host := appsecPanelHost() // GH #706: admin allowlist is scoped to the panel host
 	for _, want := range []string{
 		"# jabali-mode: off\n",
 		"name: crowdsecurity/jabali-appsec\ndefault_remediation: ban\n",
 		// The rules on disk, in render-config's order (appseccfg.DetectInbandRules).
 		"inband_rules:\n - crowdsecurity/vpatch-*\n - crowdsecurity/generic-*\n - crowdsecurity/base-config\n - crowdsecurity/crs\n - crowdsecurity/crs-exclusion-plugin-wordpress\non_match:",
-		"on_match:\n - filter: (req.URL.Path startsWith \"/api/v1/\" || req.URL.Path startsWith \"/phpmyadmin/\" || req.URL.Path startsWith \"/jabali-adminer/\" || req.URL.Path startsWith \"/dav/\") && req.Host == \"" + host + "\"\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation(\"allow\")\n",
+		"on_match:\n - filter: (req.URL.Path startsWith \"/api/v1/\" || req.URL.Path startsWith \"/phpmyadmin/\" || req.URL.Path startsWith \"/jabali-adminer/\" || req.URL.Path startsWith \"/dav/\") && req.Host in [\"" + host + "\", \"" + host + ":8443\"]\n   apply:\n    - CancelEvent()\n    - CancelAlert()\n    - SetRemediation(\"allow\")\n",
 	} {
 		if !strings.Contains(off, want) {
 			t.Fatalf("off mode missing %q\n%s", want, off)

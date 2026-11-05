@@ -156,6 +156,10 @@ var appsecRulesDir = appseccfg.AppsecRulesDir
 // for tests.
 var appsecWebmailHostsPath = appseccfg.WebmailHostsPath
 
+// appsecPanelAddrs lists this host's public IPv4 addresses, which name the
+// panel in the AppSec scope too. A var for tests.
+var appsecPanelAddrs = appseccfg.LocalPublicAddrs
+
 // renderJabaliAppsec is the call site for appseccfg.Render used by both the
 // geoblock and bot-detection handlers, so neither resets the other's header
 // marker. Webmail allowlist comes from the panel reconciler's state file
@@ -177,6 +181,7 @@ func renderJabaliAppsecWith(geoMode string, countries []string, botMode, botScop
 		Inband:         appseccfg.DetectInbandRules(appsecRulesDir),
 		AdminAllowlist: true,
 		PanelHost:      panelHost,
+		PanelAddrs:     appsecPanelAddrs(),
 		WebmailHosts:   webmailHosts,
 		BotDetection:   botMode,
 		BotScope:       botScope,
@@ -340,6 +345,7 @@ func botExemptOpts(scope string) appseccfg.Opts {
 	pathExclusions, _ := appseccfg.LoadBotExemptPaths(appseccfg.BotExemptPathsPath)
 	return appseccfg.Opts{
 		PanelHost:         appsecPanelHost(),
+		PanelAddrs:        appsecPanelAddrs(),
 		WebmailHosts:      webmailHosts,
 		BotScope:          scope,
 		BotExemptHosts:    exemptHosts,

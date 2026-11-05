@@ -107,22 +107,22 @@ func appsecOperatorApplyHandler(ctx context.Context, params json.RawMessage) (an
 // writeAppsecRuleExclusions re-renders jabali-appsec.yaml with list, the
 // exclusions that name an AppSec rule. Everything else is kept as the live file
 // has it: the geoblock and bot-detection settings from its header, and the
-// panel-host scoping of its panel-path allowlist. Write-on-diff. Without the
-// file, AppSec is not set up and there is nothing to change. prev is the file
-// as it was, for a rollback.
+// panel host its panel-path allowlist is scoped to. An allowlist scoped to no
+// host, or to one that does not read back, is scoped to this host, as the
+// agent's own renders are. Write-on-diff. Without the file, AppSec is not set
+// up and there is nothing to change. prev is the file as it was, for a
+// rollback.
 func writeAppsecRuleExclusions(list []appseccfg.Exclusion) (changed bool, prev []byte, err error) {
 	prev, ok := readFileOK(appsecRulePath)
 	if !ok {
 		return false, nil, nil
 	}
-	panelHost, scoped := appseccfg.PanelHostFromConfig(string(prev))
-	if scoped && panelHost == "" {
-		// Scoped to a host that does not read back: the agent's own renders
-		// scope it to this one.
+	panelHost, _ := appseccfg.PanelHostFromConfig(string(prev))
+	if panelHost == "" {
 		panelHost = appsecPanelHost()
 	}
-	if scoped && panelHost == "" {
-		return false, prev, errors.New("the live AppSec config scopes the panel allowlist to a host that cannot be read back; not re-rendering it, which would widen it")
+	if panelHost == "" {
+		return false, prev, errors.New("this host's name cannot be read, so the AppSec config's panel allowlist cannot be scoped to it; left as it is")
 	}
 	geoMode, countries := readGeoblockState()
 	body := renderJabaliAppsecWith(geoMode, countries, readBotDetectionMode(), readBotScope(), panelHost, list)

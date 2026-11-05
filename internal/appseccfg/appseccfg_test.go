@@ -221,7 +221,7 @@ func TestRenderBotExempt_AlwaysExemptsAcme(t *testing.T) {
 func TestRenderBotExempt_PanelHostScopesPanelPathsButNotAcme(t *testing.T) {
 	out := RenderBotExempt(Opts{PanelHost: "panel.example.com"})
 	// Panel paths get host-scoped exactly like the on_match allowlist.
-	mustContain(t, out, `) && req.Host == "panel.example.com"`, "panel paths scoped to panel host")
+	mustContain(t, out, `) && req.Host in ["panel.example.com", "panel.example.com:8443"]`, "panel paths scoped to panel host")
 	// ...but ACME is NOT host-scoped (every tenant domain renews certs).
 	acmeLine := `    - filter: req.URL.Path startsWith "/.well-known/acme-challenge/"` + "\n"
 	if !strings.Contains(out, acmeLine) {

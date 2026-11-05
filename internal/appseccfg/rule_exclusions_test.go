@@ -226,13 +226,23 @@ func TestPanelHostFromConfig(t *testing.T) {
 		host   string
 		scoped bool
 	}{
-		"scoped":    {Render(Opts{AdminAllowlist: true, PanelHost: "panel.example.com"}), "panel.example.com", true},
+		"scoped": {Render(Opts{AdminAllowlist: true, PanelHost: "panel.example.com"}), "panel.example.com", true},
+		"scoped with addresses": {Render(Opts{AdminAllowlist: true, PanelHost: "panel.example.com", PanelAddrs: []string{"203.0.113.5"}}),
+			"panel.example.com", true},
+		// The single-host form fleet configs hold until their next render.
+		"older form": {` - filter: (req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/dav/") && req.Host == "panel.example.com"` + "\n",
+			"panel.example.com", true},
 		"path only": {Render(Opts{AdminAllowlist: true}), "", false},
 		// A host that does not read back cleanly is still a scope: reading it
 		// as path-only would widen the allowlist.
-		"uppercase host": {Render(Opts{AdminAllowlist: true, PanelHost: "Panel.Example.com"}), "", true},
+		"uppercase host": {` - filter: (req.URL.Path startsWith "/api/v1/") && req.Host == "Panel.Example.com"` + "\n", "", true},
+		"uppercase host in the list": {` - filter: (req.URL.Path startsWith "/api/v1/") && req.Host in ["Panel.Example.com", "Panel.Example.com:8443"]` + "\n",
+			"", true},
+		"addresses only": {Render(Opts{AdminAllowlist: true, PanelHost: "bad host!", PanelAddrs: []string{"203.0.113.5"}}), "", true},
+		"no valid name":  {Render(Opts{AdminAllowlist: true, PanelHost: "bad host!"}), "", true},
 		// A hand-edited file must not smuggle an expression into the next render.
 		"forged host":  {` - filter: (req.URL.Path startsWith "/api/v1/") && req.Host == "x" || true || "y"` + "\n", "", true},
+		"forged list":  {` - filter: (req.URL.Path startsWith "/api/v1/") && req.Host in ["x"] || true || req.Host in ["y"]` + "\n", "", true},
 		"no allowlist": {Render(Opts{}), "", true},
 	} {
 		host, scoped := PanelHostFromConfig(tc.body)
