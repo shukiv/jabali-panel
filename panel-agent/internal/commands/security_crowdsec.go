@@ -934,6 +934,8 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 	if (p.Mode == "allow" || p.Mode == "deny") && len(cleaned) == 0 {
 		return nil, csInvalidArg("mode " + p.Mode + " requires at least one country")
 	}
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	body := renderAppSecGeoblockRule(p.Mode, cleaned)
 	if err := os.MkdirAll("/etc/crowdsec/appsec-configs", 0o755); err != nil {
 		return nil, csInternal("mkdir appsec-configs", err)

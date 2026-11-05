@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 )
@@ -164,4 +165,40 @@ func TestAppSecRefresh_RefusedConfigIsPutBack(t *testing.T) {
 	if got := strings.Join(*calls, "; "); got != "crowdsec -t" {
 		t.Fatalf("calls = %q, want the check only", got)
 	}
+}
+
+// A refresh waits for another writer of the AppSec configs, so it cannot
+// render from a header that writer is replacing or put back what it wrote.
+func TestAppSecRefresh_WaitsForAnotherWriter(t *testing.T) {
+	refreshEnv(t, nil, "mail.a.example", "mail.b.example")
+	liveConfig(t, "", "mail.a.example")
+
+	appsecConfigMu.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := callRefreshErr()
+		done <- err
+	}()
+	select {
+	case <-done:
+		appsecConfigMu.Unlock()
+		t.Fatal("the refresh ran while another writer held the AppSec configs")
+	case <-time.After(200 * time.Millisecond):
+	}
+	appsecConfigMu.Unlock()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refresh did not run once the other writer finished")
+	}
+	if !strings.Contains(readAppsec(t), `req.Host == "mail.b.example"`) {
+		t.Fatal("the refresh did not write the list after waiting")
+	}
+}
+
+func callRefreshErr() (any, error) {
+	return csAppSecRefreshHandler(context.Background(), nil)
 }

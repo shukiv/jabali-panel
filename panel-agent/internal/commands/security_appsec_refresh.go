@@ -19,12 +19,24 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 )
+
+// appsecConfigMu serializes the verbs that write the AppSec configs
+// (jabali-appsec.yaml, jabali-bot-exempt.yaml): geoblock, bot detection, the
+// bot exemptions, the operator exclusions and this refresh. Each reads the
+// live file, renders from it, writes, checks, and may put the old file back.
+// Two at once could render from a header the other is replacing, or put back
+// a file the other just wrote, and lose a geoblock or exclusion change.
+// `jabali appsec render-config` runs in another process and is not covered.
+var appsecConfigMu sync.Mutex
 
 // csAppSecRefreshHandler is the verb. Without jabali-appsec.yaml, AppSec is
 // not set up here and nothing is written.
 func csAppSecRefreshHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	changed, prev, err := writeAppsecRuleExclusions(readRuleExclusions())
 	if err != nil {
 		return nil, csInternal("re-render the AppSec config", err)

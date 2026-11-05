@@ -242,6 +242,8 @@ func csBotDetectionSetHandler(ctx context.Context, params json.RawMessage) (any,
 	} else if p.Scope != "" && p.Scope != "all" {
 		return nil, csInvalidArg("scope must be all|selected")
 	}
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	geoMode, countries := readGeoblockState()
 	if p.Mode == "off" {
 		return botDetectionApplyOff(ctx, geoMode, countries)
@@ -358,6 +360,8 @@ func botExemptOpts(scope string) appseccfg.Opts {
 // detection off ⇒ the exempt config isn't composed into the acquis, so there is
 // nothing to reload; the next botdetection.set renders it fresh.
 func csBotDetectionRefreshExemptHandler(ctx context.Context, _ json.RawMessage) (any, error) {
+	appsecConfigMu.Lock()
+	defer appsecConfigMu.Unlock()
 	mode := readBotDetectionMode()
 	if mode == "off" {
 		return map[string]any{"mode": "off", "reloaded": false}, nil
