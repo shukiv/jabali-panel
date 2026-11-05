@@ -2,7 +2,12 @@ slug: forgejo
 popularity: 70
 name: Forgejo
 tags: ["Developer tools"]
-version: "16.0.5"
+version: "17.0.1"
+# Release track (GH #1956): new installs get Forgejo 17. Update moves a 16
+# install to 17 in place (Forgejo migrates its database on start) and a 15
+# install to 16 first; a 16 install keeps the 16 image on an env or domain edit.
+track: "17"
+update_from: ["16"]
 description: |
   Lightweight self-hosted Git forge — a community-run fork of Gitea.
   Bundled SQLite for v1; admin can flip to compose-managed Postgres
@@ -12,7 +17,12 @@ icon: icon.svg
 upstream: https://codeberg.org/forgejo/forgejo
 documentation: https://forgejo.org/docs/
 
-image_channel: codeberg.org/forgejo/forgejo:16.0.5@sha256:cf5f5ae6acf2ababca0ee3d255705b83a47f35b25e07fc931d694d60664053fe
+image_channel: codeberg.org/forgejo/forgejo:17.0.1@sha256:fcd19ff4ebc85fb098a67e8e1d0d5a84d07dd6e8a23edcfdfd5b71a6178953be
+held_tracks:
+  - track: "16"
+    version: "16.0.7"
+    image_channel: codeberg.org/forgejo/forgejo:16.0.7@sha256:c0fddfc04075e4198cc8e075fe6a1182984a5a7d5951c3a3c39b7fba2f10fbce
+    update_from: ["15"]
 volume_owner: "1000:1000"
 update_mode: manual
 

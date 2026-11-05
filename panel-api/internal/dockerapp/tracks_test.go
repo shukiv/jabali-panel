@@ -183,6 +183,9 @@ func TestCatalogTracks_ShippedLabels(t *testing.T) {
 		{"gitea", "1.26.2", "28.3.0"},
 		{"gitea", "1.27.1", "28.3.0"},
 		{"gitea", "1.27.3", "28.3.0"},
+		{"forgejo", "15.0.3", "16.0.7"},
+		{"forgejo", "16.0.2", "17.0.1"},
+		{"forgejo", "16.0.5", "17.0.1"},
 	} {
 		e, ok := cat.Get(tc.slug)
 		if !ok {
