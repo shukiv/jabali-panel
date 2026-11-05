@@ -137,7 +137,11 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
         <Table.Column<DomainBotExclusion>
           title="Path"
           dataIndex="path_prefix"
-          render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
+          render={(p: string) => (
+            <Typography.Text code className="jabali-wrap-cell">
+              {p}
+            </Typography.Text>
+          )}
         />
         <Table.Column<DomainBotExclusion>
           title="Methods"
@@ -155,7 +159,7 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
           dataIndex="note"
           render={(n: string) =>
             n ? (
-              <Typography.Text>{n}</Typography.Text>
+              <Typography.Text className="jabali-wrap-cell">{n}</Typography.Text>
             ) : (
               <Typography.Text type="secondary">—</Typography.Text>
             )

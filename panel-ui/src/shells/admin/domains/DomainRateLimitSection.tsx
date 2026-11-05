@@ -70,9 +70,13 @@ export const DomainRateLimitSection = ({ domainId, rateLimitRPS, connectionLimit
           <InputNumber min={0} max={MAX_LIMIT} precision={0} style={{ width: 200 }} placeholder="0" />
         </Form.Item>
       </Space>
-      <Button type="primary" loading={saving} onClick={onSave}>
-        Save limits
-      </Button>
+      {/* Its own row: after the inline-flex Space a bare button sat beside
+          the inputs (GH #2328). */}
+      <Form.Item style={{ marginBottom: 0 }}>
+        <Button type="primary" loading={saving} onClick={onSave}>
+          Save limits
+        </Button>
+      </Form.Item>
     </Form>
   );
 };

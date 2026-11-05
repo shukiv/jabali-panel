@@ -166,14 +166,18 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
         <Table.Column<DomainIPACL>
           title={t("domainipaclsection.cidr")}
           dataIndex="cidr"
-          render={(c: string) => <Typography.Text code>{c}</Typography.Text>}
+          render={(c: string) => (
+            <Typography.Text code className="jabali-wrap-cell">
+              {c}
+            </Typography.Text>
+          )}
         />
         <Table.Column<DomainIPACL>
           title={t("domainipaclsection.comment")}
           dataIndex="comment"
           render={(c: string) =>
             c ? (
-              <Typography.Text>{c}</Typography.Text>
+              <Typography.Text className="jabali-wrap-cell">{c}</Typography.Text>
             ) : (
               <Typography.Text type="secondary">—</Typography.Text>
             )

@@ -247,6 +247,24 @@ body.imp-active .ant-modal-body {
   max-width: 100%;
 }
 
+/* A free-text or path value in a list cell (GH #2328). Tables size to their
+   content (scroll={{ x: "max-content" }}), so a cell never wraps on its own:
+   one long value widened its column and pushed the list past the card. Capped
+   here, the value wraps, and the table scrolls only when it still can't fit.
+   The cap follows the viewport, so it narrows with browser zoom too. */
+.jabali-wrap-cell {
+  display: inline-block;
+  max-width: min(32em, 25vw);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+/* A wrapped code value gets its padded box on every line, not one box cut
+   across the break. */
+.jabali-wrap-cell code {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* ---------- Scrollbar styling (panel-wide) ----------------------------------
  * Browsers default to chunky 16px scrollbars that look out of place on
  * dark surfaces. Use thin/transparent rails everywhere — Firefox via

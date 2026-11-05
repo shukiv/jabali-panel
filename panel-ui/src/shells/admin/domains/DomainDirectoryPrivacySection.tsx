@@ -219,11 +219,16 @@ export const DomainDirectoryPrivacySection = ({
         <Table.Column<DirectoryPrivacyRule>
           title={t("domaindirectoryprivacysection.path")}
           dataIndex="path"
-          render={(p: string) => <Typography.Text code>{p}</Typography.Text>}
+          render={(p: string) => (
+            <Typography.Text code className="jabali-wrap-cell">
+              {p}
+            </Typography.Text>
+          )}
         />
         <Table.Column<DirectoryPrivacyRule>
           title={t("domaindirectoryprivacysection.authentication_name")}
           dataIndex="realm"
+          render={(r: string) => <span className="jabali-wrap-cell">{r}</span>}
         />
         <Table.Column<DirectoryPrivacyRule>
           title=""
