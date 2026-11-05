@@ -52,7 +52,10 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
 {{ else }}  listen [::]:443 ssl{{.HTTP2Param}};
 {{ end }}{{ if .HTTP2Directive }}  {{.HTTP2Directive}}
 {{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}}{{ range .ExtraServerNames }} {{.}}{{ end }};
-
+{{ if .PanelHostGuard }}  # A request naming the panel never reaches a domain, not even on the
+  # domain's own address (panelHostGuard).
+  if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
+{{ end }}
   ssl_certificate {{.SSLCertPath}};
   ssl_certificate_key {{.SSLKeyPath}};
 
@@ -219,7 +222,10 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
 {{ end }}{{ if .ListenIPv6 }}  listen [{{.ListenIPv6}}]:80;
 {{ else }}  listen [::]:80;
 {{ end }}  server_name mail.{{.DomainName}} autoconfig.{{.DomainName}} autodiscover.{{.DomainName}} mta-sts.{{.DomainName}}{{ range .ExtraServerNames }} {{.}}{{ end }};
-
+{{ if .PanelHostGuard }}  # A request naming the panel never reaches a domain, not even on the
+  # domain's own address (panelHostGuard).
+  if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
+{{ end }}
   # ACME HTTP-01 webroot. Must be a location block — a server-level
   # redirect fires in nginx SERVER_REWRITE phase BEFORE FIND_CONFIG,
   # so a server-scoped redirect bypasses ^~ matching for ACME paths.
@@ -353,6 +359,10 @@ type webmailVhostApplyParams struct {
 	ExtraServerNames []string `json:"extra_server_names,omitempty"`
 	// SubFilterHost is the resolved sub_filter target; set by the handler.
 	SubFilterHost string `json:"-"`
+	// PanelHostGuard is the Host pattern the vhost refuses (panelHostGuard);
+	// set by the handler, never for the panel-primary mail vhost, which is
+	// the panel's own.
+	PanelHostGuard string `json:"-"`
 	// ChallengeOnly renders the :80 block alone, for a domain with mail but
 	// no webmail (GH #2082): mail.<domain> still answers Let's Encrypt's
 	// check for its mail certificate, and nothing else is served. No
@@ -450,6 +460,10 @@ func webmailVhostApplyHandler(ctx context.Context, params json.RawMessage) (any,
 
 	if err := p.resolveMailHostnames(); err != nil {
 		return nil, err
+	}
+	if !p.IsPanelPrimary {
+		p.PanelHostGuard = panelHostGuard(append([]string{"mail." + p.DomainName, "autoconfig." + p.DomainName,
+			"autodiscover." + p.DomainName, "mta-sts." + p.DomainName}, p.ExtraServerNames...)...)
 	}
 
 	h2 := nginxHTTP2()
