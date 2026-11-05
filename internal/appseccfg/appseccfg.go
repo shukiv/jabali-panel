@@ -32,8 +32,8 @@ type Opts struct {
 	// bypass AppSec. Empty = path-only (fallback; never breaks the operator tools).
 	// The scope takes the host bare and with the panel port (PanelHostForms).
 	PanelHost string
-	// PanelAddrs are this host's public IPv4 addresses, which name the panel
-	// too when an admin opens it by address. Used only with PanelHost.
+	// PanelAddrs are IPv4 addresses that name the panel too, when an admin
+	// opens it by address (LocalPanelAddrs). Used only with PanelHost.
 	PanelAddrs []string
 	// WebmailHosts is the explicit allowlist of FQDNs exempted from
 	// CrowdSec AppSec. These are the dedicated webmail/autodiscover

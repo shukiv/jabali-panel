@@ -3,6 +3,7 @@ package appseccfg
 import (
 	"net"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -70,25 +71,41 @@ func LocalPanelHost() string {
 	return strings.ToLower(strings.TrimSpace(h))
 }
 
-// LocalPublicAddrs lists this host's public IPv4 addresses, sorted: the ones
-// an admin can reach the panel on by address. Private, loopback and link-local
-// addresses are left out; container bridges come and go, and each change
-// would re-render the config.
-func LocalPublicAddrs() []string {
-	ifAddrs, err := net.InterfaceAddrs()
+// DefaultVhostPath is jabali's default nginx vhost (install.sh
+// install_nginx_default_vhost).
+const DefaultVhostPath = "/etc/nginx/sites-available/jabali-default.conf"
+
+// LocalPanelAddrs lists the IPv4 addresses an admin can open the panel on by
+// address here: the ones jabali's default vhost holds as default_server on
+// :443 (DefaultServerAddrs).
+func LocalPanelAddrs() []string {
+	return DefaultServerAddrs(DefaultVhostPath)
+}
+
+var defaultServerListen = regexp.MustCompile(`^listen\s+(\d{1,3}(?:\.\d{1,3}){3}):443\s[^;#]*\bdefault_server\b`)
+
+// DefaultServerAddrs lists, sorted, the IPv4 addresses the nginx config at
+// path listens on as default_server for :443. On those, a Host naming no site
+// reaches jabali's own server, never a hosted site, so the address is safe to
+// name the panel. A hosted site bound to an address of its own is that
+// address's default, which is why the server's other addresses are not used.
+func DefaultServerAddrs(path string) []string {
+	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil
 	}
+	seen := map[string]bool{}
 	var out []string
-	for _, a := range ifAddrs {
-		n, ok := a.(*net.IPNet)
-		if !ok {
+	for _, line := range strings.Split(string(body), "\n") {
+		m := defaultServerListen.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
 			continue
 		}
-		ip := n.IP.To4()
-		if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		ip := net.ParseIP(m[1]).To4()
+		if ip == nil || seen[ip.String()] {
 			continue
 		}
+		seen[ip.String()] = true
 		out = append(out, ip.String())
 	}
 	sort.Strings(out)

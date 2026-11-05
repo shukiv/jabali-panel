@@ -156,9 +156,9 @@ var appsecRulesDir = appseccfg.AppsecRulesDir
 // for tests.
 var appsecWebmailHostsPath = appseccfg.WebmailHostsPath
 
-// appsecPanelAddrs lists this host's public IPv4 addresses, which name the
-// panel in the AppSec scope too. A var for tests.
-var appsecPanelAddrs = appseccfg.LocalPublicAddrs
+// appsecPanelAddrs lists the addresses that name the panel in the AppSec
+// scope too. A var for tests.
+var appsecPanelAddrs = appseccfg.LocalPanelAddrs
 
 // renderJabaliAppsec is the call site for appseccfg.Render used by both the
 // geoblock and bot-detection handlers, so neither resets the other's header

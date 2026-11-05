@@ -41,10 +41,11 @@ const (
 )
 
 // appsecPanelScope names the panel for the scope of the config's panel-path
-// allowlist: this host's name and public IPv4 addresses, read as the agent
-// reads them, so neither writer's render undoes the other's. A var for tests.
+// allowlist: this host's name and the addresses jabali's default vhost holds,
+// read as the agent reads them, so neither writer's render undoes the other's.
+// A var for tests.
 var appsecPanelScope = func() (host string, addrs []string) {
-	return appseccfg.LocalPanelHost(), appseccfg.LocalPublicAddrs()
+	return appseccfg.LocalPanelHost(), appseccfg.LocalPanelAddrs()
 }
 
 // appsecConfigOpts scopes o's panel-path allowlist to the panel (GH #706), so

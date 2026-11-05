@@ -1,6 +1,8 @@
 package appseccfg
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -63,5 +65,44 @@ func TestRender_InvalidPanelHostSkipsNothing(t *testing.T) {
 	exempt := RenderBotExempt(Opts{PanelHost: `x" || true || "y`})
 	if !strings.Contains(exempt, `req.URL.Path startsWith "/dav/") && false`+"\n") {
 		t.Fatalf("want the panel exemption to match nothing:\n%s", exempt)
+	}
+}
+
+// Only an address jabali's default vhost holds as default_server on :443
+// names the panel: a Host of that address reaches jabali's server there. An
+// address a hosted site listens on without jabali's default_server, a comment,
+// :80 and IPv6 do not count.
+func TestDefaultServerAddrs(t *testing.T) {
+	conf := `server {
+    listen 80 default_server;
+    listen 203.0.113.5:80 default_server;
+    # listen 198.51.100.9:443 ssl default_server;
+}
+server {
+    listen 443 ssl default_server http2;
+    listen [::]:443 ssl default_server http2;
+    listen 203.0.113.5:443 ssl default_server http2;
+    listen [2001:db8::1]:443 ssl default_server;
+    server_name _;
+}
+server {
+    listen 203.0.113.5:443 ssl http2;
+    listen 192.0.2.7:443 ssl http2;
+    server_name panel.example.com;
+}
+server {
+	listen 198.51.100.20:443 ssl default_server;
+}
+`
+	path := filepath.Join(t.TempDir(), "jabali-default.conf")
+	if err := os.WriteFile(path, []byte(conf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"198.51.100.20", "203.0.113.5"}
+	if got := DefaultServerAddrs(path); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if got := DefaultServerAddrs(filepath.Join(t.TempDir(), "absent.conf")); got != nil {
+		t.Errorf("missing file: got %q, want none", got)
 	}
 }

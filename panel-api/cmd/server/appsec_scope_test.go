@@ -9,8 +9,8 @@ import (
 )
 
 // render-config scopes the panel-path allowlist to the panel, as the agent's
-// renders do (GH #706): the host and its public addresses, bare and with the
-// panel port.
+// renders do (GH #706): the host and the addresses jabali's default vhost
+// holds, bare and with the panel port.
 func TestAppSecRenderConfig_ScopesPanelAllowlist(t *testing.T) {
 	prev := appsecPanelScope
 	appsecPanelScope = func() (string, []string) { return "panel.example.com", []string{"203.0.113.5"} }
@@ -37,7 +37,7 @@ func TestAppSecRenderConfig_ScopesPanelAllowlist(t *testing.T) {
 // undoes the other.
 func TestAppSecPanelScope_IsTheLocalHost(t *testing.T) {
 	host, addrs := appsecPanelScope()
-	if host != appseccfg.LocalPanelHost() || strings.Join(addrs, ",") != strings.Join(appseccfg.LocalPublicAddrs(), ",") {
+	if host != appseccfg.LocalPanelHost() || strings.Join(addrs, ",") != strings.Join(appseccfg.LocalPanelAddrs(), ",") {
 		t.Fatalf("scope = %q %v, want this host's", host, addrs)
 	}
 }
