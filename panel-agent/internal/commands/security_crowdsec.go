@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
 )
 
 // M26 Step 2 (ADR-0053). CrowdSec LAPI surface for the admin Security
@@ -2041,12 +2042,9 @@ func init() {
 }
 
 // appsecPanelHost returns the panel FQDN used to scope the AppSec admin
-// allowlist (GH #706). The panel hostname is the system hostname (M6.4); on
-// error we return "" so the renderer falls back to path-only (never breaks the
-// operator's phpMyAdmin/adminer access).
+// allowlist (GH #706). The panel hostname is the system hostname (M6.4), read
+// as `jabali-panel appsec render-config` reads it, so the two writers scope
+// alike; "" when it cannot be read.
 func appsecPanelHost() string {
-	if h, err := os.Hostname(); err == nil {
-		return strings.TrimSpace(h)
-	}
-	return ""
+	return appseccfg.LocalPanelHost()
 }

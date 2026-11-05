@@ -30,7 +30,11 @@ type Opts struct {
 	// PanelHost (GH #706) scopes the admin path-allowlist to the panel host so a
 	// tenant vhost serving /api/v1/, /phpmyadmin/, or /jabali-adminer/ paths cannot
 	// bypass AppSec. Empty = path-only (fallback; never breaks the operator tools).
+	// The scope takes the host bare and with the panel port (PanelHostForms).
 	PanelHost string
+	// PanelAddrs are IPv4 addresses that name the panel too, when an admin
+	// opens it by address (LocalPanelAddrs). Used only with PanelHost.
+	PanelAddrs []string
 	// WebmailHosts is the explicit allowlist of FQDNs exempted from
 	// CrowdSec AppSec. These are the dedicated webmail/autodiscover
 	// vhosts served exclusively by Bulwark + Stalwart, both of which
@@ -534,11 +538,11 @@ func Render(o Opts) string {
 		// group), exactly as the signon gate is for the DB tools; IP-reputation
 		// banning still applies (this only skips AppSec body inspection).
 		adminFilter := `req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/phpmyadmin/" || req.URL.Path startsWith "/jabali-adminer/" || req.URL.Path startsWith "/dav/"`
-		if o.PanelHost != "" {
+		if hf := panelHostFilter(o); hf != "" {
 			// GH #706: only skip AppSec for these paths ON THE PANEL HOST, so a
 			// tenant vhost serving the same paths is still WAF-inspected. req.Host
 			// equality (never a prefix — it is a client-controlled header).
-			adminFilter = "(" + adminFilter + `) && req.Host == "` + o.PanelHost + `"`
+			adminFilter = "(" + adminFilter + ") && " + hf
 		}
 		b.WriteString(" - filter: " + adminFilter + "\n")
 		b.WriteString("   apply:\n")
@@ -628,8 +632,8 @@ func RenderBotExempt(o Opts) string {
 	// vhost serving the same paths is still challenge-eligible. req.Host is a
 	// client-controlled header → equality, never a prefix.
 	pathExpr := `req.URL.Path startsWith "/api/v1/" || req.URL.Path startsWith "/.ory/" || req.URL.Path startsWith "/phpmyadmin/" || req.URL.Path startsWith "/jabali-adminer/" || req.URL.Path startsWith "/dav/"`
-	if o.PanelHost != "" {
-		pathExpr = "(" + pathExpr + `) && req.Host == "` + o.PanelHost + `"`
+	if hf := panelHostFilter(o); hf != "" {
+		pathExpr = "(" + pathExpr + ") && " + hf
 	}
 	b.WriteString("    - filter: " + pathExpr + "\n")
 	b.WriteString("      apply:\n")

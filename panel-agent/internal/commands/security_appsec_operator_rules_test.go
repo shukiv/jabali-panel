@@ -45,7 +45,7 @@ func liveAppsec(t *testing.T, o appseccfg.Opts) appseccfg.Opts {
 // before-plugin. The new config is checked before the reload.
 func TestOperatorApply_RuleNameRendersIntoAppsecConfig(t *testing.T) {
 	before, calls := operatorApplyEnvExec(t, nil, nil)
-	live := liveAppsec(t, appseccfg.Opts{Mode: "allow", Countries: []string{"IL"}, BotDetection: "off", BotScope: "all"})
+	live := liveAppsec(t, appseccfg.Opts{Mode: "allow", Countries: []string{"IL"}, BotDetection: "off", BotScope: "all", PanelHost: appsecPanelHost()})
 	wantLive := readString(t, appsecRulePath)
 
 	rows := []appseccfg.Exclusion{flarumRow(), vpatchRow()}
@@ -102,16 +102,28 @@ func TestOperatorApply_KeepsLivePanelHostScope(t *testing.T) {
 }
 
 // A live allowlist scoped to a host that does not read back (here: upper
-// case) stays scoped. Read as path-only, it would let every tenant vhost skip
-// AppSec on the panel paths.
+// case, in the older single-host form) stays scoped, to this host. Read as
+// path-only, it would let every tenant vhost skip AppSec on the panel paths.
 func TestOperatorApply_UnreadablePanelHostStaysScoped(t *testing.T) {
+	host := appsecPanelHost()
+	if host == "" {
+		t.Skip("no hostname")
+	}
 	operatorApplyEnvExec(t, nil, nil)
-	liveAppsec(t, appseccfg.Opts{Mode: "off", PanelHost: "Panel.Example.com"})
+	liveAppsec(t, appseccfg.Opts{Mode: "off", PanelHost: "panel.example.com"})
+	live := strings.Replace(readString(t, appsecRulePath),
+		`req.Host in ["panel.example.com", "panel.example.com:8443"]`, `req.Host == "Panel.Example.com"`, 1)
+	if !strings.Contains(live, `req.Host == "Panel.Example.com"`) {
+		t.Fatal("could not write the older form")
+	}
+	if err := os.WriteFile(appsecRulePath, []byte(live), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := callOperatorApply(t, appseccfg.NewOperatorApplyParams([]appseccfg.Exclusion{vpatchRow()}, nil)); err != nil {
 		t.Fatal(err)
 	}
 	got := readString(t, appsecRulePath)
-	if !strings.Contains(got, `/dav/") && req.Host == "`) {
+	if !strings.Contains(got, `/dav/") && req.Host in ["`+host+`", "`+host+`:8443"]`) {
 		t.Fatalf("panel allowlist lost its host scope:\n%s", got)
 	}
 }

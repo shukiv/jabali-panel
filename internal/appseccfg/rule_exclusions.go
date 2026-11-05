@@ -3,6 +3,7 @@ package appseccfg
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -225,11 +226,14 @@ func RuleExclusionsFromConfig(body string) []Exclusion {
 // something else (operator apply) keeps it. scoped is false only when the file
 // holds the allowlist by path alone (Opts.PanelHost ""). Anything else counts
 // as scoped, so a read-back never widens the allowlist; host is "" when the
-// scoped host does not read back as a clean host name.
+// scoped host does not read back as a clean host name. Both scoped forms read
+// back: `req.Host == "<host>"` (before the panel port joined the scope) and
+// `req.Host in ["<host>", "<host>:8443", ...]`, whose first entry is the host.
 func PanelHostFromConfig(body string) (host string, scoped bool) {
 	const pathOnly = `- filter: req.URL.Path startsWith "/api/v1/"`
 	const prefix = `- filter: (req.URL.Path startsWith "/api/v1/"`
 	const hostExpr = `) && req.Host == "`
+	const hostList = `) && req.Host in [`
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, pathOnly) {
@@ -238,12 +242,20 @@ func PanelHostFromConfig(body string) (host string, scoped bool) {
 		if !strings.HasPrefix(line, prefix) {
 			continue
 		}
-		i := strings.LastIndex(line, hostExpr)
-		if i < 0 || !strings.HasSuffix(line, `"`) {
+		var h string
+		if i := strings.LastIndex(line, hostList); i >= 0 && strings.HasSuffix(line, "]") {
+			first, _, _ := strings.Cut(line[i+len(hostList):len(line)-1], ",")
+			first = strings.TrimSpace(first)
+			if len(first) < 2 || first[0] != '"' || first[len(first)-1] != '"' {
+				return "", true
+			}
+			h = first[1 : len(first)-1]
+		} else if i := strings.LastIndex(line, hostExpr); i >= 0 && strings.HasSuffix(line, `"`) {
+			h = strings.TrimSuffix(line[i+len(hostExpr):], `"`)
+		} else {
 			return "", true
 		}
-		h := strings.TrimSuffix(line[i+len(hostExpr):], `"`)
-		if clean := sanitizeWebmailHosts([]string{h}); len(clean) == 1 && clean[0] == h {
+		if clean := sanitizeWebmailHosts([]string{h}); len(clean) == 1 && clean[0] == h && net.ParseIP(h) == nil {
 			return h, true
 		}
 		return "", true

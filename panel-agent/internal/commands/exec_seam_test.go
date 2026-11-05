@@ -34,6 +34,10 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("JABALI_PDNS_ENV_FILE", filepath.Join(dir, "absent-pdns.env")); err != nil {
 		panic("pdns env seam: " + err.Error())
 	}
+	// The AppSec renders scope the panel's paths to the addresses this
+	// host's nginx holds too. A test box's must not reach the configs tests
+	// render.
+	appsecPanelAddrs = func() []string { return nil }
 
 	stub := filepath.Join(dir, "noexec")
 	// The stub path is baked into argv (below), NOT into an env marker, so the

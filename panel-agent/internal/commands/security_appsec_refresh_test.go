@@ -32,7 +32,7 @@ func refreshEnv(t *testing.T, fail map[string]bool, hosts ...string) (string, *[
 
 // refreshOpts is jabali-appsec.yaml's settings as a writer left them: geoblock
 // on, bot detection balanced, one exclusion by rule name. panelHost "" is the
-// form `jabali appsec render-config` writes.
+// path-only form `jabali appsec render-config` used to write.
 func refreshOpts(panelHost string, webmail ...string) appseccfg.Opts {
 	return appseccfg.Opts{
 		Mode:           "deny",
@@ -82,7 +82,12 @@ func TestAppSecRefresh_AddsANewWebmailHost(t *testing.T) {
 		t.Run("panel host "+panelHost, func(t *testing.T) {
 			_, calls := refreshEnv(t, nil, "mail.old.example", "mail.new.example")
 			liveConfig(t, panelHost, "mail.old.example")
-			want := appseccfg.Render(refreshOpts(panelHost, "mail.old.example", "mail.new.example"))
+			// A path-only allowlist is scoped to this host on the way.
+			wantHost := panelHost
+			if wantHost == "" {
+				wantHost = appsecPanelHost()
+			}
+			want := appseccfg.Render(refreshOpts(wantHost, "mail.old.example", "mail.new.example"))
 
 			changed, err := callRefresh(t)
 			if err != nil {
@@ -107,9 +112,10 @@ func TestAppSecRefresh_AddsANewWebmailHost(t *testing.T) {
 
 // A config already rendered from the list, by the CLI or by the agent, is
 // left alone: no write, no reload. Otherwise every audit pass would reload
-// crowdsec.
+// crowdsec. Both writers scope the panel allowlist to this host; one scoped to
+// another host (renamed since) keeps it.
 func TestAppSecRefresh_CurrentConfigIsLeftAlone(t *testing.T) {
-	for _, panelHost := range []string{"", "panel.example.com"} {
+	for _, panelHost := range []string{appsecPanelHost(), "panel.example.com"} {
 		t.Run("panel host "+panelHost, func(t *testing.T) {
 			_, calls := refreshEnv(t, nil, "mail.a.example", "autoconfig.a.example")
 			before := liveConfig(t, panelHost, "mail.a.example", "autoconfig.a.example")
@@ -128,6 +134,35 @@ func TestAppSecRefresh_CurrentConfigIsLeftAlone(t *testing.T) {
 				t.Fatalf("calls = %q, want none", *calls)
 			}
 		})
+	}
+}
+
+// A path-only panel allowlist, as `jabali appsec render-config` used to write
+// it, is scoped to this host by the next refresh even when the webmail list
+// has not changed: the config is then the one both writers render.
+func TestAppSecRefresh_ScopesAPathOnlyPanelAllowlist(t *testing.T) {
+	host := appsecPanelHost()
+	if host == "" {
+		t.Skip("no hostname")
+	}
+	_, calls := refreshEnv(t, nil, "mail.a.example")
+	if live := liveConfig(t, "", "mail.a.example"); !strings.Contains(live, " - filter: req.URL.Path startsWith \"/api/v1/\"") {
+		t.Fatalf("the live config is not path-only to begin with:\n%s", live)
+	}
+
+	changed, err := callRefresh(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readAppsec(t)
+	if want := appseccfg.Render(refreshOpts(host, "mail.a.example")); !changed || got != want {
+		t.Fatalf("changed = %v\n--- got\n%s\n--- want\n%s", changed, got, want)
+	}
+	if !strings.Contains(got, `/dav/") && req.Host in ["`+host+`", "`+host+`:8443"]`) {
+		t.Fatalf("the panel allowlist is not scoped to this host:\n%s", got)
+	}
+	if got := strings.Join(*calls, "; "); got != "crowdsec -t; systemctl reload crowdsec" {
+		t.Fatalf("calls = %q, want the check then the reload", got)
 	}
 }
 
@@ -201,4 +236,20 @@ func TestAppSecRefresh_WaitsForAnotherWriter(t *testing.T) {
 
 func callRefreshErr() (any, error) {
 	return csAppSecRefreshHandler(context.Background(), nil)
+}
+
+// The agent's renders name the panel by the addresses jabali's default vhost
+// holds too, in the on_match allowlist and the bot-challenge exemption alike.
+func TestAppSecRenders_NameThePanelByItsAddresses(t *testing.T) {
+	refreshEnv(t, nil)
+	prev := appsecPanelAddrs
+	appsecPanelAddrs = func() []string { return []string{"203.0.113.5"} }
+	t.Cleanup(func() { appsecPanelAddrs = prev })
+
+	if body := renderJabaliAppsec("off", nil, "off", "all"); !strings.Contains(body, `"203.0.113.5", "203.0.113.5:8443"]`) {
+		t.Errorf("jabali-appsec does not name the panel's address:\n%s", body)
+	}
+	if body := appseccfg.RenderBotExempt(botExemptOpts("all")); !strings.Contains(body, `"203.0.113.5", "203.0.113.5:8443"]`) {
+		t.Errorf("the bot-challenge exemption does not name the panel's address:\n%s", body)
+	}
 }

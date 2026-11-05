@@ -40,6 +40,21 @@ const (
 	appsecBotScopeHead  = "# jabali-bot-detection-scope:"
 )
 
+// appsecPanelScope names the panel for the scope of the config's panel-path
+// allowlist: this host's name and the addresses jabali's default vhost holds,
+// read as the agent reads them, so neither writer's render undoes the other's.
+// A var for tests.
+var appsecPanelScope = func() (host string, addrs []string) {
+	return appseccfg.LocalPanelHost(), appseccfg.LocalPanelAddrs()
+}
+
+// appsecConfigOpts scopes o's panel-path allowlist to the panel (GH #706), so
+// it holds on the panel and nowhere else.
+func appsecConfigOpts(o appseccfg.Opts) appseccfg.Opts {
+	o.PanelHost, o.PanelAddrs = appsecPanelScope()
+	return o
+}
+
 // newAppSecRenderConfigCmd is the canonical writer of
 // /etc/crowdsec/appsec-configs/jabali-appsec.yaml. Replaces install.sh's
 // bash heredoc + reconcile-awk + idempotent-ensure (plans/appsec-config-
@@ -123,7 +138,7 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 				fmt.Fprintf(cmd.ErrOrStderr(), "warn: load %s: %v\n", appseccfg.WebmailHostsPath, err)
 			}
 
-			body := appseccfg.Render(appseccfg.Opts{
+			body := appseccfg.Render(appsecConfigOpts(appseccfg.Opts{
 				Mode:           mode,
 				Countries:      countries,
 				Inband:         inband,
@@ -140,7 +155,7 @@ gate a 'systemctl reload crowdsec' on real diffs.`,
 				// challenge every hosted site at once.
 				BotScope:       botScope,
 				RuleExclusions: ruleExclusions,
-			})
+			}))
 
 			// Write-on-diff: cheap before any nginx/crowdsec reload
 			// upstream that may key off mtime or content hash.
