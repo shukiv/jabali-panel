@@ -212,6 +212,11 @@ func (m *MockDomainRepository) List(ctx context.Context, opts repository.ListOpt
 	return args.Get(0).([]models.Domain), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *MockDomainRepository) CreateWithinCap(ctx context.Context, domain *models.Domain, maxDomains uint32) error {
+	args := m.Called(ctx, domain, maxDomains)
+	return args.Error(0)
+}
+
 func (m *MockDomainRepository) CountByUserID(ctx context.Context, userID string) (int64, error) {
 	args := m.Called(ctx, userID)
 	return args.Get(0).(int64), args.Error(1)

@@ -160,20 +160,31 @@ func ReleaseReverseProxyPort(ctx context.Context, ports repository.PortAllocatio
 // DomainCreator is the slice of the domain repository PersistDomain needs.
 type DomainCreator interface {
 	Create(ctx context.Context, d *models.Domain) error
+	CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error
 }
 
-// PersistDomain inserts d. When the insert fails and d holds a reverse-proxy
-// port, the port is released before the error is returned, so every failed
-// create compensates its reservation (AC4). A unique-name conflict returns
-// ErrDomainExists; any other failure returns ErrPersist. Both wrap the store
-// error.
-func PersistDomain(ctx context.Context, domains DomainCreator, ports repository.PortAllocationRepository, d *models.Domain) error {
-	err := domains.Create(ctx, d)
+// PersistDomain inserts d. With a maxDomains cap (non-zero), the insert counts
+// the owner's domains under a lock on the owner and refuses with a
+// *DomainQuotaError once the cap is reached. When the insert fails and d holds
+// a reverse-proxy port, the port is released before the error is returned, so
+// every failed create compensates its reservation (AC4). A unique-name
+// conflict returns ErrDomainExists; any other failure returns ErrPersist. Both
+// wrap the store error.
+func PersistDomain(ctx context.Context, domains DomainCreator, ports repository.PortAllocationRepository, d *models.Domain, maxDomains uint32) error {
+	var err error
+	if maxDomains > 0 {
+		err = domains.CreateWithinCap(ctx, d, maxDomains)
+	} else {
+		err = domains.Create(ctx, d)
+	}
 	if err == nil {
 		return nil
 	}
 	if d.ReverseProxyPort != 0 {
 		_ = ReleaseReverseProxyPort(ctx, ports, d.ID)
+	}
+	if errors.Is(err, repository.ErrDomainCapExceeded) {
+		return &DomainQuotaError{Count: int64(maxDomains), Max: maxDomains}
 	}
 	if errors.Is(err, repository.ErrConflict) {
 		return &kindError{kind: ErrDomainExists, cause: err}

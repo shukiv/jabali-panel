@@ -125,6 +125,18 @@ func (m *mockDomainRepo) SetRegistrarExpiry(ctx context.Context, id string, expi
 func (m *mockDomainRepo) CountByUserID(ctx context.Context, userID string) (int64, error) {
 	return 0, nil
 }
+func (m *mockDomainRepo) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	var n int64
+	for _, x := range m.domains {
+		if x.UserID == d.UserID {
+			n++
+		}
+	}
+	if n >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return m.Create(ctx, d)
+}
 
 // ListPreviewEnabled mirrors List above (empty): tests that need preview-slug
 // collisions use their own store.

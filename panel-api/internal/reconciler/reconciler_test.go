@@ -73,6 +73,13 @@ type fakeDomainRepo struct {
 	domains map[string]*models.Domain
 }
 
+func (f *fakeDomainRepo) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	if n, _ := f.CountByUserID(ctx, d.UserID); n >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return f.Create(ctx, d)
+}
+
 func (f *fakeDomainRepo) Create(ctx context.Context, d *models.Domain) error {
 	f.domains[d.ID] = d
 	return nil
