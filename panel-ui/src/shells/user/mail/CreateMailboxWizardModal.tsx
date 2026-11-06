@@ -33,6 +33,7 @@ import {
 } from "antd";
 
 import { PasswordInput } from "../../../components/PasswordInput";
+import { feedback } from "../../../lib/feedback";
 import { useMailGroups, useAddMailboxToGroup } from "../../../hooks/useMailGroups";
 import { useCreateForwarder } from "../../../hooks/useForwarders";
 import {
@@ -125,13 +126,27 @@ export const CreateMailboxWizardModal = ({
           send_only: values.send_only || undefined,
         },
       });
+      // The mailbox exists from here on, so a failed group, alias or forward
+      // must not undo it or hide behind it: collect each failure and list
+      // them once the mailbox is created.
+      const failures: string[] = [];
+      const failed = (what: string) => (err: unknown) => {
+        const why =
+          err instanceof Error && err.message
+            ? err.message
+            : t("createmailboxwizardmodal.extra_failed_unknown", "the request failed");
+        failures.push(`${what}: ${why}`);
+      };
+
       if (values.group_ids?.length) {
         await Promise.all(
-          values.group_ids.map((gid) =>
-            addToGroup
+          values.group_ids.map((gid) => {
+            const group = domainGroups?.find((g) => g.id === gid);
+            const name = group?.display_name || group?.email || gid;
+            return addToGroup
               .mutateAsync({ groupId: gid, mailboxId: resp.id, domainId: values.domain_id })
-              .catch(() => {}),
-          ),
+              .catch(failed(t("createmailboxwizardmodal.extra_failed_group", "Group {{name}}", { name })));
+          }),
         );
       }
 
@@ -145,7 +160,13 @@ export const CreateMailboxWizardModal = ({
         aliasParts.map((localPart) =>
           createForwarder
             .mutateAsync({ mailboxID: resp.id, type: "alias", localPart, target: mbEmail })
-            .catch(() => {}),
+            .catch(
+              failed(
+                t("createmailboxwizardmodal.extra_failed_alias", "Alias {{address}}", {
+                  address: `${localPart}@${chosenDomain?.name ?? ""}`,
+                }),
+              ),
+            ),
         ),
       );
       const fwd = values.forward_target?.trim();
@@ -157,9 +178,34 @@ export const CreateMailboxWizardModal = ({
             target: fwd,
             keepCopy: values.forward_keep_copy ?? false,
           })
-          .catch(() => {});
+          .catch(
+            failed(t("createmailboxwizardmodal.extra_failed_forward", "Forward to {{target}}", { target: fwd })),
+          );
       }
       form.resetFields();
+      if (failures.length > 0) {
+        feedback.notification.warning({
+          title: t(
+            "createmailboxwizardmodal.extras_failed_title",
+            "{{email}} was created, but not all of it was set up",
+            { email: resp.email },
+          ),
+          description: (
+            <>
+              <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
+                {failures.map((f) => (
+                  <li key={f}>{f}</li>
+                ))}
+              </ul>
+              {t(
+                "createmailboxwizardmodal.extras_failed_hint",
+                "Add them from the mailbox's Edit drawer.",
+              )}
+            </>
+          ),
+          duration: 0,
+        });
+      }
       onCreated(resp);
     } catch (err) {
       const detail =
