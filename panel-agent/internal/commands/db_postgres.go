@@ -56,6 +56,8 @@ func pgRunSQL(ctx context.Context, sql string) error {
 
 // pgRunSQLStdin is pgRunSQL with the statement on psql's stdin (-f -), for
 // a statement that carries a password, so it stays off the command line.
+// Unlike -c, -f runs each statement in its own transaction; callers send one
+// DO block, which runs the same either way.
 func pgRunSQLStdin(ctx context.Context, sql string) error {
 	cmd := sqlOnStdin(ctx, sql, "sudo", "-u", "postgres", "psql",
 		"-v", "ON_ERROR_STOP=1",
