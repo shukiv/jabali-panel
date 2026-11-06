@@ -63,3 +63,27 @@ func TestDatabaseUserCreateWithinCap_OwnerMissing(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestDatabaseCreateWithinCap_UnderCapInserts(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+	expectOwnerLockAndCount(mock, "databases", 1)
+	mock.ExpectExec("INSERT INTO `databases`").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	d := &models.Database{ID: "db1", UserID: "u1", Name: "alice_shop", Engine: "mariadb"}
+	require.NoError(t, NewDatabaseRepository(db).CreateWithinCap(context.Background(), d, 2))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDatabaseCreateWithinCap_AtCapRejectsNoInsert(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+	expectOwnerLockAndCount(mock, "databases", 2)
+	mock.ExpectRollback()
+
+	d := &models.Database{ID: "db1", UserID: "u1", Name: "alice_shop", Engine: "mariadb"}
+	err := NewDatabaseRepository(db).CreateWithinCap(context.Background(), d, 2)
+	require.ErrorIs(t, err, ErrDatabaseCapExceeded)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

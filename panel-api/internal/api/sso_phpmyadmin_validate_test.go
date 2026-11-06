@@ -239,6 +239,10 @@ func (m *mockDatabaseRepoValidate) Create(ctx context.Context, db *models.Databa
 	return nil
 }
 
+func (m *mockDatabaseRepoValidate) CreateWithinCap(ctx context.Context, db *models.Database, maxDatabases uint32) error {
+	return nil
+}
+
 func (m *mockDatabaseRepoValidate) FindByID(ctx context.Context, id string) (*models.Database, error) {
 	db, ok := m.databases[id]
 	if !ok {

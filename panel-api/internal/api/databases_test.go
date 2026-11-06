@@ -31,6 +31,9 @@ type mockDatabaseRepo struct {
 	createErr error
 	deleteErr error
 	existsErr error
+	// capAtInsert makes CreateWithinCap find the cap reached, as when
+	// another create took the last slot after the early count.
+	capAtInsert bool
 }
 
 func (m *mockDatabaseRepo) FindByID(ctx context.Context, id string) (*models.Database, error) {
@@ -81,6 +84,19 @@ func (m *mockDatabaseRepo) Create(ctx context.Context, d *models.Database) error
 	}
 	m.databases = append(m.databases, *d)
 	return nil
+}
+
+func (m *mockDatabaseRepo) CreateWithinCap(ctx context.Context, d *models.Database, maxDatabases uint32) error {
+	n := 0
+	for _, db := range m.databases {
+		if db.UserID == d.UserID {
+			n++
+		}
+	}
+	if m.capAtInsert || n >= int(maxDatabases) {
+		return repository.ErrDatabaseCapExceeded
+	}
+	return m.Create(ctx, d)
 }
 
 func (m *mockDatabaseRepo) Delete(ctx context.Context, id string) error {
