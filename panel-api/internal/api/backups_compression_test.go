@@ -67,6 +67,11 @@ type jobCaptureRepo struct {
 	created []models.BackupJob
 }
 
+// No job is pending in these tests.
+func (*jobCaptureRepo) HasActiveOfKind(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (r *jobCaptureRepo) Create(_ context.Context, j *models.BackupJob) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
