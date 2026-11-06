@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -125,36 +124,13 @@ func (h *meBackupHandler) restoreUploadChunk(c *gin.Context) {
 		return
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o640)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "open_staging_failed"})
+	written, status, errBody := appendRestoreChunk(path, offset, c.Request.Body)
+	if status != 0 {
+		c.JSON(status, errBody)
 		return
-	}
-	defer f.Close()
-	if _, err := f.Seek(offset, 0); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "seek_failed"})
-		return
-	}
-	remaining := maxRestoreUploadBytes - offset
-	written, werr := io.Copy(f, io.LimitReader(c.Request.Body, remaining))
-	if werr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "write_failed", "detail": werr.Error()})
-		return
-	}
-	if written == remaining { // exactly at the cap — reject if more bytes remain (silent-truncation guard)
-		var probe [1]byte
-		if n, _ := c.Request.Body.Read(probe[:]); n > 0 {
-			_ = os.Remove(path)
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "archive_too_large"})
-			return
-		}
 	}
 	if c.Query("final") == "1" {
-		size := offset + written
-		if fi, serr := f.Stat(); serr == nil {
-			size = fi.Size()
-		}
-		c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "size": size})
+		c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "size": offset + written})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": written, "offset": offset + written})
