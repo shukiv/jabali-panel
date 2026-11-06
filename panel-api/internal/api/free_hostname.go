@@ -127,6 +127,11 @@ func (h *serverSettingsHandler) freeHostnameClaim(c *gin.Context) {
 			code = "code_invalid"
 		case http.StatusTooManyRequests:
 			code = "code_attempts"
+			// The service also answers 429 when this address or email has
+			// tried too often this hour; a new code doesn't help then.
+			if jsonField(body, "error") == "rate_limited" {
+				code = "rate_limited"
+			}
 		case http.StatusUnprocessableEntity:
 			code = "bad_source" // CGNAT/bogon public IP — free hostname impossible
 		}

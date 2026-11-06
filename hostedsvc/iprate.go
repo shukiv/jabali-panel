@@ -1,6 +1,7 @@
 package hostedsvc
 
 import (
+	"net"
 	"sync"
 	"time"
 )
@@ -28,6 +29,26 @@ const registerIPHourlyCap = 10
 
 // registerIPWindow is the sliding window the cap applies over.
 const registerIPWindow = time.Hour
+
+// POST /v1/claim checks a code. The attempt cap stops guessing one code;
+// these bound the tries one source address makes in an hour, and the wrong
+// codes one email address gets in an hour across all the codes it is sent.
+// Only a wrong code against a live code counts for the email, so an address
+// with no code pending is never held back. A real operator claims once or
+// twice.
+const (
+	claimIPHourlyCap    = 30
+	claimEmailHourlyCap = 20
+)
+
+// rateKey is the limiter key for a source address: an IPv4 address as is,
+// an IPv6 address by its /64, since one host is commonly given a whole /64.
+func rateKey(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
 
 // ipRateLimiter is a small sliding-window counter keyed by source IP.
 //
@@ -60,6 +81,32 @@ func (l *ipRateLimiter) allow(ip string) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	now := l.prune()
+	if len(l.hits[ip]) >= l.cap {
+		return false
+	}
+	l.hits[ip] = append(l.hits[ip], now)
+	return true
+}
+
+// full reports whether key is at the cap, without counting a hit.
+func (l *ipRateLimiter) full(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.prune()
+	return len(l.hits[key]) >= l.cap
+}
+
+// hit counts one hit for key.
+func (l *ipRateLimiter) hit(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.prune()
+	l.hits[key] = append(l.hits[key], now)
+}
+
+// prune drops hits older than the window and returns now. Caller holds mu.
+func (l *ipRateLimiter) prune() time.Time {
 	now := l.now()
 	cutoff := now.Add(-l.win)
 
@@ -78,10 +125,5 @@ func (l *ipRateLimiter) allow(ip string) bool {
 		}
 		l.hits[k] = kept
 	}
-
-	if len(l.hits[ip]) >= l.cap {
-		return false
-	}
-	l.hits[ip] = append(l.hits[ip], now)
-	return true
+	return now
 }

@@ -167,3 +167,27 @@ func TestFreeHostnameClaim_AppliesTheHostnamePlan(t *testing.T) {
 		})
 	}
 }
+
+// The service's 429 means either "this code is used up" or "too many tries
+// this hour"; the panel keeps them apart, since only the first is fixed by a
+// new code.
+func TestFreeHostnameClaim_TooManyRequestsKeepsTheReason(t *testing.T) {
+	for _, tc := range []struct{ svcErr, want string }{
+		{"code_attempts", "code_attempts"},
+		{"rate_limited", "rate_limited"},
+	} {
+		t.Run(tc.svcErr, func(t *testing.T) {
+			defer withFakeService(t, func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusTooManyRequests)
+				w.Write([]byte(`{"error":"` + tc.svcErr + `","message":"m"}`))
+			})()
+			router := settingsRouter(true, &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1}}, agent.NewMockClient())
+			w := postFH(t, router, "/api/v1/admin/settings/free-hostname/claim", `{"email":"op@example.com","code":"000000"}`)
+			var out map[string]any
+			_ = json.Unmarshal(w.Body.Bytes(), &out)
+			if w.Code != http.StatusUnprocessableEntity || out["error"] != tc.want {
+				t.Fatalf("HTTP %d error %v, want 422 %s", w.Code, out["error"], tc.want)
+			}
+		})
+	}
+}
