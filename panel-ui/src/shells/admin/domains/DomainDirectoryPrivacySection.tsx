@@ -24,6 +24,7 @@ import {
   type DirectoryPrivacyRule,
 } from "../../../hooks/useDomainDirectoryPrivacy";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
+import { columnWidth } from "../../../components/columnWidth";
 
 type Props = { domainId: string; domainName?: string };
 
@@ -232,7 +233,7 @@ export const DomainDirectoryPrivacySection = ({
         />
         <Table.Column<DirectoryPrivacyRule>
           title=""
-          width={80}
+          {...columnWidth(80)}
           render={(_, r) => (
             <Popconfirm
               title={t("domaindirectoryprivacysection.delete_this_rule_and_all_its_credentials")}
@@ -380,7 +381,7 @@ const DirectoryPrivacyCredentialsTable = ({
         />
         <Table.Column<DirectoryPrivacyCredential>
           title=""
-          width={80}
+          {...columnWidth(80)}
           render={(_, c) => (
             <Popconfirm
               title={t("domaindirectoryprivacysection.delete_this_user")}
