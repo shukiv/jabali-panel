@@ -8,10 +8,12 @@
 # the local rotation still runs and a loud warning is logged so a missing
 # remote never passes silently.
 set -euo pipefail
+# The snapshot holds registrant emails and token hashes: owner-only, always.
+umask 077
 
 DB=/var/lib/jabalihosted/svc.db
 DIR=/var/backups/jabalihosted
-mkdir -p "$DIR"
+install -d -m 0700 "$DIR"
 
 day=$(date +%u) # 1..7, so we keep a rotating week
 out="$DIR/svc-${day}.db"

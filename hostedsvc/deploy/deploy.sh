@@ -43,20 +43,24 @@ fi
 if [[ ! -f /etc/jabalihosted/svc.env ]]; then
   install -d -m 0755 /etc/jabalihosted
   PDNS_KEY=$(head -c 32 /dev/urandom | sha256sum | cut -c1-48)
-  cat > /etc/jabalihosted/svc.env <<EOF
+  # Created under umask 077 so the secret is never readable before chmod.
+  (umask 077; cat > /etc/jabalihosted/svc.env <<EOF
 PDNS_API_KEY=${PDNS_KEY}
 SMTP_ADDR=mail.reeva.me:587
 SMTP_HOST=mail.reeva.me
 SMTP_FROM=FILL-ME-IN
 SMTP_PASSWORD=FILL-ME-IN
 EOF
+  )
   chmod 0600 /etc/jabalihosted/svc.env
   say "wrote /etc/jabalihosted/svc.env — FILL IN SMTP_FROM/SMTP_PASSWORD"
 fi
 # shellcheck disable=SC1091
 source /etc/jabalihosted/svc.env
 
-cat > /etc/powerdns/pdns.d/jabalihosted.conf <<EOF
+# The file carries api-key: create it 0600 under umask 077, then set the
+# final owner and mode (root:pdns 0640, readable by the pdns daemon only).
+(umask 077; cat > /etc/powerdns/pdns.d/jabalihosted.conf <<EOF
 launch=gsqlite3
 gsqlite3-database=/var/lib/powerdns/pdns.sqlite3
 api=yes
@@ -66,6 +70,9 @@ webserver-address=127.0.0.1
 webserver-port=8081
 local-address=0.0.0.0:53, [::]:53
 EOF
+)
+chown root:pdns /etc/powerdns/pdns.d/jabalihosted.conf
+chmod 0640 /etc/powerdns/pdns.d/jabalihosted.conf
 systemctl enable --now pdns
 systemctl restart pdns
 
