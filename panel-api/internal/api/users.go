@@ -396,6 +396,12 @@ func (h *userHandler) update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
 		return
 	}
+	// Checked up front: the other fields are saved before the password is
+	// rotated, and a 400 must mean nothing was applied.
+	if req.Password != nil && userops.CheckPasswordLength(*req.Password) != nil {
+		passwordTooLong(c)
+		return
+	}
 
 	// GH #258: email is optional. An empty string clears it; a non-empty value
 	// must be a valid address. (createUserRequest's plain-string field already

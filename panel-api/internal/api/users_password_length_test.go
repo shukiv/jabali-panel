@@ -69,6 +69,30 @@ func TestUsers_Patch_OwnPasswordOverBcryptLimit400(t *testing.T) {
 	}
 }
 
+// A 400 means nothing was applied: a field sent alongside an over-long
+// password is not saved either.
+func TestUsers_Patch_PasswordOverBcryptLimitAppliesNothing(t *testing.T) {
+	t.Parallel()
+	repo := newMemUserRepo()
+	admin := makeUser(t, "admin@example.com", true, "adminpassword")
+	repo.seed(admin)
+	u := makeUser(t, "u@example.com", false, "password01")
+	u.NameFirst = "Before"
+	repo.seed(u)
+	r := buildRouter(repo, &auth.AccessClaims{UserID: admin.ID, IsAdmin: true})
+
+	rec := doJSON(t, r, http.MethodPatch, "/api/v1/users/"+u.ID, map[string]any{
+		"name_first": "After",
+		"email":      "changed@example.com",
+		"password":   strings.Repeat("p", 80),
+	})
+	requirePasswordTooLong(t, rec, "80 bytes with other fields")
+	got, err := repo.FindByID(t.Context(), u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Before", got.NameFirst)
+	assert.Equal(t, "u@example.com", got.Email)
+}
+
 func TestUsers_Reprovision_PasswordOverBcryptLimit400(t *testing.T) {
 	t.Parallel()
 	repo := newMemUserRepo()
