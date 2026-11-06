@@ -22,9 +22,6 @@ export interface UseLogStreamOptions {
   // Whether the stream should be live (the modal's `visible`). When it goes
   // false the socket is torn down and the polling interval stops.
   active: boolean;
-  // Fired synchronously just before each GoAccess poll bumps the tick, so the
-  // component can snapshot the iframe scroll position before the src changes.
-  onBeforeGoAccessRefresh?: () => void;
 }
 
 export interface LogStream {
@@ -45,7 +42,6 @@ export function useLogStream({
   streamUrl,
   logType,
   active,
-  onBeforeGoAccessRefresh,
 }: UseLogStreamOptions): LogStream {
   const [logs, setLogs] = useState<string[]>([]);
   const [connected, setConnected] = useState(false);
@@ -61,11 +57,6 @@ export function useLogStream({
   // bug: pausing only relabelled the button, frames kept appending). Read a ref
   // instead so pause/resume actually gates the live socket.
   const pausedRef = useRef(false);
-  // The GoAccess pre-refresh callback can change identity every render; hold it
-  // in a ref so the polling effect does not resubscribe (which would reset the
-  // 10s interval before it ever fires).
-  const beforeRefreshRef = useRef(onBeforeGoAccessRefresh);
-  beforeRefreshRef.current = onBeforeGoAccessRefresh;
 
   useEffect(() => {
     // GoAccess renders through an HTTP iframe, not a socket — no WS for it.
@@ -125,10 +116,7 @@ export function useLogStream({
   // changes and the browser re-fetches. Same cadence as the prior WS path.
   useEffect(() => {
     if (logType !== "goaccess" || !active || !streamUrl) return;
-    const id = setInterval(() => {
-      beforeRefreshRef.current?.();
-      setGoAccessTick(Date.now());
-    }, 10000);
+    const id = setInterval(() => setGoAccessTick(Date.now()), 10000);
     return () => clearInterval(id);
   }, [logType, active, streamUrl]);
 

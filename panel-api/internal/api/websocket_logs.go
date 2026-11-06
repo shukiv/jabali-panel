@@ -327,6 +327,9 @@ func goaccessFramed(r *http.Request) bool {
 // goaccessScrollBridge is added to the report. The panel cannot read the
 // scroll position of its sandboxed iframe, so the report posts it out as the
 // user scrolls, and takes it back after each 10s refresh (LogStreamModal).
+// A restore that lands while the report is still shorter than the saved
+// position is retried for about a second of frames; otherwise the cut-short
+// position would be posted back and replace the saved one.
 const goaccessScrollBridge = `<script>(function () {
   var up = window.parent;
   if (!up || up === window) return;
@@ -345,9 +348,13 @@ const goaccessScrollBridge = `<script>(function () {
   window.addEventListener("message", function (ev) {
     var d = ev.data;
     if (ev.source !== up || !d || d.type !== "jabali-goaccess-restore" || !offset(d.top) || !offset(d.left)) return;
-    var el = page();
-    el.scrollTop = d.top;
-    el.scrollLeft = d.left;
+    var tries = 0;
+    (function apply() {
+      var el = page();
+      el.scrollTop = d.top;
+      el.scrollLeft = d.left;
+      if ((el.scrollTop < d.top - 1 || el.scrollLeft < d.left - 1) && ++tries < 60) requestAnimationFrame(apply);
+    })();
   });
 })();</script>`
 
