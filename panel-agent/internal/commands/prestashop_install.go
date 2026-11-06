@@ -69,11 +69,11 @@ var prestashopCountryPattern = regexp.MustCompile(`^[a-z]{2}$`)
 
 var prestashopLanguagePattern = regexp.MustCompile(`^[a-z]{2,3}(-[a-z0-9]{1,8})?$`)
 
-func computePrestaShopInstallPath(docroot, subdirectory string) string {
+func computePrestaShopInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadPrestaShopZip(ctx context.Context, dest string) error {
@@ -298,7 +298,10 @@ func prestashopInstallHandler(ctx context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computePrestaShopInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computePrestaShopInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)

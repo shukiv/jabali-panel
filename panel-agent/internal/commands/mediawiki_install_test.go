@@ -16,8 +16,8 @@ func TestComputeMediaWikiInstallPath(t *testing.T) {
 		{"/home/alice/domains/x/public_html", "wiki", "/home/alice/domains/x/public_html/wiki"},
 	}
 	for _, c := range cases {
-		if got := computeMediaWikiInstallPath(c.docroot, c.subdir); got != c.want {
-			t.Errorf("computeMediaWikiInstallPath(%q, %q) = %q, want %q", c.docroot, c.subdir, got, c.want)
+		if got, err := computeMediaWikiInstallPath(c.docroot, c.subdir); err != nil || got != c.want {
+			t.Errorf("computeMediaWikiInstallPath(%q, %q) = %q, %v, want %q", c.docroot, c.subdir, got, err, c.want)
 		}
 	}
 }

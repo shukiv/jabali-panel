@@ -78,11 +78,11 @@ var phpbbAdminUserPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{3,20}$`)
 // uses (en, en-us, de, fr, …).
 var phpbbLanguagePattern = regexp.MustCompile(`^[a-z]{2,3}(-[a-z0-9]{1,8})?$`)
 
-func computePhpbbInstallPath(docroot, subdirectory string) string {
+func computePhpbbInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadPhpbbTarball(ctx context.Context, dest string) error {
@@ -356,7 +356,10 @@ func phpbbInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computePhpbbInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computePhpbbInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)

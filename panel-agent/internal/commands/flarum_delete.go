@@ -64,7 +64,10 @@ func flarumDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid docroot: %v", err)}
 	}
 
-	installPath := computeFlarumInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeFlarumInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	sub := strings.Trim(req.Subdirectory, "/")
 
 	if sub != "" {
