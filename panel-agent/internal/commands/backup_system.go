@@ -617,17 +617,12 @@ func resyncDBAccountPasswords(ctx context.Context) ([]string, []string) {
 				fmt.Sprintf("db-account resync %s: password file empty", a.mariadbUser))
 			continue
 		}
-		// Use mariadb client + ALTER USER ... IDENTIFIED BY '<pw>'.
-		// We use --execute= so the password never lands on the cmdline
-		// argv-visible part is just ALTER USER (the password too,
-		// unfortunately — but argv on a single-tenant host with root-
-		// owned mariadb client is acceptable; alternative is INI file
-		// auth which is more setup).
+		// ALTER USER ... IDENTIFIED BY '<pw>', on the client's stdin so
+		// the password stays off the command line.
 		stmt := fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'; FLUSH PRIVILEGES;",
 			a.mariadbUser, a.host, sqlEscape(pw))
-		cmd := execCommandContext(ctx, "mariadb",
+		cmd := sqlOnStdin(ctx, stmt, "mariadb",
 			"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
-			"-e", stmt,
 		)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -692,7 +687,7 @@ func writeTempStr(s string) (string, error) {
 // NO_BACKSLASH_ESCAPES a backslash is stored twice, but the literal holds.
 func sqlEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
-	return strings.ReplaceAll(s, "'", "''")
+	return escapeLineBreaks(strings.ReplaceAll(s, "'", "''"))
 }
 
 // applySystemRestore walks staged restore output and applies the

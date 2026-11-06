@@ -78,8 +78,8 @@ END$$;`,
 		pgIdent(roleName), pgStr(password),
 	)
 
-	cmd := execCommandContext(ctx, "sudo", "-u", "postgres", "psql",
-		"-v", "ON_ERROR_STOP=1", "-XAtq", "-c", sql)
+	cmd := sqlOnStdin(ctx, sql, "sudo", "-u", "postgres", "psql",
+		"-v", "ON_ERROR_STOP=1", "-XAtq", "-f", "-")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Do not echo psql's stderr — it may contain the password.
 		_ = out

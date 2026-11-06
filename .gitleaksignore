@@ -5,3 +5,6 @@
 # GH #2277 webhook tests: fake signing key and secret (PR #2296).
 f8a6f0a7ac252bb958e21ebfedc433f855308f55:panel-api/internal/gitdeploy/webhook_test.go:generic-api-key:20
 f8a6f0a7ac252bb958e21ebfedc433f855308f55:panel-api/internal/gitdeploy/webhook_test.go:generic-api-key:165
+
+# Database statement tests: fake database user password (PR #2412).
+247a0648234c0f4a12635c865faedb72d1594b84:panel-agent/internal/commands/sql_stdin_test.go:generic-api-key:156

@@ -69,6 +69,12 @@ func TestEscapeMariaDBLiteral(t *testing.T) {
 		{"has\x00nul", "", true},
 		// UTF-8 string
 		{"café", "'café'", false},
+		// CR and LF as escapes: the statement stays on one line, and the
+		// CR of a CRLF survives the client's line reader.
+		{"a\r\nb", `'a\r\nb'`, false},
+		{"back\\\nslash", `'back\\\nslash'`, false},
+		// A backslash and an r in the value stay two characters.
+		{`not\r a CR`, `'not\\r a CR'`, false},
 	}
 
 	for _, tt := range tests {

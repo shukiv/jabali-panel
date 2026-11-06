@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"reflect"
 	"regexp"
 	"strings"
@@ -20,19 +19,15 @@ import (
 // sent to mariadb.
 func captureDomainInsert(t *testing.T, d backup.MetadataDomain) string {
 	t.Helper()
-	var stmt string
-	prev := execCommandContext
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		for i, a := range args {
-			if name == "mariadb" && a == "-e" && i+1 < len(args) {
-				stmt = args[i+1]
-			}
-		}
-		return exec.CommandContext(ctx, "true")
-	}
-	t.Cleanup(func() { execCommandContext = prev })
+	execs := recordSQLExecs(t)
 	if err := insertDomain(context.Background(), "u1", d); err != nil {
 		t.Fatal(err)
+	}
+	var stmt string
+	for _, e := range execs() {
+		if e.name == "mariadb" {
+			stmt = e.sql
+		}
 	}
 	if stmt == "" {
 		t.Fatal("insertDomain sent no statement")
@@ -188,6 +183,9 @@ func TestInsertDomain_TenantTextStaysInsideItsLiteral(t *testing.T) {
 func TestSQLEscape_BackslashAndQuote(t *testing.T) {
 	if got := sqlEscape(`a\'b`); got != `a\\''b` {
 		t.Fatalf("sqlEscape = %q", got)
+	}
+	if got := sqlEscape("pem\r\nline\n"); got != `pem\r\nline\n` {
+		t.Fatalf("sqlEscape kept a raw line break: %q", got)
 	}
 }
 

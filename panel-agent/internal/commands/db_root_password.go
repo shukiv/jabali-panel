@@ -109,7 +109,7 @@ func dbRootSetPasswordHandler(ctx context.Context, params json.RawMessage) (any,
 	// winning; mysql_native_password as the break-glass backup.
 	// Omitting unix_socket here would silently delete it.
 	alter := mariadbRootAlterPrefix + escapedPw + ")"
-	if err := execCommandContext(ctx, "mysql", "-e", alter).Run(); err != nil {
+	if err := sqlOnStdin(ctx, alter, "mysql").Run(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "failed to set root password"}
 	}
 

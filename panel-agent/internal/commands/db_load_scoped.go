@@ -135,11 +135,11 @@ func provisionScopedShadow(ctx context.Context, dbName, shadow, pwd string) erro
 
 // mariadbRoot runs a statement as root over the unix socket. Only used
 // for the static, operator-side provisioning statements — dump content
-// never passes through here.
+// never passes through here. The statement goes on stdin: provisioning
+// carries the account's password.
 func mariadbRoot(ctx context.Context, stmt string) error {
-	cmd := execCommandContext(ctx, "mariadb",
-		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
-		"-e", stmt)
+	cmd := sqlOnStdin(ctx, stmt, "mariadb",
+		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
