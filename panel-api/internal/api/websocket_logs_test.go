@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -208,5 +209,103 @@ func TestRenderGoAccessHTTP_SetsRelaxedCSPHeaderEvenWhenLogMissing(t *testing.T)
 	}
 	if got := w.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
 		t.Errorf("Content-Type = %q; want text/html...", got)
+	}
+}
+
+// The report runs in an opaque origin: the CSP sandboxes it even when it is
+// opened outside the panel's iframe.
+func TestGoAccessCSP_SandboxesTheReport(t *testing.T) {
+	if !strings.HasPrefix(goaccessCSP, "sandbox allow-scripts; ") {
+		t.Fatalf("goaccessCSP must start with `sandbox allow-scripts; `; got: %s", goaccessCSP)
+	}
+	for _, d := range []string{"allow-same-origin", "allow-top-navigation", "allow-popups", "allow-forms"} {
+		if strings.Contains(goaccessCSP, d) {
+			t.Errorf("goaccessCSP must not grant %s; got: %s", d, goaccessCSP)
+		}
+	}
+}
+
+// Behind nginx the vhost's copy of the policy is the one the browser sees
+// (proxy_hide_header drops panel-api's), so the two must not drift.
+func TestGoAccessCSP_VhostSendsTheSamePolicy(t *testing.T) {
+	raw, err := os.ReadFile("../../../install/nginx/jabali-panel-vhost.conf.tmpl")
+	if err != nil {
+		t.Fatalf("read vhost template: %v", err)
+	}
+	vhost := string(raw)
+	start := strings.Index(vhost, "location ^~ /api/v1/logs/stream/ {")
+	if start < 0 {
+		t.Fatal("vhost template has no /api/v1/logs/stream/ location")
+	}
+	end := strings.Index(vhost[start:], "\n  }\n")
+	if end < 0 {
+		t.Fatal("cannot find the end of the /api/v1/logs/stream/ location")
+	}
+	loc := vhost[start : start+end]
+	if !strings.Contains(loc, "proxy_hide_header Content-Security-Policy;") {
+		t.Fatal("the location no longer hides panel-api's CSP; update this test")
+	}
+	want := `add_header Content-Security-Policy "` + goaccessCSP + `" always;`
+	if got := strings.Count(loc, "add_header Content-Security-Policy "); got != 1 {
+		t.Fatalf("want exactly one CSP add_header in the location, got %d", got)
+	}
+	if !strings.Contains(loc, want) {
+		t.Errorf("the vhost's GoAccess CSP differs from goaccessCSP\nwant line: %s\nlocation:\n%s", want, loc)
+	}
+}
+
+func TestRenderGoAccessHTTP_OnlyServesAFrame(t *testing.T) {
+	stream := &models.LogAccessStream{LogType: "goaccess", ExpiresAt: time.Now().Add(time.Hour)}
+	for _, tc := range []struct {
+		dest string
+		want int
+	}{
+		{"document", http.StatusForbidden},
+		{"embed", http.StatusForbidden},
+		{"object", http.StatusForbidden},
+		{"script", http.StatusForbidden},
+		{"iframe", http.StatusOK},
+		{"", http.StatusOK}, // no fetch metadata
+	} {
+		r := newGoAccessRouter(&fakeLogStreamRepo{stream: stream})
+		req := httptest.NewRequest("GET", "/logs/stream/"+validHexStreamKey+"/goaccess.html", nil)
+		if tc.dest != "" {
+			req.Header.Set("Sec-Fetch-Dest", tc.dest)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != tc.want {
+			t.Errorf("Sec-Fetch-Dest %q: got %d, want %d (body %q)", tc.dest, w.Code, tc.want, w.Body.String())
+		}
+	}
+}
+
+func TestWithScrollBridge(t *testing.T) {
+	page := []byte("<html><body><p>report</p></body>\n</html>")
+	orig := string(page)
+	got := string(withScrollBridge(page))
+	if want := "<html><body><p>report</p>" + goaccessScrollBridge + "</body>\n</html>"; got != want {
+		t.Errorf("bridge not placed before </body>:\n%s", got)
+	}
+	if string(page) != orig {
+		t.Errorf("the shared page was changed: %s", page)
+	}
+
+	// The last </body> wins (a literal one can sit in the report's data).
+	two := []byte(`<body><script>var d="</body>";</script></body></html>`)
+	if got := string(withScrollBridge(two)); !strings.HasSuffix(got, goaccessScrollBridge+"</body></html>") {
+		t.Errorf("bridge not before the last </body>: %s", got)
+	}
+
+	if got := string(withScrollBridge([]byte("<p>no body tag</p>"))); got != "<p>no body tag</p>"+goaccessScrollBridge {
+		t.Errorf("bridge not appended to a page without </body>: %s", got)
+	}
+
+	// Spare capacity in the cached slice must not be written to.
+	spare := make([]byte, 0, 64)
+	spare = append(spare, "<body></body>"...)
+	_ = withScrollBridge(spare)
+	if tail := string(spare[:cap(spare)][len(spare):]); strings.Trim(tail, "\x00") != "" {
+		t.Errorf("withScrollBridge wrote past the page into its spare capacity: %q", tail)
 	}
 }

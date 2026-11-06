@@ -2,8 +2,10 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"os"
@@ -294,9 +296,18 @@ func runGoAccess(ctx context.Context, accessLogPath string) ([]byte, error) {
 // `new Function(...)` for HTML-template compilation, which requires
 // 'unsafe-eval'. The panel's server-scope CSP forbids unsafe-eval — by
 // returning a fresh URL-loaded response (not srcdoc), the iframe gets
-// THIS CSP instead of the parent's. nginx must NOT add its own CSP
-// add_header on this route (otherwise nginx's wins per nginx semantics).
-const goaccessCSP = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
+// THIS CSP instead of the parent's.
+//
+// `sandbox allow-scripts` gives the report an opaque origin wherever it is
+// opened, so its scripts never run as the panel. The panel's iframe carries
+// the same sandbox.
+//
+// Behind nginx, the panel vhost's /api/v1/logs/stream/ location hides this
+// header and sends its own copy of the policy (install/nginx/
+// jabali-panel-vhost.conf.tmpl). TestGoAccessCSP_VhostSendsTheSamePolicy
+// keeps the two identical.
+const goaccessCSP = "sandbox allow-scripts; " +
+	"default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
 	"script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
 	"style-src 'self' 'unsafe-inline'; " +
 	"img-src 'self' data: blob:; " +
@@ -304,6 +315,55 @@ const goaccessCSP = "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob
 	"connect-src 'self'; " +
 	"frame-ancestors 'self'; " +
 	"form-action 'self';"
+
+// goaccessFramed reports whether a request for the report comes from an
+// iframe, the only way the panel loads it. A browser that sends no fetch
+// metadata (Sec-Fetch-Dest) is let through.
+func goaccessFramed(r *http.Request) bool {
+	dest := r.Header.Get("Sec-Fetch-Dest")
+	return dest == "" || dest == "iframe"
+}
+
+// goaccessScrollBridge is added to the report. The panel cannot read the
+// scroll position of its sandboxed iframe, so the report posts it out as the
+// user scrolls, and takes it back after each 10s refresh (LogStreamModal).
+const goaccessScrollBridge = `<script>(function () {
+  var up = window.parent;
+  if (!up || up === window) return;
+  var page = function () { return document.scrollingElement || document.documentElement; };
+  var offset = function (v) { return typeof v === "number" && isFinite(v) && v >= 0; };
+  var queued = false;
+  window.addEventListener("scroll", function () {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () {
+      queued = false;
+      var el = page();
+      up.postMessage({ type: "jabali-goaccess-scroll", top: el.scrollTop, left: el.scrollLeft }, "*");
+    });
+  }, { passive: true });
+  window.addEventListener("message", function (ev) {
+    var d = ev.data;
+    if (ev.source !== up || !d || d.type !== "jabali-goaccess-restore" || !offset(d.top) || !offset(d.left)) return;
+    var el = page();
+    el.scrollTop = d.top;
+    el.scrollLeft = d.left;
+  });
+})();</script>`
+
+// withScrollBridge returns a copy of a GoAccess page with goaccessScrollBridge
+// placed before its last </body>, or at the end when it has none. The page
+// itself is not changed: renderGoAccessCached shares it between viewers.
+func withScrollBridge(page []byte) []byte {
+	at := bytes.LastIndex(page, []byte("</body>"))
+	if at < 0 {
+		at = len(page)
+	}
+	out := make([]byte, 0, len(page)+len(goaccessScrollBridge))
+	out = append(out, page[:at]...)
+	out = append(out, goaccessScrollBridge...)
+	return append(out, page[at:]...)
+}
 
 // renderGoAccessHTTP serves the current GoAccess HTML snapshot over HTTP
 // (not WS). The response carries the relaxed `goaccessCSP` header so the
@@ -318,6 +378,10 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 	}
 	if err := validateStreamKey(streamKey); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid stream key"})
+		return
+	}
+	if !goaccessFramed(c.Request) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "open this report from the panel's Logs page"})
 		return
 	}
 	stream, err := h.cfg.LogAccessStreams.FindByStreamKey(c.Request.Context(), streamKey)
@@ -346,9 +410,8 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 		return
 	}
 
-	// Per-response CSP MUST be set BEFORE any write. nginx add_header
-	// at the goaccess location is OFF (see vhost template) so this
-	// header is what the browser sees.
+	// Per-response CSP MUST be set BEFORE any write. Behind nginx the
+	// vhost's copy of goaccessCSP replaces it (see goaccessCSP).
 	c.Header("Content-Security-Policy", goaccessCSP)
 	// frame-ancestors is set in the CSP; the legacy X-Frame-Options from
 	// server scope is overridden to SAMEORIGIN by nginx for this location.
@@ -365,7 +428,7 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 				"<h2>No access log yet</h2>"+
 				"<p>File <code>%s</code> doesn't exist. "+
 				"GoAccess will start once nginx writes traffic to this domain.</p>"+
-				"</body></html>", filepath.Base(accessLogPath))
+				"</body></html>", html.EscapeString(filepath.Base(accessLogPath)))
 		return
 	}
 
@@ -380,10 +443,10 @@ func (h *logStreamHandler) renderGoAccessHTTP(c *gin.Context) {
 		h.cfg.Log.Warn("goaccess render failed", "err", err, "path", accessLogPath)
 		c.String(http.StatusOK,
 			"<!doctype html><html><body style='font-family:sans-serif;padding:2em;background:#1f1f1f;color:#fff'>"+
-				"<h2>GoAccess error</h2><pre>%s</pre></body></html>", err.Error())
+				"<h2>GoAccess error</h2><pre>%s</pre></body></html>", html.EscapeString(err.Error()))
 		return
 	}
-	c.Data(http.StatusOK, "text/html; charset=utf-8", out)
+	c.Data(http.StatusOK, "text/html; charset=utf-8", withScrollBridge(out))
 }
 
 // systemLogPath returns the path to system-wide nginx logs
