@@ -1,12 +1,19 @@
 // applicationInventory.test.ts — pins the shared Application Inventory login
 // capability, invalidation keys, and error extraction (JAB-334 AC2/AC3) so the
 // admin and tenant lists can't drift from each other or from the backend.
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
+
+vi.mock("../../lib/feedback", () => ({
+  feedback: { message: { warning: vi.fn(), error: vi.fn(), success: vi.fn() } },
+}));
+
+import { feedback } from "../../lib/feedback";
 import {
   canApplicationLogin,
   APPLICATION_LOGIN_APP_TYPES,
   APPLICATION_INVALIDATION_KEYS,
   extractApiError,
+  openApplicationLogin,
 } from "./applicationInventory";
 
 describe("canApplicationLogin", () => {
@@ -64,5 +71,62 @@ describe("extractApiError", () => {
     expect(extractApiError({ message: "m" }, "fb")).toBe("m");
     expect(extractApiError({}, "fb")).toBe("fb");
     expect(extractApiError(null, "fb")).toBe("fb");
+  });
+});
+
+describe("openApplicationLogin", () => {
+  function fakeTab() {
+    return { opener: {} as unknown, location: { href: "" }, close: vi.fn() };
+  }
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(feedback.message.warning).mockReset();
+    vi.mocked(feedback.message.error).mockReset();
+    vi.mocked(feedback.message.success).mockReset();
+  });
+
+  it("opens the tab before minting, then sends it to the link", async () => {
+    const tab = fakeTab();
+    const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    let resolve!: (v: { url: string }) => void;
+    const mint = vi.fn(() => new Promise<{ url: string }>((r) => (resolve = r)));
+
+    const done = openApplicationLogin(mint);
+    // The tab exists, with its opener cut, before the mint has answered.
+    expect(open).toHaveBeenCalledWith("about:blank", "_blank");
+    expect(tab.opener).toBeNull();
+    expect(mint).toHaveBeenCalledTimes(1);
+
+    resolve({ url: "https://site.example/wp-login.php?magic=abc" });
+    await done;
+    expect(tab.location.href).toBe("https://site.example/wp-login.php?magic=abc");
+    expect(feedback.message.success).toHaveBeenCalled();
+  });
+
+  it("does not mint when the browser blocks the tab", async () => {
+    vi.spyOn(window, "open").mockReturnValue(null);
+    const mint = vi.fn();
+    await openApplicationLogin(mint);
+    expect(mint).not.toHaveBeenCalled();
+    expect(feedback.message.warning).toHaveBeenCalled();
+    expect(feedback.message.success).not.toHaveBeenCalled();
+  });
+
+  it("closes the tab and shows the reason when the mint fails", async () => {
+    const tab = fakeTab();
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    await openApplicationLogin(() => Promise.reject(new Error("site is suspended")), "stale");
+    expect(tab.close).toHaveBeenCalled();
+    expect(feedback.message.error).toHaveBeenCalledWith("site is suspended");
+  });
+
+  it("closes the tab for a link that is not a web address", async () => {
+    const tab = fakeTab();
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    await openApplicationLogin(() => Promise.resolve({ url: "javascript:alert(1)" }));
+    expect(tab.close).toHaveBeenCalled();
+    expect(tab.location.href).toBe("");
+    expect(feedback.message.success).not.toHaveBeenCalled();
+    expect(feedback.message.error).toHaveBeenCalled();
   });
 });

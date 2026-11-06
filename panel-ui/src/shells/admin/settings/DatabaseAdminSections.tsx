@@ -14,6 +14,7 @@ import {
 } from "@icons";
 import { Button, Card, Form, Input, InputNumber, Modal, Popconfirm, Segmented, Select, Skeleton, Space, Table, Tag, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { openSsoTab, sendSsoTab } from "../../../lib/ssoTab";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -292,7 +293,8 @@ function ConfigTunerSection() {
   );
 }
 
-function AdminDbConsoleSection() {
+// Exported for tests.
+export function AdminDbConsoleSection() {
   const [busy, setBusy] = useState<string | null>(null);
 
   // If a pgAdmin docker app (GH #1005) is installed, running and reverse-
@@ -308,12 +310,21 @@ function AdminDbConsoleSection() {
     (a) => a.slug === "pgadmin" && a.status === "running" && !!a.domain,
   );
 
+  // Runs straight from the click: the tab opens before the sign-in link is
+  // minted, and the link is never minted for a blocked tab (lib/ssoTab).
   const open = async (path: string, label: string) => {
+    const tab = openSsoTab(
+      `Browser blocked the ${label} tab — allow popups for this site and click again.`,
+    );
+    if (!tab) return;
     setBusy(label);
     try {
       const res = await apiClient.post<{ redirect_url: string }>(path, {});
-      window.open(res.data.redirect_url, "_blank", "noopener,noreferrer");
+      if (!sendSsoTab(tab, res.data.redirect_url)) {
+        feedback.message.error(`Could not open ${label}: the sign-in link was not a web address`);
+      }
     } catch (err) {
+      tab.close();
       feedback.message.error(
         `Could not open ${label}: ${
           err instanceof Error ? err.message : String(err)

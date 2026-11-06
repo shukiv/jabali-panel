@@ -5,6 +5,7 @@
 // The status vocabulary (status union, badge meta, transitional rule) lives in
 // utils/applicationStatus — this module owns the rest of the shared behavior.
 import { feedback } from "../../lib/feedback"; // GH #970: themed toasts
+import { openSsoTab, sendSsoTab } from "../../lib/ssoTab";
 import type { ApplicationStatus } from "../../utils/applicationStatus";
 
 // Canonical Application Inventory row. The admin (cross-user) list carries the
@@ -52,20 +53,32 @@ export const canApplicationLogin = (
   record.status === "ready" &&
   APPLICATION_LOGIN_APP_TYPES.has(record.app_type ?? "wordpress");
 
-// openApplicationLogin — mint a magic link, open the admin dashboard in a new
-// tab, and toast. Both lists ran this identical flow behind their login button;
-// centralizing it keeps the SSO affordance in one place (JAB-334 AC3). `mint`
-// is useMagicLink().mint; `fallbackError` is its captured error string.
+// openApplicationLogin — open a tab, mint a magic link, send the tab to the
+// admin dashboard, and toast. Both lists ran this identical flow behind their
+// login button; centralizing it keeps the SSO affordance in one place (JAB-334
+// AC3). `mint` is useMagicLink().mint; `fallbackError` is its captured error
+// string. Call it straight from the click: the tab is opened before the first
+// await (see lib/ssoTab).
 export async function openApplicationLogin(
   mint: () => Promise<{ url: string }>,
   fallbackError?: string | null,
 ): Promise<void> {
+  const tab = openSsoTab(
+    "Browser blocked the admin login tab — allow popups for this site and click again.",
+  );
+  if (!tab) return; // never mint a one-time link nobody can open
   try {
     const { url } = await mint();
-    window.open(url, "_blank", "noopener,noreferrer");
+    if (!sendSsoTab(tab, url)) {
+      feedback.message.error("The admin login link was not a web address");
+      return;
+    }
     feedback.message.success("Admin login link opened");
-  } catch {
-    feedback.message.error(fallbackError || "Failed to generate admin login link");
+  } catch (err) {
+    tab.close();
+    feedback.message.error(
+      (err instanceof Error && err.message) || fallbackError || "Failed to generate admin login link",
+    );
   }
 }
 
