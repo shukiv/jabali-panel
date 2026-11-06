@@ -131,6 +131,32 @@ func TestChangeDomainOwner_HappyPath(t *testing.T) {
 	}
 }
 
+// The move empties the old owner's /home/<old>/domains/<name>; the agent is
+// asked to remove it. The default layout's leaf is the domain's own folder,
+// so nothing is left behind there.
+func TestChangeDomainOwner_PrunesTheOldWrapper(t *testing.T) {
+	for _, tc := range []struct {
+		docRoot, want string
+	}{
+		{"/home/alice/domains/site.example/public_html", "/home/alice/domains/site.example"},
+		{"/home/alice/public_html/site.example", ""},
+		{"/home/alice/custom/www", ""},
+	} {
+		d, cd, domain, newOwner, _, ag := chownFixture()
+		domain.DocRoot = tc.docRoot
+		if err := ChangeDomainOwner(context.Background(), d, cd, domain, newOwner); err != nil {
+			t.Fatalf("%s: chown: %v", tc.docRoot, err)
+		}
+		got, set := ag.lastParams["prune_empty_dir"]
+		if tc.want == "" && set {
+			t.Errorf("%s: prune_empty_dir = %v, want none", tc.docRoot, got)
+		}
+		if tc.want != "" && got != tc.want {
+			t.Errorf("%s: prune_empty_dir = %v, want %q", tc.docRoot, got, tc.want)
+		}
+	}
+}
+
 func TestChangeDomainOwner_Refusals(t *testing.T) {
 	cases := []struct {
 		name   string

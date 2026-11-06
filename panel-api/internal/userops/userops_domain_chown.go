@@ -91,11 +91,18 @@ func ChangeDomainOwner(ctx context.Context, d Deps, cd ChownDeps, domain *models
 	newDocRoot := newPrefix + strings.TrimPrefix(domain.DocRoot, oldPrefix)
 
 	// Move + re-own the docroot tree on the box.
-	if _, err := d.Agent.Call(ctx, "domain.reown", map[string]any{
+	reownParams := map[string]any{
 		"old_doc_root": domain.DocRoot,
 		"new_doc_root": newDocRoot,
 		"new_uid":      int(*newOwner.LinuxUID),
-	}); err != nil {
+	}
+	// Nested layout (/home/<old>/domains/<name>/public_html): the move empties
+	// the old owner's <name> folder; the agent removes it if it is empty, as
+	// on a rename.
+	if _, pruneOldDir, rerr := renameDocRootSegment(domain.DocRoot, domain.Name, domain.Name); rerr == nil && pruneOldDir != "" {
+		reownParams["prune_empty_dir"] = pruneOldDir
+	}
+	if _, err := d.Agent.Call(ctx, "domain.reown", reownParams); err != nil {
 		return fmt.Errorf("chown: agent domain.reown failed: %w", err)
 	}
 
