@@ -32,6 +32,12 @@ func TestLinkStaysIn(t *testing.T) {
 		{"/etc/nginx/sites-enabled/a", "/etc/nginx/../shadow", nginx, false},
 		{"/etc/nginx/sites-enabled/a", "/", nginx, false},
 		{"/etc/nginx/sites-enabled/a", "/etc/nginxx/a", nginx, false},
+		{"/etc/nginx/sites-enabled/a", "./a.conf", nginx, true},
+		{"/etc/letsencrypt/live/a/cert.pem", "./../../archive/a/cert1.pem", le, true},
+		{"/etc/nginx/sites-enabled/a", "/etc/nginx/./sites-available/a", nginx, true},
+		{"/etc/nginx/sites-enabled/a", "/etc/nginx/sites-available/", nginx, true},
+		{"/etc/nginx/sites-enabled/a", "//etc/nginx/sites-available/a", nginx, true},
+		{"/etc/letsencrypt/live/a/cert.pem", "../../../letsencrypt/archive/a/cert1.pem", le, true},
 	} {
 		if got := linkStaysIn(tc.live, tc.dest, tc.roots); got != tc.ok {
 			t.Errorf("%s -> %s: got %v, want %v", tc.live, tc.dest, got, tc.ok)
@@ -39,12 +45,13 @@ func TestLinkStaysIn(t *testing.T) {
 	}
 }
 
-// A staged link that would point outside the restore target is left out of
-// the staged tree before rsync runs; the links a backup normally holds stay.
-func TestRsyncStageOnto_LeavesOutLinksThatPointOutside(t *testing.T) {
-	stage := t.TempDir()
-	target := filepath.Join(t.TempDir(), "etc", "letsencrypt")
-	src := filepath.Join(stage, target)
+// stagedLetsencrypt stages a copy of a letsencrypt tree under stage for
+// target, with live/a/cert.pem -> ../../archive/a/cert1.pem.
+func stagedLetsencrypt(t *testing.T) (stage, target, src string) {
+	t.Helper()
+	stage = t.TempDir()
+	target = filepath.Join(t.TempDir(), "etc", "letsencrypt")
+	src = filepath.Join(stage, target)
 	for _, d := range []string{"live/a", "archive/a"} {
 		if err := os.MkdirAll(filepath.Join(src, d), 0o755); err != nil {
 			t.Fatal(err)
@@ -53,40 +60,75 @@ func TestRsyncStageOnto_LeavesOutLinksThatPointOutside(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "archive/a/cert1.pem"), []byte("c"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	links := map[string]string{
-		"live/a/cert.pem":  "../../archive/a/cert1.pem",
-		"live/a/abs.pem":   filepath.Join(target, "archive/a/cert1.pem"),
-		"live/a/shadow":    "/etc/shadow",
-		"live/a/climb.pem": "../../../../shadow",
-	}
-	for name, dest := range links {
+	for name, dest := range map[string]string{
+		"live/a/cert.pem": "../../archive/a/cert1.pem",
+		"live/a/abs.pem":  filepath.Join(target, "archive/a/cert1.pem"),
+	} {
 		if err := os.Symlink(dest, filepath.Join(src, name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	var calls []string
+	return stage, target, src
+}
+
+func recordRestoreExec(t *testing.T) *[]string {
+	t.Helper()
+	calls := &[]string{}
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		calls = append(calls, name+" "+strings.Join(args, " "))
+		*calls = append(*calls, name+" "+strings.Join(args, " "))
 		return exec.CommandContext(ctx, "true")
 	}
 	t.Cleanup(func() { execCommandContext = prev })
+	return calls
+}
 
-	warnings, err := rsyncStageOnto(context.Background(), stage, target, nil)
-	if err != nil {
+// A staged tree holding a link that would point outside the restore target
+// is not applied at all; one holding only the links a backup normally has is.
+func TestRsyncStageOnto_RefusesLinksThatPointOutside(t *testing.T) {
+	stage, target, src := stagedLetsencrypt(t)
+	calls := recordRestoreExec(t)
+	if err := rsyncStageOnto(context.Background(), stage, target, nil); err != nil {
 		t.Fatal(err)
 	}
-	for name, kept := range map[string]bool{"live/a/cert.pem": true, "live/a/abs.pem": true, "live/a/shadow": false, "live/a/climb.pem": false} {
-		_, lerr := os.Lstat(filepath.Join(src, name))
-		if (lerr == nil) != kept {
-			t.Errorf("%s: kept=%v, want %v", name, lerr == nil, kept)
+	if len(*calls) != 1 || !strings.HasPrefix((*calls)[0], "rsync ") {
+		t.Fatalf("calls %q", *calls)
+	}
+
+	for _, dest := range []string{"/etc/shadow", "../../../../shadow", "d/../../x"} {
+		stage, target, src = stagedLetsencrypt(t)
+		calls = recordRestoreExec(t)
+		if err := os.Symlink(dest, filepath.Join(src, "live/a/bad")); err != nil {
+			t.Fatal(err)
+		}
+		err := rsyncStageOnto(context.Background(), stage, target, nil)
+		if err == nil || !strings.Contains(err.Error(), "live/a/bad -> "+dest) {
+			t.Errorf("%s: err %v", dest, err)
+		}
+		if len(*calls) != 0 {
+			t.Errorf("%s: a refused stage must run nothing, ran %q", dest, *calls)
 		}
 	}
-	if len(warnings) != 2 || !strings.Contains(strings.Join(warnings, "\n"), "/etc/shadow") {
-		t.Errorf("warnings %q", warnings)
+}
+
+// A staged folder on the way to the target that is a link is refused: the
+// mirror would otherwise copy from wherever it points.
+func TestRsyncStageOnto_RefusesALinkedStagedFolder(t *testing.T) {
+	stage := t.TempDir()
+	elsewhere := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(elsewhere, "nginx"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if len(calls) != 1 || !strings.HasPrefix(calls[0], "rsync ") {
-		t.Errorf("calls %q", calls)
+	if err := os.Symlink(elsewhere, filepath.Join(stage, "etc")); err != nil {
+		t.Fatal(err)
+	}
+	calls := recordRestoreExec(t)
+	err := rsyncStageOnto(context.Background(), stage, "/etc/nginx", nil)
+	if err == nil || !strings.Contains(err.Error(), "is not a folder") {
+		t.Fatalf("err %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("ran %q", *calls)
 	}
 }
 
@@ -120,5 +162,18 @@ func TestApplyPanelDBStage_LoadsOnlyThePanelDatabases(t *testing.T) {
 	}
 	if len(calls) != 1 || !strings.HasSuffix(calls[0], " -- jabali_panel") {
 		t.Fatalf("calls %q", calls)
+	}
+
+	// A panel database whose dump is a link to another file is not loaded.
+	linked := t.TempDir()
+	if err := os.Symlink("/etc/hostname", filepath.Join(linked, "jabali_kratos.sql")); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if err := applyPanelDBStage(context.Background(), linked, backup.ManifestStage{Name: backup.StagePanelDB, Items: []string{"jabali_kratos"}}); err == nil {
+		t.Error("a linked dump was loaded")
+	}
+	if len(calls) != 0 {
+		t.Fatalf("a linked dump must run nothing, ran %q", calls)
 	}
 }

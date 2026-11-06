@@ -27,6 +27,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 )
 
@@ -726,9 +728,7 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			}
 			applied = append(applied, fmt.Sprintf("panel_db: %v", st.Items))
 		case backup.StagePanelConfig:
-			w, err := rsyncStageOnto(ctx, stageDir, "/etc/jabali-panel", []string{"restic-repo.password"})
-			warnings = append(warnings, w...)
-			if err != nil {
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/jabali-panel", []string{"restic-repo.password"}); err != nil {
 				warnings = append(warnings, fmt.Sprintf("panel_config: %v", err))
 				continue
 			}
@@ -742,9 +742,7 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			applied = append(applied, ownApplied...)
 			warnings = append(warnings, ownWarn...)
 		case backup.StageTLS:
-			w, err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil)
-			warnings = append(warnings, w...)
-			if err != nil {
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
 				continue
 			}
@@ -759,9 +757,7 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 						stageDir))
 				continue
 			}
-			w, err := applyMailState(ctx, stageDir)
-			warnings = append(warnings, w...)
-			if err != nil {
+			if err := applyMailState(ctx, stageDir); err != nil {
 				warnings = append(warnings, fmt.Sprintf("mail_state: %v", err))
 				continue
 			}
@@ -774,15 +770,11 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 				continue
 			}
 			// nginx, php pools, systemd drop-ins. Reload nginx after.
-			if w, err := rsyncStageOnto(ctx, stageDir, "/etc/nginx", nil); err != nil {
-				warnings = append(warnings, append(w, fmt.Sprintf("service_config nginx: %v", err))...)
-			} else {
-				warnings = append(warnings, w...)
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/nginx", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("service_config nginx: %v", err))
 			}
-			if w, err := rsyncStageOnto(ctx, stageDir, "/etc/php", nil); err != nil {
-				warnings = append(warnings, append(w, fmt.Sprintf("service_config php: %v", err))...)
-			} else {
-				warnings = append(warnings, w...)
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/php", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("service_config php: %v", err))
 			}
 			_ = execCommandContext(ctx, "systemctl", "daemon-reload").Run()
 			_ = execCommandContext(ctx, "systemctl", "reload", "nginx").Run()
@@ -794,15 +786,11 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 						stageDir))
 				continue
 			}
-			if w, err := rsyncStageOnto(ctx, stageDir, "/etc/ufw", nil); err != nil {
-				warnings = append(warnings, append(w, fmt.Sprintf("security ufw: %v", err))...)
-			} else {
-				warnings = append(warnings, w...)
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/ufw", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("security ufw: %v", err))
 			}
-			if w, err := rsyncStageOnto(ctx, stageDir, "/etc/crowdsec", nil); err != nil {
-				warnings = append(warnings, append(w, fmt.Sprintf("security crowdsec: %v", err))...)
-			} else {
-				warnings = append(warnings, w...)
+			if err := rsyncStageOnto(ctx, stageDir, "/etc/crowdsec", nil); err != nil {
+				warnings = append(warnings, fmt.Sprintf("security crowdsec: %v", err))
 			}
 			applied = append(applied, "security → /etc/ufw + /etc/crowdsec")
 		case backup.StageOSUsers:
@@ -831,7 +819,7 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 	return applied, warnings
 }
 
-func applyMailState(ctx context.Context, stageDir string) ([]string, error) {
+func applyMailState(ctx context.Context, stageDir string) error {
 	_ = execCommandContext(ctx, "systemctl", "stop", "jabali-stalwart.service").Run()
 	defer func() {
 		_ = execCommandContext(context.Background(), "systemctl", "start", "jabali-stalwart.service").Run()
@@ -858,7 +846,7 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 	}
 	var src string
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil {
 			src = p
 			break
 		}
@@ -866,11 +854,15 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 	if src == "" {
 		return fmt.Errorf("no SQL file in %s", stageDir)
 	}
-	f, err := os.Open(src) // #nosec G304 — path built from server-controlled stage dir
+	// The dump must be a file of the backup's own, never a link to one.
+	f, err := os.OpenFile(src, os.O_RDONLY|unix.O_NOFOLLOW, 0) // #nosec G304 — path built from server-controlled stage dir
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", src)
+	}
 	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket",
 		"--socket=/run/mysqld/mysqld.sock",
@@ -892,24 +884,36 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 // installed manually before the restore dispatch (see
 // install_disaster_restore in install.sh).
 //
-// A link in the staged tree that would point outside target once in place
-// is left out (see dropOutsideLinks); each one is reported in the returned
-// warnings.
-func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) ([]string, error) {
+// The staged tree is checked first, and nothing is applied when it fails:
+// every folder from stageDir down to the staged target must be a folder, not
+// a link, and no link in it may point outside target once in place (see
+// linkStaysIn).
+func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) error {
 	// The staged tree mirrors the original absolute path: e.g.
 	// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
 	// holds <stageDir>/etc/jabali-panel/... — we want to sync the
 	// inner /etc/jabali-panel/... part onto /etc/jabali-panel.
 	src := filepath.Join(stageDir, target) + "/"
-	if _, err := os.Stat(src); err != nil {
-		return nil, fmt.Errorf("staged source %s missing: %w", src, err)
+	p := stageDir
+	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
+		p = filepath.Join(p, c)
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return fmt.Errorf("staged source %s missing: %w", src, err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("staged source %s: %s is not a folder", src, p)
+		}
 	}
-	warnings, err := dropOutsideLinks(filepath.Join(stageDir, target), target)
+	bad, err := outsideLinks(filepath.Join(stageDir, target), target)
 	if err != nil {
-		return warnings, fmt.Errorf("check staged links: %w", err)
+		return fmt.Errorf("check staged links: %w", err)
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
 	}
 	if err := os.MkdirAll(target, 0o755); err != nil {
-		return warnings, fmt.Errorf("mkdir target: %w", err)
+		return fmt.Errorf("mkdir target: %w", err)
 	}
 	args := []string{"-a", "--delete-after"}
 	for _, e := range excludes {
@@ -919,10 +923,10 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 	cmd := execCommandContext(ctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return warnings, fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, target, err,
+		return fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, target, err,
 			strings.TrimSpace(string(out)))
 	}
-	return warnings, nil
+	return nil
 }
 
 // isSystemPanelDatabase reports whether db is one of systemPanelDatabases.
@@ -942,14 +946,13 @@ var restoreLinkRoots = map[string][]string{
 	"/etc/nginx": {"/usr/share/nginx"},
 }
 
-// dropOutsideLinks removes from the staged tree src, which is restored onto
-// target, every link that would point outside target (and its
-// restoreLinkRoots) once in place, and reports each one. The links a backup
-// normally holds stay: nginx sites-enabled, letsencrypt live/, php conf.d,
-// the crowdsec hub, a user's default.cred.
-func dropOutsideLinks(src, target string) ([]string, error) {
+// outsideLinks lists the links in the staged tree src, which is restored onto
+// target, that would point outside target (and its restoreLinkRoots) once in
+// place. The links a backup normally holds stay inside: nginx sites-enabled,
+// letsencrypt live/, php conf.d, the crowdsec hub, a user's default.cred.
+func outsideLinks(src, target string) ([]string, error) {
 	roots := append([]string{target}, restoreLinkRoots[target]...)
-	var dropped []string
+	var bad []string
 	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -965,17 +968,12 @@ func dropOutsideLinks(src, target string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-		live := filepath.Join(target, rel)
-		if linkStaysIn(live, dest, roots) {
-			return nil
+		if live := filepath.Join(target, rel); !linkStaysIn(live, dest, roots) {
+			bad = append(bad, live+" -> "+dest)
 		}
-		if err := os.Remove(p); err != nil {
-			return err
-		}
-		dropped = append(dropped, fmt.Sprintf("left out the link %s -> %s: it points outside %s", live, dest, strings.Join(roots, ", ")))
 		return nil
 	})
-	return dropped, err
+	return bad, err
 }
 
 // linkStaysIn reports whether a link at live pointing at dest lands inside
@@ -983,19 +981,17 @@ func dropOutsideLinks(src, target string) ([]string, error) {
 // name, the name may itself be a link and ".." would climb from wherever it
 // points, which a lexical check can't follow.
 func linkStaysIn(live, dest string, roots []string) bool {
-	parts := strings.Split(dest, "/")
-	if filepath.IsAbs(dest) {
-		parts = parts[1:]
-	}
 	leading := !filepath.IsAbs(dest)
-	for _, c := range parts {
-		if c == ".." {
+	for _, c := range strings.Split(dest, "/") {
+		switch c {
+		case "", ".":
+		case "..":
 			if !leading {
 				return false
 			}
-			continue
+		default:
+			leading = false
 		}
-		leading = false
 	}
 	resolved := dest
 	if !filepath.IsAbs(dest) {
