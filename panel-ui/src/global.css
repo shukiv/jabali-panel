@@ -265,6 +265,18 @@ body.imp-active .ant-modal-body {
   box-decoration-break: clone;
 }
 
+/* Safari's page zoom multiplies a <col> width a second time (GH #2328), and
+   antd sizes the expand-arrow column on its <col>: at 250% it takes 120px
+   and squeezes the text columns. Size it on its cells instead, at antd's
+   width (checkbox 16px + 2 x padding 16px). Column widths go through
+   columnWidth() for the same reason. */
+.ant-table-wrapper table col.ant-table-expand-icon-col {
+  width: auto;
+}
+.ant-table-wrapper table .ant-table-row-expand-icon-cell {
+  width: 48px;
+}
+
 /* ---------- Scrollbar styling (panel-wide) ----------------------------------
  * Browsers default to chunky 16px scrollbars that look out of place on
  * dark surfaces. Use thin/transparent rails everywhere — Firefox via

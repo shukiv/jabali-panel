@@ -17,6 +17,7 @@ import {
   type DomainIPACL,
 } from "../../../hooks/useDomainIPACL";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
+import { columnWidth } from "../../../components/columnWidth";
 
 type Props = { domainId: string };
 
@@ -152,12 +153,12 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
         <Table.Column<DomainIPACL>
           title={t("domainipaclsection.priority")}
           dataIndex="priority"
-          width={80}
+          {...columnWidth(80)}
         />
         <Table.Column<DomainIPACL>
           title={t("domainipaclsection.action")}
           dataIndex="action"
-          width={100}
+          {...columnWidth(100)}
           render={(a: ACLAction) => {
             const t = ACTION_TAG[a];
             return <Tag color={t.color}>{t.label}</Tag>;
@@ -185,7 +186,7 @@ export const DomainIPACLSection = ({ domainId }: Props) => {
         />
         <Table.Column<DomainIPACL>
           title=""
-          width={80}
+          {...columnWidth(80)}
           render={(_, r) => (
             <Popconfirm
               title={t("domainipaclsection.delete_this_rule")}

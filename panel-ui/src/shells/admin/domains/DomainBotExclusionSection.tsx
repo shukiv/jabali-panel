@@ -16,6 +16,7 @@ import {
   type DomainBotExclusion,
 } from "../../../hooks/useDomainBotExclusions";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
+import { columnWidth } from "../../../components/columnWidth";
 
 type Props = { domainId: string; domainName: string };
 
@@ -167,7 +168,7 @@ export const DomainBotExclusionSection = ({ domainId, domainName }: Props) => {
         />
         <Table.Column<DomainBotExclusion>
           title=""
-          width={80}
+          {...columnWidth(80)}
           render={(_, r) => (
             <Popconfirm
               title="Remove this path?"
