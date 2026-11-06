@@ -1,8 +1,10 @@
 // domain.reown — move a domain's served docroot tree from the old owner's home
 // to the new owner's home and re-own it to the new uid (GH #1238 owner-change).
 //
-// Same-filesystem move (both docroots live under /home) so os.Rename is instant
-// and preserves the docroot's setgid bit; chownTreeRecursive then repoints every
+// Same-filesystem move (both docroots live under /home) so the rename is instant
+// and preserves the docroot's setgid bit. fsperm.MoveDirUnder reaches both
+// parents from their homes without following a link, and the docroot must be a
+// real directory. chownTreeRecursive then repoints every
 // entry to new_uid:www-data (Lchown-based, symlink-safe — never follows a tenant
 // -planted symlink out of the tree). The uid change is the point here: after the
 // move the old owner owns nothing in the tree and cannot traverse into the new
@@ -95,7 +97,7 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 
 	// Move (same fs → instant; preserves the docroot's own setgid), then re-own.
-	if err := os.Rename(p.OldDocRoot, p.NewDocRoot); err != nil {
+	if err := fsperm.MoveDirUnder(homeOf(p.OldDocRoot), p.OldDocRoot, anchor, p.NewDocRoot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("move docroot %q -> %q: %v", p.OldDocRoot, p.NewDocRoot, err)}
 	}
 	if err := chownTreeRecursive(filepath.Dir(grandparent), p.NewDocRoot, p.NewUID, wwwGID); err != nil {
@@ -122,13 +124,20 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 //   - refuses a dir that is not a strict ANCESTOR of oldDocRoot (so it can only
 //     ever be the wrapper the move emptied, never the docroot or an unrelated
 //     path);
-//   - uses os.Remove, which removes an EMPTY directory and fails (ignored) on a
-//     non-empty one — so extra sibling files the rename did not move are kept.
+//   - removes only an EMPTY directory, reached from the old owner's home without
+//     following a link (fsperm.RemoveEmptyDirUnder); a non-empty one fails
+//     (ignored), so extra sibling files the rename did not move are kept.
 func pruneEmptyRenameDir(dir, oldDocRoot string) {
 	if !shouldPruneRenameDir(dir, oldDocRoot) {
 		return
 	}
-	_ = os.Remove(dir) // rmdir; no-op (error ignored) when non-empty or absent.
+	_ = fsperm.RemoveEmptyDirUnder(homeOf(oldDocRoot), dir) // no-op when non-empty or absent.
+}
+
+// homeOf returns /home/<user> for a path under /home/<user>/.
+func homeOf(p string) string {
+	user, _, _ := strings.Cut(strings.TrimPrefix(p, "/home/"), "/")
+	return "/home/" + user
 }
 
 // shouldPruneRenameDir is the pure guard for pruneEmptyRenameDir: it returns
