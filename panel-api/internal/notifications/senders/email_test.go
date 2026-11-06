@@ -33,7 +33,7 @@ func TestEmail_SendsWellFormedMIME(t *testing.T) {
 	require.Equal(t, []string{"admin@example.com"}, gotTo)
 	require.Contains(t, gotMsg, "Subject: cert.renew.fail")
 	require.Contains(t, gotMsg, "Content-Type: text/html")
-	require.Contains(t, gotMsg, "Let's Encrypt 429")
+	require.Contains(t, gotMsg, "Let&#39;s Encrypt 429")
 }
 
 func TestEmail_MissingConfigPermanent(t *testing.T) {
