@@ -66,9 +66,27 @@ self.addEventListener("push", (event) => {
   );
 });
 
+// Notification links are panel paths. Resolve the link against this origin
+// and open "/" instead when it points anywhere else ("https://other",
+// "//other", "/\other", "javascript:").
+function panelTarget(link) {
+  if (typeof link !== "string") {
+    return "/";
+  }
+  try {
+    const url = new URL(link, self.location.origin);
+    if (url.origin === self.location.origin) {
+      return url.pathname + url.search + url.hash;
+    }
+  } catch (_err) {
+    // Not a URL at all: fall through.
+  }
+  return "/";
+}
+
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.deeplink) || "/";
+  const target = panelTarget((event.notification.data && event.notification.data.deeplink) || "/");
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
       for (const client of list) {

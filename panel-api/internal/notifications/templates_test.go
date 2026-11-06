@@ -49,6 +49,25 @@ func TestRenderForChannel_EmailHTML(t *testing.T) {
 	require.Contains(t, body, `href="https://panel/"`)
 }
 
+// The email sender sends the rendered body as text/html, so markup in the
+// body, severity or link must arrive as text.
+func TestRenderForChannel_EmailEscapesValues(t *testing.T) {
+	t.Parallel()
+	env := Envelope{
+		Title:    "Malware found",
+		Body:     "/home/u/public_html/<img src=x>.php\nnext & last",
+		Severity: "error<b>",
+		Deeplink: `/x"><a href="https://example.test/">`,
+	}
+	_, body := RenderForChannel(env, "email")
+	require.Contains(t, body, "<p>/home/u/public_html/&lt;img src=x&gt;.php<br>next &amp; last</p>")
+	require.Contains(t, body, "Severity: error&lt;b&gt;")
+	require.Contains(t, body, `href="/x&#34;&gt;&lt;a href=&#34;https://example.test/&#34;&gt;"`)
+	require.NotContains(t, body, "<img")
+	require.NotContains(t, body, "<b>")
+	require.Equal(t, 1, strings.Count(body, "<a "), "only the panel's own link is markup")
+}
+
 func TestRenderForChannel_UnknownFallsBack(t *testing.T) {
 	t.Parallel()
 	env := Envelope{Title: "t", Body: "b"}

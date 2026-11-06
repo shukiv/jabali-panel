@@ -227,6 +227,9 @@ func newNotificationBroadcastCmd() *cobra.Command {
 			default:
 				return fmt.Errorf("--severity must be info|warning|error|critical")
 			}
+			if deeplink != "" && notifications.PanelPath(deeplink) == "" {
+				return fmt.Errorf("--deeplink must be a panel path starting with /")
+			}
 			ctx, cancel := context.WithTimeout(c.Context(), 15*time.Second)
 			defer cancel()
 			env := notifications.Envelope{

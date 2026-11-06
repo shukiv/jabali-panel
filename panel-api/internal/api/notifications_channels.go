@@ -368,6 +368,10 @@ func (h *notificationsChannelsHandler) broadcast(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "severity must be info|warning|error|critical"})
 		return
 	}
+	if req.Deeplink != "" && notifications.PanelPath(req.Deeplink) == "" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "deeplink must be a panel path starting with /"})
+		return
+	}
 	env := notifications.Envelope{
 		EventKind: "notifications.broadcast",
 		Severity:  req.Severity,
