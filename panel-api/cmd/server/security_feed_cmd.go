@@ -119,9 +119,10 @@ func fetchSecurityFeed(ctx context.Context, url string) ([]byte, error) {
 // stable release are known locally; a failed fetch leaves what is there.
 func liveSecurityFeedHost(ctx context.Context, repoDir, serviceUser, statePath string, signed bool, logf func(string, ...any)) securityFeedHost {
 	git := func(args ...string) (string, error) {
-		full := append([]string{"-u", serviceUser, "-H", "env", "HOME=" + repoDir, "PATH=/usr/bin:/bin", "GIT_NO_REPLACE_OBJECTS=1",
-			"git", "-C", repoDir}, args...)
-		out, err := exec.CommandContext(ctx, "sudo", full...).CombinedOutput()
+		// Root on the root-owned checkout; see gitRootCmd.
+		c := gitRootCmd(repoDir, args...)
+		c.Env = append(c.Env, "GIT_NO_REPLACE_OBJECTS=1")
+		out, err := c.CombinedOutput()
 		return string(out), err
 	}
 	if out, err := git("fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main"); err != nil {
@@ -214,16 +215,15 @@ func startSecurityConverger(ctx context.Context, repoDir, serviceUser, stateDir 
 	if err := os.MkdirAll(tree, 0o700); err != nil {
 		return err
 	}
-	// git writes the archive to stdout as the service user; this process
-	// (root) keeps it, so the tree it runs from is root's.
 	tarPath := filepath.Join(dir, "tree.tar")
 	f, err := os.OpenFile(tarPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 	var stderr strings.Builder
-	archive := exec.CommandContext(ctx, "sudo", "-u", serviceUser, "-H", "env", "HOME="+repoDir, "PATH=/usr/bin:/bin", "GIT_NO_REPLACE_OBJECTS=1",
-		"git", "-C", repoDir, "archive", "--format=tar", adv.Jabali.ConvergerCommit)
+	// git archives the converger commit as root from the root-owned checkout.
+	archive := gitRootCmd(repoDir, "archive", "--format=tar", adv.Jabali.ConvergerCommit)
+	archive.Env = append(archive.Env, "GIT_NO_REPLACE_OBJECTS=1")
 	archive.Stdout, archive.Stderr = f, &stderr
 	err = archive.Run()
 	if cerr := f.Close(); err == nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -47,8 +46,7 @@ stable host would build it from source instead, which takes minutes on each.
 				repoDir = defaultRepoDir
 			}
 			git := func(args ...string) error {
-				full := append([]string{"-C", repoDir}, args...)
-				c := exec.Command("git", full...)
+				c := gitRootCmd(repoDir, args...)
 				c.Stdout, c.Stderr = os.Stdout, os.Stderr
 				return c.Run()
 			}
@@ -58,12 +56,12 @@ stable host would build it from source instead, which takes minutes on each.
 			}
 			// Refresh main so the default target is the real current HEAD.
 			_ = git("fetch", "origin", "main")
-			fullOut, err := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", target+"^{commit}").Output()
+			fullOut, err := gitRootCmd(repoDir, "rev-parse", "--verify", target+"^{commit}").Output()
 			if err != nil {
 				return fmt.Errorf("resolve %q: %w (is it a valid commit?)", target, err)
 			}
 			fullSHA := strings.TrimSpace(string(fullOut))
-			shaOut, err := exec.Command("git", "-C", repoDir, "rev-parse", "--short", fullSHA).Output()
+			shaOut, err := gitRootCmd(repoDir, "rev-parse", "--short", fullSHA).Output()
 			if err != nil {
 				return fmt.Errorf("resolve %q: %w (is it a valid commit?)", target, err)
 			}

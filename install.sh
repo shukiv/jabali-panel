@@ -3707,7 +3707,7 @@ ensure_jabali_sendmail_binary() {
   local src_pkg="$REPO_DIR/panel-agent/cmd/jabali-sendmail"
   [[ -d "$src_pkg" ]] || return 0   # pre-JAB-230 checkout — nothing to build
   local want
-  want="$(sudo -u "$SERVICE_USER" git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+  want="$(root_git rev-parse HEAD 2>/dev/null || echo unknown)"
   if [[ -x "$dst" && -f "$marker" && "$(cat "$marker" 2>/dev/null)" == "$want" ]]; then
     return 0
   fi
@@ -6236,6 +6236,22 @@ EOF
 
 # ---------- step 4: clone / update repo -------------------------------------
 
+# $REPO_DIR is root-owned, .git included. install.sh is sourced from it, the
+# install/ payloads are installed from it, and the root-run Go binaries and the
+# panel-ui bundle are built from it. npm, vite and go run as root; their caches
+# live under /var/cache.
+root_git() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+    git -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat \
+    -C "$REPO_DIR" "$@"
+}
+
+root_repo_layout() {
+  chown root:root "$REPO_DIR"
+  chown -R root:root "$REPO_DIR"
+  chmod -R a+rX "$REPO_DIR"
+}
+
 clone_or_update_repo() {
   # Hard gate: sudo must be installed before we reach for sudo -u jabali.
   # install_base_packages adds it to the apt batch, but a minimal LXC /
@@ -6289,44 +6305,37 @@ clone_or_update_repo() {
     )
   fi
 
+  # A checkout whose .git is not root-owned is moved aside (kept) and cloned
+  # fresh below, so root's git only ever reads a root-owned .git.
+  if [[ -e "$REPO_DIR" && "$(stat -c %u "$REPO_DIR/.git" 2>/dev/null || echo none)" != "0" ]]; then
+    local old_repo="$REPO_DIR.quarantine-$(date -u +%Y%m%dT%H%M%SZ)"
+    _warn "checkout $REPO_DIR is not root-owned — kept at $old_repo, re-cloning"
+    mv "$REPO_DIR" "$old_repo" || _die "could not move $REPO_DIR aside"
+  fi
+
   if [[ -d "$REPO_DIR/.git" ]]; then
     _log "pulling latest $REPO_BRANCH into $REPO_DIR"
-    # Self-heal for a classic footgun: operator (or a prior debug
-    # session) ran `git fetch`/`git pull` as root inside the repo,
-    # silently re-chowning .git/FETCH_HEAD and friends to root. The
-    # next install.sh fetch (run as $SERVICE_USER) then dies with
-    # "cannot open '.git/FETCH_HEAD': Permission denied". Mirror the
-    # fix already in panel-api update.go — re-chown the .git dir
-    # before pulling so the install self-heals instead of leaving a
-    # half-installed host needing a magic chown from the operator.
-    # Scope intentionally narrow: just .git/, so node_modules or
-    # other trees that may legitimately be group-owned differently
-    # don't get clobbered.
-    chown -R "$SERVICE_USER:$SERVICE_USER" "$REPO_DIR/.git"
-    # Self-heal a stale remote URL. Boxes provisioned before the codeberg→GitHub
-    # source-of-truth switch still have origin pointing at the DROPPED codeberg
-    # remote, which is frozen: `git fetch origin` there silently pulls
-    # long-obsolete code (e.g. missing install/hostname/* and other newer
-    # files), then a later install step hard-fails on a file the current
-    # install.sh references. Force origin to the canonical $REPO_URL before
-    # fetching so the pull always tracks the real source. Idempotent — a no-op
-    # when origin is already correct.
-    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" remote set-url origin "$REPO_URL" 2>/dev/null \
+    # Stale remote URL self-heal: boxes provisioned before the codeberg→GitHub
+    # switch still point at the dropped remote. Idempotent.
+    root_git remote set-url origin "$REPO_URL" 2>/dev/null \
       || _warn "could not reset origin URL to $REPO_URL — continuing with the existing remote"
-    # No --quiet: under `set -e` a failed fetch/clone aborts install.sh
-    # without any output because --quiet suppresses git's stderr, leaving
-    # the operator with a silent exit. Let git's error reach the trace.
-    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" -C "$REPO_DIR" fetch origin "$REPO_BRANCH" \
-      || _die "git fetch origin $REPO_BRANCH failed (run manually as $SERVICE_USER to see full error)"
-    sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" reset --hard "origin/$REPO_BRANCH" \
+    # No --quiet: under `set -e` a failed fetch/clone aborts install.sh silently.
+    root_git "${git_args[@]}" fetch origin "$REPO_BRANCH" \
+      || _die "git fetch origin $REPO_BRANCH failed (see the git error above)"
+    root_git reset --hard "origin/$REPO_BRANCH" \
       || _die "git reset --hard origin/$REPO_BRANCH failed"
   else
     _log "cloning $REPO_URL into $REPO_DIR"
-    sudo -u "$SERVICE_USER" -H git "${git_args[@]}" clone --branch "$REPO_BRANCH" \
-      "$REPO_URL" "$REPO_DIR" \
-      || _die "git clone $REPO_URL failed (check connectivity, cert trust, and that $REPO_DIR is writable by $SERVICE_USER)"
+    # umask 022 so the tree is readable by $SERVICE_USER (panel-ui, assets).
+    (
+      umask 022
+      GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null \
+        git -c core.hooksPath=/dev/null "${git_args[@]}" clone --branch "$REPO_BRANCH" \
+        "$REPO_URL" "$REPO_DIR"
+    ) || _die "git clone $REPO_URL failed (check connectivity, cert trust, and that $REPO_DIR can be created)"
   fi
-  _ok "repo at $(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
+  root_repo_layout
+  _ok "repo at $(root_git rev-parse --short HEAD)"
 }
 
 protect_panel_docs() {
@@ -6815,12 +6824,14 @@ build_frontend() {
   fi
   ensure_swap
   _log "building panel-ui (npm ci + npm run build)"
-  # npm ci needs lock + no partial node_modules. Run as the service user so
-  # the node_modules cache sits in the project dir, not /root.
-  sudo -u "$SERVICE_USER" -H env \
-    HOME="$REPO_DIR" \
+  # Root runs npm on the root-owned checkout, so nothing the service user can
+  # write feeds the build. --ignore-scripts: no package lifecycle hooks run as
+  # root; panel-ui declares none, and the lockfile pins what is installed.
+  # npm's cache lives outside the checkout.
+  mkdir -p /var/cache/jabali-build/home /var/cache/jabali-build/npm
+  env -i HOME=/var/cache/jabali-build/home npm_config_cache=/var/cache/jabali-build/npm \
     PATH="/usr/bin:/bin" \
-    bash -c "cd '$REPO_DIR/panel-ui' && npm ci --no-audit --no-fund --prefer-offline"
+    bash -c "cd '$REPO_DIR/panel-ui' && npm ci --ignore-scripts --no-audit --no-fund --prefer-offline"
 
   # Wipe Vite's dep pre-bundling cache. When a previous install/update
   # left a node_modules/.vite dir, its cached resolutions for packages
@@ -6853,8 +6864,7 @@ build_frontend() {
   elif [[ $mem_mb_fe -gt 0 && $mem_mb_fe -le 4096 ]]; then node_heap_mb=1536
   fi
   _log "panel-ui build: host=${mem_mb_fe}MB RAM → NODE --max-old-space-size=${node_heap_mb}"
-  sudo -u "$SERVICE_USER" -H env \
-    HOME="$REPO_DIR" \
+  env -i HOME=/var/cache/jabali-build/home npm_config_cache=/var/cache/jabali-build/npm \
     PATH="/usr/bin:/bin" \
     NODE_OPTIONS="--max-old-space-size=${node_heap_mb}" \
     $vite_demo \
@@ -6866,7 +6876,8 @@ build_frontend() {
   # grows unbounded across updates as deps churn (630 MB on a 16-day host).
   # The build is already done, so purge it — the next update's npm ci
   # re-populates only what that build needs. Best-effort; never fail the build.
-  sudo -u "$SERVICE_USER" -H env HOME="$REPO_DIR" PATH="/usr/bin:/bin" \
+  env -i HOME=/var/cache/jabali-build/home npm_config_cache=/var/cache/jabali-build/npm \
+    PATH="/usr/bin:/bin" \
     bash -c "npm cache clean --force" >/dev/null 2>&1 || true
 }
 
@@ -6907,8 +6918,8 @@ sync_app_catalogs() {
 build_backend() {
   _log "building panel-api + jabali-agent"
   local version full_sha btime
-  version="$(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse --short HEAD)"
-  full_sha="$(sudo -u "$SERVICE_USER" -H git -C "$REPO_DIR" rev-parse HEAD)"
+  version="$(root_git rev-parse --short HEAD)"
+  full_sha="$(root_git rev-parse HEAD)"
   # GH #731: with prebuilt binaries the version must come from the release, not
   # from the clone -- the clone tracks the branch and can already be ahead of the
   # tarball, which would make `jabali version` report a commit the running binary
@@ -6968,11 +6979,14 @@ build_backend() {
     install -m 0755 "$JABALI_PREBUILT_BIN/jabali-webdav"    "$tmp_webdav"
   else
     # One invocation of go, three binaries — shared module, shared build cache.
-    sudo -u "$SERVICE_USER" -H env \
+    # root compiles the binaries it installs, from the root-owned tree.
+    # Go's caches live outside the checkout.
+    mkdir -p /var/cache/jabali-build
+    env -i \
       PATH="$GO_ROOT/bin:/usr/bin:/bin" \
-      HOME="$REPO_DIR" \
-      GOCACHE="$REPO_DIR/.cache/go-build" \
-      GOMODCACHE="$REPO_DIR/.cache/go-mod" \
+      HOME=/var/cache/jabali-build \
+      GOCACHE=/var/cache/jabali-build/go-build \
+      GOMODCACHE=/var/cache/jabali-build/go-mod \
       $go_lowmem \
       bash -c "cd '$REPO_DIR' && \
         go build -trimpath $panel_tags -ldflags '$panel_ld' -o '$tmp_panel' ./panel-api/cmd/server && \
@@ -7995,7 +8009,7 @@ start_and_verify() {
 
 seed_last_built_sha() {
   local sha
-  sha="$(sudo -u "$SERVICE_USER" git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  sha="$(root_git rev-parse HEAD 2>/dev/null || true)"
   if [[ -z "$sha" ]]; then
     _warn "could not resolve HEAD in $REPO_DIR; skipping last-built-sha seed"
     return 0
