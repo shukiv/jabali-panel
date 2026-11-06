@@ -189,7 +189,7 @@ func TestCatalogTracks_ShippedLabels(t *testing.T) {
 		{"memos", "0.29.1", "0.31.0"},
 		{"memos", "0.30.0", "0.31.0"},
 		{"memos", "0.31.0", "26.11.0"},
-		{"onlyoffice", "9.4.0", "9.4.0"},
+		{"onlyoffice", "9.4.0", "10.0.0.1"},
 		{"onlyoffice", "10.0.0.1", "10.0.0.1"},
 	} {
 		e, ok := cat.Get(tc.slug)
@@ -199,6 +199,30 @@ func TestCatalogTracks_ShippedLabels(t *testing.T) {
 		got, err := e.TargetFor(tc.label, true)
 		if err != nil || got.Version != tc.want {
 			t.Errorf("%s %s: Update target %q, %v; want %s", tc.slug, tc.label, got.Version, err, tc.want)
+		}
+	}
+}
+
+// An env or domain edit keeps an install on its own major: only Update moves
+// it to the next one.
+func TestCatalogTracks_EditKeepsTheMajor(t *testing.T) {
+	cat, errs := LoadDir(catalogRoot(t))
+	if len(errs) > 0 {
+		t.Fatalf("catalog load: %v", errs)
+	}
+	for _, tc := range []struct {
+		slug, label, want string
+	}{
+		{"onlyoffice", "9.4.0", "9.4.0"},
+		{"forgejo", "16.0.5", "16.0.7"},
+	} {
+		e, ok := cat.Get(tc.slug)
+		if !ok {
+			t.Fatalf("%s not in the catalog", tc.slug)
+		}
+		got, err := e.TargetFor(tc.label, false)
+		if err != nil || got.Version != tc.want {
+			t.Errorf("%s %s: edit target %q, %v; want %s", tc.slug, tc.label, got.Version, err, tc.want)
 		}
 	}
 }
