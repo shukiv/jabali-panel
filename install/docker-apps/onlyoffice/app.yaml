@@ -3,12 +3,14 @@ popularity: 44
 name: ONLYOFFICE Docs
 tags: ["Productivity", "File sharing"]
 version: "10.0.0.1"
-# Release track (GH #1956): new installs get ONLYOFFICE Docs 10. Update keeps
-# a 9.x install on its own 9.4.0 image and says why: 10 changes how
-# /converter, /docbuilder and /command take a token, so an app connected to a
-# 9.x install could stop working after a silent move. Moving 9 to 10 needs a
-# reviewed change.
+# Release track (GH #1956): new installs get ONLYOFFICE Docs 10. Update moves
+# a 9 install to 10 in place: neither Community image keeps state in a
+# database, and 10 starts and converts on a 9 install's data (box-tested). A
+# 9 install keeps the 9.4.0 image on an env or domain edit. After the update,
+# check any app connected to it: 10 no longer accepts a token from the editor
+# config for /converter, /docbuilder and /command.
 track: "10"
+update_from: ["9"]
 description: >-
   ONLYOFFICE Document Server: online editors for documents, spreadsheets, and
   presentations (OOXML-native), used standalone or as the editing backend for
