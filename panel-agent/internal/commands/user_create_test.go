@@ -149,3 +149,29 @@ func TestUserCreateHandler_Integration(t *testing.T) {
 // mock pattern used elsewhere in the test suite (see user_slice_ensure_test.go).
 // For now, integration tests at the system level (requires root) are the primary
 // verification mechanism.
+
+// user.create makes only hosting users: home /home/<username>, the SSH
+// sandbox wrapper as shell. Anything else is refused before any command runs.
+func TestUserCreateHandler_RefusesOtherShellsAndHomes(t *testing.T) {
+	calls := setShellExec(t, "")
+	for _, tc := range []struct{ home, shell string }{
+		{"/home/testuser", "/bin/bash"},
+		{"/home/testuser", "/usr/sbin/nologin"},
+		{"/home/testuser", ""},
+		{"/home/testuser", sshTenantShell + "/../../../bin/sh"},
+		{"/home/other", sshTenantShell},
+		{"/home/testuser/../other", sshTenantShell},
+		{"/home/testuser/", sshTenantShell},
+		{"/home/testuser/sub", sshTenantShell},
+		{"/var/lib/testuser", sshTenantShell},
+	} {
+		params, _ := json.Marshal(userCreateParams{Username: "testuser", HomeDir: tc.home, Shell: tc.shell})
+		_, err := userCreateHandler(context.Background(), params)
+		var aerr *agentwire.AgentError
+		if !assert.ErrorAs(t, err, &aerr, "home %q shell %q", tc.home, tc.shell) {
+			continue
+		}
+		assert.Equal(t, agentwire.CodeInvalidArgument, aerr.Code, "home %q shell %q", tc.home, tc.shell)
+	}
+	assert.Empty(t, calls(), "a refused user.create must run nothing")
+}
