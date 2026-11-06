@@ -607,6 +607,12 @@ func (h *databaseAdminOpsHandler) runMaintenance(c *gin.Context) {
 		Status: "running", ActorUserID: claims.UserID,
 	}
 	if err := h.cfg.DBAdmin.CreateJob(ctx, job); err != nil {
+		// Another run claimed the engine between the check above and this
+		// insert (a second tab, or the CLI).
+		if errors.Is(err, repository.ErrConflict) {
+			c.JSON(http.StatusConflict, gin.H{"error": "maintenance_already_running"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

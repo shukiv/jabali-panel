@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -229,6 +230,9 @@ func newDBMaintenanceCmd() *cobra.Command {
 			}
 			job := &models.DBAdminJob{ID: ulid.Make().String(), Engine: engine, Kind: "maintenance", Scope: scope, Status: "running", ActorUserID: "cli"}
 			if err := adminRepo.CreateJob(ctx, job); err != nil {
+				if errors.Is(err, repository.ErrConflict) {
+					return fmt.Errorf("maintenance already running for %s", engine)
+				}
 				return fmt.Errorf("create job: %w", err)
 			}
 			verb := "db.maintenance"
