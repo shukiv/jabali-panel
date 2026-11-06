@@ -61,6 +61,10 @@ type BackupJobRepository interface {
 	// window lets the cadence pile unbounded duplicate jobs and starve every
 	// other backup (JAB-361).
 	HasPendingForTarget(ctx context.Context, scheduleID, destinationID, userID string) (bool, error)
+	// HasActiveOfKind reports whether userID has a queued or running job of
+	// kind. The manual backup and restore starts use it to refuse a second
+	// submit while the first is still pending.
+	HasActiveOfKind(ctx context.Context, userID, kind string) (bool, error)
 	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
 	// ListRunning is the finalizer's worklist. It must query status
 	// directly: paging the newest N of ALL statuses and filtering in Go
@@ -315,6 +319,20 @@ func (r *backupJobRepo) HasPendingForTarget(ctx context.Context, scheduleID, des
 		Model(&models.BackupJob{}).
 		Where("schedule_id = ? AND destination_id = ? AND user_id = ? AND status IN ?",
 			scheduleID, destinationID, userID,
+			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning}).
+		Limit(1).
+		Count(&n).Error
+	if err != nil {
+		return false, translate(err)
+	}
+	return n > 0, nil
+}
+
+func (r *backupJobRepo) HasActiveOfKind(ctx context.Context, userID, kind string) (bool, error) {
+	var n int64
+	err := r.db.WithContext(ctx).
+		Model(&models.BackupJob{}).
+		Where("user_id = ? AND kind = ? AND status IN ?", userID, kind,
 			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning}).
 		Limit(1).
 		Count(&n).Error

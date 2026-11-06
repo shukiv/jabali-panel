@@ -106,6 +106,12 @@ func (h *backupHandler) fullBackupPackage(c *gin.Context) {
 		return
 	}
 
+	release, ok := fullBackupPacks.TryAcquire(runID)
+	if !ok {
+		c.JSON(http.StatusConflict, gin.H{"error": "packaging_in_progress", "detail": "this backup run is already being packaged"})
+		return
+	}
+
 	c.Set("audit_target", runID)
 	c.Set("audit_target_type", "backup_run")
 
@@ -113,6 +119,7 @@ func (h *backupHandler) fullBackupPackage(c *gin.Context) {
 	writeFullBackupOutcome(marker, fullBackupOutcome{Status: "packaging"})
 
 	go func() {
+		defer release()
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 		defer cancel()
 		runPack := func(pwFile string) error {
