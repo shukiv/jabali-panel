@@ -24,6 +24,9 @@ var (
 	ErrNotFound     = errors.New("hostedsvc: not found")
 	ErrCodeInvalid  = errors.New("hostedsvc: code invalid or expired")
 	ErrCodeAttempts = errors.New("hostedsvc: too many attempts for this code")
+	// ErrCodeWrong is a live code compared and not matched. It is also an
+	// ErrCodeInvalid.
+	ErrCodeWrong    = fmt.Errorf("%w: wrong code", ErrCodeInvalid)
 	ErrEmailCap     = errors.New("hostedsvc: label cap reached for this email")
 	ErrLabelRevoked = errors.New("hostedsvc: label revoked")
 	ErrRateLimited  = errors.New("hostedsvc: rate limited")
@@ -153,28 +156,21 @@ func (s *Store) PutCode(email, code string) error {
 }
 
 // ConsumeCode verifies a code for the email. Every try burns an attempt
-// before the code is compared, in one conditional UPDATE, so tries running at
-// the same time cannot get past codeMaxAttempts between them; the cap (or
-// expiry) invalidates the code, so a 6-digit space cannot be brute-forced
-// inside the TTL. A matching code is deleted, and only one try can delete it.
+// before the code is compared, in one conditional UPDATE that also returns the
+// code and this try's count, so tries running at the same time cannot get
+// past codeMaxAttempts between them; the cap (or expiry) invalidates the
+// code, so a 6-digit space cannot be brute-forced inside the TTL. A wrong
+// code is ErrCodeWrong, or ErrCodeAttempts on the last try. A matching code
+// is deleted, and only one try can delete it.
 func (s *Store) ConsumeCode(email, code string) error {
 	now := s.now().Unix()
-	res, err := s.db.Exec(`UPDATE email_codes SET attempts = attempts+1
-		WHERE email = ? AND expires_at >= ? AND attempts < ?`, email, now, codeMaxAttempts)
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return err
-	} else if n == 0 {
-		return ErrCodeInvalid // no code, expired, or out of attempts
-	}
 	var hash string
 	var attempts int64
-	err = s.db.QueryRow(`SELECT code_hash, attempts FROM email_codes WHERE email = ?`,
-		email).Scan(&hash, &attempts)
+	err := s.db.QueryRow(`UPDATE email_codes SET attempts = attempts+1
+		WHERE email = ? AND expires_at >= ? AND attempts < ?
+		RETURNING code_hash, attempts`, email, now, codeMaxAttempts).Scan(&hash, &attempts)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ErrCodeInvalid
+		return ErrCodeInvalid // no code, expired, or out of attempts
 	}
 	if err != nil {
 		return err
@@ -183,9 +179,9 @@ func (s *Store) ConsumeCode(email, code string) error {
 		if attempts >= codeMaxAttempts {
 			return ErrCodeAttempts
 		}
-		return ErrCodeInvalid
+		return ErrCodeWrong
 	}
-	res, err = s.db.Exec(`DELETE FROM email_codes WHERE email = ? AND code_hash = ?`, email, hash)
+	res, err := s.db.Exec(`DELETE FROM email_codes WHERE email = ? AND code_hash = ?`, email, hash)
 	if err != nil {
 		return err
 	}

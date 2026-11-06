@@ -68,7 +68,13 @@ func decode[T any](w http.ResponseWriter, r *http.Request, into *T) bool {
 	return true
 }
 
+// maxEmailLen is the longest address SMTP can carry (RFC 5321 path limit).
+const maxEmailLen = 254
+
 func normEmail(raw string) (string, bool) {
+	if len(raw) > maxEmailLen {
+		return "", false
+	}
 	addr, err := mail.ParseAddress(strings.TrimSpace(raw))
 	if err != nil || addr.Address != strings.TrimSpace(raw) {
 		return "", false
@@ -144,13 +150,16 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ipLimiter, emailLimiter := a.claimRateLimiters()
-	if !ipLimiter.allow(rateKey(ip)) || !emailLimiter.allow(email) {
-		a.Log.Warn("claim: hourly cap reached", "ip", ip.String(), "email", email)
+	if !ipLimiter.allow(rateKey(ip)) || emailLimiter.full(email) {
+		a.Log.Warn("claim: hourly cap reached", "ip", ip.String())
 		writeErr(w, http.StatusTooManyRequests, "rate_limited",
 			"too many attempts — try again later")
 		return
 	}
 	if err := a.Store.ConsumeCode(email, req.Code); err != nil {
+		if errors.Is(err, ErrCodeWrong) || errors.Is(err, ErrCodeAttempts) {
+			emailLimiter.hit(email)
+		}
 		switch {
 		case errors.Is(err, ErrCodeAttempts):
 			writeErr(w, http.StatusTooManyRequests, "code_attempts", "too many wrong codes — request a new one")
