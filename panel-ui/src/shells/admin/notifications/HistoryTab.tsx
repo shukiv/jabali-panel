@@ -16,6 +16,7 @@ import { RowActionButton } from "../../../components/RowActionButton";
 
 import { apiClient } from "../../../apiClient";
 import { shortDateTimeSeconds } from "../../../utils/datetime";
+import { panelPath } from "../../../utils/notificationTarget";
 
 type NotificationHistoryRow = {
   id: string;
@@ -132,8 +133,9 @@ export const HistoryTab = () => {
 
   const handleRowClick = (row: NotificationHistoryRow) => {
     void markRead(row);
-    if (row.deeplink) {
-      navigate(row.deeplink);
+    const link = panelPath(row.deeplink);
+    if (link) {
+      navigate(link);
     }
   };
 
@@ -198,7 +200,7 @@ export const HistoryTab = () => {
         onRow={(row) => ({
           onClick: () => handleRowClick(row),
           style: {
-            cursor: row.deeplink ? "pointer" : "default",
+            cursor: panelPath(row.deeplink) ? "pointer" : "default",
             // GH #726: the notification the bell sent us to (?focus=<id>) gets a
             // stronger amber tint so it stands out from the unread blue wash.
             background:
@@ -306,13 +308,14 @@ export const HistoryTab = () => {
         onCancel={() => setInfo(null)}
         title={info ? `${info.event_kind} · ${info.severity}` : ""}
         footer={[
-          info?.deeplink ? (
+          panelPath(info?.deeplink) ? (
             <Button
               key="open"
               type="primary"
               onClick={() => {
-                if (info?.deeplink) {
-                  navigate(info.deeplink);
+                const link = panelPath(info?.deeplink);
+                if (link) {
+                  navigate(link);
                   setInfo(null);
                 }
               }}
