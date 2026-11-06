@@ -4,17 +4,16 @@ name: ONLYOFFICE Docs
 tags: ["Productivity", "File sharing"]
 version: "10.0.0.1"
 # Release track (GH #1956): new installs get ONLYOFFICE Docs 10. Update keeps
-# a 9.x install on its own 9.4.0 image and says why. The 10 Community image
-# starts no PostgreSQL, RabbitMQ or Redis (run-document-server.sh starts them
-# only when PRODUCT_EDITION is set), so an in-place move would leave a 9.x
-# install's bundled state unread. Moving 9 to 10 needs a reviewed change after
-# a box upgrade test.
+# a 9.x install on its own 9.4.0 image and says why: 10 changes how
+# /converter, /docbuilder and /command take a token, so an app connected to a
+# 9.x install could stop working after a silent move. Moving 9 to 10 needs a
+# reviewed change.
 track: "10"
 description: >-
   ONLYOFFICE Document Server: online editors for documents, spreadsheets, and
   presentations (OOXML-native), used standalone or as the editing backend for
-  Nextcloud, Seafile, and others. Single container; 9.x installs bundle their
-  own datastore, new 10 installs start none.
+  Nextcloud, Seafile, and others. Single container; the Community edition
+  keeps editing state in memory and starts no database.
   JWT request-signing is enabled with a generated secret (JWT_SECRET in the
   install .env) — set the same secret in any app that connects to it.
 icon: icon.svg
@@ -33,9 +32,11 @@ resources:
   memory: "2g"
   pids: 500
 
-# The 9.x documentserver image bundles its own postgres/rabbitmq/redis; the 10
-# image starts none of them. Both run the entrypoint as root, chowning their
-# data dirs on start — no volume_owner. The db volume stays for 9.x installs.
+# Neither the 9.4.0 nor the 10 Community image starts its bundled
+# postgres/rabbitmq/redis: run-document-server.sh starts them only when
+# PRODUCT_EDITION is set, and editor state is kept in memory. Both run the
+# entrypoint as root, chowning their data dirs on start — no volume_owner. The
+# db volume stays so the compose is unchanged.
 volumes:
   - name: data
     container_path: /var/www/onlyoffice/Data
