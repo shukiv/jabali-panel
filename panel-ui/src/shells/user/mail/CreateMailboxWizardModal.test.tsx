@@ -8,8 +8,9 @@ import {
   QueryClientProvider,
 } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { feedback } from "../../../lib/feedback";
 import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
 vi.mock("../../../apiClient", () => ({
@@ -204,5 +205,100 @@ describe("CreateMailboxWizardModal — GH #529 tabbed drawer", () => {
     await screen.findByRole("tab", { name: /account/i });
     expect(screen.queryByLabelText(/email address/i)).toBeNull();
     expect(screen.queryByLabelText(/^Password$/i)).toBeNull();
+  });
+});
+
+describe("CreateMailboxWizardModal — groups, aliases and forwards that fail", () => {
+  const GROUPS = { data: { data: [{ id: "g1", display_name: "Sales team", email: "sales-team@second.test" }] } };
+
+  // The warning stays until dismissed; clear it so no test sees another's.
+  afterEach(() => feedback.message.destroy());
+
+  async function fillAndSubmit(aliases = "sales, info") {
+    fireEvent.mouseDown(await screen.findByLabelText(/^Domain$/i));
+    fireEvent.click(await screen.findByText(/^second\.test$/));
+    fireEvent.change(await screen.findByLabelText(/email address/i), { target: { value: "alice" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: /forwarding/i }));
+    fireEvent.change(await screen.findByLabelText(/aliases/i), { target: { value: aliases } });
+    fireEvent.change(await screen.findByLabelText(/forward to/i), { target: { value: "ext@example.org" } });
+
+    fireEvent.click(screen.getByRole("tab", { name: /groups/i }));
+    const groups = await screen.findByLabelText(/add to groups/i);
+    await waitFor(() => expect(groups).not.toBeDisabled());
+    fireEvent.mouseDown(groups);
+    fireEvent.click(await screen.findByText(/^Sales team$/));
+
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+  }
+
+  it("keeps the mailbox and lists each one that was not set up", async () => {
+    mocked.get.mockResolvedValue(GROUPS);
+    mocked.post.mockImplementation(async (url: string, body?: { type?: string; local_part?: string }) => {
+      if (url === "/domains/dom2/mailboxes") return { data: { id: "mb9", email: "alice@second.test" } };
+      if (url === "/mailgroups/g1/members/mb9") throw new Error("group is full");
+      if (url === "/mailboxes/mb9/forwarders" && body?.type === "alias" && body.local_part === "info") {
+        throw new Error("address already in use");
+      }
+      if (url === "/mailboxes/mb9/forwarders" && body?.type === "external") throw new Error("target refused");
+      return { data: {} };
+    });
+    const onCreated = vi.fn();
+    renderModal({ onCreated });
+
+    await fillAndSubmit();
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith(expect.objectContaining({ id: "mb9" })));
+    expect(await screen.findByText("alice@second.test was created, but not all of it was set up")).toBeInTheDocument();
+    expect(screen.getByText("Alias info@second.test: address already in use")).toBeInTheDocument();
+    expect(screen.getByText("Forward to ext@example.org: target refused")).toBeInTheDocument();
+    expect(screen.getByText("Group Sales team: group is full")).toBeInTheDocument();
+    // The alias that was created is not reported, and the mailbox is not
+    // reported as failed.
+    expect(screen.queryByText(/Alias sales@second\.test/)).toBeNull();
+    expect(screen.queryByText(/failed to create mailbox/i)).toBeNull();
+    expect(mocked.post).toHaveBeenCalledWith(
+      "/mailboxes/mb9/forwarders",
+      expect.objectContaining({ type: "alias", local_part: "sales" }),
+    );
+  });
+
+  it("shows no warning when all of them are set up", async () => {
+    mocked.get.mockResolvedValue(GROUPS);
+    mocked.post.mockImplementation(async (url: string) =>
+      url === "/domains/dom2/mailboxes" ? { data: { id: "mb9", email: "alice@second.test" } } : { data: {} },
+    );
+    const onCreated = vi.fn();
+    renderModal({ onCreated });
+
+    await fillAndSubmit();
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    expect(mocked.post).toHaveBeenCalledWith("/mailgroups/g1/members/mb9");
+    expect(mocked.post).toHaveBeenCalledWith(
+      "/mailboxes/mb9/forwarders",
+      expect.objectContaining({ type: "external", target: "ext@example.org" }),
+    );
+    expect(screen.queryByText(/was created, but not all of it was set up/)).toBeNull();
+  });
+
+  it("sends a repeated alias once, and words a failure without a message", async () => {
+    mocked.get.mockResolvedValue(GROUPS);
+    mocked.post.mockImplementation(async (url: string, body?: { type?: string }) => {
+      if (url === "/domains/dom2/mailboxes") return { data: { id: "mb9", email: "alice@second.test" } };
+      if (url === "/mailboxes/mb9/forwarders" && body?.type === "alias") throw { status: 500 };
+      return { data: {} };
+    });
+    const onCreated = vi.fn();
+    renderModal({ onCreated });
+
+    await fillAndSubmit("info, INFO,info");
+
+    await waitFor(() => expect(onCreated).toHaveBeenCalled());
+    const aliasCalls = mocked.post.mock.calls.filter(
+      ([url, body]) => url === "/mailboxes/mb9/forwarders" && (body as { type?: string })?.type === "alias",
+    );
+    expect(aliasCalls).toHaveLength(1);
+    expect(await screen.findByText("Alias info@second.test: the request failed")).toBeInTheDocument();
   });
 });
