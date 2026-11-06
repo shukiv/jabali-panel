@@ -101,3 +101,19 @@ func TestEnabledFalse_PersistsOnCreate(t *testing.T) {
 			"a channel created disabled must INSERT enabled=false")
 	})
 }
+
+// A Docker app port created reverse_proxy=false (or disabled) must INSERT
+// false: with the old `default:1` tags GORM left the field out and the
+// column DEFAULT 1 gave the port an nginx upstream it should not have.
+func TestDockerAppPort_FalseFlagsPersistOnCreate(t *testing.T) {
+	db := newToSQLDB(t)
+	sql := db.ToSQL(func(tx *gorm.DB) *gorm.DB {
+		return tx.Create(&models.DockerAppPublishedPort{
+			ID: "p1", AppID: "a1", PortName: "admin", ContainerPort: 9000,
+			BindInterface: "loopback", HostPort: 21001, Protocol: "tcp",
+			ReverseProxy: false, Enabled: false,
+		})
+	})
+	require.Equal(t, "false", insertedValue(t, sql, "reverse_proxy"), "reverse_proxy=false must be written")
+	require.Equal(t, "false", insertedValue(t, sql, "enabled"), "enabled=false must be written")
+}
