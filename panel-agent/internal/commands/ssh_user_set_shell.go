@@ -32,6 +32,9 @@ import (
 // sshTenantShell is the one login shell the panel gives a hosting user.
 const sshTenantShell = "/usr/local/bin/jabali-ssh-shell"
 
+// lookupShellUser is user.Lookup; tests swap it for a synthetic account.
+var lookupShellUser = user.Lookup
+
 type sshUserSetShellParams struct {
 	Username string `json:"username"`
 	Shell    string `json:"shell"`
@@ -83,7 +86,7 @@ func sshUserSetShellHandler(ctx context.Context, params json.RawMessage) (any, e
 		}
 	}
 
-	u, err := user.Lookup(p.Username)
+	u, err := lookupShellUser(p.Username)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeNotFound,

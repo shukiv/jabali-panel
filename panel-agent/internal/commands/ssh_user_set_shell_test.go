@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os/exec"
 	"os/user"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -92,11 +91,17 @@ func TestSSHUserSetShellHandler_RefusesBadInput(t *testing.T) {
 
 // A system account (uid below the tenant range, or nobody) keeps its shell.
 func TestSSHUserSetShellHandler_RefusesSystemAccounts(t *testing.T) {
+	checked := 0
 	for _, u := range []string{"daemon", "www-data", "nobody"} {
 		if _, err := user.Lookup(u); err != nil {
-			t.Skipf("no %s account here: %v", u, err)
+			t.Logf("no %s account here: %v", u, err)
+			continue
 		}
 		wantSetShellRefusal(t, u, sshTenantShell, agentwire.CodePermissionDenied)
+		checked++
+	}
+	if checked == 0 {
+		t.Skip("none of the system accounts exist here")
 	}
 }
 
@@ -130,18 +135,17 @@ func TestSSHShellAccount(t *testing.T) {
 
 // A hosting user still gets the wrapper.
 func TestSSHUserSetShellHandler_SetsTheWrapperForATenant(t *testing.T) {
-	me, err := user.Current()
-	if err != nil {
-		t.Skip(err)
+	tenant := &user.User{Username: "alice", Uid: "1001", Gid: "1001", HomeDir: "/home/alice"}
+	prev := lookupShellUser
+	lookupShellUser = func(name string) (*user.User, error) {
+		if name != tenant.Username {
+			return nil, user.UnknownUserError(name)
+		}
+		return tenant, nil
 	}
-	if uid, _ := strconv.Atoi(me.Uid); uid < minTenantUID || uid >= 60000 {
-		t.Skipf("test runs as uid %s, not a tenant-range uid", me.Uid)
-	}
-	if sshShellAccount(me) != nil {
-		t.Skipf("test user %s is not a plain account", me.Username)
-	}
-	calls := setShellExec(t, me.Username+":x:"+me.Uid+":"+me.Gid+"::"+me.HomeDir+":/bin/bash")
-	params, _ := json.Marshal(map[string]string{"username": me.Username, "shell": sshTenantShell})
+	t.Cleanup(func() { lookupShellUser = prev })
+	calls := setShellExec(t, "alice:x:1001:1001::/home/alice:/bin/bash")
+	params, _ := json.Marshal(map[string]string{"username": "alice", "shell": sshTenantShell})
 	res, err := sshUserSetShellHandler(context.Background(), params)
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +155,17 @@ func TestSSHUserSetShellHandler_SetsTheWrapperForATenant(t *testing.T) {
 		t.Fatalf("response %+v", r)
 	}
 	c := calls()
-	if len(c) != 2 || c[1] != "chsh -s "+sshTenantShell+" "+me.Username {
+	if len(c) != 2 || c[0] != "getent passwd alice" || c[1] != "chsh -s "+sshTenantShell+" alice" {
 		t.Fatalf("calls %q", c)
+	}
+
+	// An FTP alias of that tenant, same uid, keeps its shell.
+	tenant = &user.User{Username: "alice", Uid: "1001", Name: ftpAliasGecosFor("bob")}
+	calls = setShellExec(t, "alice:x:1001:1001::/home/alice:/usr/sbin/nologin")
+	if _, err := sshUserSetShellHandler(context.Background(), params); err == nil {
+		t.Fatal("an FTP alias must be refused")
+	}
+	if c := calls(); len(c) != 0 {
+		t.Fatalf("a refused alias must run nothing, ran %q", c)
 	}
 }
