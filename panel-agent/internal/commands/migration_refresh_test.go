@@ -187,6 +187,32 @@ func TestMigrationRefreshFiles_StaysInTheTenantsHomeAndTheStaging(t *testing.T) 
 	}
 }
 
+// rsync -p hands the docroot the staged folder's mode; the docroot keeps
+// its own, setgid bit included.
+func TestMigrationRefreshFiles_KeepsTheDocrootMode(t *testing.T) {
+	b := newRefreshBox(t)
+	if err := os.Chmod(b.aliceDoc, 0o750|os.ModeSetgid); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(b.aliceDoc)
+	if err != nil || fi.Mode()&os.ModeSetgid == 0 {
+		t.Skipf("can't set setgid on a test folder here: %v %v", fi, err)
+	}
+	b.onExec = func(name string) string {
+		if name == "rsync" {
+			return "chmod 0755 ."
+		}
+		return ""
+	}
+	if err := b.call(t, migrationRefreshFilesHandler, map[string]string{"source": filepath.Join(b.jobs, "files"), "docroot": b.aliceDoc, "os_user": "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ = os.Stat(b.aliceDoc)
+	if fi.Mode().Perm() != 0o750 || fi.Mode()&os.ModeSetgid == 0 {
+		t.Fatalf("docroot mode %v, want 2750", fi.Mode())
+	}
+}
+
 func TestMigrationRefreshDB_ReadsOnlyAStagedDump(t *testing.T) {
 	b := newRefreshBox(t)
 	stageLink := filepath.Join(b.jobs, "link.sql")

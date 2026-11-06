@@ -290,6 +290,12 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 		return nil, csInvalidArg("dest docroot: " + err.Error())
 	}
 	defer dst.Close()
+	// rsync -p gives the docroot the staged folder's own mode; keep the
+	// docroot's (its setgid bit included) and put it back afterwards.
+	var before unix.Stat_t
+	if sErr := unix.Fstat(int(dst.Fd()), &before); sErr != nil {
+		return nil, csInternal("stat dest docroot", sErr)
+	}
 	args = append(args, src+"/", "./")
 	rs := execCommandContext(ctx, "rsync", args...)
 	rs.Dir = fdDir(dst)
@@ -307,6 +313,9 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 	}
 	if cErr := refreshChownTree(t.anchor, docroot, t.uid, gid); cErr != nil {
 		return nil, csInternal("chown docroot", cErr)
+	}
+	if mErr := unix.Fchmod(int(dst.Fd()), before.Mode&0o7777); mErr != nil {
+		return nil, csInternal("docroot mode", mErr)
 	}
 	return map[string]any{"ok": true}, nil
 }
