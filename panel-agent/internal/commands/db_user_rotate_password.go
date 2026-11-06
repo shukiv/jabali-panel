@@ -74,7 +74,7 @@ func dbUserRotatePasswordHandler(ctx context.Context, params json.RawMessage) (a
 		escapedPassword,
 	)
 
-	cmd := execCommandContext(ctx, "mysql", "-e", sql)
+	cmd := sqlOnStdin(ctx, sql, "mysql")
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,

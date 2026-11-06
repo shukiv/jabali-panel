@@ -51,7 +51,7 @@ func TestDBUserCommands_AcceptHyphenatedNames(t *testing.T) {
 			if _, err := c.handler(context.Background(), raw); err != nil {
 				t.Fatalf("%s refused a hyphenated name: %v", c.name, err)
 			}
-			if all := strings.Join(*execs, "\n"); !strings.Contains(all, c.want) {
+			if all := strings.Join(execs(), "\n"); !strings.Contains(all, c.want) {
 				t.Fatalf("want %q in:\n%s", c.want, all)
 			}
 		})

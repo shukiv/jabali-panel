@@ -128,7 +128,7 @@ func dbUserCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		)
 	}
 
-	cmd := execCommandContext(ctx, "mysql", "-e", sql)
+	cmd := sqlOnStdin(ctx, sql, "mysql")
 	if err := cmd.Run(); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -153,7 +153,7 @@ func dbUserCreateOnly(ctx context.Context, escapedUsername string, p dbUserCreat
 		}
 		sql = fmt.Sprintf("CREATE USER %s@'localhost' IDENTIFIED BY %s", escapedUsername, escapedPassword)
 	}
-	out, err := execCommandContext(ctx, "mysql", "-e", sql).CombinedOutput()
+	out, err := sqlOnStdin(ctx, sql, "mysql").CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(out), "ERROR 1396") {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeAlreadyExists, Message: "a MariaDB account with this name already exists"}
