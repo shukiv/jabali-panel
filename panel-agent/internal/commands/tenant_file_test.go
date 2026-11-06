@@ -129,3 +129,22 @@ func TestEnsureOwnedSetgidDir_RefusesSymlinkComponent(t *testing.T) {
 		t.Fatal("a directory was created behind the symlink")
 	}
 }
+
+// Each folder ensureOwnedSetgidDir creates is 2750: the setgid bit keeps new
+// files in the www-data group, as on a folder created with the domain.
+func TestEnsureOwnedSetgidDir_CreatesSetgid2750(t *testing.T) {
+	anchor := t.TempDir()
+	dir := filepath.Join(anchor, "domains", "example.com")
+	if err := ensureOwnedSetgidDir(anchor, dir, os.Getuid(), os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{filepath.Dir(dir), dir} {
+		fi, err := os.Stat(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := fi.Mode() & (os.ModeSetgid | os.ModePerm); got != os.ModeSetgid|0o750 {
+			t.Errorf("%s mode %v, want %v", d, got, os.ModeSetgid|0o750)
+		}
+	}
+}

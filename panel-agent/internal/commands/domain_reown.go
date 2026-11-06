@@ -151,9 +151,10 @@ func shouldPruneRenameDir(dir, oldDocRoot string) bool {
 // component to uid:gid + setgid 2750. Components are created and owned through
 // their file descriptors (fsperm.OpenDirUnder), so a symlink swapped in while
 // this runs cannot make root chown the link's target. An existing directory is
-// left untouched.
+// left untouched. OpenDirUnder takes a unix mode: os.ModeSetgid is Go's own
+// bit, not 02000, and the kernel would drop it.
 func ensureOwnedSetgidDir(anchor, dir string, uid, gid int) error {
-	f, err := fsperm.OpenDirUnder(anchor, dir, uint32(os.ModeSetgid|0o750), uid, gid)
+	f, err := fsperm.OpenDirUnder(anchor, dir, 0o2750, uid, gid)
 	if err != nil {
 		return err
 	}
