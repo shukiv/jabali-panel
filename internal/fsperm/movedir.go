@@ -3,10 +3,15 @@ package fsperm
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
 )
+
+// beforeMove, when set, runs between checking src and moving it. Tests use it
+// to swap src, as a racing tenant would.
+var beforeMove func()
 
 // MoveDirUnder moves the directory src to dst. src's parent is reached from
 // srcAnchor and dst's parent from dstAnchor, one component at a time without
@@ -31,11 +36,16 @@ func MoveDirUnder(srcAnchor, src, dstAnchor, dst string) error {
 	if err := isDirAt(sfd, sname); err != nil {
 		return fmt.Errorf("%s: %w", src, err)
 	}
+	if beforeMove != nil {
+		beforeMove()
+	}
 	if err := renameNoReplace(sfd, sname, dfd, dname); err != nil {
 		return fmt.Errorf("move %s to %s: %w", src, dst, err)
 	}
 	if err := isDirAt(dfd, dname); err != nil {
-		_ = unix.Unlinkat(dfd, dname, 0)
+		if uerr := unix.Unlinkat(dfd, dname, 0); uerr != nil {
+			return fmt.Errorf("%s changed during the move, and %s could not be removed: %w", src, dst, uerr)
+		}
 		return fmt.Errorf("%s changed during the move: %w", src, err)
 	}
 	return nil
@@ -76,8 +86,21 @@ func renameNoReplace(sfd int, sname string, dfd int, dname string) error {
 		return err
 	}
 	var st unix.Stat_t
-	if serr := unix.Fstatat(dfd, dname, &st, unix.AT_SYMLINK_NOFOLLOW); !errors.Is(serr, unix.ENOENT) {
+	switch serr := unix.Fstatat(dfd, dname, &st, unix.AT_SYMLINK_NOFOLLOW); {
+	case serr == nil:
 		return unix.EEXIST
+	case !errors.Is(serr, unix.ENOENT):
+		return serr
 	}
 	return unix.Renameat(sfd, sname, dfd, dname)
+}
+
+// OpenExistingDirUnder opens the existing directory root, reached from anchor
+// one component at a time without following a symlink. Nothing is created.
+func OpenExistingDirUnder(anchor, root string) (*os.File, error) {
+	fd, err := openUnder(anchor, root)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), filepath.Clean(root)), nil
 }

@@ -118,6 +118,26 @@ func TestMoveDirUnder(t *testing.T) {
 			t.Fatal("the docroot left alice's home")
 		}
 	})
+	t.Run("a docroot swapped for a link during the move is not left behind", func(t *testing.T) {
+		_, alice, bob, carol := moveTree(t)
+		src := filepath.Join(alice, "domains", "a.example", "public_html")
+		dst := filepath.Join(carol, "domains", "a.example", "public_html")
+		beforeMove = func() {
+			if err := os.Rename(src, src+".real"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(bob, "domains", "b.example", "public_html"), src); err != nil {
+				t.Fatal(err)
+			}
+		}
+		defer func() { beforeMove = nil }()
+		if err := MoveDirUnder(alice, src, carol, dst); err == nil {
+			t.Fatal("a swapped-in link was moved without an error")
+		}
+		if exists(dst) || !exists(filepath.Join(bob, "domains", "b.example", "public_html", "index.html")) {
+			t.Fatal("the link was left at the destination, or bob's docroot changed")
+		}
+	})
 	t.Run("an existing destination is kept", func(t *testing.T) {
 		_, alice, _, carol := moveTree(t)
 		src := filepath.Join(alice, "domains", "a.example", "public_html")
@@ -135,6 +155,30 @@ func TestMoveDirUnder(t *testing.T) {
 			t.Fatal("source or destination changed")
 		}
 	})
+}
+
+func TestOpenExistingDirUnder(t *testing.T) {
+	_, alice, bob, _ := moveTree(t)
+	if f, err := OpenExistingDirUnder(alice, filepath.Join(alice, "domains", "missing")); err == nil {
+		f.Close()
+		t.Fatal("opened a folder that does not exist")
+	}
+	if exists(filepath.Join(alice, "domains", "missing")) {
+		t.Fatal("created a missing folder")
+	}
+	link := filepath.Join(alice, "domains", "x.example")
+	if err := os.Symlink(filepath.Join(bob, "domains"), link); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := OpenExistingDirUnder(alice, filepath.Join(link, "b.example")); err == nil {
+		f.Close()
+		t.Fatal("opened through a link")
+	}
+	f, err := OpenExistingDirUnder(alice, filepath.Join(alice, "domains", "a.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
 }
 
 func TestRemoveEmptyDirUnder(t *testing.T) {

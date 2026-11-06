@@ -71,9 +71,14 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	oldExists := oldErr == nil
 	newExists := newErr == nil
 
-	// Idempotent: already moved. Still attempt the empty-parent prune — a prior
-	// run may have moved the docroot but died before pruning.
+	anchor := homeOf(p.NewDocRoot) // /home/<new>: root owns /home, so the tenant can't swap it
+
+	// Idempotent: already moved. A prior run may have moved the docroot but died
+	// before re-owning or pruning it, so finish both (each is a no-op when done).
 	if !oldExists && newExists {
+		if err := reownMovedTree(anchor, p.NewDocRoot, p.NewUID, wwwGID); err != nil {
+			return nil, err
+		}
 		pruneEmptyRenameDir(p.PruneEmptyDir, p.OldDocRoot)
 		return domainReownResponse{NewDocRoot: p.NewDocRoot, AlreadyDone: true}, nil
 	}
@@ -89,8 +94,10 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	// wrapper). Re-owning an already-correct dir is a no-op.
 	parent := filepath.Dir(p.NewDocRoot) // /home/<new>/domains/<name>
 	grandparent := filepath.Dir(parent)  // /home/<new>/domains
-	anchor := filepath.Dir(grandparent)  // /home/<new>, owned by the new owner
 	for _, d := range []string{grandparent, parent} {
+		if rel, err := filepath.Rel(anchor, d); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			continue // /home itself, for a docroot right under the home: nothing to make
+		}
 		if err := ensureOwnedSetgidDir(anchor, d, p.NewUID, wwwGID); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("prepare destination dir %q: %v", d, err)}
 		}
@@ -100,13 +107,8 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	if err := fsperm.MoveDirUnder(homeOf(p.OldDocRoot), p.OldDocRoot, anchor, p.NewDocRoot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("move docroot %q -> %q: %v", p.OldDocRoot, p.NewDocRoot, err)}
 	}
-	if err := chownTreeRecursive(filepath.Dir(grandparent), p.NewDocRoot, p.NewUID, wwwGID); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-own moved tree (docroot moved to %q; re-run to resume): %v", p.NewDocRoot, err)}
-	}
-	// Re-assert setgid 2750 on the docroot itself so new files keep inheriting the
-	// www-data group (rename preserved it, but be explicit).
-	if err := chmodDirUnder(anchor, p.NewDocRoot, os.ModeSetgid|0o750); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
+	if err := reownMovedTree(anchor, p.NewDocRoot, p.NewUID, wwwGID); err != nil {
+		return nil, err
 	}
 
 	// The docroot leaf has moved out of its old-name wrapper dir (nested layout);
@@ -170,10 +172,25 @@ func ensureOwnedSetgidDir(anchor, dir string, uid, gid int) error {
 	return f.Close()
 }
 
+// reownMovedTree re-owns a moved docroot to uid:gid and re-asserts setgid 2750
+// on it, so new files keep inheriting the www-data group (rename preserved it,
+// but be explicit). Both steps reach the tree from anchor without following a
+// link, and both are no-ops once done, so a re-run resumes here.
+func reownMovedTree(anchor, docroot string, uid, gid int) error {
+	if err := chownTreeRecursive(anchor, docroot, uid, gid); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-own moved tree (docroot moved to %q; re-run to resume): %v", docroot, err)}
+	}
+	if err := chmodDirUnder(anchor, docroot, os.ModeSetgid|0o750); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
+	}
+	return nil
+}
+
 // chmodDirUnder sets the mode of an existing directory through its file
 // descriptor, after walking to it from anchor without following links.
+// Nothing is created.
 func chmodDirUnder(anchor, dir string, mode os.FileMode) error {
-	f, err := fsperm.OpenDirUnder(anchor, dir, uint32(mode.Perm()), 0, 0)
+	f, err := fsperm.OpenExistingDirUnder(anchor, dir)
 	if err != nil {
 		return err
 	}
