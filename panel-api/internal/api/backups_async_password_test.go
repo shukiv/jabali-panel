@@ -72,6 +72,11 @@ type stubBackupJobs struct {
 	repository.BackupJobRepository
 }
 
+// No job is pending in these tests.
+func (stubBackupJobs) HasActiveOfKind(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 func (stubBackupJobs) Create(_ context.Context, _ *models.BackupJob) error { return nil }
 func (stubBackupJobs) MarkStarted(_ context.Context, _ string) error       { return nil }
 
