@@ -83,6 +83,11 @@ Password: --password <pwd> | --password-stdin | (omitted → auto-generate + pri
 			if len(newPwd) < 10 {
 				return fmt.Errorf("password must be at least 10 characters")
 			}
+			// Before the agent call: it creates the OS account first, so a
+			// password bcrypt then refuses would leave it with no panel hash.
+			if err := userops.CheckPasswordLength(newPwd); err != nil {
+				return err
+			}
 
 			// Agent-first + synchronous (like the HTTP handler): if the OS
 			// side fails, the DB password is left untouched.

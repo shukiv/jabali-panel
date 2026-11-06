@@ -73,7 +73,8 @@ func (e *DBCleanupError) Error() string {
 }
 
 // RotatePassword rotates a user's auth password. Order is load-bearing
-// (moved verbatim from the REST update handler): bcrypt hash → Kratos
+// (moved verbatim from the REST update handler): length check
+// (ErrPasswordTooLong, before anything changes) → bcrypt hash → Kratos
 // SetPassword (authoritative post-M20; failure = old password keeps
 // working) → agent user.password for non-admin OS accounts (failure =
 // Kratos already rotated, DB hash intentionally NOT updated — matches
@@ -84,6 +85,9 @@ func (e *DBCleanupError) Error() string {
 func RotatePassword(ctx context.Context, d Deps, user *models.User, password string) error {
 	if d.Users == nil || d.BcryptCost == 0 {
 		return ErrDeps
+	}
+	if err := CheckPasswordLength(password); err != nil {
+		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), d.BcryptCost)
 	if err != nil {

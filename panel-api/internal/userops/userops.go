@@ -181,6 +181,9 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*CreateResult, error) 
 	if in.Password == "" {
 		return nil, fmt.Errorf("%w: password required", ErrInvalidUsername)
 	}
+	if err := CheckPasswordLength(in.Password); err != nil {
+		return nil, err
+	}
 
 	// Effective username — caller-supplied OR derived from email prefix.
 	// Admins need one too: it is the login identifier (ADR-0119), and
