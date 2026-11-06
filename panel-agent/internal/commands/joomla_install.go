@@ -86,11 +86,11 @@ var joomlaAdminUserPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,150}$`)
 // joomla-<version>/ directory the way DokuWiki/MediaWiki/Drupal do —
 // it explodes directly to the install root. So we extract WITHOUT
 // --strip-components=1.
-func computeJoomlaInstallPath(docroot, subdirectory string) string {
+func computeJoomlaInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadJoomlaTarball(ctx context.Context, dest string) error {
@@ -256,7 +256,10 @@ func joomlaInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computeJoomlaInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeJoomlaInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)

@@ -129,7 +129,11 @@ func wordpressCloneHandler(ctx context.Context, params json.RawMessage) (any, er
 	// Compute dstInstallPath: dst_docroot + optional subdirectory
 	dstInstallPath := req.DstDocroot
 	if req.DstSubdirectory != "" {
-		dstInstallPath = filepath.Join(dstInstallPath, req.DstSubdirectory)
+		p, err := appInstallPath(req.DstDocroot, req.DstSubdirectory)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+		}
+		dstInstallPath = p
 		// Create the subdirectory if it doesn't exist
 		mkdirCmd := buildSystemdRunCmd(ctx,
 			req.OSUser,

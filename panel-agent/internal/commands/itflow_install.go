@@ -107,11 +107,11 @@ func itflowResolveBranch(req string) (branch, pin string) {
 // admin_email guard.)
 var itflowSafeText = regexp.MustCompile(`^[^'"\\\x00-\x1f]{1,120}$`)
 
-func computeITFlowInstallPath(docroot, subdirectory string) string {
+func computeITFlowInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 // cloneITFlow clones master into installPath as the site user. git clone
@@ -307,7 +307,10 @@ func itflowInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computeITFlowInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeITFlowInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	subdir := strings.Trim(req.Subdirectory, "/")
 
 	if subdir != "" {

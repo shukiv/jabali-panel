@@ -77,11 +77,11 @@ const flarumTarballSHA256 = "9e29fdb67c13ed5e35118f4818e792c93b3d9d2abd005ea8eb7
 // only guards against a malformed override.
 var flarumAdminUserPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{3,30}$`)
 
-func computeFlarumInstallPath(docroot, subdirectory string) string {
+func computeFlarumInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadFlarumTarball(ctx context.Context, dest string) error {
@@ -332,7 +332,10 @@ func flarumInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computeFlarumInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeFlarumInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	subdir := strings.Trim(req.Subdirectory, "/")
 
 	if subdir != "" {

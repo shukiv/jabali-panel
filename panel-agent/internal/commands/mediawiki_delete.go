@@ -84,7 +84,10 @@ func mediawikiDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid docroot: %v", err)}
 	}
 
-	installPath := computeMediaWikiInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeMediaWikiInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", installPath)
