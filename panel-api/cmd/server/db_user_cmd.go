@@ -312,6 +312,10 @@ func dbUserCreate(ctx context.Context, d dbUserCreateDeps, in dbUserCreateInput)
 		if derr != nil {
 			return nil, "", fmt.Errorf("db_user row insert failed (%v) AND the compensating engine drop ALSO failed (%v) — a live %s credential %q is now orphaned; drop it directly on the engine", err, derr, engine, finalName)
 		}
+		if errors.Is(err, repository.ErrDatabaseUserCapExceeded) {
+			return nil, "", fmt.Errorf("quota exceeded: package allows %d database users for %s (engine credential rolled back): %w",
+				maxUsers, in.panelUser.ID, err)
+		}
 		return nil, "", fmt.Errorf("db_user row insert: %w (engine credential rolled back)", err)
 	}
 	return du, pw, nil
