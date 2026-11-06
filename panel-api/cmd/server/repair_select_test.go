@@ -73,6 +73,7 @@ func TestRepairMarkers(t *testing.T) {
 	cases := map[string]string{
 		"docroot-www-data-group": "",
 		"git-pointer":            " [destructive]",
+		"git-ownership":          " [destructive]",
 		"dirty-migration":        " [manual]",
 		"fpm-masters-down":       " [manual]",
 	}

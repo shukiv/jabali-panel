@@ -109,9 +109,8 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	}
 	goBin := goRoot + "/bin/go"
 
-	// The repo is owned by the jabali service user. Run git/npm/go as
-	// that user to avoid git's "dubious ownership" check and to keep
-	// node_modules/go-cache owned correctly.
+	// The checkout is root-owned. git, npm and go run as root, with caches
+	// under /var/cache/jabali-build.
 	serviceUser := os.Getenv("JABALI_SERVICE_USER")
 	if serviceUser == "" {
 		serviceUser = "jabali"
@@ -121,36 +120,33 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	// from-source go build can't OOM the box (mirrors install.sh:build_backend).
 	// The vars are Go-specific, so passing them to git/npm too is harmless.
 	lowMemGoEnv := lowRAMGoBuildEnv()
-	asUser := func(dir string, name string, args ...string) error {
-		allArgs := []string{"-u", serviceUser, "-H", "env",
-			"HOME=" + repoDir,
+
+	// root builds the binaries it installs, from the root-owned tree,
+	// with caches outside the checkout.
+	rootGo := func(dir string, args ...string) error {
+		_ = os.MkdirAll(goBuildHome, 0o755)
+		allArgs := []string{"-i",
 			"PATH=" + goRoot + "/bin:/usr/bin:/bin",
-			"GOCACHE=" + repoDir + "/.cache/go-build",
-			"GOMODCACHE=" + repoDir + "/.cache/go-mod",
+			"HOME=" + goBuildHome,
+			"GOCACHE=" + goBuildHome + "/go-build",
+			"GOMODCACHE=" + goBuildHome + "/go-mod",
 		}
 		allArgs = append(allArgs, lowMemGoEnv...)
-		allArgs = append(allArgs, name)
+		allArgs = append(allArgs, goBin)
 		allArgs = append(allArgs, args...)
-		return run(dir, "sudo", allArgs...)
+		return run(dir, "env", allArgs...)
 	}
-	// asUserOut is asUser for the one case that has to inspect what git said
-	// rather than only whether it failed (JAB-210). `run` streams straight to
-	// the terminal, which is right for build output but leaves the caller
-	// nothing to classify.
-	asUserOut := func(dir string, name string, args ...string) (string, error) {
-		allArgs := []string{"-u", serviceUser, "-H", "env",
-			"HOME=" + repoDir,
-			"PATH=" + goRoot + "/bin:/usr/bin:/bin",
-			"GOCACHE=" + repoDir + "/.cache/go-build",
-			"GOMODCACHE=" + repoDir + "/.cache/go-mod",
-		}
-		allArgs = append(allArgs, lowMemGoEnv...)
-		allArgs = append(allArgs, name)
-		allArgs = append(allArgs, args...)
-		c := exec.Command("sudo", allArgs...)
-		c.Dir = dir
-		out, err := c.CombinedOutput()
-		return string(out), err
+	// enforceLayout puts the checkout in its root-owned layout. It
+	// runs before the git sync and again after it, since git writes files as
+	// root.
+	enforceLayout := func() (bool, error) {
+		return enforceRepoOwnership(repoDir,
+			func(name string, args ...string) error { return run("", name, args...) },
+			func(dst string) error {
+				c := gitRootCmd("", recloneArgs(dst)...)
+				c.Stdout, c.Stderr = os.Stdout, os.Stderr
+				return c.Run()
+			})
 	}
 
 	force, _ := cmd.Flags().GetBool("force")
@@ -199,15 +195,11 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		preUpdateBinaries = snap
 	}
 
-	// gitHead captures HEAD as a string. Runs via `sudo -u <serviceUser>`
-	// because the repo is owned by the jabali user; git 2.35+ refuses to
-	// operate on a repo owned by a different uid ("fatal: detected
-	// dubious ownership"), which surfaces as exit 128.
+	// gitHead captures HEAD as a string. Git runs as root on the root-owned
+	// checkout; see gitRootCmd.
 	var postHEAD string
 	gitHead := func() (string, error) {
-		c := exec.Command("sudo", "-u", serviceUser,
-			"git", "-C", repoDir, "rev-parse", "HEAD")
-		out, err := c.Output()
+		out, err := gitRootCmd(repoDir, "rev-parse", "HEAD").Output()
 		if err != nil {
 			return "", fmt.Errorf("git rev-parse HEAD: %w", err)
 		}
@@ -242,8 +234,7 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	// path under HEAD (free — no extra hashing). compositeSHA folds
 	// many such shas into a single deterministic fingerprint.
 	gitPathSHA := func(path string) (string, error) {
-		out, err := exec.Command("sudo", "-u", serviceUser,
-			"git", "-C", repoDir, "rev-parse", "HEAD:"+path).Output()
+		out, err := gitRootCmd(repoDir, "rev-parse", "HEAD:"+path).Output()
 		if err != nil {
 			return "", err
 		}
@@ -287,8 +278,10 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 		return hex.EncodeToString(sum[:])
 	}
+	// Artifact markers live in a root-only directory, outside the
+	// service user's directories.
 	artifactSHAPath := func(name string) string {
-		return filepath.Join("/var/lib/jabali-panel", "last-built-"+name)
+		return filepath.Join(artifactMarkerDir, name)
 	}
 	// artifactUnchanged returns true if --force is OFF, the prior sha
 	// matches, and the produced artifact still exists. Missing target
@@ -309,9 +302,9 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		return strings.TrimSpace(string(b)) == want
 	}
 	writeArtifactSHA := func(name, sha string) {
-		_ = os.MkdirAll("/var/lib/jabali-panel", 0o755)
+		_ = os.MkdirAll(artifactMarkerDir, 0o700)
 		tmp := artifactSHAPath(name) + ".tmp"
-		if err := os.WriteFile(tmp, []byte(sha+"\n"), 0o644); err == nil {
+		if err := os.WriteFile(tmp, []byte(sha+"\n"), 0o600); err == nil {
 			_ = os.Rename(tmp, artifactSHAPath(name))
 		}
 	}
@@ -341,54 +334,19 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 		fn   func() error
 	}{
 		{"fix repo ownership", func() error {
-			// `git pull` runs as the jabali user, but a previous hand-run
-			// of `git fetch`/`git pull` as root inside the repo silently
-			// chowns FETCH_HEAD/ORIG_HEAD/objects/* to root — and the
-			// next `jabali update` then dies with "cannot open
-			// '.git/FETCH_HEAD': Permission denied". Re-chown the .git
-			// dir before pulling so the update self-heals instead of
-			// requiring the operator to know the magic chown command.
-			//
-			// Also chown panel-ui/test-results/ + playwright-report/
-			// since `npx playwright test` run as root drops files
-			// there which then block sudo-as-jabali `git reset --hard`
-			// with "unable to unlink: Permission denied". Both dirs
-			// are .gitignore'd; chown is purely to let `git reset`
-			// remove any leftovers from a previous Playwright run.
-			if err := run("", "chown", "-R",
-				serviceUser+":"+serviceUser, repoDir+"/.git"); err != nil {
+			// the checkout must be root-owned. See update_repo_owner.go.
+			migrated, err := enforceLayout()
+			if err != nil {
 				return err
 			}
-			// Ignore failures on the panel-ui dirs — they may not
-			// exist yet on a fresh install, and missing dirs are not
-			// a deployment-blocking condition.
-			_ = run("", "bash", "-c",
-				"shopt -s nullglob; "+
-					"chown -R "+serviceUser+":"+serviceUser+" "+
-					repoDir+"/panel-ui/test-results "+
-					repoDir+"/panel-ui/playwright-report 2>/dev/null; "+
-					"true")
-			// …and the WORKING TREE, which the two chowns above never
-			// covered. Repo files are mode 0640/0660, so a single tracked
-			// file left owned by root breaks every git command that has to
-			// hash the tree — seen on a fresh install as a bare
-			// `fatal: cannot hash CLAUDE.md` mid-update. Tracked files only;
-			// node_modules and build caches keep whatever ownership they have.
-			rep, err := fixTrackedFileOwnership(cmd.Context(), repoDir, serviceUser)
-			if err != nil {
-				// Not fatal on its own: `git reset --hard` can still replace a
-				// root-owned file when the parent dir is writable. Say what
-				// happened rather than letting git fail cryptically later.
-				fmt.Printf("  (could not repair working-tree ownership: %v — "+
-					"a root-owned tracked file may make git fail below)\n", err)
-			} else if len(rep.Fixed) > 0 {
-				shown := rep.Fixed
-				if len(shown) > 5 {
-					shown = shown[:5]
+			if migrated {
+				// Build markers describe artifacts of the old jabali-owned
+				// checkout. Drop them so the next build runs in full.
+				matches, _ := filepath.Glob(filepath.Join(artifactMarkerDir, "*"))
+				matches = append(matches, mustGlob("/var/lib/jabali-panel/last-built-*")...)
+				for _, m := range matches {
+					_ = os.Remove(m)
 				}
-				fmt.Printf("  repaired ownership of %d tracked file(s) not owned by %s: %s%s\n",
-					len(rep.Fixed), serviceUser, strings.Join(shown, ", "),
-					map[bool]string{true: ", …", false: ""}[len(rep.Fixed) > len(shown)])
 			}
 			return nil
 		}},
@@ -443,14 +401,16 @@ chmod 0750 "$WR"`)
 			// at a superseded host is repointed to GitHub here, so after this
 			// one update the host fetches from GitHub directly and every
 			// subsequent update comes from GitHub. Idempotent + best-effort.
-			_ = asUser(repoDir, "bash", "-c",
-				`u=$(git remote get-url origin 2>/dev/null); `+
-					`case "$u" in `+
-					`*git.jabali-panel.com*|*git.linux-hosting.co.il*|*codeberg.org*) `+
-					`git remote set-url origin https://github.com/shukiv/jabali-panel.git;; `+
-					`esac`)
+			if u, uerr := gitOut(repoDir, "remote", "get-url", "origin"); uerr == nil {
+				u = strings.TrimSpace(u)
+				if strings.Contains(u, "git.jabali-panel.com") ||
+					strings.Contains(u, "git.linux-hosting.co.il") ||
+					strings.Contains(u, "codeberg.org") {
+					_ = gitRun(repoDir, "remote", "set-url", "origin", canonicalRepoURL)
+				}
+			}
 			// Always fetch main (required).
-			if err := asUser(repoDir, "git", "fetch", "origin", "main"); err != nil {
+			if err := gitRun(repoDir, "fetch", "origin", "main"); err != nil {
 				return err
 			}
 			resetRef, followStable := updateBaseRef(channel, channelErr)
@@ -463,13 +423,13 @@ chmod 0750 "$WR"`)
 				// Any other one leaves a possibly-stale LOCAL refs/tags/stable
 				// that rev-parse below would happily accept, resetting the
 				// checkout backwards (JAB-210) — so classify, don't discard.
-				fetchOut, fetchErr := asUserOut(repoDir, "git", "fetch", "--force", "origin",
+				fetchOut, fetchErr := gitOut(repoDir, "fetch", "--force", "origin",
 					"+refs/tags/stable:refs/tags/stable")
 				tagOnOrigin, fatal := classifyStableTagFetch(fetchErr, fetchOut)
 				if fatal != nil {
 					return fatal
 				}
-				if tagOnOrigin && asUser(repoDir, "git", "rev-parse", "--verify", "--quiet",
+				if tagOnOrigin && gitRun(repoDir, "rev-parse", "--verify", "--quiet",
 					"refs/tags/stable^{commit}") == nil {
 					resetRef = "refs/tags/stable"
 					fmt.Println("  release channel: stable -> tracking the promoted `stable` tag")
@@ -493,7 +453,7 @@ chmod 0750 "$WR"`)
 					liveSchema = st.Version
 				}
 				target, note, tErr := updateResetTarget(func(args ...string) (string, error) {
-					return asUserOut(repoDir, "git", args...)
+					return gitOut(repoDir, args...)
 				}, resetRef, followStable, liveSchema)
 				if tErr != nil {
 					return tErr
@@ -509,7 +469,7 @@ chmod 0750 "$WR"`)
 			// (update_release_staged.go).
 			if resetRef != "HEAD" && requireSignature {
 				gitOut := func(args ...string) (string, error) {
-					return asUserOut(repoDir, "git", args...)
+					return gitOut(repoDir, args...)
 				}
 				targetSHA, tErr := gitSHA(gitOut, "rev-parse", "--verify", "--quiet", resetRef+"^{commit}")
 				if tErr != nil {
@@ -555,7 +515,7 @@ chmod 0750 "$WR"`)
 			//
 			// which reads exactly like the update itself died. It had not; the
 			// reset below repaired the file and carried on. Name it instead.
-			if diffOut, diffErr := asUserOut(repoDir, "git", "diff", "--stat", "HEAD"); diffErr != nil {
+			if diffOut, diffErr := gitOut(repoDir, "diff", "--stat", "HEAD"); diffErr != nil {
 				fmt.Printf("  (could not compute local drift, continuing: %s)\n",
 					gitFailureLine(diffOut, diffErr))
 			} else if d := strings.TrimSpace(diffOut); d != "" {
@@ -565,23 +525,12 @@ chmod 0750 "$WR"`)
 				}
 				fmt.Println("  (recover from reflog if this was a surprise: git reflog, git reset --hard <sha>)")
 			}
-			if err := asUser(repoDir, "git", "reset", "--hard", resetRef); err != nil {
-				// A reset that dies with "unable to unlink ... Permission
-				// denied" means a root-owned tracked file is in the repo (a
-				// file written by a root-run command, or a manually-added
-				// docker-app under install/). The reset runs as the service
-				// user, so it can't replace those — and without this retry the
-				// update aborts and the host silently stays on OLD code (the
-				// GH #298 wp-cli self-heal, and every other fix, then never
-				// land). Self-heal: chown the whole working tree back to the
-				// service user and retry once.
-				fmt.Println("  git reset failed (likely root-owned files in the repo) — re-chowning the tree to " + serviceUser + " and retrying")
-				if cerr := run("", "chown", "-R", serviceUser+":"+serviceUser, repoDir); cerr != nil {
-					return fmt.Errorf("git reset --hard %s failed and chown repair failed: %w (original reset error: %v)", resetRef, cerr, err)
-				}
-				if err2 := asUser(repoDir, "git", "reset", "--hard", resetRef); err2 != nil {
-					return fmt.Errorf("git reset --hard %s failed even after re-chowning the repo to %s: %w", resetRef, serviceUser, err2)
-				}
+			if err := gitRun(repoDir, "reset", "--hard", resetRef); err != nil {
+				return fmt.Errorf("git reset --hard %s: %w", resetRef, err)
+			}
+			// git wrote the tree as root; restore the layout.
+			if _, err := enforceLayout(); err != nil {
+				return err
 			}
 			// GH #606: a corrupt/linked worktree (the reporting box's .git was
 			// a corrupted worktree pointer, flagged by `jabali repair
@@ -596,13 +545,11 @@ chmod 0750 "$WR"`)
 			// missing afterwards the .git pointer itself is corrupt, so fail
 			// with an actionable message instead of the opaque install-stat
 			// error downstream.
-			missingOut, _ := exec.Command("sudo", "-u", serviceUser,
-				"git", "-C", repoDir, "ls-files", "--deleted").Output()
+			missingOut, _ := gitOut(repoDir, "ls-files", "--deleted")
 			if strings.TrimSpace(string(missingOut)) != "" {
 				fmt.Println("  working tree is missing tracked files after reset (incomplete/corrupt checkout) — forcing a fresh checkout of the tree")
-				_ = asUser(repoDir, "git", "checkout", "--force", "--", ".")
-				missingOut2, _ := exec.Command("sudo", "-u", serviceUser,
-					"git", "-C", repoDir, "ls-files", "--deleted").Output()
+				_ = gitRun(repoDir, "checkout", "--force", "--", ".")
+				missingOut2, _ := gitOut(repoDir, "ls-files", "--deleted")
 				if still := strings.TrimSpace(string(missingOut2)); still != "" {
 					// A corrupt .git worktree POINTER can't be fixed by a forced
 					// checkout (git operates through the broken pointer). The repair
@@ -1287,20 +1234,6 @@ fi
 				fmt.Println("  (vite build skipped: src + config + lockfile unchanged + dist intact)")
 				return nil
 			}
-			// vite's emptyDir unlinks every file under dist/ before
-			// writing the new bundle. If any prior build left root-owned
-			// artifacts there (e.g. a legacy update ran as root, or an
-			// operator ran `npm run build` from a root shell), the
-			// jabali-owned build here hits EACCES on unlink and aborts.
-			// chown the tree to the service user each run — cheap,
-			// idempotent, and immune to however dist got into that state.
-			distDir := repoDir + "/panel-ui/dist"
-			if _, err := os.Stat(distDir); err == nil {
-				if err := run("", "chown", "-R",
-					serviceUser+":"+serviceUser, distDir); err != nil {
-					return err
-				}
-			}
 			// viteBuild wraps `npm run build` with NODE_OPTIONS so
 			// node's V8 heap cap matches the host. Without a cap, V8
 			// trusts /proc/meminfo and tries to grow up to ~1.5GB on
@@ -1318,7 +1251,7 @@ fi
 				bashCmd := fmt.Sprintf(
 					"%sNODE_OPTIONS=\"--max-old-space-size=$(awk '/MemTotal/{print int($2*%.2f/1024)}' /proc/meminfo)\" npm run build",
 					viteEnv, float64(heapPct)/100)
-				return asUser(repoDir+"/panel-ui", "bash", "-c", bashCmd)
+				return rootNpm(repoDir+"/panel-ui", bashCmd)
 			}
 			buildErr := viteBuild(viteHeapPctDefault)
 			if buildErr == nil {
@@ -1378,7 +1311,7 @@ fi
 		}},
 		{"prune npm cache", func() error {
 			// JAB-156: npm ci leaves every downloaded tarball in the
-			// service user's ~/.npm/_cacache (/opt/jabali-panel/.npm),
+			// npm cache (/var/cache/jabali-build/npm),
 			// which grows unbounded across updates as deps churn. The
 			// build is already done, so purge it — the next update's
 			// npm ci re-populates only what it needs. Best-effort: a
@@ -1386,7 +1319,7 @@ fi
 			if installedFromRelease {
 				return nil
 			}
-			if err := asUser(repoDir+"/panel-ui", "bash", "-c", "npm cache clean --force >/dev/null 2>&1 || true"); err != nil {
+			if err := rootNpm(repoDir+"/panel-ui", "npm cache clean --force >/dev/null 2>&1 || true"); err != nil {
 				fmt.Printf("  (npm cache clean skipped: %v)\n", err)
 			}
 			return nil
@@ -1472,12 +1405,12 @@ fi
 						apiArgs = append(apiArgs, "-tags", "demo")
 					}
 					apiArgs = append(apiArgs, "-ldflags", ldflagsAPI, "-o", repoDir+"/bin/jabali-panel.new", "./panel-api/cmd/server")
-					apiErr = asUser(repoDir, goBin, apiArgs...)
+					apiErr = rootGo(repoDir, apiArgs...)
 				})
 			}
 			if !agentSkip {
 				spawn(func() {
-					agentErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
+					agentErr = rootGo(repoDir, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-agent.new", "./panel-agent/cmd/jabali-agent")
 				})
 			}
@@ -1491,7 +1424,7 @@ fi
 			var sshShellErr error
 			if !agentSkip {
 				spawn(func() {
-					sshShellErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
+					sshShellErr = rootGo(repoDir, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-ssh-shell.new", "./panel-agent/cmd/jabali-ssh-shell")
 				})
 			}
@@ -1502,7 +1435,7 @@ fi
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					mailhookErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
+					mailhookErr = rootGo(repoDir, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-mailhook.new", "./panel-agent/cmd/jabali-mailhook")
 				}()
 			}
@@ -1514,7 +1447,7 @@ fi
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					sendmailErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", "-s -w",
+					sendmailErr = rootGo(repoDir, "build", "-trimpath", "-ldflags", "-s -w",
 						"-o", repoDir+"/bin/jabali-sendmail.new", "./panel-agent/cmd/jabali-sendmail")
 				}()
 			}
@@ -1526,7 +1459,7 @@ fi
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					webdavErr = asUser(repoDir, goBin, "build", "-trimpath", "-ldflags", ldflagsAgent,
+					webdavErr = rootGo(repoDir, "build", "-trimpath", "-ldflags", ldflagsAgent,
 						"-o", repoDir+"/bin/jabali-webdav.new", "./panel-agent/cmd/jabali-webdav")
 				}()
 			}
@@ -2165,8 +2098,7 @@ fi
 	// `&& !force` clause was permanently stuck.
 	binStale := false
 	if binInfo, statErr := os.Stat(defaultPanelBinPath); statErr == nil {
-		commitTimeRaw, _ := exec.Command("sudo", "-u", serviceUser,
-			"git", "-C", repoDir, "show", "-s", "--format=%cI", postHEAD).Output()
+		commitTimeRaw, _ := gitRootCmd(repoDir, "show", "-s", "--format=%cI", postHEAD).Output()
 		if ct := strings.TrimSpace(string(commitTimeRaw)); ct != "" {
 			if t, perr := time.Parse(time.RFC3339, ct); perr == nil && binInfo.ModTime().Before(t) {
 				binStale = true
@@ -2262,44 +2194,19 @@ func run(dir string, name string, args ...string) error {
 	return nil
 }
 
-// asServiceUser runs a command as the jabali service user (repo owner), with the
-// same HOME/PATH/GOCACHE + low-RAM Go env `jabali update` uses. Package-level so
-// both the update path and the repair suite (GH #1173) share one impl and never
-// drift on how privilege-drop + env are set up.
-func asServiceUser(repoDir, dir, name string, args ...string) error {
-	serviceUser := os.Getenv("JABALI_SERVICE_USER")
-	if serviceUser == "" {
-		serviceUser = "jabali"
-	}
-	goRoot := os.Getenv("JABALI_GO_ROOT")
-	if goRoot == "" {
-		goRoot = defaultGoRoot
-	}
-	allArgs := []string{"-u", serviceUser, "-H", "env",
-		"HOME=" + repoDir,
-		"PATH=" + goRoot + "/bin:/usr/bin:/bin",
-		"GOCACHE=" + repoDir + "/.cache/go-build",
-		"GOMODCACHE=" + repoDir + "/.cache/go-mod",
-	}
-	allArgs = append(allArgs, lowRAMGoBuildEnv()...)
-	allArgs = append(allArgs, name)
-	allArgs = append(allArgs, args...)
-	return run(dir, "sudo", allArgs...)
-}
-
-// npmCIResilient wipes panel-ui/node_modules and runs `npm ci` as the service
-// user with the mv-stale + retry-once dance, then verifies node_modules/.bin/tsc
-// actually landed. Shared by `jabali update`'s npm-ci step and the node-modules
+// npmCIResilient wipes panel-ui/node_modules and runs `npm ci` as root with
+// --ignore-scripts, using the mv-stale + retry-once dance, then verifies
+// node_modules/.bin/tsc actually landed. Shared by `jabali update`'s npm-ci step and the node-modules
 // repair — a bare `rm -rf` (the old repair) left .bin/tsc missing so the detector
 // re-reported BROKEN immediately (GH #1173); this actually reinstalls.
 func npmCIResilient(repoDir string) error {
-	return asServiceUser(repoDir, repoDir+"/panel-ui", "bash", "-c", `set -e
+	return rootNpm(repoDir+"/panel-ui", `set -e
 trash="node_modules.stale.$$"
 if [ -d node_modules ]; then
   mv node_modules "$trash"
   ( rm -rf "$trash" 2>/dev/null & )
 fi
-attempt() { npm ci --no-audit --no-fund; }
+attempt() { npm ci --ignore-scripts --no-audit --no-fund; }
 if ! attempt; then
   echo "[jabali] npm ci failed, wiping node_modules and retrying once..." >&2
   rm -rf node_modules
@@ -2364,14 +2271,12 @@ func appendGoPath(env []string) []string {
 	return append(env, "PATH="+goRoot+"/bin:"+ensureSystemSbins("/usr/bin:/bin"))
 }
 
-// gitRevParseAsUser runs `git -C repoDir rev-parse <args...>` as
-// serviceUser (matches the rest of the update flow which avoids "dubious
-// ownership" by always shelling git through sudo). Returns ("unknown",
-// err) on failure so callers can ship a best-effort build-info value
-// rather than aborting the whole build.
+// gitRevParseAsUser runs `git -C repoDir rev-parse <args...>` as root on
+// the root-owned checkout. serviceUser is kept for the callers' shape
+// and is unused. Returns ("unknown", err) on failure so callers can ship a
+// best-effort build-info value rather than aborting the whole build.
 func gitRevParseAsUser(repoDir, serviceUser string, args ...string) (string, error) {
-	cmdArgs := append([]string{"-u", serviceUser, "git", "-C", repoDir, "rev-parse"}, args...)
-	out, err := exec.Command("sudo", cmdArgs...).Output()
+	out, err := gitRootCmd(repoDir, append([]string{"rev-parse"}, args...)...).Output()
 	if err != nil {
 		return "unknown", err
 	}

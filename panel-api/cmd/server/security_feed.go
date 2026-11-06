@@ -363,8 +363,8 @@ func checkConvergerCommit(git gitOutFunc, commit string) error {
 // the way jabali-security-converger does it.
 func convergerManualCommand(adv securityAdvisory) string {
 	dir := "/root/" + strings.ToLower(adv.ID)
-	return fmt.Sprintf("sudo -u jabali git -C %[1]s fetch -q origin main && mkdir -p %[2]s && "+
-		"sudo -u jabali git -C %[1]s archive %[3]s | tar -x -C %[2]s && "+
+	return fmt.Sprintf("git -C %[1]s fetch -q origin main && mkdir -p %[2]s && "+
+		"git -C %[1]s archive %[3]s | tar -x -C %[2]s && "+
 		"bash -c 'cd %[2]s && source ./install.sh >/dev/null 2>&1; REPO_DIR=$PWD; %[4]s'",
 		defaultRepoDir, dir, adv.Jabali.ConvergerCommit, adv.Jabali.Converger)
 }

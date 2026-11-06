@@ -159,7 +159,7 @@ func TestRefMaxMigration(t *testing.T) {
 func TestUpdate_ChecksResetTargetBeforeReset(t *testing.T) {
 	src := stripLineComments(readGoSource(t, "update.go"))
 	guard := strings.Index(src, "updateResetTarget(")
-	reset := strings.Index(src, `asUser(repoDir, "git", "reset", "--hard", resetRef)`)
+	reset := strings.Index(src, `gitRun(repoDir, "reset", "--hard", resetRef)`)
 	if guard < 0 || reset < 0 {
 		t.Fatalf("not found: updateResetTarget at %d, reset at %d", guard, reset)
 	}

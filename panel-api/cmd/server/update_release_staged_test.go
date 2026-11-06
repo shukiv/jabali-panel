@@ -256,7 +256,7 @@ func TestUpdateGitStep_VerifiesTargetBeforeReset(t *testing.T) {
 	}
 	s := string(src)
 	verify := strings.Index(s, "verifyResetTarget(")
-	reset := strings.Index(s, `"git", "reset", "--hard", resetRef`)
+	reset := strings.Index(s, `gitRun(repoDir, "reset", "--hard", resetRef)`)
 	if verify < 0 || reset < 0 {
 		t.Fatalf("could not find the verify call (%d) or the reset (%d) in update.go", verify, reset)
 	}

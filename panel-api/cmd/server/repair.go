@@ -336,10 +336,11 @@ func repairSteps() []repairStep {
 			fix:         fixGitPointer,
 		},
 		{
-			id:     "git-ownership",
-			label:  "/opt/jabali-panel/.git owned by wrong user",
-			detect: detectGitOwnership,
-			fix:    fixGitOwnership,
+			id:          "git-ownership",
+			label:       "/opt/jabali-panel/.git owned by wrong user",
+			destructive: true,
+			detect:      detectGitOwnership,
+			fix:         fixGitOwnership,
 		},
 		{
 			id:     "git-stale-worktrees",
@@ -492,11 +493,6 @@ func fixGitPointer(ctx repairCtx) error {
 	repo := ctx.repoDir
 	backup := repo + ".broken"
 
-	originURL, err := readOriginURL(repo)
-	if err != nil {
-		return fmt.Errorf("could not determine remote origin URL: %w", err)
-	}
-
 	// Move broken tree out of the way.
 	if _, err := os.Stat(backup); err == nil {
 		if err := run("", "rm", "-rf", backup); err != nil {
@@ -507,68 +503,40 @@ func fixGitPointer(ctx repairCtx) error {
 		return err
 	}
 
-	// Fresh clone.
-	if err := run("", "git", "clone", originURL, repo); err != nil {
-		return err
-	}
-	if err := run("", "chown", "-R",
-		ctx.serviceUser+":"+ctx.serviceUser, repo); err != nil {
+	// Fresh clone from the canonical URL, root-owned (see enforceRepoOwnership).
+	// Re-clone from canonicalRepoURL.
+	c := gitRootCmd("", recloneArgs(repo)...)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	if err := c.Run(); err != nil {
 		return err
 	}
 
-	// Restore preserved untracked state. Each cp is best-effort so a
-	// missing source from the broken tree doesn't abort the recovery.
-	preserves := []string{
-		".env",
-		"panel-ui/node_modules",
-		"panel-ui/dist",
-		".cache",
-		"bin",
+	// Restore .env only. Build output and caches are not carried over: the
+	// broken tree's copies are jabali-owned, and root must not build from them.
+	// Each cp is best-effort so a missing source doesn't abort the recovery.
+	if _, err := os.Stat(filepath.Join(backup, ".env")); err == nil {
+		_ = run("", "cp", "-a", filepath.Join(backup, ".env"), filepath.Join(repo, ".env"))
 	}
-	for _, p := range preserves {
-		src := filepath.Join(backup, p)
-		if _, err := os.Stat(src); err != nil {
-			continue
-		}
-		dst := filepath.Join(repo, p)
-		_ = run("", "cp", "-a", src, dst)
+	if _, err := enforceRepoOwnership(repo,
+		func(name string, args ...string) error { return run("", name, args...) },
+		func(dst string) error {
+			c := gitRootCmd("", recloneArgs(dst)...)
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+			return c.Run()
+		}); err != nil {
+		return err
 	}
 
 	fmt.Printf("  (preserved tree kept at %s — delete after you confirm the new clone works)\n", backup)
 	return nil
 }
 
-func readOriginURL(repo string) (string, error) {
-	c := exec.Command("git", "-C", repo, "remote", "get-url", "origin")
-	out, err := c.Output()
-	if err == nil {
-		return strings.TrimSpace(string(out)), nil
-	}
-	// Fallback: read .git/config directly. Useful when the gitdir pointer
-	// is broken but .git/config still exists somewhere reachable.
-	cfg, cerr := os.ReadFile(filepath.Join(repo, ".git", "config"))
-	if cerr != nil {
-		// Last resort: try the broken-clone backup if we already moved it.
-		cfg, cerr = os.ReadFile(filepath.Join(repo+".broken", ".git", "config"))
-	}
-	if cerr != nil {
-		return "", err
-	}
-	for _, line := range strings.Split(string(cfg), "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "url = ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "url = ")), nil
-		}
-	}
-	return "", fmt.Errorf("origin URL not found in any git config")
-}
-
 // ---------- git-ownership ----------
 //
-// Symptom: `.git/objects/*` or `.git/FETCH_HEAD` is owned by root after
-// a hand-run `git fetch` as root, so the next `jabali update` (which
-// runs git as the jabali user) hits "permission denied" or
-// "fatal: detected dubious ownership".
+// Symptom: /opt/jabali-panel/.git is not owned by root. That is the old
+// jabali-owned layout. The fix moves the checkout aside and re-clones it
+// root-owned from canonicalRepoURL. The move is destructive, so the step is
+// marked destructive and --auto skips it.
 
 func detectGitOwnership(ctx repairCtx) (bool, string, error) {
 	gitDir := filepath.Join(ctx.repoDir, ".git")
@@ -587,16 +555,23 @@ func detectGitOwnership(ctx repairCtx) (bool, string, error) {
 		return false, "", err
 	}
 	owner := strings.TrimSpace(string(out))
-	if owner != ctx.serviceUser {
-		return true, fmt.Sprintf("owner=%s expected=%s", owner, ctx.serviceUser), nil
+	if gitOwnerWrong(owner) {
+		return true, fmt.Sprintf("owner=%s expected=root", owner), nil
 	}
 	return false, "", nil
 }
 
+// fixGitOwnership moves a non-root .git to the root-owned layout. The old
+// .git is kept aside and the checkout re-cloned from canonicalRepoURL.
 func fixGitOwnership(ctx repairCtx) error {
-	return run("", "chown", "-R",
-		ctx.serviceUser+":"+ctx.serviceUser,
-		filepath.Join(ctx.repoDir, ".git"))
+	_, err := enforceRepoOwnership(ctx.repoDir,
+		func(name string, args ...string) error { return run("", name, args...) },
+		func(dst string) error {
+			c := gitRootCmd("", recloneArgs(dst)...)
+			c.Stdout, c.Stderr = os.Stdout, os.Stderr
+			return c.Run()
+		})
+	return err
 }
 
 // ---------- git-stale-worktrees ----------

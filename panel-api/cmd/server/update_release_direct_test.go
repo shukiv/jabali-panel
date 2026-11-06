@@ -187,7 +187,7 @@ func TestByCommitDownloadURLs(t *testing.T) {
 //
 // Simulated here by pointing git's ownership check at a repo it should distrust
 // via a scrubbed environment, which is the closest a same-user test can get.
-func TestLocalHeadSHA_UsesSafeDirectory(t *testing.T) {
+func TestLocalHeadSHA_UsesRootGit(t *testing.T) {
 	t.Parallel()
 
 	if _, err := exec.LookPath("git"); err != nil {
@@ -216,16 +216,16 @@ func TestLocalHeadSHA_UsesSafeDirectory(t *testing.T) {
 		t.Errorf("HEAD = %q, want a 40-char SHA", sha)
 	}
 
-	// Assert the flag is actually present in the source of truth — the
-	// behaviour above cannot distinguish "has the flag" from "same owner", and
-	// the flag is the whole fix.
+	// The checkout is root-owned and read through gitRootCmd, so no
+	// safe.directory exception is needed or allowed.
 	src, rerr := os.ReadFile("update_release_direct.go")
 	if rerr != nil {
 		t.Fatalf("read source: %v", rerr)
 	}
-	if !strings.Contains(string(src), `"safe.directory="+repoDir`) {
-		t.Error("localHeadSHA must pass -c safe.directory=<repoDir>; without it " +
-			"the lookup fails as root on every real host and silently degrades " +
-			"to the rate-limited API path")
+	if !strings.Contains(string(src), "gitRootCmd(repoDir, \"rev-parse\", \"HEAD\")") {
+		t.Error("localHeadSHA must read HEAD through gitRootCmd")
+	}
+	if strings.Contains(string(src), "safe.directory") {
+		t.Error("localHeadSHA must not carry a safe.directory exception")
 	}
 }
