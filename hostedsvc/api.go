@@ -30,6 +30,12 @@ type API struct {
 	// that construct the struct directly). See iprate.go.
 	registerLimiterOnce sync.Once
 	registerLimiter     *ipRateLimiter
+
+	// claimIPLimiter and claimEmailLimiter bound /v1/claim per source
+	// address and per email. Lazily built, like registerLimiter.
+	claimLimitersOnce sync.Once
+	claimIPLimiter    *ipRateLimiter
+	claimEmailLimiter *ipRateLimiter
 }
 
 func (a *API) Routes() http.Handler {
@@ -86,7 +92,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	// forever, or fanning out across millions of addresses using this
 	// service's authenticated relay as a spam relay. Checked BEFORE minting a
 	// code or touching the store so a bulk sender does no work here.
-	if ip := ClientIP(r); ip != nil && !a.registerRateLimiter().allow(ip.String()) {
+	if ip := ClientIP(r); ip != nil && !a.registerRateLimiter().allow(rateKey(ip)) {
 		a.Log.Warn("register: per-IP cap reached", "ip", ip.String())
 		writeErr(w, http.StatusTooManyRequests, "rate_limited",
 			"too many registrations from this address — try again later")
@@ -135,6 +141,13 @@ func (a *API) claim(w http.ResponseWriter, r *http.Request) {
 	base, err := LabelFromIP(ip)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "bad_source", err.Error())
+		return
+	}
+	ipLimiter, emailLimiter := a.claimRateLimiters()
+	if !ipLimiter.allow(rateKey(ip)) || !emailLimiter.allow(email) {
+		a.Log.Warn("claim: hourly cap reached", "ip", ip.String(), "email", email)
+		writeErr(w, http.StatusTooManyRequests, "rate_limited",
+			"too many attempts — try again later")
 		return
 	}
 	if err := a.Store.ConsumeCode(email, req.Code); err != nil {
@@ -205,6 +218,16 @@ func (a *API) registerRateLimiter() *ipRateLimiter {
 		a.registerLimiter = newIPRateLimiter(registerIPHourlyCap, registerIPWindow)
 	})
 	return a.registerLimiter
+}
+
+// claimRateLimiters returns the lazily-built per-IP and per-email limiters
+// for /v1/claim.
+func (a *API) claimRateLimiters() (ip, email *ipRateLimiter) {
+	a.claimLimitersOnce.Do(func() {
+		a.claimIPLimiter = newIPRateLimiter(claimIPHourlyCap, time.Hour)
+		a.claimEmailLimiter = newIPRateLimiter(claimEmailHourlyCap, time.Hour)
+	})
+	return a.claimIPLimiter, a.claimEmailLimiter
 }
 
 // httpErr is a handler-ready error: status + wire code + user-facing message.

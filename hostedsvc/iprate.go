@@ -1,6 +1,7 @@
 package hostedsvc
 
 import (
+	"net"
 	"sync"
 	"time"
 )
@@ -28,6 +29,23 @@ const registerIPHourlyCap = 10
 
 // registerIPWindow is the sliding window the cap applies over.
 const registerIPWindow = time.Hour
+
+// POST /v1/claim checks a code. The attempt cap stops guessing one code;
+// these bound how many codes one source address, and one email address, can
+// try in an hour. A real operator claims once or twice.
+const (
+	claimIPHourlyCap    = 30
+	claimEmailHourlyCap = 20
+)
+
+// rateKey is the limiter key for a source address: an IPv4 address as is,
+// an IPv6 address by its /64, since one host is commonly given a whole /64.
+func rateKey(ip net.IP) string {
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}
 
 // ipRateLimiter is a small sliding-window counter keyed by source IP.
 //
