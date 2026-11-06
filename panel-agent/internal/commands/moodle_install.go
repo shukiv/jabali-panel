@@ -88,20 +88,15 @@ func computeMoodleDataRoot(docroot, subdirectory string) string {
 	return filepath.Join(filepath.Dir(docroot), ".moodledata", key)
 }
 
-// validateMoodleSubdir rejects a subdirectory that escapes the docroot. The
-// panel validates it at create, but the agent is the trust boundary — never
-// trust the wire value (mirrors wordpress_delete's defense-in-depth check).
+// validateMoodleSubdir rejects a subdirectory that escapes the docroot or
+// names the docroot itself (appInstallPath). The panel validates it at
+// create, but the agent is the trust boundary — never trust the wire value.
 func validateMoodleSubdir(docroot, subdirectory string) error {
-	sub := strings.Trim(subdirectory, "/")
-	if sub == "" {
+	if subdirectory == "" {
 		return nil
 	}
-	installPath := filepath.Join(docroot, sub)
-	if rel, err := filepath.Rel(docroot, installPath); err != nil ||
-		rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("subdirectory escapes docroot: %q", subdirectory)
-	}
-	return nil
+	_, err := appInstallPath(docroot, subdirectory)
+	return err
 }
 
 // moodleShortName slugifies the site title into a Moodle shortname (alnum,

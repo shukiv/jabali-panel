@@ -73,15 +73,12 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 	// per-domain xmlrpc snippet and index.html restore are docroot-only
 	// (a sibling root install on the same domain may still rely on them).
 	if sub := strings.Trim(req.Subdirectory, "/"); sub != "" {
-		installPath := filepath.Join(req.Docroot, sub)
-		// Defense-in-depth: the join must stay inside the validated
-		// docroot (the subdir is validated at create, but never trust it).
-		if rel, err := filepath.Rel(req.Docroot, installPath); err != nil ||
-			rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInvalidArgument,
-				Message: fmt.Sprintf("subdirectory escapes docroot: %q", req.Subdirectory),
-			}
+		// Defense-in-depth: the subdir is validated at create, but never
+		// trust it. appInstallPath keeps it inside the docroot and refuses
+		// one that names the docroot itself.
+		installPath, err := appInstallPath(req.Docroot, req.Subdirectory)
+		if err != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 		}
 		cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", installPath)
 		_ = cmd.Run()
