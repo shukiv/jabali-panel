@@ -680,7 +680,9 @@ func (r *domainRepo) MarkPanelPrimary(ctx context.Context, id string) error {
 
 // CreateWithinCap — see the interface doc. The users row is the per-owner
 // serialization point: it exists even at zero domains, where a COUNT ... FOR
-// UPDATE would lock nothing (the FTP cap's reasoning, JAB-262).
+// UPDATE would lock nothing (the FTP cap's reasoning, JAB-262). Keep the lock
+// before the count: under REPEATABLE READ the read view is taken at the first
+// plain SELECT, so a count made after the lock sees the other create's commit.
 func (r *domainRepo) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var lockedID string

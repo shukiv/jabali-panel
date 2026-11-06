@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -69,5 +70,26 @@ func TestDomainCreateWithinCap_OwnerMissing(t *testing.T) {
 
 	err := repo.CreateWithinCap(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "a.test"}, 3)
 	require.ErrorIs(t, err, ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestDomainCreateWithinCap_DuplicateNameIsConflict(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+	repo := NewDomainRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT id FROM users WHERE id = ? FOR UPDATE")).
+		WithArgs("u1").
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("u1"))
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT count(*) FROM `domains` WHERE user_id = ?")).
+		WithArgs("u1").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec("INSERT INTO `domains`").
+		WillReturnError(&mysql.MySQLError{Number: 1062, Message: "Duplicate entry 'a.test' for key 'name'"})
+	mock.ExpectRollback()
+
+	err := repo.CreateWithinCap(context.Background(), &models.Domain{ID: "d1", UserID: "u1", Name: "a.test"}, 3)
+	require.ErrorIs(t, err, ErrConflict)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
