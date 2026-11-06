@@ -48,11 +48,18 @@ func userCreateHandler(ctx context.Context, params json.RawMessage) (any, error)
 		}
 	}
 
-	// Validate home_dir starts with /home/.
-	if !strings.HasPrefix(p.HomeDir, "/home/") {
+	// A hosting user's home is /home/<username> and its login shell is the
+	// SSH sandbox wrapper; the panel creates no other kind of account.
+	if p.HomeDir != "/home/"+p.Username {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("invalid home_dir %q: must start with /home/", p.HomeDir),
+			Message: fmt.Sprintf("invalid home_dir %q: must be /home/%s", p.HomeDir, p.Username),
+		}
+	}
+	if p.Shell != sshTenantShell {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid shell %q: must be %s", p.Shell, sshTenantShell),
 		}
 	}
 
