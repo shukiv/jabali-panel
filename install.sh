@@ -9586,19 +9586,10 @@ install_ssh_sandbox() {
   # command (-c) forwarding (scp/git/rsync broke) and didn't filter
   # /etc/passwd. Single source of truth = panel-agent/cmd/jabali-ssh-shell.
 
-  # Sudo-bridged nspawn entry helper. Runs as root after sudoers gate.
-  install -m 0755 -o root -g root \
-    "$REPO_DIR/install/ssh/jabali-nspawn-enter" \
-    /usr/local/bin/jabali-nspawn-enter
-
-  # Sudoers entry (NOPASSWD locked to absolute path). visudo -cf checks
-  # parse — abort install if the file is malformed before placement.
-  if ! visudo -cf "$REPO_DIR/install/ssh/jabali-nspawn-sudoers" >/dev/null; then
-    _die "jabali-nspawn-sudoers failed visudo -cf"
-  fi
-  install -m 0440 -o root -g root \
-    "$REPO_DIR/install/ssh/jabali-nspawn-sudoers" \
-    /etc/sudoers.d/jabali-nspawn
+  # No sudo bridge to nspawn: the login wrapper never dispatches to it (its
+  # nspawn path returns nologin), so the helper and its sudoers grant are not
+  # needed. Remove whatever an earlier install left behind.
+  retire_nspawn_sudo_bridge
 
   # Default mode = bubblewrap (ADR-0067 §0.2). Don't clobber on rerun.
   if [ ! -f /etc/jabali/ssh-sandbox-mode ]; then
@@ -17842,11 +17833,20 @@ provision_php_extensions() {
   fi
 }
 
+# retire_nspawn_sudo_bridge removes the sudo grant and root helper that an
+# earlier install placed for the nspawn SSH mode. The mode is not wired (the
+# wrapper refuses it), so nothing needs them. Idempotent.
+retire_nspawn_sudo_bridge() {
+  rm -f /etc/sudoers.d/jabali-nspawn
+  rm -f /usr/local/bin/jabali-nspawn-enter
+}
+
 provision_new_software() {
   # Sweep a leaked policy-rc.d BEFORE anything else — while it sits there,
   # every invoke-rc.d action this provision chain (and logrotate, and dpkg
   # postinsts) performs is silently denied. Found leaked on jabalitests
   # 2026-08-12 (nginx access logs 0-byte for months).
+  retire_nspawn_sudo_bridge
   sweep_leaked_policy_rcd
 
   # Heal /etc/jabali-panel traversal FIRST — a 0750 parent here means
