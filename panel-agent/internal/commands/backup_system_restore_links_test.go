@@ -115,15 +115,20 @@ func TestRsyncStageOnto_RefusesLinksThatPointOutside(t *testing.T) {
 // mirror would otherwise copy from wherever it points.
 func TestRsyncStageOnto_RefusesALinkedStagedFolder(t *testing.T) {
 	stage := t.TempDir()
+	target := filepath.Join(t.TempDir(), "etc", "nginx")
 	elsewhere := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(elsewhere, "nginx"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(elsewhere, filepath.Join(stage, "etc")); err != nil {
+	staged := filepath.Join(stage, filepath.Dir(target))
+	if err := os.MkdirAll(filepath.Dir(staged), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, staged); err != nil {
 		t.Fatal(err)
 	}
 	calls := recordRestoreExec(t)
-	err := rsyncStageOnto(context.Background(), stage, "/etc/nginx", nil)
+	err := rsyncStageOnto(context.Background(), stage, target, nil)
 	if err == nil || !strings.Contains(err.Error(), "is not a folder") {
 		t.Fatalf("err %v", err)
 	}
