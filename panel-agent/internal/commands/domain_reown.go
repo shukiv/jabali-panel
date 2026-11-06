@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
 type domainReownParams struct {
@@ -86,8 +87,9 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	// wrapper). Re-owning an already-correct dir is a no-op.
 	parent := filepath.Dir(p.NewDocRoot) // /home/<new>/domains/<name>
 	grandparent := filepath.Dir(parent)  // /home/<new>/domains
+	anchor := filepath.Dir(grandparent)  // /home/<new>, owned by the new owner
 	for _, d := range []string{grandparent, parent} {
-		if err := ensureOwnedSetgidDir(d, p.NewUID, wwwGID); err != nil {
+		if err := ensureOwnedSetgidDir(anchor, d, p.NewUID, wwwGID); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("prepare destination dir %q: %v", d, err)}
 		}
 	}
@@ -101,7 +103,7 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 	// Re-assert setgid 2750 on the docroot itself so new files keep inheriting the
 	// www-data group (rename preserved it, but be explicit).
-	if err := os.Chmod(p.NewDocRoot, os.ModeSetgid|0o750); err != nil {
+	if err := chmodDirUnder(anchor, p.NewDocRoot, os.ModeSetgid|0o750); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
 	}
 
@@ -145,22 +147,28 @@ func shouldPruneRenameDir(dir, oldDocRoot string) bool {
 	return strings.HasPrefix(oldDocRoot, dir+"/")
 }
 
-// ensureOwnedSetgidDir creates dir (if absent) and sets it to uid:gid + setgid
-// 2750. If it already exists as a directory it is left untouched.
-func ensureOwnedSetgidDir(path string, uid, gid int) error {
-	if fi, err := os.Lstat(path); err == nil {
-		if fi.IsDir() {
-			return nil
-		}
-		return fmt.Errorf("%s exists but is not a directory", path)
-	}
-	if err := os.Mkdir(path, 0o750); err != nil {
+// ensureOwnedSetgidDir creates dir (if absent) under anchor and sets each new
+// component to uid:gid + setgid 2750. Components are created and owned through
+// their file descriptors (fsperm.OpenDirUnder), so a symlink swapped in while
+// this runs cannot make root chown the link's target. An existing directory is
+// left untouched.
+func ensureOwnedSetgidDir(anchor, dir string, uid, gid int) error {
+	f, err := fsperm.OpenDirUnder(anchor, dir, uint32(os.ModeSetgid|0o750), uid, gid)
+	if err != nil {
 		return err
 	}
-	if err := os.Chown(path, uid, gid); err != nil {
+	return f.Close()
+}
+
+// chmodDirUnder sets the mode of an existing directory through its file
+// descriptor, after walking to it from anchor without following links.
+func chmodDirUnder(anchor, dir string, mode os.FileMode) error {
+	f, err := fsperm.OpenDirUnder(anchor, dir, uint32(mode.Perm()), 0, 0)
+	if err != nil {
 		return err
 	}
-	return os.Chmod(path, os.ModeSetgid|0o750)
+	defer f.Close()
+	return f.Chmod(mode)
 }
 
 func init() {

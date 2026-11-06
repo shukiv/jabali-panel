@@ -353,7 +353,11 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 	// Compute installPath: docroot + optional subdirectory
 	installPath := req.Docroot
 	if req.Subdirectory != "" {
-		installPath = filepath.Join(req.Docroot, req.Subdirectory)
+		joined, jerr := appInstallPath(req.Docroot, req.Subdirectory)
+		if jerr != nil {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: jerr.Error()}
+		}
+		installPath = joined
 	}
 	// Always ensure installPath exists before handing off to wp-cli.
 	// For subdir installs the subdir definitely doesn't exist on first
@@ -493,7 +497,7 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 
 	// Read wp-config.php and replace placeholder with real password
 	configPath := filepath.Join(installPath, "wp-config.php")
-	configContent, err := os.ReadFile(configPath)
+	configContent, err := readTenantRegular(configPath)
 	if err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
@@ -509,25 +513,23 @@ func wordpressInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		req.DBPassword,
 	))
 
-	// Write back with restricted permissions (0640)
-	if err := os.WriteFile(configPath, configContent, 0640); err != nil {
+	// Owner <user>, group www-data (nginx reads via group bits, FPM as <user>
+	// via owner bits), mode 0640. Written through the tenant scope with the
+	// owner set on the open descriptor, so a link planted at the path cannot
+	// redirect the write or the chown.
+	ownerUID, wwwGID, lerr := lookupOwnerIDs(req.OSUser, "www-data")
+	if lerr != nil {
+		_ = cleanupWordPressFiles(ctx, installPath)
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("resolve owner for wp-config.php: %v", lerr),
+		}
+	}
+	if err := writeTenantFile(configPath, configContent, 0640, ownerUID, wwwGID); err != nil {
 		_ = cleanupWordPressFiles(ctx, installPath)
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
 			Message: fmt.Sprintf("failed to write wp-config.php: %v", err),
-		}
-	}
-
-	// Chown the config file to <user>:www-data so it matches the rest
-	// of the docroot once normalizePermsToWwwData runs at the end.
-	// Group=www-data lets nginx (in www-data) read the file via group bits;
-	// FPM (running as <user>) reads via owner bits.
-	chownCmd := execCommandContext(ctx, "chown", req.OSUser+":www-data", configPath)
-	if err := chownCmd.Run(); err != nil {
-		_ = cleanupWordPressFiles(ctx, installPath)
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("chown wp-config.php failed: %v", err),
 		}
 	}
 

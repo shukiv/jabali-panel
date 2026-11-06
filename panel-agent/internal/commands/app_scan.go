@@ -146,7 +146,7 @@ var (
 )
 
 func readWPVersion(dir string) string {
-	b, err := os.ReadFile(filepath.Join(dir, "wp-includes", "version.php"))
+	b, err := readTenantRegular(filepath.Join(dir, "wp-includes", "version.php"))
 	if err != nil {
 		return ""
 	}
@@ -157,7 +157,7 @@ func readWPVersion(dir string) string {
 }
 
 func readDrupalVersion(dir string) string {
-	b, err := os.ReadFile(filepath.Join(dir, "core", "lib", "Drupal.php"))
+	b, err := readTenantRegular(filepath.Join(dir, "core", "lib", "Drupal.php"))
 	if err != nil {
 		return ""
 	}
@@ -168,10 +168,10 @@ func readDrupalVersion(dir string) string {
 }
 
 func readJoomlaVersion(dir string) string {
-	b, err := os.ReadFile(filepath.Join(dir, "libraries", "src", "Version.php"))
+	b, err := readTenantRegular(filepath.Join(dir, "libraries", "src", "Version.php"))
 	if err != nil {
 		// Joomla 3.x fallback
-		b, err = os.ReadFile(filepath.Join(dir, "libraries", "joomla", "version.php"))
+		b, err = readTenantRegular(filepath.Join(dir, "libraries", "joomla", "version.php"))
 		if err != nil {
 			return ""
 		}

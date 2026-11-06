@@ -76,7 +76,10 @@ func drupalDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid docroot: %v", err)}
 	}
 
-	installPath := computeDrupalInstallPath(req.Docroot, req.Subdirectory)
+	installPath, perr := computeDrupalInstallPath(req.Docroot, req.Subdirectory)
+	if perr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: perr.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", installPath)

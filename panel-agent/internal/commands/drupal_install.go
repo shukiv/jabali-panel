@@ -87,11 +87,11 @@ var drupalInstallProfilePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,49}$`)
 
 // computeDrupalInstallPath joins docroot + subdir, returning the
 // install root the tarball will land under after --strip-components=1.
-func computeDrupalInstallPath(docroot, subdirectory string) string {
+func computeDrupalInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadDrupalTarball(ctx context.Context, dest string) error {
@@ -180,11 +180,12 @@ func installDrushViaComposer(ctx context.Context, osUser, php, composerPhar, ins
 		"composer.lock": drupalComposerLock,
 	} {
 		p := filepath.Join(installPath, name)
-		if err := os.WriteFile(p, data, 0o644); err != nil {
-			return fmt.Errorf("write pinned %s: %w", name, err)
+		uid, gid, err := lookupOwnerIDs(osUser, osUser)
+		if err != nil {
+			return fmt.Errorf("resolve owner for pinned %s: %w", name, err)
 		}
-		if err := execCommandContext(ctx, "chown", osUser+":"+osUser, p).Run(); err != nil {
-			return fmt.Errorf("chown pinned %s: %w", name, err)
+		if err := writeTenantFile(p, data, 0o644, uid, gid); err != nil {
+			return fmt.Errorf("write pinned %s: %w", name, err)
 		}
 	}
 	if err := ensureComposerHome(osUser); err != nil {
@@ -380,7 +381,10 @@ func drupalInstallHandler(ctx context.Context, params json.RawMessage) (any, err
 		return nil, &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: err.Error()}
 	}
 
-	installPath := computeDrupalInstallPath(req.Docroot, req.Subdirectory)
+	installPath, perr := computeDrupalInstallPath(req.Docroot, req.Subdirectory)
+	if perr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: perr.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
