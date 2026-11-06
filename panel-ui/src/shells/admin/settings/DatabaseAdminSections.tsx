@@ -311,8 +311,10 @@ export function AdminDbConsoleSection() {
   );
 
   // Runs straight from the click: the tab opens before the sign-in link is
-  // minted, and the link is never minted for a blocked tab (lib/ssoTab).
+  // minted, and the link is never minted for a blocked tab (lib/ssoTab). One
+  // console at a time: a second click while a link is being minted is ignored.
   const open = async (path: string, label: string) => {
+    if (busy) return;
     const tab = openSsoTab(
       `Browser blocked the ${label} tab — allow popups for this site and click again.`,
     );
@@ -321,7 +323,7 @@ export function AdminDbConsoleSection() {
     try {
       const res = await apiClient.post<{ redirect_url: string }>(path, {});
       if (!sendSsoTab(tab, res.data.redirect_url)) {
-        feedback.message.error(`Could not open ${label}: the sign-in link was not a web address`);
+        feedback.message.error(`Could not open ${label}`);
       }
     } catch (err) {
       tab.close();
@@ -354,12 +356,14 @@ export function AdminDbConsoleSection() {
       <Space wrap>
         <Button
           loading={busy === "phpMyAdmin"}
+          disabled={busy === "Adminer"}
           onClick={() => open("/admin/databases/sso/phpmyadmin", "phpMyAdmin")}
         >
           Open phpMyAdmin (all MariaDB)
         </Button>
         <Button
           loading={busy === "Adminer"}
+          disabled={busy === "phpMyAdmin"}
           onClick={() => open("/admin/databases/sso/adminer", "Adminer")}
         >
           Open Adminer (all PostgreSQL)

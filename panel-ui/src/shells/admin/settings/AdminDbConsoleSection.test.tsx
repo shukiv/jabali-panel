@@ -82,4 +82,23 @@ describe("AdminDbConsoleSection", () => {
     await waitFor(() => expect(tab.close).toHaveBeenCalled());
     expect(tab.location.href).toBe("");
   });
+
+  it("ignores a second click while a sign-in link is being minted", async () => {
+    const tab = fakeTab();
+    const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    let resolve!: (v: unknown) => void;
+    post.mockReturnValue(new Promise((r) => (resolve = r)));
+    renderSection();
+
+    fireEvent.click(screen.getByRole("button", { name: /open phpmyadmin/i }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /open adminer/i })).toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: /open adminer/i }));
+    fireEvent.click(screen.getByRole("button", { name: /open phpmyadmin/i }));
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledTimes(1);
+    resolve({ data: { redirect_url: "https://panel.example/phpmyadmin/sso.php?token=abc" } });
+    await waitFor(() => expect(tab.location.href).toContain("token=abc"));
+  });
 });
+

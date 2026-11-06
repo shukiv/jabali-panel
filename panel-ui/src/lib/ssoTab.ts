@@ -32,7 +32,8 @@ export function openSsoTab(blockedMessage: string): Window | null {
 
 // sendSsoTab sends the tab to the minted link. The blank tab shares the
 // panel's origin, so only an http(s) link is followed; for anything else the
-// tab is closed and false is returned.
+// tab is closed and false is returned. False also when the user closed the tab,
+// or took it elsewhere, while the link was being minted.
 export function sendSsoTab(tab: Window, url: string | null | undefined): boolean {
   let target: URL | null = null;
   try {
@@ -44,6 +45,12 @@ export function sendSsoTab(tab: Window, url: string | null | undefined): boolean
     tab.close();
     return false;
   }
-  tab.location.href = target.href;
+  if (tab.closed) return false;
+  try {
+    tab.location.href = target.href;
+  } catch {
+    // The tab is on another origin now.
+    return false;
+  }
   return true;
 }

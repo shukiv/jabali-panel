@@ -65,4 +65,32 @@ describe("sendSsoTab", () => {
     expect(tab.location.href).toBe("");
     expect(tab.close).toHaveBeenCalled();
   });
+
+  it("follows a protocol-relative link on the page's own scheme", () => {
+    const tab = fakeTab();
+    expect(sendSsoTab(tab as unknown as Window, "//webmail.example/sso?t=1")).toBe(true);
+    const got = new URL(tab.location.href);
+    expect(got.host).toBe("webmail.example");
+    expect(["http:", "https:"]).toContain(got.protocol);
+  });
+
+  it("does nothing when the user closed the tab while the link was minted", () => {
+    const tab = { ...fakeTab(), closed: true };
+    expect(sendSsoTab(tab as unknown as Window, "https://pma.example/x")).toBe(false);
+    expect(tab.location.href).toBe("");
+  });
+
+  it("returns false when the tab has gone to another origin", () => {
+    const tab = {
+      closed: false,
+      close: vi.fn(),
+      location: {
+        set href(_v: string) {
+          throw new DOMException("Blocked a frame", "SecurityError");
+        },
+      },
+    };
+    expect(sendSsoTab(tab as unknown as Window, "https://pma.example/x")).toBe(false);
+  });
 });
+

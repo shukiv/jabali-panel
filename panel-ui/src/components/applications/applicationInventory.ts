@@ -70,7 +70,7 @@ export async function openApplicationLogin(
   try {
     const { url } = await mint();
     if (!sendSsoTab(tab, url)) {
-      feedback.message.error("The admin login link was not a web address");
+      feedback.message.error("Could not open the admin login");
       return;
     }
     feedback.message.success("Admin login link opened");

@@ -105,7 +105,7 @@ export function useMailboxWebmail() {
       { id },
       {
         onSuccess: (data) => {
-          sendSsoTab(popup, data?.url);
+          if (!sendSsoTab(popup, data?.url)) feedback.message.error("Could not open webmail");
         },
         onError: (err: unknown) => {
           popup.close();
