@@ -185,27 +185,35 @@ export const CreateMailboxWizardModal = ({
       form.resetFields();
       onCreated(resp);
       if (failures.length > 0) {
-        feedback.notification.warning({
-          key: `mailbox-extras-${resp.id}`,
-          title: t(
-            "createmailboxwizardmodal.extras_failed_title",
-            "{{email}} was created, but not all of it was set up",
-            { email: resp.email },
-          ),
-          description: (
-            <>
+        // The house toast, left up long enough to read the list; a click
+        // dismisses it.
+        const key = `mailbox-extras-${resp.id}`;
+        feedback.message.warning({
+          key,
+          duration: 15,
+          onClick: () => feedback.message.destroy(key),
+          content: (
+            <div style={{ display: "inline-block", textAlign: "start", verticalAlign: "top" }}>
+              <div>
+                {t(
+                  "createmailboxwizardmodal.extras_failed_title",
+                  "{{email}} was created, but not all of it was set up",
+                  { email: resp.email },
+                )}
+              </div>
               <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
                 {failures.map((f, i) => (
                   <li key={i}>{f}</li>
                 ))}
               </ul>
-              {t(
-                "createmailboxwizardmodal.extras_failed_hint",
-                "Add them from the mailbox's Edit drawer.",
-              )}
-            </>
+              <div>
+                {t(
+                  "createmailboxwizardmodal.extras_failed_hint",
+                  "Add them from the mailbox's Edit drawer.",
+                )}
+              </div>
+            </div>
           ),
-          duration: 0,
         });
       }
     } catch (err) {

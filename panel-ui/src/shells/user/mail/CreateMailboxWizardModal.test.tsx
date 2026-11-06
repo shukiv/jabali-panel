@@ -212,7 +212,7 @@ describe("CreateMailboxWizardModal — groups, aliases and forwards that fail", 
   const GROUPS = { data: { data: [{ id: "g1", display_name: "Sales team", email: "sales-team@second.test" }] } };
 
   // The warning stays until dismissed; clear it so no test sees another's.
-  afterEach(() => feedback.notification.destroy());
+  afterEach(() => feedback.message.destroy());
 
   async function fillAndSubmit(aliases = "sales, info") {
     fireEvent.mouseDown(await screen.findByLabelText(/^Domain$/i));
