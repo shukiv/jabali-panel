@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -60,12 +61,21 @@ func TestRunMaintenance_InsertConflictIs409(t *testing.T) {
 }
 
 func TestRunMaintenance_StartsWhenFree(t *testing.T) {
-	fa := &fakeDBAdmin{}
+	fa := &fakeDBAdmin{finished: make(chan string, 1)}
 	w := postMaintenance(t, fa, &maintAgent{})
-	if w.Code != http.StatusAccepted && w.Code != http.StatusOK {
-		t.Fatalf("status = %d; body %s", w.Code, w.Body.String())
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body %s", w.Code, w.Body.String())
 	}
 	if len(fa.created) != 1 || fa.created[0].Status != "running" || fa.created[0].Engine != "mariadb" {
 		t.Fatalf("created = %+v, want one running mariadb job", fa.created)
+	}
+	// The background run finishes the job, which frees the engine.
+	select {
+	case id := <-fa.finished:
+		if id != fa.created[0].ID {
+			t.Fatalf("finished job %q, want %q", id, fa.created[0].ID)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run never finished its job")
 	}
 }

@@ -18,6 +18,7 @@ type fakeDBAdmin struct {
 	audits    []models.DBAdminAudit
 	createErr error
 	created   []*models.DBAdminJob
+	finished  chan string // job ids passed to FinishJob, when set
 }
 
 func (f *fakeDBAdmin) Audit(_ context.Context, a models.DBAdminAudit) error {
@@ -41,7 +42,12 @@ func (f *fakeDBAdmin) CreateJob(_ context.Context, j *models.DBAdminJob) error {
 	f.created = append(f.created, j)
 	return nil
 }
-func (f *fakeDBAdmin) FinishJob(context.Context, string, string, string) error { return nil }
+func (f *fakeDBAdmin) FinishJob(_ context.Context, id, _, _ string) error {
+	if f.finished != nil {
+		f.finished <- id
+	}
+	return nil
+}
 func (f *fakeDBAdmin) GetJob(context.Context, string) (*models.DBAdminJob, error) {
 	return nil, repository.ErrNotFound
 }
