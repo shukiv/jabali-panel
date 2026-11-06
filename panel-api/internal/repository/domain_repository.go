@@ -69,6 +69,11 @@ type DomainRepository interface {
 	BulkSetEnabledByUserID(ctx context.Context, userID string, enabled bool) (int64, error)
 	Delete(ctx context.Context, id string) error
 	CountByUserID(ctx context.Context, userID string) (int64, error)
+	// CreateWithinCap inserts d only while its owner has fewer than maxDomains
+	// domains, else ErrDomainCapExceeded. The count and the insert run in one
+	// transaction holding the owner's users row FOR UPDATE. ErrNotFound when
+	// the owner row is missing.
+	CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error
 	// ListPreviewEnabled returns every domain whose preview URL is on, with
 	// only id, name, and temp_url_enabled loaded (JAB-279). It backs the
 	// preview-slug collision check, which must see all of them — not a page —
@@ -668,6 +673,32 @@ func (r *domainRepo) MarkPanelPrimary(ctx context.Context, id string) error {
 			Where("id = ?", id).
 			Update("is_panel_primary", true).Error; err != nil {
 			return err
+		}
+		return nil
+	})
+}
+
+// CreateWithinCap — see the interface doc. The users row is the per-owner
+// serialization point: it exists even at zero domains, where a COUNT ... FOR
+// UPDATE would lock nothing (the FTP cap's reasoning, JAB-262).
+func (r *domainRepo) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedID string
+		if err := tx.Raw("SELECT id FROM users WHERE id = ? FOR UPDATE", d.UserID).Scan(&lockedID).Error; err != nil {
+			return err
+		}
+		if lockedID == "" {
+			return ErrNotFound
+		}
+		var count int64
+		if err := tx.Model(&models.Domain{}).Where("user_id = ?", d.UserID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(maxDomains) {
+			return ErrDomainCapExceeded
+		}
+		if err := tx.Create(d).Error; err != nil {
+			return translate(err)
 		}
 		return nil
 	})

@@ -189,6 +189,17 @@ type fakeCreator struct {
 	err     error
 	cancel  context.CancelFunc
 	created []*models.Domain
+	// capErr is what CreateWithinCap answers; caps records its maxDomains.
+	capErr error
+	caps   []uint32
+}
+
+func (c *fakeCreator) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	c.caps = append(c.caps, maxDomains)
+	if c.capErr != nil {
+		return c.capErr
+	}
+	return c.Create(ctx, d)
 }
 
 func (c *fakeCreator) Create(ctx context.Context, d *models.Domain) error {
@@ -208,7 +219,7 @@ func TestPersistDomain(t *testing.T) {
 		p := newFakePorts()
 		p.held["d1"] = 30000
 		c := &fakeCreator{}
-		if err := PersistDomain(context.Background(), c, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000}); err != nil {
+		if err := PersistDomain(context.Background(), c, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000}, 0); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if len(c.created) != 1 || p.held["d1"] != 30000 {
@@ -219,7 +230,7 @@ func TestPersistDomain(t *testing.T) {
 	t.Run("conflict → ErrDomainExists and the port is released", func(t *testing.T) {
 		p := newFakePorts()
 		p.held["d1"] = 30000
-		err := PersistDomain(context.Background(), &fakeCreator{err: repository.ErrConflict}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000})
+		err := PersistDomain(context.Background(), &fakeCreator{err: repository.ErrConflict}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000}, 0)
 		if !errors.Is(err, ErrDomainExists) || !errors.Is(err, repository.ErrConflict) || errors.Is(err, ErrPersist) {
 			t.Fatalf("want ErrDomainExists wrapping ErrConflict, got %v", err)
 		}
@@ -231,7 +242,7 @@ func TestPersistDomain(t *testing.T) {
 	t.Run("other failure → ErrPersist and the port is released", func(t *testing.T) {
 		p := newFakePorts()
 		p.held["d1"] = 30000
-		err := PersistDomain(context.Background(), &fakeCreator{err: errors.New("db down")}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000})
+		err := PersistDomain(context.Background(), &fakeCreator{err: errors.New("db down")}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000}, 0)
 		if !errors.Is(err, ErrPersist) || errors.Is(err, ErrDomainExists) {
 			t.Fatalf("want ErrPersist, got %v", err)
 		}
@@ -245,7 +256,7 @@ func TestPersistDomain(t *testing.T) {
 		p.held["d1"] = 30000
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		err := PersistDomain(ctx, &fakeCreator{cancel: cancel}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000})
+		err := PersistDomain(ctx, &fakeCreator{cancel: cancel}, p, &models.Domain{ID: "d1", ReverseProxyPort: 30000}, 0)
 		if !errors.Is(err, ErrPersist) {
 			t.Fatalf("want ErrPersist, got %v", err)
 		}
@@ -254,9 +265,46 @@ func TestPersistDomain(t *testing.T) {
 		}
 	})
 
+	t.Run("with a cap the insert goes through the locked count", func(t *testing.T) {
+		c := &fakeCreator{}
+		if err := PersistDomain(context.Background(), c, newFakePorts(), &models.Domain{ID: "d1"}, 3); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(c.caps) != 1 || c.caps[0] != 3 || len(c.created) != 1 {
+			t.Fatalf("want one CreateWithinCap(3), caps=%v created=%d", c.caps, len(c.created))
+		}
+	})
+
+	t.Run("without a cap the plain insert runs", func(t *testing.T) {
+		c := &fakeCreator{}
+		if err := PersistDomain(context.Background(), c, newFakePorts(), &models.Domain{ID: "d1"}, 0); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(c.caps) != 0 || len(c.created) != 1 {
+			t.Fatalf("want a plain Create, caps=%v created=%d", c.caps, len(c.created))
+		}
+	})
+
+	t.Run("cap reached → quota error and the port is released", func(t *testing.T) {
+		p := newFakePorts()
+		p.held["d1"] = 30000
+		err := PersistDomain(context.Background(), &fakeCreator{capErr: repository.ErrDomainCapExceeded}, p,
+			&models.Domain{ID: "d1", ReverseProxyPort: 30000}, 2)
+		var qe *DomainQuotaError
+		if !errors.As(err, &qe) || !errors.Is(err, ErrDomainQuotaExceeded) || qe.Max != 2 {
+			t.Fatalf("want *DomainQuotaError{Max: 2}, got %v", err)
+		}
+		if errors.Is(err, ErrPersist) {
+			t.Fatalf("a refused cap is not a store failure: %v", err)
+		}
+		if len(p.held) != 0 {
+			t.Fatalf("want the port released, held=%v", p.held)
+		}
+	})
+
 	t.Run("a non-proxy domain touches no port", func(t *testing.T) {
 		p := newFakePorts()
-		_ = PersistDomain(context.Background(), &fakeCreator{err: errors.New("db down")}, p, &models.Domain{ID: "d1"})
+		_ = PersistDomain(context.Background(), &fakeCreator{err: errors.New("db down")}, p, &models.Domain{ID: "d1"}, 0)
 		if len(p.releaseKinds) != 0 {
 			t.Fatalf("no release expected for a domain without a port, got %v", p.releaseKinds)
 		}
@@ -273,7 +321,7 @@ func TestWrappedErrorsPrintTheStoreErrorOnly(t *testing.T) {
 		t.Fatalf("pool exhausted: want %q, got %v", repository.ErrPortPoolExhausted, err)
 	}
 	storeErr := errors.New("Error 1205: Lock wait timeout exceeded")
-	err = PersistDomain(context.Background(), &fakeCreator{err: storeErr}, p, &models.Domain{ID: "d1"})
+	err = PersistDomain(context.Background(), &fakeCreator{err: storeErr}, p, &models.Domain{ID: "d1"}, 0)
 	if err == nil || err.Error() != storeErr.Error() {
 		t.Fatalf("persist: want %q, got %v", storeErr, err)
 	}

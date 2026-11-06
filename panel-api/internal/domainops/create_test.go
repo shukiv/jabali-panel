@@ -15,6 +15,8 @@ type createStore struct {
 	byName  map[string]*models.Domain
 	created []*models.Domain
 	shared  []string
+	// caps records the maxDomains of each CreateWithinCap call.
+	caps []uint32
 }
 
 func newCreateStore(existing ...*models.Domain) *createStore {
@@ -42,7 +44,24 @@ func (s *createStore) FindStrictSubdomains(_ context.Context, name string) ([]mo
 	return out, nil
 }
 
-func (s *createStore) CountByUserID(context.Context, string) (int64, error) { return 0, nil }
+func (s *createStore) CountByUserID(_ context.Context, userID string) (int64, error) {
+	var n int64
+	for _, d := range s.byName {
+		if d.UserID == userID {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CreateWithinCap counts like the repository, without its lock.
+func (s *createStore) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	s.caps = append(s.caps, maxDomains)
+	if n, _ := s.CountByUserID(ctx, d.UserID); n >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return s.Create(ctx, d)
+}
 
 func (s *createStore) ListPreviewEnabled(context.Context) ([]models.Domain, error) {
 	var out []models.Domain
