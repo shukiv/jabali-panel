@@ -184,6 +184,9 @@ func TestSQLEscape_BackslashAndQuote(t *testing.T) {
 	if got := sqlEscape(`a\'b`); got != `a\\''b` {
 		t.Fatalf("sqlEscape = %q", got)
 	}
+	if got := sqlEscape("pem\r\nline\n"); got != `pem\r\nline\n` {
+		t.Fatalf("sqlEscape kept a raw line break: %q", got)
+	}
 }
 
 // The settings come back as recorded. A setting an older archive doesn't

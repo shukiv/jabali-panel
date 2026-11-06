@@ -687,7 +687,7 @@ func writeTempStr(s string) (string, error) {
 // NO_BACKSLASH_ESCAPES a backslash is stored twice, but the literal holds.
 func sqlEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
-	return strings.ReplaceAll(s, "'", "''")
+	return escapeLineBreaks(strings.ReplaceAll(s, "'", "''"))
 }
 
 // applySystemRestore walks staged restore output and applies the

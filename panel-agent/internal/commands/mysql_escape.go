@@ -37,7 +37,17 @@ func EscapeMariaDBLiteral(s string) (string, error) {
 	// is safe regardless of the session's sql_mode.
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, `'`, `''`)
-	return "'" + s + "'", nil
+	return "'" + escapeLineBreaks(s) + "'", nil
+}
+
+// escapeLineBreaks writes CR and LF as the \r and \n escapes, which the
+// server reads back as the same bytes. A statement then stays on one line:
+// the client reads SQL from stdin line by line and drops the CR of a CRLF,
+// which would change a value that holds one. Apply after doubling
+// backslashes.
+func escapeLineBreaks(s string) string {
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	return strings.ReplaceAll(s, "\n", `\n`)
 }
 
 // EscapeMariaDBGrantDB quotes a database name for a database-level GRANT or
