@@ -43,6 +43,10 @@ type refreshBox struct {
 	aliceDoc, bobDoc, jobs string
 	calls                  []string
 	chowns                 []string
+	cmds                   []*exec.Cmd
+	// onExec, when set, runs as a command starts and may return a shell
+	// snippet for it to run instead of true.
+	onExec func(name string) string
 }
 
 func newRefreshBox(t *testing.T) *refreshBox {
@@ -94,10 +98,17 @@ func newRefreshBox(t *testing.T) *refreshBox {
 	}
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		b.calls = append(b.calls, name+" "+strings.Join(args, " "))
+		cmd := exec.CommandContext(ctx, "true")
 		if name == "mysqldump" {
-			return exec.CommandContext(ctx, "echo", "-- dump")
+			cmd = exec.CommandContext(ctx, "echo", "-- dump")
 		}
-		return exec.CommandContext(ctx, "true")
+		if b.onExec != nil {
+			if run := b.onExec(name); run != "" {
+				cmd = exec.CommandContext(ctx, "sh", "-c", run)
+			}
+		}
+		b.cmds = append(b.cmds, cmd)
+		return cmd
 	}
 	t.Cleanup(func() {
 		lookupRefreshUser, refreshHomeRoot, refreshChownTree, migrationStagingRoots, execCommandContext = prevLookup, prevHome, prevChown, prevRoots, prevExec
@@ -121,7 +132,15 @@ func wantRefreshRefused(t *testing.T, b *refreshBox, what string, err error) {
 	if len(b.calls) != 0 || len(b.chowns) != 0 {
 		t.Errorf("%s: a refused call must run nothing, ran %q, chowned %q", what, b.calls, b.chowns)
 	}
-	b.calls, b.chowns = nil, nil
+	b.calls, b.chowns, b.cmds = nil, nil, nil
+}
+
+// wantPinned checks the i-th command ran in a held directory, not a path.
+func (b *refreshBox) wantPinned(t *testing.T, i int) {
+	t.Helper()
+	if i >= len(b.cmds) || !strings.HasPrefix(b.cmds[i].Dir, "/proc/self/fd/") {
+		t.Fatalf("command %d must run in a held directory, cmds %q", i, b.calls)
+	}
 }
 
 // The refresh writes only inside the dest user's own home, and reads only
@@ -159,9 +178,10 @@ func TestMigrationRefreshFiles_StaysInTheTenantsHomeAndTheStaging(t *testing.T) 
 	if err := b.call(t, migrationRefreshFilesHandler, map[string]string{"source": files, "docroot": b.aliceDoc, "os_user": "alice"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(b.calls) != 1 || !strings.HasPrefix(b.calls[0], "rsync ") || !strings.HasSuffix(b.calls[0], " "+files+"/ "+b.aliceDoc+"/") {
+	if len(b.calls) != 1 || !strings.HasPrefix(b.calls[0], "rsync ") || !strings.HasSuffix(b.calls[0], " "+files+"/ ./") {
 		t.Fatalf("calls %q", b.calls)
 	}
+	b.wantPinned(t, 0)
 	if want := filepath.Join(b.homes, "alice") + " " + b.aliceDoc + " 1001"; len(b.chowns) != 1 || b.chowns[0] != want {
 		t.Fatalf("chowns %q, want %q", b.chowns, want)
 	}
@@ -244,8 +264,38 @@ func TestMigrationRefreshBackup_NeverWritesThroughALink(t *testing.T) {
 	if body, _ := os.ReadFile(dump); string(body) != "-- dump\n" {
 		t.Fatalf("dump body %q", body)
 	}
-	if len(b.calls) != 2 || !strings.HasPrefix(b.calls[0], "cp -al "+b.aliceDoc+" ") {
+	if len(b.calls) != 2 || b.calls[0] != "cp -al -- public_html public_html.pre-refresh-"+stamp {
 		t.Fatalf("calls %q", b.calls)
+	}
+	b.wantPinned(t, 0)
+}
+
+// The docroot's folder swapped for a link to another tenant's after the
+// check: the mirror still runs in the folder that was checked.
+func TestMigrationRefreshFiles_ASwapAfterTheCheckIsNotFollowed(t *testing.T) {
+	b := newRefreshBox(t)
+	aDir := filepath.Dir(b.aliceDoc)
+	b.onExec = func(name string) string {
+		if name != "rsync" {
+			return ""
+		}
+		if err := os.Rename(aDir, aDir+".real"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Dir(b.bobDoc), aDir); err != nil {
+			t.Fatal(err)
+		}
+		return "echo mirrored > marker"
+	}
+	err := b.call(t, migrationRefreshFilesHandler, map[string]string{"source": filepath.Join(b.jobs, "files"), "docroot": b.aliceDoc, "os_user": "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(b.bobDoc, "marker")); err == nil {
+		t.Fatal("the mirror followed the link into bob's docroot")
+	}
+	if body, _ := os.ReadFile(filepath.Join(aDir+".real", "public_html", "marker")); string(body) != "mirrored\n" {
+		t.Fatalf("the mirror did not run in alice's checked docroot: %q", body)
 	}
 }
 

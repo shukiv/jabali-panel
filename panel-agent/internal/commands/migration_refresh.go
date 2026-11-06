@@ -120,6 +120,13 @@ func (t *refreshTenant) dirBelow(p, what string) (string, error) {
 	return resolved, nil
 }
 
+// fdDir is a working directory for a child process: the directory f holds
+// open. The child changes into it before it runs, so the path f was opened
+// by is never looked up again.
+func fdDir(f *os.File) string {
+	return "/proc/self/fd/" + strconv.Itoa(int(f.Fd()))
+}
+
 // refreshStaged resolves a staged source path inside the migration staging
 // roots, links and all.
 func refreshStaged(p, what string) (string, *filesafe.Scope, error) {
@@ -163,31 +170,45 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 	if err != nil {
 		return nil, csInvalidArg(err.Error())
 	}
-	snapshot := docroot + ".pre-refresh-" + p.Stamp
-	if _, sErr := os.Lstat(snapshot); sErr == nil {
+	// The snapshot and the dump go next to the docroot, in a folder the
+	// tenant writes. Hold that folder open (resolved inside the home) and do
+	// everything relative to it: the dump is created new (O_EXCL, O_NOFOLLOW),
+	// so a name the tenant made first, a link included, fails the backup
+	// instead of being written through, and cp runs in the held folder, so a
+	// link swapped into the path since the check is never followed.
+	parent, err := t.scope.OpenDirInScope(filepath.Dir(docroot))
+	if err != nil {
+		return nil, csInvalidArg("docroot's folder: " + err.Error())
+	}
+	defer parent.Close()
+	base := filepath.Base(docroot)
+	snapName := base + ".pre-refresh-" + p.Stamp
+	snapshot := filepath.Join(filepath.Dir(docroot), snapName)
+	var st unix.Stat_t
+	if unix.Fstatat(int(parent.Fd()), snapName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
 		return nil, csInvalidArg("snapshot already exists: " + snapshot)
 	}
-	// The dump sits next to the docroot, in a folder the tenant writes: create
-	// it new (O_EXCL, O_NOFOLLOW) through the home's scope, so a name the
-	// tenant made first, a link included, fails the backup instead of being
-	// written through.
-	dumpPath := filepath.Join(filepath.Dir(docroot), "pre-refresh-"+p.Stamp+".sql")
-	f, fErr := t.scope.CreateExclInScope(dumpPath, 0o600)
+	dumpName := "pre-refresh-" + p.Stamp + ".sql"
+	dumpPath := filepath.Join(filepath.Dir(docroot), dumpName)
+	fd, fErr := unix.Openat(int(parent.Fd()), dumpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if fErr != nil {
 		if errors.Is(fErr, unix.EEXIST) {
 			return nil, csInvalidArg("db dump already exists: " + dumpPath)
 		}
 		return nil, csInternal("create dump", fErr)
 	}
+	f := os.NewFile(uintptr(fd), dumpPath)
 	defer f.Close()
-	if out, cErr := execCommandContext(ctx, "cp", "-al", docroot, snapshot).CombinedOutput(); cErr != nil {
-		_ = t.scope.RemoveInScope(dumpPath, false)
+	cp := execCommandContext(ctx, "cp", "-al", "--", base, snapName)
+	cp.Dir = fdDir(parent)
+	if out, cErr := cp.CombinedOutput(); cErr != nil {
+		_ = unix.Unlinkat(int(parent.Fd()), dumpName, 0)
 		return nil, csInternal("docroot snapshot", fmt.Errorf("%v: %s", cErr, string(out)))
 	}
 	dump := execCommandContext(ctx, "mysqldump", "--single-transaction", "--quick", "--lock-tables=0", "--", p.DBName)
 	dump.Stdout = f
 	if dErr := dump.Run(); dErr != nil {
-		_ = t.scope.RemoveInScope(dumpPath, false)
+		_ = unix.Unlinkat(int(parent.Fd()), dumpName, 0)
 		_ = t.scope.RemoveAllInScope(ctx, snapshot)
 		return nil, csInternal("mysqldump", dErr)
 	}
@@ -227,8 +248,17 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 	for _, ex := range jabaliManagedRefreshExcludes {
 		args = append(args, "--exclude="+ex)
 	}
-	args = append(args, src+"/", docroot+"/")
-	if out, rErr := execCommandContext(ctx, "rsync", args...).CombinedOutput(); rErr != nil {
+	// rsync runs in the docroot it was handed, held open from inside the
+	// home, so a link swapped into the path since the check is never followed.
+	dst, err := t.scope.OpenDirInScope(docroot)
+	if err != nil {
+		return nil, csInvalidArg("dest docroot: " + err.Error())
+	}
+	defer dst.Close()
+	args = append(args, src+"/", "./")
+	rs := execCommandContext(ctx, "rsync", args...)
+	rs.Dir = fdDir(dst)
+	if out, rErr := rs.CombinedOutput(); rErr != nil {
 		return nil, csInternal("rsync mirror", fmt.Errorf("%v: %s", rErr, string(out)))
 	}
 	// <user>:www-data, by file descriptor from the home (never `chown -R`,
