@@ -233,18 +233,21 @@ func dbUserCreate(ctx context.Context, d dbUserCreateDeps, in dbUserCreateInput)
 	}
 
 	// Package quota parity with the REST handler (JAB-282): enforce
-	// max_database_users when the owner has a package. A package-load error is
-	// non-fatal — matches REST, which skips the quota and proceeds.
-	if in.panelUser.PackageID != nil && *in.panelUser.PackageID != "" && d.packages != nil {
-		if pkg, pErr := d.packages.FindByID(ctx, *in.panelUser.PackageID); pErr == nil && pkg.MaxDatabaseUsers > 0 {
-			count, cErr := d.dbUsers.CountByUserID(ctx, in.panelUser.ID)
-			if cErr != nil {
-				return nil, "", fmt.Errorf("quota count: %w", cErr)
-			}
-			if count >= int64(pkg.MaxDatabaseUsers) {
-				return nil, "", fmt.Errorf("quota exceeded: package allows %d database users, %s already has %d",
-					pkg.MaxDatabaseUsers, in.panelUser.ID, count)
-			}
+	// max_database_users from the owner's package. A package that is set but
+	// can't be loaded refuses the create, as REST does. The row insert below
+	// re-checks the cap under a row lock.
+	maxUsers, err := dbops.PackageLimit(ctx, d.packages, in.panelUser, dbops.MaxDatabaseUsers)
+	if err != nil {
+		return nil, "", err
+	}
+	if maxUsers > 0 {
+		count, cErr := d.dbUsers.CountByUserID(ctx, in.panelUser.ID)
+		if cErr != nil {
+			return nil, "", fmt.Errorf("quota count: %w", cErr)
+		}
+		if count >= int64(maxUsers) {
+			return nil, "", fmt.Errorf("quota exceeded: package allows %d database users, %s already has %d",
+				maxUsers, in.panelUser.ID, count)
 		}
 	}
 
@@ -291,7 +294,13 @@ func dbUserCreate(ctx context.Context, d dbUserCreateDeps, in dbUserCreateInput)
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := d.dbUsers.Create(ctx, du); err != nil {
+	insert := d.dbUsers.Create
+	if maxUsers > 0 {
+		insert = func(ctx context.Context, du *models.DatabaseUser) error {
+			return d.dbUsers.CreateWithinCap(ctx, du, maxUsers)
+		}
+	}
+	if err := insert(ctx, du); err != nil {
 		// Compensate: the engine credential is already live. Drop it so a failed
 		// row insert never leaves an orphaned MariaDB user / PostgreSQL role —
 		// the exact bug this closes. Background ctx so a near-deadline create ctx

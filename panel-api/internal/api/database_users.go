@@ -387,24 +387,25 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		return
 	}
 
-	// Enforce max_database_users quota if the user has a package.
-	if user.PackageID != nil && *user.PackageID != "" {
-		pkg, pkgErr := h.cfg.Packages.FindByID(ctx, *user.PackageID)
-		if pkgErr == nil && pkg.MaxDatabaseUsers > 0 {
-			limit := int64(pkg.MaxDatabaseUsers)
-			count, cErr := h.cfg.DatabaseUsers.CountByUserID(ctx, targetUserID)
-			if cErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-				return
-			}
-			if count >= limit {
-				c.JSON(http.StatusConflict, gin.H{
-					"error":    "quota_exceeded",
-					"resource": "database_users",
-					"limit":    limit,
-				})
-				return
-			}
+	// Enforce max_database_users from the owner's package. A package that is
+	// set but can't be loaded refuses the create rather than lifting the cap.
+	// This count is the early answer before any agent call; the insert below
+	// re-checks it under a row lock, so creates at the same time can't both
+	// take the last slot.
+	maxUsers, err := dbops.PackageLimit(ctx, h.cfg.Packages, user, dbops.MaxDatabaseUsers)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "quota_unavailable", "detail": "the hosting package's limits cannot be loaded right now"})
+		return
+	}
+	if maxUsers > 0 {
+		count, cErr := h.cfg.DatabaseUsers.CountByUserID(ctx, targetUserID)
+		if cErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if count >= int64(maxUsers) {
+			dbUserQuotaExceeded(c, maxUsers)
+			return
 		}
 	}
 
@@ -509,17 +510,27 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := h.cfg.DatabaseUsers.Create(ctx, du); err != nil {
-		// On DB failure we've already provisioned the MariaDB user —
-		// roll back so state is consistent.
-		dropCtx, dropCancel := context.WithTimeout(ctx, 30*time.Second)
+	var insertErr error
+	if maxUsers > 0 {
+		insertErr = h.cfg.DatabaseUsers.CreateWithinCap(ctx, du, maxUsers)
+	} else {
+		insertErr = h.cfg.DatabaseUsers.Create(ctx, du)
+	}
+	if insertErr != nil {
+		// The engine account is already live (create_only made it, so it is
+		// ours) — roll it back so state is consistent. A fresh context, so a
+		// request near its deadline still drops it.
+		dropCtx, dropCancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer dropCancel()
 		_, _ = h.cfg.Agent.Call(dropCtx, dbUserCmd(engine, "drop"), dbUserDropParams(engine, finalUsername))
-		if isConflict(err) {
+		switch {
+		case errors.Is(insertErr, repository.ErrDatabaseUserCapExceeded):
+			dbUserQuotaExceeded(c, maxUsers)
+		case isConflict(insertErr):
 			c.JSON(http.StatusConflict, gin.H{"error": "username_exists"})
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 
@@ -527,6 +538,15 @@ func (h *databaseUserHandler) create(c *gin.Context) {
 		ID:       du.ID,
 		Username: du.Username,
 		Password: plainPassword,
+	})
+}
+
+// dbUserQuotaExceeded answers a create over the package's max_database_users.
+func dbUserQuotaExceeded(c *gin.Context, limit uint32) {
+	c.JSON(http.StatusConflict, gin.H{
+		"error":    "quota_exceeded",
+		"resource": "database_users",
+		"limit":    int64(limit),
 	})
 }
 

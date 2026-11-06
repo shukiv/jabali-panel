@@ -130,6 +130,10 @@ func (m *mockDatabaseUserRepo) Create(ctx context.Context, du *models.DatabaseUs
 	return nil
 }
 
+func (m *mockDatabaseUserRepo) CreateWithinCap(ctx context.Context, du *models.DatabaseUser, maxUsers uint32) error {
+	return nil
+}
+
 func (m *mockDatabaseUserRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
