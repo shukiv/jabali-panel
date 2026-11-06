@@ -19,6 +19,7 @@ import { Progress, Tag, Tooltip } from "antd";
 
 import { useMintMailboxSSO, useRotateMailboxPassword } from "../../hooks/useMailboxes";
 import { feedback } from "../../lib/feedback";
+import { openSsoTab, sendSsoTab } from "../../lib/ssoTab";
 import { DatabaseUserPasswordModal } from "../DatabaseUserPasswordModal";
 
 // ---- byte formatting ----------------------------------------------------
@@ -94,29 +95,17 @@ export function useMailboxWebmail() {
 
   const launch = (id: string) => {
     // window.open MUST run synchronously with the click or popup blockers
-    // intercept it; pop a blank tab now, navigate it once the mint responds.
-    const popup = window.open("about:blank", "_blank");
-    if (!popup) {
-      feedback.message.warning(
-        "Browser blocked the webmail popup — allow popups for this site or click again.",
-      );
-      return; // never mint an SSO URL the user can't reach
-    }
-    // JAB-330: sever the opener link BEFORE the async mint so the webmail tab
-    // can never reach back into the panel window (reverse tabnabbing). Must run
-    // synchronously here. (noopener can't be passed to window.open — it returns
-    // null and breaks the synchronous-popup-then-set-href trick.)
-    try {
-      popup.opener = null;
-    } catch {
-      // older Safari — best effort
-    }
+    // intercept it; pop a blank tab now (opener already severed, JAB-330),
+    // navigate it once the mint responds. See lib/ssoTab.
+    const popup = openSsoTab(
+      "Browser blocked the webmail popup — allow popups for this site or click again.",
+    );
+    if (!popup) return; // never mint an SSO URL the user can't reach
     sso.mutate(
       { id },
       {
         onSuccess: (data) => {
-          if (data?.url) popup.location.href = data.url;
-          else popup.close();
+          if (!sendSsoTab(popup, data?.url)) feedback.message.error("Could not open webmail");
         },
         onError: (err: unknown) => {
           popup.close();
