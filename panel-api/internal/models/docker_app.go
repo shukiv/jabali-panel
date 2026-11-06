@@ -114,6 +114,12 @@ const (
 // Uniqueness on (bind_interface, host_port, protocol) is enforced at
 // the DB level (uniq_dapp_pubport_global) so the auto-allocator can
 // rely on INSERT-fail-on-conflict instead of pre-seeding a pool table.
+//
+// ReverseProxy and Enabled carry NO gorm default on purpose: with
+// `default:1` GORM leaves a false bool out of the INSERT and the column's
+// DEFAULT 1 wins, so a port created reverse_proxy=false got an nginx
+// upstream anyway (same scar as cron_job / ftp_account). Every writer sets
+// both; the columns keep DEFAULT 1 from the migration.
 type DockerAppPublishedPort struct {
 	ID            string    `gorm:"type:char(26);primaryKey" json:"id"`
 	AppID         string    `gorm:"column:app_id;type:char(26);not null" json:"app_id"`
@@ -122,8 +128,8 @@ type DockerAppPublishedPort struct {
 	BindInterface string    `gorm:"column:bind_interface;type:varchar(64);not null;default:'loopback'" json:"bind_interface"`
 	HostPort      int       `gorm:"column:host_port;type:int;not null" json:"host_port"`
 	Protocol      string    `gorm:"type:varchar(8);not null;default:'tcp'" json:"protocol"`
-	ReverseProxy  bool      `gorm:"column:reverse_proxy;type:tinyint(1);not null;default:1" json:"reverse_proxy"`
-	Enabled       bool      `gorm:"type:tinyint(1);not null;default:1" json:"enabled"`
+	ReverseProxy  bool      `gorm:"column:reverse_proxy;type:tinyint(1);not null" json:"reverse_proxy"`
+	Enabled       bool      `gorm:"type:tinyint(1);not null" json:"enabled"`
 	CreatedAt     time.Time `gorm:"type:timestamp;not null;default:CURRENT_TIMESTAMP" json:"created_at"`
 }
 
