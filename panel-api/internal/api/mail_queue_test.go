@@ -90,7 +90,7 @@ func TestMailQueue_PagePastTheEndIsEmpty(t *testing.T) {
 		"page=4611686018427387905&page_size=2",
 		"page=9223372036854775807&page_size=2",
 		"page=9223372036854775807",
-		"page=46116860184273880&page_size=200",
+		"page=46116860184273881&page_size=200",
 	} {
 		rec := httptest.NewRecorder()
 		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/mail/queue?"+q, nil))
