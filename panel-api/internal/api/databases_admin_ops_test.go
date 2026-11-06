@@ -14,7 +14,12 @@ import (
 
 // fakeDBAdmin records audit rows; everything else is a no-op stub so it
 // satisfies repository.DBAdminRepository.
-type fakeDBAdmin struct{ audits []models.DBAdminAudit }
+type fakeDBAdmin struct {
+	audits    []models.DBAdminAudit
+	createErr error
+	created   []*models.DBAdminJob
+	finished  chan string // job ids passed to FinishJob, when set
+}
 
 func (f *fakeDBAdmin) Audit(_ context.Context, a models.DBAdminAudit) error {
 	f.audits = append(f.audits, a)
@@ -30,8 +35,19 @@ func (f *fakeDBAdmin) UpsertTuning(context.Context, string, string, string) erro
 func (f *fakeDBAdmin) MarkTuningApplied(context.Context, string, string, time.Time) error {
 	return nil
 }
-func (f *fakeDBAdmin) CreateJob(context.Context, *models.DBAdminJob) error     { return nil }
-func (f *fakeDBAdmin) FinishJob(context.Context, string, string, string) error { return nil }
+func (f *fakeDBAdmin) CreateJob(_ context.Context, j *models.DBAdminJob) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.created = append(f.created, j)
+	return nil
+}
+func (f *fakeDBAdmin) FinishJob(_ context.Context, id, _, _ string) error {
+	if f.finished != nil {
+		f.finished <- id
+	}
+	return nil
+}
 func (f *fakeDBAdmin) GetJob(context.Context, string) (*models.DBAdminJob, error) {
 	return nil, repository.ErrNotFound
 }

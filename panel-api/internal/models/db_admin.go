@@ -33,6 +33,11 @@ type DBAdminJob struct {
 	ActorUserID string     `gorm:"type:char(26);not null" json:"actor_user_id"`
 	StartedAt   time.Time  `gorm:"type:datetime(6);not null" json:"started_at"`
 	FinishedAt  *time.Time `gorm:"type:datetime(6)" json:"finished_at,omitempty"`
+
+	// RunningEngine is Engine while the job runs and NULL once it finishes.
+	// A unique key on it lets the insert refuse a second running job for an
+	// engine. The repository sets and clears it.
+	RunningEngine *string `gorm:"type:varchar(16)" json:"-"`
 }
 
 func (DBAdminJob) TableName() string { return "db_admin_jobs" }
