@@ -135,7 +135,7 @@ export const CreateMailboxWizardModal = ({
           err instanceof Error && err.message
             ? err.message
             : t("createmailboxwizardmodal.extra_failed_unknown", "the request failed");
-        failures.push(`${what}: ${why}`);
+        failures.push(t("createmailboxwizardmodal.extra_failed_line", "{{what}}: {{why}}", { what, why }));
       };
 
       if (values.group_ids?.length) {
@@ -157,7 +157,7 @@ export const CreateMailboxWizardModal = ({
         .map((a) => a.trim().toLowerCase())
         .filter((a) => a.length > 0);
       await Promise.all(
-        aliasParts.map((localPart) =>
+        [...new Set(aliasParts)].map((localPart) =>
           createForwarder
             .mutateAsync({ mailboxID: resp.id, type: "alias", localPart, target: mbEmail })
             .catch(
@@ -183,8 +183,10 @@ export const CreateMailboxWizardModal = ({
           );
       }
       form.resetFields();
+      onCreated(resp);
       if (failures.length > 0) {
         feedback.notification.warning({
+          key: `mailbox-extras-${resp.id}`,
           title: t(
             "createmailboxwizardmodal.extras_failed_title",
             "{{email}} was created, but not all of it was set up",
@@ -193,8 +195,8 @@ export const CreateMailboxWizardModal = ({
           description: (
             <>
               <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
-                {failures.map((f) => (
-                  <li key={f}>{f}</li>
+                {failures.map((f, i) => (
+                  <li key={i}>{f}</li>
                 ))}
               </ul>
               {t(
@@ -206,7 +208,6 @@ export const CreateMailboxWizardModal = ({
           duration: 0,
         });
       }
-      onCreated(resp);
     } catch (err) {
       const detail =
         (err as { response?: { data?: { detail?: string; error?: string } } })?.response
