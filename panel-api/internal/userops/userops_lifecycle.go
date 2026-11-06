@@ -85,6 +85,9 @@ func RotatePassword(ctx context.Context, d Deps, user *models.User, password str
 	if d.Users == nil || d.BcryptCost == 0 {
 		return ErrDeps
 	}
+	if err := CheckPasswordLength(password); err != nil {
+		return err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), d.BcryptCost)
 	if err != nil {
 		return fmt.Errorf("%w: bcrypt: %v", ErrInternal, err)

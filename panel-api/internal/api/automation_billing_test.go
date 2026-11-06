@@ -268,6 +268,20 @@ func TestAutomationUserCreate_ShortPassword422(t *testing.T) {
 	}
 }
 
+// bcrypt hashes at most 72 bytes; a longer password is the caller's input.
+func TestAutomationUserCreate_PasswordOverBcryptLimit422(t *testing.T) {
+	users := newAbUsers()
+	body := `{"email":"a@example.com","password":"` + strings.Repeat("p", 73) + `"}`
+	r := abRouterWithBody(billingCfg(users), billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users", body, billingTok())
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "at most 72 bytes") {
+		t.Fatalf("want 422 naming the 72-byte limit, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(users.created) != 0 {
+		t.Fatalf("no user may be created, got %+v", users.created)
+	}
+}
+
 func TestAutomationUserCreate_IsAdminFieldIgnored(t *testing.T) {
 	// A hostile/buggy caller sending is_admin must never mint an admin.
 	users := newAbUsers()
@@ -390,6 +404,18 @@ func TestAutomationUserPassword_NoKratosIdentity409(t *testing.T) {
 	// No KratosIdentityID on the row → userops.ErrNoKratosIdentity → conflict.
 	if w.Code != http.StatusConflict {
 		t.Fatalf("want 409 for identity-less user, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAutomationUserPassword_OverBcryptLimit422(t *testing.T) {
+	un := "bob"
+	kid := "kratos-1"
+	users := newAbUsers(&models.User{ID: "u1", Email: "b@x.com", Username: &un, KratosIdentityID: &kid})
+	body := `{"password":"` + strings.Repeat("p", 73) + `"}`
+	r := abRouterWithBody(billingCfg(users), billingTok(), body)
+	w := abReq(r, http.MethodPost, "/users/u1/password", body, billingTok())
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "at most 72 bytes") {
+		t.Fatalf("want 422 naming the 72-byte limit, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

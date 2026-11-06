@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/mail"
@@ -339,6 +340,15 @@ func (h *userHandler) create(c *gin.Context) {
 	c.JSON(http.StatusCreated, res.User)
 }
 
+// passwordTooLong answers a password bcrypt cannot hash (over
+// userops.MaxPasswordBytes bytes).
+func passwordTooLong(c *gin.Context) {
+	c.JSON(http.StatusBadRequest, gin.H{
+		"error":  "password_too_long",
+		"detail": fmt.Sprintf("password must be at most %d bytes", userops.MaxPasswordBytes),
+	})
+}
+
 // userOpsRESTError translates userops sentinels to HTTP status + JSON. An
 // error it cannot map is a 500 the caller sees only as "internal", so it is
 // logged (GH #1938: an admin create failed with nothing in the journal).
@@ -354,6 +364,8 @@ func userOpsRESTError(c *gin.Context, log *slog.Logger, err error) {
 			"error":  "invalid_package_id",
 			"detail": "hosting package not found",
 		})
+	case errors.Is(err, userops.ErrPasswordTooLong):
+		passwordTooLong(c)
 	case errors.Is(err, userops.ErrUsernameTaken):
 		c.JSON(http.StatusConflict, gin.H{"error": "username_taken"})
 	case errors.Is(err, userops.ErrEmailTaken):
@@ -510,6 +522,8 @@ func (h *userHandler) update(c *gin.Context) {
 		// The automation API calls the same userops.RotatePassword.
 		if err := userops.RotatePassword(ctx, h.userOpsDeps(), existing, *req.Password); err != nil {
 			switch {
+			case errors.Is(err, userops.ErrPasswordTooLong):
+				passwordTooLong(c)
 			case errors.Is(err, userops.ErrNoKratosIdentity):
 				c.JSON(http.StatusConflict, gin.H{
 					"error":  "no_kratos_identity",
@@ -657,6 +671,12 @@ func (h *userHandler) reprovision(c *gin.Context) {
 	var req reprovisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	// Before the agent call: the OS account is created first, so a password
+	// bcrypt then refuses would leave it set up with no panel hash.
+	if userops.CheckPasswordLength(req.Password) != nil {
+		passwordTooLong(c)
 		return
 	}
 
