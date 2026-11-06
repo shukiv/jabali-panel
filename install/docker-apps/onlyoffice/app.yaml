@@ -2,18 +2,29 @@ slug: onlyoffice
 popularity: 44
 name: ONLYOFFICE Docs
 tags: ["Productivity", "File sharing"]
-version: "9.4.0"
+version: "10.0.0.1"
+# Release track (GH #1956): new installs get ONLYOFFICE Docs 10. Update keeps
+# a 9.x install on its own 9.4.0 image and says why: 10 changes how
+# /converter, /docbuilder and /command take a token, so an app connected to a
+# 9.x install could stop working after a silent move. Moving 9 to 10 needs a
+# reviewed change.
+track: "10"
 description: >-
   ONLYOFFICE Document Server: online editors for documents, spreadsheets, and
   presentations (OOXML-native), used standalone or as the editing backend for
-  Nextcloud, Seafile, and others. Single container bundling its own datastore.
+  Nextcloud, Seafile, and others. Single container; the Community edition
+  keeps editing state in memory and starts no database.
   JWT request-signing is enabled with a generated secret (JWT_SECRET in the
   install .env) — set the same secret in any app that connects to it.
 icon: icon.svg
 upstream: https://github.com/ONLYOFFICE/DocumentServer
 documentation: https://helpcenter.onlyoffice.com/installation/docs-developer-index.aspx
 
-image_channel: onlyoffice/documentserver:9.4.0@sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b
+image_channel: onlyoffice/documentserver:10.0.0.1@sha256:ca17889f10b11141cc6441836aebdd2835cf3e1b49681b2fd6e155c94b7850b3
+held_tracks:
+  - track: "9"
+    version: "9.4.0"
+    image_channel: onlyoffice/documentserver:9.4.0@sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b
 update_mode: manual
 
 resources:
@@ -21,8 +32,11 @@ resources:
   memory: "2g"
   pids: 500
 
-# The documentserver image bundles its own postgres/rabbitmq/redis and runs
-# its entrypoint as root, chowning its data dirs on start — no volume_owner.
+# Neither the 9.4.0 nor the 10 Community image starts its bundled
+# postgres/rabbitmq/redis: run-document-server.sh starts them only when
+# PRODUCT_EDITION is set, and editor state is kept in memory. Both run the
+# entrypoint as root, chowning their data dirs on start — no volume_owner. The
+# db volume stays so the compose is unchanged.
 volumes:
   - name: data
     container_path: /var/www/onlyoffice/Data
