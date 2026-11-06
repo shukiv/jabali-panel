@@ -32,9 +32,9 @@ describe("panelPath", () => {
     expect(panelPath(link)).toBeNull();
   });
 
-  it("drops a link over 2048 bytes", () => {
-    expect(panelPath("/" + "a".repeat(2047))).toBe("/" + "a".repeat(2047));
-    expect(panelPath("/" + "a".repeat(2048))).toBeNull();
+  it("drops a link over 500 bytes", () => {
+    expect(panelPath("/" + "a".repeat(499))).toBe("/" + "a".repeat(499));
+    expect(panelPath("/" + "a".repeat(500))).toBeNull();
   });
 });
 

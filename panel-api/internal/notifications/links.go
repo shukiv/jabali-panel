@@ -1,8 +1,9 @@
 package notifications
 
-// maxPanelPathLen bounds a notification link. The longest one any producer
-// builds is well under 200 bytes.
-const maxPanelPathLen = 2048
+// maxPanelPathLen bounds a notification link at what the bell row stores
+// (notification_history.deeplink is varchar(500)); a longer link would fail
+// that row's insert.
+const maxPanelPathLen = 500
 
 // PanelPath returns link when it is a path inside the panel, such as
 // "/jabali-admin/backups" or "/admin/security?tab=malware", and "" otherwise.

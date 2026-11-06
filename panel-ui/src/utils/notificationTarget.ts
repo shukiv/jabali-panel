@@ -19,6 +19,6 @@ const PANEL_PATH = /^\/(?![/\\])[A-Za-z0-9/\-._~?&=%+:@#!$()*,;]*$/;
 // panel, and null otherwise. The server already keeps links to panel paths;
 // this also covers rows stored before it did.
 export function panelPath(link?: string | null): string | null {
-  if (!link || link.length > 2048 || !PANEL_PATH.test(link)) return null;
+  if (!link || link.length > 500 || !PANEL_PATH.test(link)) return null;
   return link;
 }

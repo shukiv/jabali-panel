@@ -70,6 +70,9 @@ self.addEventListener("push", (event) => {
 // and open "/" instead when it points anywhere else ("https://other",
 // "//other", "/\other", "javascript:").
 function panelTarget(link) {
+  if (typeof link !== "string") {
+    return "/";
+  }
   try {
     const url = new URL(link, self.location.origin);
     if (url.origin === self.location.origin) {

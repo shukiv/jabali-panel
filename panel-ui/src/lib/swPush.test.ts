@@ -16,7 +16,7 @@ interface FakeWindow {
   navigate: ReturnType<typeof vi.fn>;
 }
 
-async function click(deeplink: string, windows: FakeWindow[] = []) {
+async function click(deeplink: unknown, windows: FakeWindow[] = []) {
   const handlers: Record<string, Handler> = {};
   const openWindow = vi.fn(async (_url: string) => undefined);
   const self = {
@@ -46,7 +46,9 @@ const elsewhere = [
   "//elsewhere.example.test/x",
   "/\\elsewhere.example.test/x",
   "javascript:alert(1)",
+  "data:text/html,x",
   "http://panel.example.test:8443/jabali-admin",
+  "https://panel.example.test:9443/jabali-admin",
 ];
 
 describe("sw-push notificationclick", () => {
@@ -61,6 +63,11 @@ describe("sw-push notificationclick", () => {
   });
 
   it.each(elsewhere)("opens / instead of %s", async (link) => {
+    const openWindow = await click(link);
+    expect(openWindow).toHaveBeenCalledWith("/");
+  });
+
+  it.each([42, true, { href: "/x" }, ["/x"]])("opens / for a link that is not a string (%s)", async (link) => {
     const openWindow = await click(link);
     expect(openWindow).toHaveBeenCalledWith("/");
   });

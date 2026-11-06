@@ -55,6 +55,8 @@ func TestPanelPath(t *testing.T) {
 		require.Empty(t, PanelPath(link), "not a panel link: %q", link)
 	}
 	require.Empty(t, PanelPath(""))
+	longest := "/" + strings.Repeat("a", maxPanelPathLen-1)
+	require.Equal(t, longest, PanelPath(longest), "a link of exactly the cap is kept")
 }
 
 func TestStreamMap_KeepsOnlyPanelLinks(t *testing.T) {
