@@ -33,9 +33,10 @@ const DefaultBodyLimitBytes int64 = 1 << 20
 func BodyLimit(limit int64, exempt map[string]struct{}) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		m := c.Request.Method
-		// Body-less methods: handlers never read these bodies, and buffering
+		// Methods whose bodies no handler reads (GET, HEAD, OPTIONS): buffering
 		// them would let a GET with a giant body waste work before the 404.
-		if m != http.MethodPost && m != http.MethodPatch && m != http.MethodPut {
+		// DELETE is capped: some DELETE handlers bind a JSON body.
+		if m != http.MethodPost && m != http.MethodPatch && m != http.MethodPut && m != http.MethodDelete {
 			c.Next()
 			return
 		}
