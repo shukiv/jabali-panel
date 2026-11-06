@@ -16,6 +16,11 @@ type DatabaseUserRepository interface {
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.DatabaseUser, int64, error)
 	CountByUserID(ctx context.Context, userID string) (int64, error)
 	Create(ctx context.Context, du *models.DatabaseUser) error
+	// CreateWithinCap inserts du only while its owner has fewer than
+	// maxUsers database users, else ErrDatabaseUserCapExceeded. The count and
+	// the insert run in one transaction holding the owner's users row FOR
+	// UPDATE. ErrNotFound when the owner row is missing.
+	CreateWithinCap(ctx context.Context, du *models.DatabaseUser, maxUsers uint32) error
 	Delete(ctx context.Context, id string) error
 	UpdatePasswordHash(ctx context.Context, id string, hash string) error
 	// UpdateUsername renames the DB-user row in place (GH #1238 DB re-prefix).
@@ -111,6 +116,11 @@ func (r *databaseUserRepo) CountByUserID(ctx context.Context, userID string) (in
 
 func (r *databaseUserRepo) Create(ctx context.Context, du *models.DatabaseUser) error {
 	return translate(r.db.WithContext(ctx).Create(du).Error)
+}
+
+// CreateWithinCap — see the interface doc and insertWithinOwnerCap.
+func (r *databaseUserRepo) CreateWithinCap(ctx context.Context, du *models.DatabaseUser, maxUsers uint32) error {
+	return insertWithinOwnerCap(ctx, r.db, du.UserID, &models.DatabaseUser{}, du, maxUsers, ErrDatabaseUserCapExceeded)
 }
 
 func (r *databaseUserRepo) Delete(ctx context.Context, id string) error {

@@ -275,7 +275,8 @@ func DropDatabaseUserHost(ctx context.Context, agent AgentCaller, engine, userna
 //  4. collision check on (user_id, finalName)
 //  5. engine gate (postgres requires server_settings)
 //  6. agent.db.create / db.postgres.create_db
-//  7. insert databases row
+//  7. insert databases row, re-checking the quota under a row lock; on a
+//     failed insert, drop the database step 6 made
 func Create(ctx context.Context, d Deps, in CreateInput) (*models.Database, error) {
 	if d.Users == nil || d.Packages == nil || d.Databases == nil || d.Agent == nil {
 		return nil, ErrDeps
@@ -305,17 +306,21 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.Database, erro
 		return nil, ErrUserNoUsername
 	}
 
-	// Quota check.
-	if user.PackageID != nil && *user.PackageID != "" {
-		pkg, err := d.Packages.FindByID(ctx, *user.PackageID)
-		if err == nil && pkg.MaxDatabases > 0 {
-			count, err := d.Databases.CountByUserID(ctx, user.ID)
-			if err != nil {
-				return nil, fmt.Errorf("%w: count databases: %v", ErrInternal, err)
-			}
-			if count >= int64(pkg.MaxDatabases) {
-				return nil, fmt.Errorf("%w: %d/%d databases", ErrQuotaExceeded, count, pkg.MaxDatabases)
-			}
+	// Quota check: the early answer before any agent call. The row insert
+	// below re-checks it under a row lock, so creates at the same time can't
+	// both take the last slot. A package that is set but can't be loaded
+	// refuses the create rather than lifting the cap.
+	maxDatabases, err := PackageLimit(ctx, d.Packages, user, MaxDatabases)
+	if err != nil {
+		return nil, err
+	}
+	if maxDatabases > 0 {
+		count, err := d.Databases.CountByUserID(ctx, user.ID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: count databases: %v", ErrInternal, err)
+		}
+		if count >= int64(maxDatabases) {
+			return nil, fmt.Errorf("%w: %d/%d databases", ErrQuotaExceeded, count, maxDatabases)
 		}
 	}
 
@@ -380,8 +385,28 @@ func Create(ctx context.Context, d Deps, in CreateInput) (*models.Database, erro
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := d.Databases.Create(ctx, row); err != nil {
-		return nil, fmt.Errorf("%w: row insert: %v", ErrInternal, err)
+	var insertErr error
+	if maxDatabases > 0 {
+		insertErr = d.Databases.CreateWithinCap(ctx, row, maxDatabases)
+	} else {
+		insertErr = d.Databases.Create(ctx, row)
+	}
+	if insertErr != nil {
+		// The engine database is already there, and it is ours: db.create
+		// and db.postgres.create_db are a plain CREATE DATABASE, which fails
+		// when the name exists, so a success above means this call made it,
+		// empty. Drop it so a failed insert leaves no database without a row.
+		// A fresh context, so a caller near its deadline still drops it.
+		dropCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		dropErr := DropDatabaseHost(dropCtx, d.Agent, engine, finalName)
+		cancel()
+		if dropErr != nil && d.Log != nil {
+			d.Log.Warn("database create: dropping the new database after a failed insert", "db", finalName, "engine", engine, "err", dropErr)
+		}
+		if errors.Is(insertErr, repository.ErrDatabaseCapExceeded) {
+			return nil, fmt.Errorf("%w: %d databases", ErrQuotaExceeded, maxDatabases)
+		}
+		return nil, fmt.Errorf("%w: row insert: %v", ErrInternal, insertErr)
 	}
 	return row, nil
 }

@@ -17,6 +17,11 @@ type DatabaseRepository interface {
 	ListByUserID(ctx context.Context, userID string, opts ListOptions) ([]models.Database, int64, error)
 	CountByUserID(ctx context.Context, userID string) (int64, error)
 	Create(ctx context.Context, d *models.Database) error
+	// CreateWithinCap inserts d only while its owner has fewer than
+	// maxDatabases databases, else ErrDatabaseCapExceeded. The count and the
+	// insert run in one transaction holding the owner's users row FOR UPDATE.
+	// ErrNotFound when the owner row is missing.
+	CreateWithinCap(ctx context.Context, d *models.Database, maxDatabases uint32) error
 	Delete(ctx context.Context, id string) error
 	ExistsByUserAndName(ctx context.Context, userID, name string) (bool, error)
 	// UpdateName renames the database row in place (GH #1238 DB re-prefix). The
@@ -115,6 +120,11 @@ func (r *databaseRepo) Create(ctx context.Context, d *models.Database) error {
 		return translate(err)
 	}
 	return nil
+}
+
+// CreateWithinCap — see the interface doc and insertWithinOwnerCap.
+func (r *databaseRepo) CreateWithinCap(ctx context.Context, d *models.Database, maxDatabases uint32) error {
+	return insertWithinOwnerCap(ctx, r.db, d.UserID, &models.Database{}, d, maxDatabases, ErrDatabaseCapExceeded)
 }
 
 func (r *databaseRepo) Delete(ctx context.Context, id string) error {

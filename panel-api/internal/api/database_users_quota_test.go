@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -80,5 +82,63 @@ func TestDatabaseUser_Create_AtConfiguredCap_Is409(t *testing.T) {
 		if !strings.Contains(body, `"limit":`+strconv.Itoa(int(cap))) {
 			t.Fatalf("cap=%d: 409 must echo the configured limit; got %s", cap, body)
 		}
+	}
+}
+
+type errPkgs struct{ repository.PackageRepository }
+
+func (errPkgs) FindByID(context.Context, string) (*models.HostingPackage, error) {
+	return nil, errors.New("db down")
+}
+
+// A package that is set but can't be loaded refuses the create (503) before
+// any agent call; it doesn't lift the cap.
+func TestDatabaseUser_Create_PackageLookupError_Is503(t *testing.T) {
+	h := quotaHandler(3, 0)
+	h.cfg.Packages = errPkgs{}
+	w := postCreateDBUser(h) // Agent nil: reaching the agent would 500
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "quota_unavailable") {
+		t.Fatalf("want 503 quota_unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// raceDBUsers passes the early count and then finds the cap reached at the
+// locked insert, as when another create took the last slot in between.
+type raceDBUsers struct {
+	quotaDBUsers
+	inserted bool
+}
+
+func (*raceDBUsers) ExistsByUserAndUsername(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+func (*raceDBUsers) CountByEngineAndUsername(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+func (*raceDBUsers) CreateWithinCap(context.Context, *models.DatabaseUser, uint32) error {
+	return repository.ErrDatabaseUserCapExceeded
+}
+func (r *raceDBUsers) Create(context.Context, *models.DatabaseUser) error {
+	r.inserted = true
+	return nil
+}
+
+func TestDatabaseUser_Create_CapReachedAtInsert_Is409AndDrops(t *testing.T) {
+	h := quotaHandler(3, 2)
+	dbu := &raceDBUsers{quotaDBUsers: quotaDBUsers{n: 2}}
+	h.cfg.DatabaseUsers = dbu
+	ag := agent.NewMockClient().On("db_user.create", map[string]any{}).On("db_user.drop", map[string]any{})
+	h.cfg.Agent = ag
+	w := postCreateDBUser(h)
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "quota_exceeded") {
+		t.Fatalf("want 409 quota_exceeded, got %d: %s", w.Code, w.Body.String())
+	}
+	if dbu.inserted {
+		t.Fatal("row inserted without the cap check")
+	}
+	calls := ag.Calls()
+	if len(calls) != 2 || calls[0].Command != "db_user.create" || calls[1].Command != "db_user.drop" ||
+		!strings.Contains(string(calls[1].Params), "tenant_app_user") {
+		t.Fatalf("want create then drop of tenant_app_user, got %+v", calls)
 	}
 }
