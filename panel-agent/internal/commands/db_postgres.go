@@ -54,6 +54,20 @@ func pgRunSQL(ctx context.Context, sql string) error {
 	return nil
 }
 
+// pgRunSQLStdin is pgRunSQL with the statement on psql's stdin (-f -), for
+// a statement that carries a password, so it stays off the command line.
+func pgRunSQLStdin(ctx context.Context, sql string) error {
+	cmd := sqlOnStdin(ctx, sql, "sudo", "-u", "postgres", "psql",
+		"-v", "ON_ERROR_STOP=1",
+		"-XAtq",
+		"-f", "-")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("psql: %w (stderr/stdout: %s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ---- db.postgres.create_db ----
 
 type dbPgCreateParams struct {
@@ -170,7 +184,7 @@ BEGIN
     ALTER ROLE "%s" WITH LOGIN PASSWORD '%s';
   END IF;
 END $$;`, p.Role, p.Role, p.Password, p.Role, p.Password)
-	if err := pgRunSQL(ctx, sql); err != nil {
+	if err := pgRunSQLStdin(ctx, sql); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "create role: " + err.Error()}
 	}
 	return dbPgCreateResponse{OK: true}, nil

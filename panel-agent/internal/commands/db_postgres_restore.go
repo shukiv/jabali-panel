@@ -304,7 +304,7 @@ BEGIN
     ALTER ROLE "%s" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD '%s';
   END IF;
 END $$;`, shadow, shadow, pwd, shadow, pwd)
-	if err := pgRunSQL(ctx, provision); err != nil {
+	if err := pgRunSQLStdin(ctx, provision); err != nil {
 		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "provision scoped restore role: " + err.Error()}
 	}
 	// Until the swap succeeds, tear down anything we created — the STAGING db

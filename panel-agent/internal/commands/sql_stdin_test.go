@@ -195,6 +195,25 @@ func TestSQLWithSecrets_GoesOnStdin(t *testing.T) {
 		requireSecretOnStdinOnly(t, execs(), "Mk-shadow-0c1d")
 	})
 
+	t.Run("db.postgres.create_role", func(t *testing.T) {
+		execs := recordSQLExecs(t)
+		raw, _ := json.Marshal(dbPgCreateRoleParams{Role: "alice_app", Password: "Mk-pgrole-3e9f"})
+		if _, err := dbPgCreateRoleHandler(ctx, raw); err != nil {
+			t.Fatalf("create role: %v", err)
+		}
+		requireSecretOnStdinOnly(t, execs(), "Mk-pgrole-3e9f")
+	})
+
+	t.Run("db.postgres.shadowadmin.ensure", func(t *testing.T) {
+		execs := recordSQLExecs(t)
+		raw, _ := json.Marshal(dbPostgresShadowadminParams{PanelUsername: "alice"})
+		out, err := dbPostgresShadowadminEnsureHandler(ctx, raw)
+		if err != nil {
+			t.Fatalf("ensure: %v", err)
+		}
+		requireSecretOnStdinOnly(t, execs(), out.(dbPostgresShadowadminResponse).Password)
+	})
+
 	t.Run("system restore statement", func(t *testing.T) {
 		execs := recordSQLExecs(t)
 		stmt := "INSERT IGNORE INTO jabali_kratos.identity_credentials (config) VALUES ('Mk-hash-6e2b')"
