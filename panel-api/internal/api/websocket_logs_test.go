@@ -301,11 +301,17 @@ func TestWithScrollBridge(t *testing.T) {
 		t.Errorf("bridge not appended to a page without </body>: %s", got)
 	}
 
-	// Spare capacity in the cached slice must not be written to.
-	spare := make([]byte, 0, 64)
-	spare = append(spare, "<body></body>"...)
-	_ = withScrollBridge(spare)
-	if tail := string(spare[:cap(spare)][len(spare):]); strings.Trim(tail, "\x00") != "" {
-		t.Errorf("withScrollBridge wrote past the page into its spare capacity: %q", tail)
+	// A cached page with room to spare must still not be written to.
+	roomy := make([]byte, 0, 2*len(goaccessScrollBridge))
+	roomy = append(roomy, "<body></body>"...)
+	got = string(withScrollBridge(roomy))
+	if string(roomy) != "<body></body>" {
+		t.Errorf("the shared page was changed: %q", roomy)
+	}
+	if tail := roomy[len(roomy):cap(roomy)]; strings.Trim(string(tail), "\x00") != "" {
+		t.Errorf("withScrollBridge wrote into the page's spare capacity")
+	}
+	if got != "<body>"+goaccessScrollBridge+"</body>" {
+		t.Errorf("bridge not placed in a roomy page: %q", got)
 	}
 }
