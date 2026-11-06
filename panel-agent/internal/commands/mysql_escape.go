@@ -44,7 +44,8 @@ func EscapeMariaDBLiteral(s string) (string, error) {
 // server reads back as the same bytes. A statement then stays on one line:
 // the client reads SQL from stdin line by line and drops the CR of a CRLF,
 // which would change a value that holds one. Apply after doubling
-// backslashes.
+// backslashes. Like the doubled backslashes, this assumes the default
+// sql_mode: under NO_BACKSLASH_ESCAPES the escapes would be stored as typed.
 func escapeLineBreaks(s string) string {
 	s = strings.ReplaceAll(s, "\r", `\r`)
 	return strings.ReplaceAll(s, "\n", `\n`)

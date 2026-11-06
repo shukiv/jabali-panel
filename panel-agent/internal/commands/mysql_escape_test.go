@@ -73,6 +73,8 @@ func TestEscapeMariaDBLiteral(t *testing.T) {
 		// CR of a CRLF survives the client's line reader.
 		{"a\r\nb", `'a\r\nb'`, false},
 		{"back\\\nslash", `'back\\\nslash'`, false},
+		// A backslash and an r in the value stay two characters.
+		{`not\r a CR`, `'not\\r a CR'`, false},
 	}
 
 	for _, tt := range tests {
