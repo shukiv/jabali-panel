@@ -73,6 +73,38 @@ func TestMailQueue_ListEnvelopeAndDomainFilter(t *testing.T) {
 	assert.Equal(t, 2, env.PageSize)
 }
 
+// A page far past the end is an empty page, including pages so large that
+// page*size does not fit in an int.
+func TestMailQueue_PagePastTheEndIsEmpty(t *testing.T) {
+	mock := agent.NewMockClient().On("mail.queue.list", map[string]any{
+		"data": []map[string]any{
+			{"id": "m1", "from": "b@send.com", "recipients": []string{"x@d1.com"}, "size": 100},
+			{"id": "m2", "from": "b@send.com", "recipients": []string{"y@d2.com"}, "size": 200},
+			{"id": "m3", "from": "z@d1.com", "recipients": []string{"q@other.com"}, "size": 300},
+		},
+		"total": 3,
+	})
+	r := newMailQueueRouter(mock, true)
+	for _, q := range []string{
+		"page=3&page_size=2",
+		"page=4611686018427387905&page_size=2",
+		"page=9223372036854775807&page_size=2",
+		"page=9223372036854775807",
+		"page=46116860184273880&page_size=200",
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/mail/queue?"+q, nil))
+		require.Equal(t, http.StatusOK, rec.Code, q)
+		var env struct {
+			Data  []map[string]any `json:"data"`
+			Total int              `json:"total"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env), q)
+		assert.Empty(t, env.Data, q)
+		assert.Equal(t, 3, env.Total, q)
+	}
+}
+
 func TestMailQueue_RetryDelete(t *testing.T) {
 	mock := agent.NewMockClient().
 		On("mail.queue.retry", map[string]any{"id": "m1", "rescheduled": true}).

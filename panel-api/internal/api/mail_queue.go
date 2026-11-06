@@ -74,10 +74,12 @@ func paginate(in []mailQueueEntry, page, size int) ([]mailQueueEntry, int, int) 
 	if page <= 0 {
 		page = 1
 	}
-	start := (page - 1) * size
-	if start >= len(in) {
+	// Compare page counts, not offsets: (page-1)*size overflows for a huge
+	// page and would start the slice at a negative index.
+	if page-1 >= (len(in)+size-1)/size {
 		return []mailQueueEntry{}, page, size
 	}
+	start := (page - 1) * size
 	end := start + size
 	if end > len(in) {
 		end = len(in)
