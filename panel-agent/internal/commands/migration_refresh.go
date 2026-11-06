@@ -127,6 +127,15 @@ func fdDir(f *os.File) string {
 	return "/proc/self/fd/" + strconv.Itoa(int(f.Fd()))
 }
 
+// openDirAt opens the directory name in dirfd without following a link.
+func openDirAt(dirfd int, name string) (*os.File, error) {
+	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
 // refreshStaged resolves a staged source path inside the migration staging
 // roots, links and all.
 func refreshStaged(p, what string) (string, *filesafe.Scope, error) {
@@ -172,26 +181,44 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 	}
 	// The snapshot and the dump go next to the docroot, in a folder the
 	// tenant writes. Hold that folder open (resolved inside the home) and do
-	// everything relative to it: the dump is created new (O_EXCL, O_NOFOLLOW),
-	// so a name the tenant made first, a link included, fails the backup
-	// instead of being written through, and cp runs in the held folder, so a
-	// link swapped into the path since the check is never followed.
+	// everything relative to it, so a link swapped into the path since the
+	// check is never followed:
+	//   - the snapshot folder is made here, root-only: mkdirat fails on
+	//     anything already at its name, a link included, and the tenant can't
+	//     put anything inside it;
+	//   - the dump is created new (O_EXCL, O_NOFOLLOW);
+	//   - cp copies the held docroot into the held snapshot folder.
 	parent, err := t.scope.OpenDirInScope(filepath.Dir(docroot))
 	if err != nil {
 		return nil, csInvalidArg("docroot's folder: " + err.Error())
 	}
 	defer parent.Close()
+	pfd := int(parent.Fd())
 	base := filepath.Base(docroot)
+	src, err := openDirAt(pfd, base)
+	if err != nil {
+		return nil, csInvalidArg("docroot: " + err.Error())
+	}
+	defer src.Close()
 	snapName := base + ".pre-refresh-" + p.Stamp
 	snapshot := filepath.Join(filepath.Dir(docroot), snapName)
-	var st unix.Stat_t
-	if unix.Fstatat(int(parent.Fd()), snapName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil {
-		return nil, csInvalidArg("snapshot already exists: " + snapshot)
+	if mErr := unix.Mkdirat(pfd, snapName, 0o700); mErr != nil {
+		if errors.Is(mErr, unix.EEXIST) {
+			return nil, csInvalidArg("snapshot already exists: " + snapshot)
+		}
+		return nil, csInternal("create snapshot folder", mErr)
 	}
+	snap, err := openDirAt(pfd, snapName)
+	if err != nil {
+		_ = unix.Unlinkat(pfd, snapName, unix.AT_REMOVEDIR)
+		return nil, csInternal("open snapshot folder", err)
+	}
+	defer snap.Close()
 	dumpName := "pre-refresh-" + p.Stamp + ".sql"
 	dumpPath := filepath.Join(filepath.Dir(docroot), dumpName)
-	fd, fErr := unix.Openat(int(parent.Fd()), dumpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	fd, fErr := unix.Openat(pfd, dumpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if fErr != nil {
+		_ = unix.Unlinkat(pfd, snapName, unix.AT_REMOVEDIR)
 		if errors.Is(fErr, unix.EEXIST) {
 			return nil, csInvalidArg("db dump already exists: " + dumpPath)
 		}
@@ -199,18 +226,26 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 	}
 	f := os.NewFile(uintptr(fd), dumpPath)
 	defer f.Close()
-	cp := execCommandContext(ctx, "cp", "-al", "--", base, snapName)
-	cp.Dir = fdDir(parent)
+	// The held docroot is the child's fd 3.
+	cp := execCommandContext(ctx, "cp", "-al", "--", "/proc/self/fd/3/.", ".")
+	cp.ExtraFiles = []*os.File{src}
+	cp.Dir = fdDir(snap)
+	// Undo on failure, with its own context: ctx may be what just ran out.
+	undo := func() {
+		_ = unix.Unlinkat(pfd, dumpName, 0)
+		_ = t.scope.RemoveAllInScope(context.Background(), snapshot)
+	}
 	if out, cErr := cp.CombinedOutput(); cErr != nil {
-		_ = unix.Unlinkat(int(parent.Fd()), dumpName, 0)
+		undo()
 		return nil, csInternal("docroot snapshot", fmt.Errorf("%v: %s", cErr, string(out)))
 	}
 	dump := execCommandContext(ctx, "mysqldump", "--single-transaction", "--quick", "--lock-tables=0", "--", p.DBName)
 	dump.Stdout = f
+	var dumpErr strings.Builder
+	dump.Stderr = &dumpErr
 	if dErr := dump.Run(); dErr != nil {
-		_ = unix.Unlinkat(int(parent.Fd()), dumpName, 0)
-		_ = t.scope.RemoveAllInScope(ctx, snapshot)
-		return nil, csInternal("mysqldump", dErr)
+		undo()
+		return nil, csInternal("mysqldump", fmt.Errorf("%v: %s", dErr, dumpErr.String()))
 	}
 	return map[string]any{"ok": true, "snapshot": snapshot, "db_dump": dumpPath}, nil
 }

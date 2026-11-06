@@ -264,10 +264,78 @@ func TestMigrationRefreshBackup_NeverWritesThroughALink(t *testing.T) {
 	if body, _ := os.ReadFile(dump); string(body) != "-- dump\n" {
 		t.Fatalf("dump body %q", body)
 	}
-	if len(b.calls) != 2 || b.calls[0] != "cp -al -- public_html public_html.pre-refresh-"+stamp {
+	if len(b.calls) != 2 || b.calls[0] != "cp -al -- /proc/self/fd/3/. ." {
 		t.Fatalf("calls %q", b.calls)
 	}
 	b.wantPinned(t, 0)
+	if n := len(b.cmds[0].ExtraFiles); n != 1 {
+		t.Fatalf("cp must get the held docroot as fd 3, got %d extra files", n)
+	}
+	snap := b.aliceDoc + ".pre-refresh-" + stamp
+	if fi, err := os.Lstat(snap); err != nil || !fi.IsDir() {
+		t.Fatalf("snapshot folder %v %v", fi, err)
+	}
+}
+
+// A link at the snapshot's name, made before the backup or swapped in while
+// cp runs, is never copied into.
+func TestMigrationRefreshBackup_TheSnapshotIsTheFolderItMade(t *testing.T) {
+	const stamp = "20261106-120001"
+	t.Run("a link already at the name", func(t *testing.T) {
+		b := newRefreshBox(t)
+		out := t.TempDir()
+		if err := os.Symlink(out, b.aliceDoc+".pre-refresh-"+stamp); err != nil {
+			t.Fatal(err)
+		}
+		err := b.call(t, migrationRefreshBackupHandler, map[string]string{"docroot": b.aliceDoc, "os_user": "alice", "db_name": "alice_wp", "stamp": stamp})
+		wantRefreshRefused(t, b, "a link at the snapshot name", err)
+		if ents, _ := os.ReadDir(out); len(ents) != 0 {
+			t.Fatalf("the link target got %d entries", len(ents))
+		}
+	})
+	t.Run("swapped for a link while cp runs", func(t *testing.T) {
+		b := newRefreshBox(t)
+		out := t.TempDir()
+		snap := b.aliceDoc + ".pre-refresh-" + stamp
+		b.onExec = func(name string) string {
+			if name != "cp" {
+				return ""
+			}
+			if err := os.Rename(snap, snap+".moved"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(out, snap); err != nil {
+				t.Fatal(err)
+			}
+			return "echo copied > marker"
+		}
+		err := b.call(t, migrationRefreshBackupHandler, map[string]string{"docroot": b.aliceDoc, "os_user": "alice", "db_name": "alice_wp", "stamp": stamp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ents, _ := os.ReadDir(out); len(ents) != 0 {
+			t.Fatalf("cp followed the link: %d entries", len(ents))
+		}
+		if body, _ := os.ReadFile(filepath.Join(snap+".moved", "marker")); string(body) != "copied\n" {
+			t.Fatalf("cp did not run in the folder it made: %q", body)
+		}
+	})
+	t.Run("a docroot straight in the home", func(t *testing.T) {
+		b := newRefreshBox(t)
+		doc := filepath.Join(b.homes, "alice", "public_html")
+		if err := os.Mkdir(doc, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := b.call(t, migrationRefreshBackupHandler, map[string]string{"docroot": doc, "os_user": "alice", "db_name": "alice_wp", "stamp": stamp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range []string{doc + ".pre-refresh-" + stamp, filepath.Join(b.homes, "alice", "pre-refresh-"+stamp+".sql")} {
+			if _, err := os.Lstat(p); err != nil {
+				t.Fatalf("%s: %v", p, err)
+			}
+		}
+	})
 }
 
 // The docroot's folder swapped for a link to another tenant's after the
