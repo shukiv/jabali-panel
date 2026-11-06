@@ -1573,6 +1573,27 @@ func resolveHTTPSFlags(p *domainCreateParams) (redirectHTTPS, serveHTTPS bool) {
 	return redirectHTTPS, serveHTTPS
 }
 
+// docRootUnsafeChars are the bytes a document root may not carry: each would
+// end the `root` directive, open or close a block, start a comment or a
+// variable, quote the value, or split the line. This is a denylist on purpose:
+// existing rows may hold any well-formed path, and a tight allowlist here
+// would fail every reconcile of every domain.
+const docRootUnsafeChars = ";{}#$\"'\\ \t\r\n\x7f"
+
+// validateDocRootForNginx rejects a doc_root that would change the nginx config
+// it is rendered into (the `root` directive and the ACME location both use it).
+func validateDocRootForNginx(docRoot string) error {
+	if strings.Contains(docRoot, "..") {
+		return fmt.Errorf("path traversal not allowed")
+	}
+	for _, r := range docRoot {
+		if r < 0x20 || strings.ContainsRune(docRootUnsafeChars, r) {
+			return fmt.Errorf("character %q not allowed", r)
+		}
+	}
+	return nil
+}
+
 func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p domainCreateParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -1621,6 +1642,12 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
 			Message: fmt.Sprintf("invalid doc_root %q: must start with /home/", p.DocRoot),
+		}
+	}
+	if err := validateDocRootForNginx(p.DocRoot); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeInvalidArgument,
+			Message: fmt.Sprintf("invalid doc_root %q: %v", p.DocRoot, err),
 		}
 	}
 

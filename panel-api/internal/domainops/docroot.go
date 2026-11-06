@@ -3,6 +3,7 @@ package domainops
 import (
 	"errors"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -34,7 +35,14 @@ var (
 	// ErrDocRootOutsideDomain means the document root escapes the domain's own
 	// /home/<user>/domains/<domain>/ tree (tenant confinement).
 	ErrDocRootOutsideDomain = errors.New("domainops: document root outside domain directory")
+	// ErrDocRootBadChars means the document root holds a character outside
+	// letters, digits, dot, underscore, slash and hyphen. The value is written
+	// into an nginx `root` directive, so anything else can change the config.
+	ErrDocRootBadChars = errors.New("domainops: document root has disallowed characters")
 )
+
+// docRootCharset is the tenant write-path allowlist for a document root.
+var docRootCharset = regexp.MustCompile(`^[A-Za-z0-9._/-]+$`)
 
 // ValidateDocumentRoot is the operator/admin confinement: an empty path is the
 // default (returns nil), otherwise the path must be under /home/<user>/ with no
@@ -65,6 +73,9 @@ func ValidateTenantDocumentRoot(docRoot, username, domainName string) error {
 	}
 	if strings.Contains(docRoot, "..") {
 		return ErrDocRootTraversal
+	}
+	if !docRootCharset.MatchString(docRoot) {
+		return ErrDocRootBadChars
 	}
 	clean := filepath.Clean(docRoot)
 	base := "/home/" + username + "/domains/" + domainName
