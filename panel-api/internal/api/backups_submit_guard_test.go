@@ -47,6 +47,15 @@ func (r *guardJobsRepo) ListByRun(context.Context, string) ([]models.BackupJob, 
 	return r.run, nil
 }
 
+func (r *guardJobsRepo) Get(_ context.Context, id string) (*models.BackupJob, error) {
+	for i := range r.run {
+		if r.run[i].ID == id {
+			return &r.run[i], nil
+		}
+	}
+	return nil, repository.ErrNotFound
+}
+
 type guardDests struct {
 	repository.BackupDestinationRepository
 }
@@ -57,14 +66,20 @@ func (guardDests) ListEnabled(context.Context) ([]models.BackupDestination, erro
 
 type guardUsers struct {
 	repository.UserRepository
+	admin bool
 }
 
-func (guardUsers) FindByID(_ context.Context, id string) (*models.User, error) {
+func (u guardUsers) FindByID(_ context.Context, id string) (*models.User, error) {
 	name := "u" + strings.ToLower(id)
-	return &models.User{ID: id, Username: &name}, nil
+	return &models.User{ID: id, Username: &name, IsAdmin: u.admin}, nil
 }
 
 func guardCall(t *testing.T, handler func(*gin.Context), body string, params gin.Params) *httptest.ResponseRecorder {
+	t.Helper()
+	return guardCallAs(t, "admin1", handler, body, params)
+}
+
+func guardCallAs(t *testing.T, userID string, handler func(*gin.Context), body string, params gin.Params) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
@@ -72,7 +87,7 @@ func guardCall(t *testing.T, handler func(*gin.Context), body string, params gin
 	c.Request = httptest.NewRequest(http.MethodPost, "/x", bytes.NewReader([]byte(body)))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Params = params
-	ginctx.SetClaims(c, &auth.AccessClaims{UserID: "admin1", IsAdmin: true})
+	ginctx.SetClaims(c, &auth.AccessClaims{UserID: userID, IsAdmin: userID == "admin1"})
 	handler(c)
 	return rec
 }
@@ -206,5 +221,35 @@ func TestPHPInstall_RefusedWhileTheVersionIsInstalling(t *testing.T) {
 	}
 	if n := len(mock.Calls()); n != 0 {
 		t.Fatalf("agent called %d times, want none", n)
+	}
+}
+
+// The account owner's own starts share the guard (and the slot key) with the
+// admin's.
+func TestMeCreate_RefusedWhileABackupIsPending(t *testing.T) {
+	jobs := &guardJobsRepo{active: map[string]bool{models.BackupJobKindAccountBackup + ":GUARDU5": true}}
+	h := &meBackupHandler{cfg: MeBackupsHandlerConfig{Jobs: jobs, Users: guardUsers{admin: true}}}
+
+	rec := guardCallAs(t, "GUARDU5", h.create, `{}`, nil)
+
+	want409(t, rec, "backup_in_progress")
+	if len(jobs.created) != 0 {
+		t.Fatalf("created %d jobs, want none", len(jobs.created))
+	}
+}
+
+func TestMeRestoreSelective_RefusedWhileARestoreIsPending(t *testing.T) {
+	jobs := &guardJobsRepo{
+		active: map[string]bool{models.BackupJobKindAccountRestore + ":GUARDU6": true},
+		run:    []models.BackupJob{{ID: "bk1", UserID: "GUARDU6", Status: models.BackupJobStatusSucceeded, SnapshotID: "s1"}},
+	}
+	ag := &cancelAgent{}
+	h := &meBackupHandler{cfg: MeBackupsHandlerConfig{Jobs: jobs, Agent: ag, Users: guardUsers{}}}
+
+	rec := guardCallAs(t, "GUARDU6", h.restoreSelective, `{"home":true}`, gin.Params{{Key: "id", Value: "bk1"}})
+
+	want409(t, rec, "restore_in_progress")
+	if len(jobs.created) != 0 || ag.calls != 0 {
+		t.Fatalf("created %d jobs and made %d agent calls, want none", len(jobs.created), ag.calls)
 	}
 }

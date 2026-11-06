@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // Double-submit guards for the starts that hand privileged work to the agent.
@@ -23,19 +24,20 @@ var (
 )
 
 // claimBackupSubmit takes the submit slot for (userID, kind) and refuses when
-// userID already has a queued or running job of kind. When ok is false the
-// response is written. Otherwise the caller calls release once its insert is
-// done (a defer in the handler is fine).
-func (h *backupHandler) claimBackupSubmit(c *gin.Context, userID, kind, code, detail string) (release func(), ok bool) {
+// userID already has a pending job of kind (HasActiveOfKind). When ok is false
+// the response is written. Otherwise the caller calls release once its insert
+// is done (a defer in the handler is fine).
+func claimBackupSubmit(c *gin.Context, jobs repository.BackupJobRepository, logErr func(string, error, ...any),
+	userID, kind, code, detail string) (release func(), ok bool) {
 	release, ok = backupSubmits.TryAcquire(kind + ":" + userID)
 	if !ok {
 		c.JSON(http.StatusConflict, gin.H{"status": "error", "error": code, "detail": detail})
 		return nil, false
 	}
-	active, err := h.cfg.Jobs.HasActiveOfKind(c.Request.Context(), userID, kind)
+	active, err := jobs.HasActiveOfKind(c.Request.Context(), userID, kind)
 	if err != nil {
 		release()
-		h.cfg.logErr("check active backup jobs", err, "user_id", userID, "kind", kind)
+		logErr("check active backup jobs", err, "user_id", userID, "kind", kind)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"status": "error", "error": "job_check_unavailable", "detail": "could not check for a job already in progress; try again"})
 		return nil, false
 	}

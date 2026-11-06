@@ -61,9 +61,11 @@ type BackupJobRepository interface {
 	// window lets the cadence pile unbounded duplicate jobs and starve every
 	// other backup (JAB-361).
 	HasPendingForTarget(ctx context.Context, scheduleID, destinationID, userID string) (bool, error)
-	// HasActiveOfKind reports whether userID has a queued or running job of
-	// kind. The manual backup and restore starts use it to refuse a second
-	// submit while the first is still pending.
+	// HasActiveOfKind reports whether userID has a running job of kind, or
+	// one queued within the last ActiveQueuedWindow. The manual backup and
+	// restore starts use it to refuse a second submit while the first is
+	// still pending. The finalizer's stall sweep ends running jobs; nothing
+	// ends a queued one, so an older queued job no longer blocks a start.
 	HasActiveOfKind(ctx context.Context, userID, kind string) (bool, error)
 	ListQueuedOldest(ctx context.Context, limit int) ([]models.BackupJob, error)
 	// ListRunning is the finalizer's worklist. It must query status
@@ -328,12 +330,16 @@ func (r *backupJobRepo) HasPendingForTarget(ctx context.Context, scheduleID, des
 	return n > 0, nil
 }
 
+// ActiveQueuedWindow is how long a queued job counts as pending for
+// HasActiveOfKind.
+const ActiveQueuedWindow = 6 * time.Hour
+
 func (r *backupJobRepo) HasActiveOfKind(ctx context.Context, userID, kind string) (bool, error) {
 	var n int64
 	err := r.db.WithContext(ctx).
 		Model(&models.BackupJob{}).
-		Where("user_id = ? AND kind = ? AND status IN ?", userID, kind,
-			[]string{models.BackupJobStatusQueued, models.BackupJobStatusRunning}).
+		Where("user_id = ? AND kind = ? AND (status = ? OR (status = ? AND created_at > ?))", userID, kind,
+			models.BackupJobStatusRunning, models.BackupJobStatusQueued, time.Now().UTC().Add(-ActiveQueuedWindow)).
 		Limit(1).
 		Count(&n).Error
 	if err != nil {
