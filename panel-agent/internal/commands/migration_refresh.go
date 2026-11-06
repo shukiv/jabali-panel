@@ -3,12 +3,19 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/filesafe"
 )
 
 // migration_refresh.go — GH #646. Re-migration/refresh writers. The refresh is
@@ -34,14 +41,97 @@ var jabaliManagedRefreshExcludes = []string{
 	"wp-content/mu-plugins/jabali-sso-*.php",
 }
 
-func refreshValidateCommon(docroot, osUser string) (string, error) {
-	if !strings.HasPrefix(docroot, "/home/") || strings.Contains(docroot, "..") {
-		return "", fmt.Errorf("docroot must be under /home with no ..")
-	}
+// Test seams: the account lookup, where homes live, and the tree chown.
+var (
+	lookupRefreshUser = user.Lookup
+	refreshHomeRoot   = "/home"
+	refreshChownTree  = chownTreeRecursive
+)
+
+// refreshTenant is the dest account of a refresh: a hosting user (uid in the
+// tenant range, home <refreshHomeRoot>/<os_user>). Every dest path a refresh
+// writes is resolved inside that home, and every source path inside the
+// migration staging roots, the same way migration.import_home does.
+type refreshTenant struct {
+	name     string
+	uid, gid int
+	home     string // <refreshHomeRoot>/<name>
+	anchor   string // home with a linked /home resolved, for the fd walks
+	scope    *filesafe.Scope
+}
+
+func resolveRefreshTenant(osUser string) (*refreshTenant, error) {
 	if !refreshOSUserRE.MatchString(osUser) {
-		return "", fmt.Errorf("invalid os_user")
+		return nil, errors.New("invalid os_user")
 	}
-	return filepath.Clean(docroot), nil
+	u, err := lookupRefreshUser(osUser)
+	if err != nil {
+		return nil, fmt.Errorf("os_user %q not found", osUser)
+	}
+	uid, uerr := strconv.Atoi(u.Uid)
+	gid, gerr := strconv.Atoi(u.Gid)
+	if uerr != nil || gerr != nil || uid < minTenantUID || uid >= 60000 {
+		return nil, fmt.Errorf("os_user %q is not a hosting user", osUser)
+	}
+	home := refreshHomeRoot + "/" + osUser
+	if u.HomeDir != home {
+		return nil, fmt.Errorf("os_user %q home is %q, not %s", osUser, u.HomeDir, home)
+	}
+	anchor := home
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		anchor = resolved
+	}
+	roots := []string{home}
+	if anchor != home {
+		roots = append(roots, anchor)
+	}
+	scope, err := filesafe.NewScope(osUser, osUser, roots)
+	if err != nil {
+		return nil, fmt.Errorf("home scope: %w", err)
+	}
+	return &refreshTenant{name: osUser, uid: uid, gid: gid, home: home, anchor: anchor, scope: scope}, nil
+}
+
+// below resolves p, which must be strictly inside the tenant's home, links
+// and all. It returns the resolved path.
+func (t *refreshTenant) below(p, what string) (string, error) {
+	if !filepath.IsAbs(p) || filepath.Clean(p) != p {
+		return "", fmt.Errorf("%s must be an absolute, clean path", what)
+	}
+	resolved, err := t.scope.Resolve(p)
+	if err != nil {
+		return "", fmt.Errorf("%s must be inside %s: %v", what, t.home, err)
+	}
+	if resolved == t.home || resolved == t.anchor {
+		return "", fmt.Errorf("%s must be below %s, not the home itself", what, t.home)
+	}
+	return resolved, nil
+}
+
+// dirBelow is below for a path that must be an existing directory.
+func (t *refreshTenant) dirBelow(p, what string) (string, error) {
+	resolved, err := t.below(p, what)
+	if err != nil {
+		return "", err
+	}
+	if fi, sErr := os.Lstat(resolved); sErr != nil || !fi.IsDir() {
+		return "", fmt.Errorf("%s does not exist", what)
+	}
+	return resolved, nil
+}
+
+// refreshStaged resolves a staged source path inside the migration staging
+// roots, links and all.
+func refreshStaged(p, what string) (string, *filesafe.Scope, error) {
+	scope, err := filesafe.NewScope("refresh", "migration", migrationStagingRoots)
+	if err != nil {
+		return "", nil, fmt.Errorf("staging scope: %w", err)
+	}
+	resolved, err := scope.Resolve(p)
+	if err != nil {
+		return "", nil, fmt.Errorf("%s must be inside %s: %v", what, strings.Join(migrationStagingRoots, " or "), err)
+	}
+	return resolved, scope, nil
 }
 
 type refreshBackupParams struct {
@@ -59,37 +149,46 @@ func migrationRefreshBackupHandler(ctx context.Context, raw json.RawMessage) (an
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, csInvalidArg("bad params")
 	}
-	docroot, err := refreshValidateCommon(p.Docroot, p.OSUser)
-	if err != nil {
-		return nil, csInvalidArg(err.Error())
-	}
 	if !refreshDBNameRE.MatchString(p.DBName) {
 		return nil, csInvalidArg("invalid db_name")
 	}
 	if !refreshStampRE.MatchString(p.Stamp) {
 		return nil, csInvalidArg("stamp must be YYYYMMDD-HHMMSS")
 	}
-	if fi, sErr := os.Stat(docroot); sErr != nil || !fi.IsDir() {
-		return nil, csInvalidArg("docroot does not exist")
+	t, err := resolveRefreshTenant(p.OSUser)
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
+	}
+	docroot, err := t.dirBelow(p.Docroot, "docroot")
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
 	}
 	snapshot := docroot + ".pre-refresh-" + p.Stamp
-	if _, sErr := os.Stat(snapshot); sErr == nil {
+	if _, sErr := os.Lstat(snapshot); sErr == nil {
 		return nil, csInvalidArg("snapshot already exists: " + snapshot)
 	}
-	if out, cErr := execCommandContext(ctx, "cp", "-al", docroot, snapshot).CombinedOutput(); cErr != nil {
-		return nil, csInternal("docroot snapshot", fmt.Errorf("%v: %s", cErr, string(out)))
-	}
+	// The dump sits next to the docroot, in a folder the tenant writes: create
+	// it new (O_EXCL, O_NOFOLLOW) through the home's scope, so a name the
+	// tenant made first, a link included, fails the backup instead of being
+	// written through.
 	dumpPath := filepath.Join(filepath.Dir(docroot), "pre-refresh-"+p.Stamp+".sql")
-	f, fErr := os.Create(dumpPath)
+	f, fErr := t.scope.CreateExclInScope(dumpPath, 0o600)
 	if fErr != nil {
+		if errors.Is(fErr, unix.EEXIST) {
+			return nil, csInvalidArg("db dump already exists: " + dumpPath)
+		}
 		return nil, csInternal("create dump", fErr)
 	}
 	defer f.Close()
+	if out, cErr := execCommandContext(ctx, "cp", "-al", docroot, snapshot).CombinedOutput(); cErr != nil {
+		_ = t.scope.RemoveInScope(dumpPath, false)
+		return nil, csInternal("docroot snapshot", fmt.Errorf("%v: %s", cErr, string(out)))
+	}
 	dump := execCommandContext(ctx, "mysqldump", "--single-transaction", "--quick", "--lock-tables=0", "--", p.DBName)
 	dump.Stdout = f
 	if dErr := dump.Run(); dErr != nil {
-		_ = os.Remove(dumpPath)
-		_ = os.RemoveAll(snapshot)
+		_ = t.scope.RemoveInScope(dumpPath, false)
+		_ = t.scope.RemoveAllInScope(ctx, snapshot)
 		return nil, csInternal("mysqldump", dErr)
 	}
 	return map[string]any{"ok": true, "snapshot": snapshot, "db_dump": dumpPath}, nil
@@ -109,19 +208,20 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, csInvalidArg("bad params")
 	}
-	docroot, err := refreshValidateCommon(p.Docroot, p.OSUser)
+	t, err := resolveRefreshTenant(p.OSUser)
 	if err != nil {
 		return nil, csInvalidArg(err.Error())
 	}
-	src := filepath.Clean(p.Source)
-	if !strings.HasPrefix(src, "/") || strings.Contains(src, "..") {
-		return nil, csInvalidArg("source must be an absolute path with no ..")
+	docroot, err := t.dirBelow(p.Docroot, "dest docroot")
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
 	}
-	if fi, sErr := os.Stat(src); sErr != nil || !fi.IsDir() {
+	src, _, err := refreshStaged(p.Source, "source")
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
+	}
+	if fi, sErr := os.Lstat(src); sErr != nil || !fi.IsDir() {
 		return nil, csInvalidArg("source dir does not exist")
-	}
-	if fi, dErr := os.Stat(docroot); dErr != nil || !fi.IsDir() {
-		return nil, csInvalidArg("dest docroot does not exist")
 	}
 	args := []string{"-rlptD", "--delete"}
 	for _, ex := range jabaliManagedRefreshExcludes {
@@ -131,8 +231,17 @@ func migrationRefreshFilesHandler(ctx context.Context, raw json.RawMessage) (any
 	if out, rErr := execCommandContext(ctx, "rsync", args...).CombinedOutput(); rErr != nil {
 		return nil, csInternal("rsync mirror", fmt.Errorf("%v: %s", rErr, string(out)))
 	}
-	if out, cErr := execCommandContext(ctx, "chown", "-R", p.OSUser+":www-data", docroot).CombinedOutput(); cErr != nil {
-		return nil, csInternal("chown docroot", fmt.Errorf("%v: %s", cErr, string(out)))
+	// <user>:www-data, by file descriptor from the home (never `chown -R`,
+	// which follows a link out of the tree). Without a www-data group the
+	// user's own group, as migration.import_home does.
+	gid := t.gid
+	if g, gErr := user.LookupGroup("www-data"); gErr == nil {
+		if n, aErr := strconv.Atoi(g.Gid); aErr == nil {
+			gid = n
+		}
+	}
+	if cErr := refreshChownTree(t.anchor, docroot, t.uid, gid); cErr != nil {
+		return nil, csInternal("chown docroot", cErr)
 	}
 	return map[string]any{"ok": true}, nil
 }
@@ -153,11 +262,16 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if !refreshDBNameRE.MatchString(p.DBName) {
 		return nil, csInvalidArg("invalid db_name")
 	}
-	sql := filepath.Clean(p.SQLPath)
-	if !strings.HasPrefix(sql, "/") || strings.Contains(sql, "..") {
-		return nil, csInvalidArg("sql_path must be absolute with no ..")
+	sql, stage, err := refreshStaged(p.SQLPath, "sql_path")
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
 	}
-	if fi, sErr := os.Stat(sql); sErr != nil || fi.IsDir() {
+	f, fErr := stage.OpenInScope(sql, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
+	if fErr != nil {
+		return nil, csInvalidArg("sql dump not found")
+	}
+	defer f.Close()
+	if fi, sErr := f.Stat(); sErr != nil || !fi.Mode().IsRegular() {
 		return nil, csInvalidArg("sql dump not found")
 	}
 	tblOut, tErr := execCommandContext(ctx, "mysql", "-N", "-e", "SHOW TABLES", "--", p.DBName).Output()
@@ -177,11 +291,6 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 	if out, dErr := dropCmd.CombinedOutput(); dErr != nil {
 		return nil, csInternal("drop dest tables", fmt.Errorf("%v: %s", dErr, string(out)))
 	}
-	f, fErr := os.Open(sql)
-	if fErr != nil {
-		return nil, csInternal("open dump", fErr)
-	}
-	defer f.Close()
 	imp := execCommandContext(ctx, "mysql", "--", p.DBName)
 	imp.Stdin = f
 	if out, iErr := imp.CombinedOutput(); iErr != nil {
@@ -189,7 +298,6 @@ func migrationRefreshDBHandler(ctx context.Context, raw json.RawMessage) (any, e
 	}
 	return map[string]any{"ok": true}, nil
 }
-
 
 type refreshReconcileParams struct {
 	OSUser      string `json:"os_user"`
@@ -209,11 +317,12 @@ func migrationRefreshReconcileHandler(ctx context.Context, raw json.RawMessage) 
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, csInvalidArg("bad params")
 	}
-	if !refreshOSUserRE.MatchString(p.OSUser) {
-		return nil, csInvalidArg("invalid os_user")
+	t, err := resolveRefreshTenant(p.OSUser)
+	if err != nil {
+		return nil, csInvalidArg(err.Error())
 	}
-	if !strings.HasPrefix(p.InstallPath, "/home/") || strings.Contains(p.InstallPath, "..") {
-		return nil, csInvalidArg("install_path must be under /home with no ..")
+	if _, err := t.below(p.InstallPath, "install_path"); err != nil {
+		return nil, csInvalidArg(err.Error())
 	}
 	warnings := []string{}
 	// 1. Site-URL rewrite when the domain/path changed. SECURITY: OldURL/NewURL
