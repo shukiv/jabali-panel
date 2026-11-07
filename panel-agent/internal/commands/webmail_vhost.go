@@ -434,6 +434,28 @@ func (p *webmailVhostApplyParams) resolveMailHostnames() error {
 	return nil
 }
 
+// validateNginxValues refuses a param that would change the rendered vhost
+// (the mail hostnames are checked by resolveMailHostnames).
+func (p *webmailVhostApplyParams) validateNginxValues() error {
+	for _, n := range [][2]string{{"domain_name", p.DomainName}, {"panel_hostname", p.PanelHostname}} {
+		if err := validateNginxName(n[0], n[1]); err != nil {
+			return err
+		}
+	}
+	for _, f := range [][2]string{{"ssl_cert_path", p.SSLCertPath}, {"ssl_key_path", p.SSLKeyPath}, {"doc_root", p.DocRoot}} {
+		if f[1] == "" {
+			continue
+		}
+		if err := validateNginxPath(f[0], f[1]); err != nil {
+			return err
+		}
+	}
+	if err := validateListenIP("listen_ipv4", p.ListenIPv4, true); err != nil {
+		return err
+	}
+	return validateListenIP("listen_ipv6", p.ListenIPv6, false)
+}
+
 type webmailVhostResponse struct {
 	Ok      bool   `json:"ok"`
 	Path    string `json:"path,omitempty"`
@@ -449,6 +471,9 @@ func webmailVhostApplyHandler(ctx context.Context, params json.RawMessage) (any,
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("parse params: %v", err)}
 	}
 	if err := validateDomainNameForShell(p.DomainName); err != nil {
+		return nil, err
+	}
+	if err := p.validateNginxValues(); err != nil {
 		return nil, err
 	}
 	if !p.ChallengeOnly && (p.SSLCertPath == "" || p.SSLKeyPath == "") {
