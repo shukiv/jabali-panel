@@ -19,7 +19,8 @@ TOKEN="$(jh_env TOKEN)"
 API="$(jh_env API)"
 : "${TOKEN:?}" "${API:?}"
 
-curl -4 -sS --max-time 30 -o /dev/null \
+# The token goes in the body on stdin, never in argv.
+printf '{"token":"%s"}' "$TOKEN" | curl -4 -sS --max-time 30 -o /dev/null \
   -H 'Content-Type: application/json' \
-  -d "{\"token\":\"${TOKEN}\"}" \
+  --data-binary @- \
   "${API}/v1/acme/cleanup" || true
