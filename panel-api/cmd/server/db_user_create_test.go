@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -33,8 +34,11 @@ type fakeCreateDBUsers struct {
 	count      int64
 	exists     bool
 	failCreate bool
-	created    *models.DatabaseUser
-	taken      map[string]bool // "<engine>|<username>" another tenant's row has
+	// atInsert, when set, is the count the locked insert sees: another
+	// create landed between the early count and the insert.
+	atInsert *int64
+	created  *models.DatabaseUser
+	taken    map[string]bool // "<engine>|<username>" another tenant's row has
 }
 
 func (f *fakeCreateDBUsers) CountByEngineAndUsername(_ context.Context, engine, username string) (int64, error) {
@@ -56,6 +60,17 @@ func (f *fakeCreateDBUsers) Create(_ context.Context, du *models.DatabaseUser) e
 	}
 	f.created = du
 	return nil
+}
+
+func (f *fakeCreateDBUsers) CreateWithinCap(ctx context.Context, du *models.DatabaseUser, maxUsers uint32) error {
+	n := f.count
+	if f.atInsert != nil {
+		n = *f.atInsert
+	}
+	if n >= int64(maxUsers) {
+		return repository.ErrDatabaseUserCapExceeded
+	}
+	return f.Create(ctx, du)
 }
 
 type fakeCreatePackages struct {
@@ -197,5 +212,64 @@ func TestDBUserCreate_RefusesAnotherTenantsAccount(t *testing.T) {
 	}
 	if len(ag.params) != 1 || ag.params[0]["create_only"] != true {
 		t.Fatalf("want create_only on db_user.create, got %v", ag.params)
+	}
+}
+
+// Another create took the last slot between the early count and the insert:
+// the locked insert refuses, and the engine credential this call made is
+// dropped again.
+func TestDBUserCreate_CapReachedAtInsert_RollsBack(t *testing.T) {
+	ag := &recCreateAgent{}
+	full := int64(3)
+	dbu := &fakeCreateDBUsers{count: 2, atInsert: &full}
+	pkgs := fakeCreatePackages{pkg: &models.HostingPackage{MaxDatabaseUsers: 3}}
+	_, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, pkgs),
+		dbUserCreateInput{panelUser: packagedUser(), name: "app"})
+	if !errors.Is(err, repository.ErrDatabaseUserCapExceeded) {
+		t.Fatalf("err = %v, want the cap error", err)
+	}
+	if dbu.created != nil {
+		t.Fatal("row inserted over the cap")
+	}
+	if len(ag.calls) != 2 || ag.calls[0] != "db_user.create" || ag.calls[1] != "db_user.drop" {
+		t.Fatalf("want create then drop, got %v", ag.calls)
+	}
+}
+
+type errCreatePackages struct{ repository.PackageRepository }
+
+func (errCreatePackages) FindByID(context.Context, string) (*models.HostingPackage, error) {
+	return nil, errors.New("db down")
+}
+
+// A package that is set but can't be loaded refuses the create; it doesn't
+// lift the cap.
+func TestDBUserCreate_PackageLookupError_Refuses(t *testing.T) {
+	for name, pkgs := range map[string]repository.PackageRepository{
+		"lookup error":  errCreatePackages{},
+		"no repository": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ag := &recCreateAgent{}
+			dbu := &fakeCreateDBUsers{}
+			_, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, pkgs),
+				dbUserCreateInput{panelUser: packagedUser(), name: "app"})
+			if !errors.Is(err, dbops.ErrQuotaUnavailable) {
+				t.Fatalf("err = %v, want ErrQuotaUnavailable", err)
+			}
+			if len(ag.calls) != 0 || dbu.created != nil {
+				t.Fatalf("created anyway: calls %v row %v", ag.calls, dbu.created)
+			}
+		})
+	}
+}
+
+// A package that no longer exists is no cap, the same as no package.
+func TestDBUserCreate_DeletedPackage_NoCap(t *testing.T) {
+	ag := &recCreateAgent{}
+	dbu := &fakeCreateDBUsers{count: 50}
+	if _, _, err := dbUserCreate(context.Background(), createDeps(ag, dbu, fakeCreatePackages{}),
+		dbUserCreateInput{panelUser: packagedUser(), name: "app"}); err != nil {
+		t.Fatalf("create: %v", err)
 	}
 }

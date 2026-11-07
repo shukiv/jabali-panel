@@ -351,6 +351,8 @@ func dbopsRESTError(c *gin.Context, err error) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "postgres_disabled", "detail": err.Error()})
 	case errors.Is(err, dbops.ErrQuotaExceeded):
 		c.JSON(http.StatusConflict, gin.H{"error": "quota_exceeded", "resource": "databases", "detail": err.Error()})
+	case errors.Is(err, dbops.ErrQuotaUnavailable):
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "quota_unavailable", "detail": "the hosting package's limits cannot be loaded right now"})
 	case errors.Is(err, dbops.ErrNameTaken):
 		c.JSON(http.StatusConflict, gin.H{"error": "database_name_exists"})
 	case errors.Is(err, dbops.ErrAgentFailed):

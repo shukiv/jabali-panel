@@ -41,6 +41,9 @@ func (f *ownerDBUsers) Create(_ context.Context, du *models.DatabaseUser) error 
 	f.created = du
 	return nil
 }
+func (f *ownerDBUsers) CreateWithinCap(ctx context.Context, du *models.DatabaseUser, _ uint32) error {
+	return f.Create(ctx, du)
+}
 func (f *ownerDBUsers) FindByID(context.Context, string) (*models.DatabaseUser, error) {
 	return f.row, nil
 }

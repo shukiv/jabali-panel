@@ -264,6 +264,8 @@ func mapDBopsErr(err error) error {
 		return fmt.Errorf("postgres engine disabled — flip server_settings.postgres_enabled=true via admin UI or SQL")
 	case errors.Is(err, dbops.ErrQuotaExceeded):
 		return err
+	case errors.Is(err, dbops.ErrQuotaUnavailable):
+		return fmt.Errorf("the user's hosting package can't be loaded, so its database limit can't be checked — try again: %w", err)
 	case errors.Is(err, dbops.ErrNotFound):
 		return fmt.Errorf("database not found")
 	case errors.Is(err, dbops.ErrAttached):
