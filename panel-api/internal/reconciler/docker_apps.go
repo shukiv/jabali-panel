@@ -24,6 +24,7 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -102,14 +103,22 @@ func (r *Reconciler) enforceDockerEntitlements(ctx context.Context, apps []*mode
 		byUser[*a.UserID] = append(byUser[*a.UserID], a)
 	}
 	for uid, list := range byUser {
+		pkg, ok := r.dockerAppPackage(ctx, uid)
+		if !ok {
+			continue
+		}
 		sort.Slice(list, func(i, j int) bool { return list[i].CreatedAt.After(list[j].CreatedAt) })
+		// Each cap below stops an app at most once per tick.
+		stopped := map[string]bool{}
+		live := func(a *models.DockerApp) bool {
+			return !stopped[a.ID] && (a.Status == models.DockerAppStatusRunning || a.Status == models.DockerAppStatusInstalling)
+		}
 		// --- count cap (Gitea #521): keep oldest <limit>, stop newer excess ---
-		limit := r.effectiveDockerLimit(ctx, uid)
-		over := len(list) - limit
+		over := len(list) - effectiveDockerLimit(pkg)
 		for i := 0; i < over; i++ {
-			a := list[i]
-			if a.Status == models.DockerAppStatusRunning || a.Status == models.DockerAppStatusInstalling {
+			if a := list[i]; live(a) {
 				r.stopOverEntitlement(ctx, a)
+				stopped[a.ID] = true
 			}
 		}
 		// --- disk cap (Gitea #489): a tenant's total docker footprint must not
@@ -118,20 +127,18 @@ func (r *Reconciler) enforceDockerEntitlements(ctx context.Context, apps []*mode
 		// frees space by deleting an app, then can restart. install-time gate
 		// (b6ad0317) already blocks new installs over quota; this is the runtime
 		// half. Skip apps already stopped above by the count cap. ---
-		quotaBytes := r.effectiveDockerDiskQuotaBytes(ctx, uid)
-		if quotaBytes <= 0 {
-			continue
-		}
-		var used int64
-		for _, a := range list {
-			used += a.DataBytes
-		}
-		if used <= quotaBytes {
-			continue
-		}
-		for _, a := range list {
-			if a.Status == models.DockerAppStatusRunning || a.Status == models.DockerAppStatusInstalling {
-				r.stopOverDiskQuota(ctx, a)
+		if quotaBytes := effectiveDockerDiskQuotaBytes(pkg); quotaBytes > 0 {
+			var used int64
+			for _, a := range list {
+				used += a.DataBytes
+			}
+			if used > quotaBytes {
+				for _, a := range list {
+					if live(a) {
+						r.stopOverDiskQuota(ctx, a)
+						stopped[a.ID] = true
+					}
+				}
 			}
 		}
 
@@ -139,29 +146,49 @@ func (r *Reconciler) enforceDockerEntitlements(ctx context.Context, apps []*mode
 		// DockerAppSlugs allowlist and an app's catalog slug is no longer on it
 		// (admin removed it), stop the running instance. Empty allowlist = no
 		// restriction. ---
-		allow := r.dockerAppAllowlist(ctx, uid)
-		if allow != nil {
+		if allow := dockerAppAllowlist(pkg); allow != nil {
 			for _, a := range list {
-				if allow[a.Slug] {
-					continue
-				}
-				if a.Status == models.DockerAppStatusRunning || a.Status == models.DockerAppStatusInstalling {
+				if !allow[a.Slug] && live(a) {
 					r.stopDisallowedApp(ctx, a)
+					stopped[a.ID] = true
 				}
 			}
 		}
 	}
 }
 
-// dockerAppAllowlist returns the package's DockerAppSlugs allowlist as a set, or
-// nil when the user has no package or the allowlist is empty (no restriction).
-func (r *Reconciler) dockerAppAllowlist(ctx context.Context, userID string) map[string]bool {
+// dockerAppPackage loads userID's hosting package for the Docker caps. A user
+// or package that no longer exists, or a user with no package, gives a nil
+// package (no Docker apps). ok is false when either cannot be read: the caps
+// skip that tenant this tick instead of reading the failure as "no apps
+// allowed" (which would stop every app on a database blip) or as "no limit".
+func (r *Reconciler) dockerAppPackage(ctx context.Context, userID string) (*models.HostingPackage, bool) {
 	u, err := r.users.FindByID(ctx, userID)
-	if err != nil || u == nil || u.PackageID == nil {
-		return nil
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, true
 	}
-	pkg, perr := r.packages.FindByID(ctx, *u.PackageID)
-	if perr != nil || pkg == nil {
+	if err != nil || u == nil {
+		r.log.Warn("dockerapp: limits skipped this tick, owner unreadable", "user_id", userID, "err", err)
+		return nil, false
+	}
+	if u.PackageID == nil || *u.PackageID == "" {
+		return nil, true
+	}
+	pkg, err := r.packages.FindByID(ctx, *u.PackageID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, true
+	}
+	if err != nil || pkg == nil {
+		r.log.Warn("dockerapp: limits skipped this tick, package unreadable", "user_id", userID, "package_id", *u.PackageID, "err", err)
+		return nil, false
+	}
+	return pkg, true
+}
+
+// dockerAppAllowlist returns the package's DockerAppSlugs allowlist as a set, or
+// nil when there is no package or the allowlist is empty (no restriction).
+func dockerAppAllowlist(pkg *models.HostingPackage) map[string]bool {
+	if pkg == nil {
 		return nil
 	}
 	csv := strings.TrimSpace(pkg.DockerAppSlugs)
@@ -203,13 +230,8 @@ func (r *Reconciler) stopDisallowedApp(ctx context.Context, a *models.DockerApp)
 // effectiveDockerLimit is the tenant's allowed running Docker app count. No
 // package = 0 (tenant Docker requires a package, Gitea #511); otherwise the
 // package's MaxDockerApps.
-func (r *Reconciler) effectiveDockerLimit(ctx context.Context, userID string) int {
-	u, err := r.users.FindByID(ctx, userID)
-	if err != nil || u == nil || u.PackageID == nil {
-		return 0
-	}
-	pkg, perr := r.packages.FindByID(ctx, *u.PackageID)
-	if perr != nil || pkg == nil {
+func effectiveDockerLimit(pkg *models.HostingPackage) int {
+	if pkg == nil {
 		return 0
 	}
 	return int(pkg.MaxDockerApps)
@@ -217,13 +239,8 @@ func (r *Reconciler) effectiveDockerLimit(ctx context.Context, userID string) in
 
 // effectiveDockerDiskQuotaBytes is the tenant's package disk quota in bytes
 // (DiskQuotaMB). 0 = unlimited / no package.
-func (r *Reconciler) effectiveDockerDiskQuotaBytes(ctx context.Context, userID string) int64 {
-	u, err := r.users.FindByID(ctx, userID)
-	if err != nil || u == nil || u.PackageID == nil {
-		return 0
-	}
-	pkg, perr := r.packages.FindByID(ctx, *u.PackageID)
-	if perr != nil || pkg == nil {
+func effectiveDockerDiskQuotaBytes(pkg *models.HostingPackage) int64 {
+	if pkg == nil {
 		return 0
 	}
 	return int64(pkg.DiskQuotaMB) * 1024 * 1024
