@@ -7,7 +7,7 @@
 // surfaces here.
 import { App } from "antd";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { UserDatabaseList } from "./UserDatabaseList";
 
@@ -66,10 +66,14 @@ vi.mock("../../../hooks/useTableURL", () => ({
 import {
   downloadDatabaseBackup,
   restoreDatabaseUploadAuto,
+  ssoAdminer,
+  ssoPhpMyAdmin,
 } from "../../../apiClient";
 
 const mockedDownload = downloadDatabaseBackup as ReturnType<typeof vi.fn>;
 const mockedRestore = restoreDatabaseUploadAuto as ReturnType<typeof vi.fn>;
+const mockedSsoPhpMyAdmin = ssoPhpMyAdmin as ReturnType<typeof vi.fn>;
+const mockedSsoAdminer = ssoAdminer as ReturnType<typeof vi.fn>;
 
 /** Opens the row's overflow menu (first action renders as a button, the
  * rest collapse into the "more" dropdown). Generous timeouts — under CI
@@ -209,6 +213,97 @@ describe("UserDatabaseList backup/restore (GH #1045)", () => {
         timeout: 5000,
       }),
     ).toBeTruthy();
+    await act(async () => {});
+    unmount();
+  });
+});
+
+describe("UserDatabaseList console tabs", () => {
+  // The shared beforeEach swaps URL for a plain object (save-as stubs);
+  // the tab helper needs the real URL constructor.
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+  });
+  // Restored after each test, so a failed assertion can't leak the spy.
+  let open: { mockRestore: () => void } | undefined;
+  afterEach(() => {
+    open?.mockRestore();
+    open = undefined;
+  });
+  const url = "https://panel.example.test/console/?token=t";
+  // A stand-in for the blank tab window.open hands back.
+  const fakeTab = () => ({
+    opener: window as Window | null,
+    closed: false,
+    location: { href: "about:blank" },
+    close: vi.fn(),
+  });
+
+  it("cuts the phpMyAdmin tab off from the panel before the link is minted", async () => {
+    const tab = fakeTab();
+    open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    let openerAtMint: unknown = "not minted";
+    mockedSsoPhpMyAdmin.mockImplementation(async () => {
+      openerAtMint = tab.opener;
+      return { redirect_url: url };
+    });
+
+    const { unmount } = render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Open in phpMyAdmin/ }, { timeout: 5000 }),
+    );
+
+    await waitFor(() => expect(tab.location.href).toBe(url));
+    expect(mockedSsoPhpMyAdmin).toHaveBeenCalledWith("db1");
+    expect(openerAtMint).toBeNull();
+    await act(async () => {});
+    unmount();
+  });
+
+  it("cuts the Adminer tab off from the panel before the link is minted", async () => {
+    const tab = fakeTab();
+    open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    let openerAtMint: unknown = "not minted";
+    mockedSsoAdminer.mockImplementation(async () => {
+      openerAtMint = tab.opener;
+      return { redirect_url: url };
+    });
+
+    const { unmount } = render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+    await openRowMenu();
+    fireEvent.click(await screen.findByText("Open in Adminer"));
+
+    await waitFor(() => expect(tab.location.href).toBe(url));
+    expect(mockedSsoAdminer).toHaveBeenCalledWith("db1");
+    expect(openerAtMint).toBeNull();
+    await act(async () => {});
+    unmount();
+  });
+
+  it("mints no link when the browser blocks the tab", async () => {
+    open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    const { unmount } = render(
+      <App>
+        <UserDatabaseList />
+      </App>,
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Open in phpMyAdmin/ }, { timeout: 5000 }),
+    );
+
+    expect(
+      await screen.findByText(/Browser blocked the phpMyAdmin tab/, undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(mockedSsoPhpMyAdmin).not.toHaveBeenCalled();
     await act(async () => {});
     unmount();
   });
