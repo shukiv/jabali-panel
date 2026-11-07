@@ -39,50 +39,13 @@ func domainDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		}
 	}
 
-	// Remove enabled symlink (ignore if missing)
-	enabledPath := filepath.Join("/etc/nginx/sites-enabled", p.Domain+".conf")
-	os.Remove(enabledPath)
-
-	// Remove available config (ignore if missing)
-	availablePath := filepath.Join("/etc/nginx/sites-available", p.Domain+".conf")
-	os.Remove(availablePath)
-
-	// Also reap the per-domain mail vhost (mail.<domain>, file
-	// `<domain>-mail.conf`). domain.delete is only ever invoked on a FULL
-	// domain teardown, so the mail vhost must go with it. reconcileWebmailVhosts
-	// only visits domains that still exist, so a deleted domain's mail vhost was
-	// otherwise never reaped — it orphaned in sites-available + sites-enabled on
-	// every delete path (HTTP via Reconciler.ReconcileDeleted and CLI
-	// `jabali user delete` alike). Same `<domain>-mail.conf` convention
-	// webmail.vhost_remove uses; the single reload below covers it.
-	removeMailVhostFiles(p.Domain)
-	// And the MTA-STS vhost and policy (`<domain>-mta-sts.conf`), for the
-	// same reason. Left behind, the vhost keeps naming the domain's
-	// certificate, which removeDomainCertArtifacts below deletes: from then
-	// on `nginx -t` fails for the whole server, and nginx doesn't start.
-	removeMTAStsVhostFiles(p.Domain)
-	// And the proxy vhost of a domain a Docker app created
-	// (`<domain>-dockerapp.conf`): a user delete or a delete on the Domains
-	// page reaches that domain only here. Left behind, it names the
-	// certificate removed below, and it keeps proxying to a loopback port the
-	// panel hands to the next app installed.
-	_, _ = removeDockerAppVhostFiles(p.Domain)
-
 	// JAB-230: reap the domain's relay credential (and re-point the owner's
 	// default.cred). Placed HERE — the shared chokepoint every delete path
 	// funnels through — per the #754 lesson, so no panel-side path can skip it.
 	removeSendmailCredForDomain(p.Domain)
 
-	// Reload nginx
-	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
-	var reloadOutput bytes.Buffer
-	reloadCmd.Stdout = &reloadOutput
-	reloadCmd.Stderr = &reloadOutput
-	if err := reloadCmd.Run(); err != nil {
-		return nil, &agentwire.AgentError{
-			Code:    agentwire.CodeInternal,
-			Message: fmt.Sprintf("systemctl reload nginx failed: %s", reloadOutput.String()),
-		}
+	if err := removeDomainNginxConfig(ctx, p.Domain); err != nil {
+		return nil, err
 	}
 
 	// #432: reap the per-domain nginx logs (current + rotated/compressed) so a
@@ -140,6 +103,63 @@ func removeUntrackedLineage(root, name string) {
 	}
 	_ = os.RemoveAll(filepath.Join(root, "live", name))
 	_ = os.RemoveAll(filepath.Join(root, "archive", name))
+}
+
+// removeDomainNginxConfig removes every piece of nginx config the domain has,
+// then reloads nginx. It holds nginxOpMu across the removals and the reload
+// (JAB-71), so no other nginx op tests or reloads a half-removed config.
+// domain is expected pre-validated (domainRegex) by the caller.
+func removeDomainNginxConfig(ctx context.Context, domain string) error {
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
+	// Remove enabled symlink (ignore if missing)
+	enabledPath := filepath.Join("/etc/nginx/sites-enabled", domain+".conf")
+	os.Remove(enabledPath)
+
+	// Remove available config (ignore if missing)
+	availablePath := filepath.Join("/etc/nginx/sites-available", domain+".conf")
+	os.Remove(availablePath)
+
+	// Also reap the per-domain mail vhost (mail.<domain>, file
+	// `<domain>-mail.conf`). domain.delete is only ever invoked on a FULL
+	// domain teardown, so the mail vhost must go with it. reconcileWebmailVhosts
+	// only visits domains that still exist, so a deleted domain's mail vhost was
+	// otherwise never reaped — it orphaned in sites-available + sites-enabled on
+	// every delete path (HTTP via Reconciler.ReconcileDeleted and CLI
+	// `jabali user delete` alike). Same `<domain>-mail.conf` convention
+	// webmail.vhost_remove uses; the single reload below covers it.
+	removeMailVhostFiles(domain)
+	// And the MTA-STS vhost and policy (`<domain>-mta-sts.conf`), for the
+	// same reason. Left behind, the vhost keeps naming the domain's
+	// certificate, which removeDomainCertArtifacts deletes: from then on
+	// `nginx -t` fails for the whole server, and nginx doesn't start.
+	removeMTAStsVhostFiles(domain)
+	// And the proxy vhost of a domain a Docker app created
+	// (`<domain>-dockerapp.conf`): a user delete or a delete on the Domains
+	// page reaches that domain only here. Left behind, it names the
+	// certificate removeDomainCertArtifacts deletes, and it keeps proxying to
+	// a loopback port the panel hands to the next app installed.
+	_, _ = removeDockerAppVhostFiles(domain)
+	// And the domain's snippet dir (`/etc/nginx/jabali/<domain>/`): the app
+	// installs' includes and the PHP pins. A domain delete never runs the
+	// apps' own teardown, and the vhost includes every `*.conf` in that dir,
+	// so left behind, the next domain created with this name — by any owner —
+	// would serve the old installs' locations.
+	_ = os.RemoveAll(filepath.Join(nginxJabaliDir, domain))
+
+	// Reload nginx
+	reloadCmd := execCommandContext(ctx, "systemctl", "reload", "nginx")
+	var reloadOutput bytes.Buffer
+	reloadCmd.Stdout = &reloadOutput
+	reloadCmd.Stderr = &reloadOutput
+	if err := reloadCmd.Run(); err != nil {
+		return &agentwire.AgentError{
+			Code:    agentwire.CodeInternal,
+			Message: fmt.Sprintf("systemctl reload nginx failed: %s", reloadOutput.String()),
+		}
+	}
+	return nil
 }
 
 // removeMailVhostFiles reaps the per-domain mail vhost (`<domain>-mail.conf`)
