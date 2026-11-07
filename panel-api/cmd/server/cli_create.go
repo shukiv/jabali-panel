@@ -421,7 +421,8 @@ func cliCreateError(err error, in cliDomainInput, owner *models.User) error {
 		return fmt.Errorf("user %q is suspended — unsuspend before adding domains", ownerID)
 	case errors.Is(err, domainops.ErrOwnerNoUsername):
 		return fmt.Errorf("user %q has no username — inconsistent state", ownerID)
-	case errors.Is(err, domainops.ErrDomainQuotaExceeded), errors.Is(err, domainops.ErrDomainCount):
+	case errors.Is(err, domainops.ErrDomainQuotaExceeded), errors.Is(err, domainops.ErrDomainCount),
+		errors.Is(err, domainops.ErrQuotaUnavailable):
 		return cliDomainQuotaError(err)
 	case errors.Is(err, domainops.ErrWebOffReverseProxy):
 		return fmt.Errorf("a reverse-proxy domain requires web hosting")
@@ -479,6 +480,8 @@ func cliDomainQuotaError(err error) error {
 		return fmt.Errorf("package quota exceeded: %d/%d domains", quota.Count, quota.Max)
 	case errors.Is(err, domainops.ErrDomainCount):
 		return fmt.Errorf("count existing domains: %w", err)
+	case errors.Is(err, domainops.ErrQuotaUnavailable):
+		return fmt.Errorf("load the user's hosting package: %w", err)
 	default:
 		return err
 	}

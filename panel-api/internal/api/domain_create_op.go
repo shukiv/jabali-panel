@@ -212,6 +212,8 @@ func createDomainOpError(err error) *createDomainError {
 		return &createDomainError{http.StatusConflict, "user_suspended", "user is suspended — unsuspend before adding domains"}
 	case errors.Is(err, domainops.ErrDomainQuotaExceeded):
 		return &createDomainError{http.StatusConflict, "domain_quota_exceeded", ""}
+	case errors.Is(err, domainops.ErrQuotaUnavailable):
+		return &createDomainError{http.StatusServiceUnavailable, "quota_unavailable", "the hosting package's limits cannot be loaded right now"}
 	case errors.As(err, &docRoot):
 		return &createDomainError{http.StatusBadRequest, "invalid_document_root", docRootError(docRoot.Reason, docRoot.Username, docRoot.DomainName).Error()}
 	case errors.Is(err, domainops.ErrWebTemplateAdminOnly):

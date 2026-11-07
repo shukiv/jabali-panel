@@ -64,6 +64,7 @@ func TestCreateDomainOp_DomainQuota(t *testing.T) {
 		countErr    error
 		wantCode    string // "" = created
 		wantStatus  int
+		wantDetail  string
 		wantCounted bool
 	}{
 		{name: "at the limit", pkg: strp(pkgID), count: 2,
@@ -76,9 +77,11 @@ func TestCreateDomainOp_DomainQuota(t *testing.T) {
 		{name: "empty package id is no package", pkg: strp(""), count: 50},
 		{name: "count failure", pkg: strp(pkgID), countErr: errors.New("domains: connection refused"),
 			wantCode: "internal", wantStatus: http.StatusInternalServerError, wantCounted: true},
-		// Current behavior, shared with the database-user quota: a package that
-		// cannot be read does not block the create.
-		{name: "unreadable package", pkg: strp(pkgID), packages: errPackages{}, count: 5, wantCounted: true},
+		// A package that cannot be read blocks the create: the limit is not
+		// lifted because it could not be checked.
+		{name: "unreadable package", pkg: strp(pkgID), packages: errPackages{}, count: 1,
+			wantCode: "quota_unavailable", wantStatus: http.StatusServiceUnavailable,
+			wantDetail: "the hosting package's limits cannot be loaded right now", wantCounted: true},
 		{name: "dangling package id", pkg: strp("pkg-gone"), count: 5, wantCounted: true},
 	}
 	for _, tc := range cases {
@@ -108,8 +111,8 @@ func TestCreateDomainOp_DomainQuota(t *testing.T) {
 				}
 				return
 			}
-			if oerr == nil || oerr.Code != tc.wantCode || oerr.Status != tc.wantStatus || oerr.Detail != "" {
-				t.Fatalf("got %+v, want {%d %q \"\"}", oerr, tc.wantStatus, tc.wantCode)
+			if oerr == nil || oerr.Code != tc.wantCode || oerr.Status != tc.wantStatus || oerr.Detail != tc.wantDetail {
+				t.Fatalf("got %+v, want {%d %q %q}", oerr, tc.wantStatus, tc.wantCode, tc.wantDetail)
 			}
 			if len(dom.created) != 0 {
 				t.Fatalf("a rejected create must persist nothing, got %d rows", len(dom.created))

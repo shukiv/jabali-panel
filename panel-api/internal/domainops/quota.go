@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
 // Package domain quota (JAB-279 AC1/AC2). The REST create door (createDomainOp,
@@ -14,9 +15,10 @@ import (
 // owner-eligibility gate and before any allocation or persistence.
 //
 // Domains are an ordinary resource limit (GH #282): an owner with no package is
-// unrestricted, and a package whose max_domains is 0 sets no limit. A package
-// that cannot be read does not block the create either — the same choice the
-// database-user quota makes. A failed domain count does block it.
+// unrestricted, a package id that no longer exists counts as no package, and a
+// package whose max_domains is 0 sets no limit. A package that cannot be read
+// blocks the create (ErrQuotaUnavailable), as does a failed domain count: a
+// limit must not open up because it could not be checked.
 
 var (
 	// ErrDomainQuotaExceeded means the owner already has as many domains as the
@@ -25,6 +27,9 @@ var (
 	// ErrDomainCount means the owner's domains could not be counted. The store
 	// error is carried and printed; errors.Is matches both.
 	ErrDomainCount = errors.New("domainops: could not count the owner's domains")
+	// ErrQuotaUnavailable means the owner's package is set but could not be
+	// loaded, so its domain limit cannot be checked.
+	ErrQuotaUnavailable = errors.New("domainops: hosting package limits cannot be loaded")
 	// ErrQuotaDeps means a quota dependency is not wired — a wiring bug, not a
 	// policy result.
 	ErrQuotaDeps = errors.New("domainops: domain quota dependencies are not wired")
@@ -64,8 +69,9 @@ type QuotaDeps struct {
 // CheckDomainQuota reports whether owner may acquire one more domain under its
 // package. It returns nil when the owner is within the limit or unrestricted, a
 // *DomainQuotaError when the limit is reached, ErrDomainCount (with the store
-// error) when the count fails, and ErrOwnerNil or ErrQuotaDeps on a wiring bug.
-// The count runs before the package lookup, as it did in the REST door.
+// error) when the count fails, ErrQuotaUnavailable when the package cannot be
+// read, and ErrOwnerNil or ErrQuotaDeps on a wiring bug. The count runs before
+// the package lookup, as it did in the REST door.
 func CheckDomainQuota(ctx context.Context, d QuotaDeps, owner *models.User) error {
 	if owner == nil {
 		return ErrOwnerNil
@@ -80,29 +86,42 @@ func CheckDomainQuota(ctx context.Context, d QuotaDeps, owner *models.User) erro
 	if err != nil {
 		return &kindError{kind: ErrDomainCount, cause: err}
 	}
-	pkg, err := d.Packages.FindByID(ctx, *owner.PackageID)
-	if err != nil || pkg == nil || pkg.MaxDomains == 0 {
-		return nil
+	limit, err := packageDomainLimit(ctx, d.Packages, *owner.PackageID)
+	if err != nil {
+		return err
 	}
-	if count >= int64(pkg.MaxDomains) {
-		return &DomainQuotaError{Count: count, Max: pkg.MaxDomains}
+	if limit != 0 && count >= int64(limit) {
+		return &DomainQuotaError{Count: count, Max: limit}
 	}
 	return nil
 }
 
 // DomainQuotaLimit returns the owner's domain cap under the same rules as
-// CheckDomainQuota, or 0 when the owner is unrestricted (no package, a package
-// with max_domains 0, or a package that cannot be read). CheckDomainQuota
-// refuses early, before anything is allocated; PersistDomain enforces the
-// limit again at the insert, under a lock, so two creates racing for the last
-// slot cannot both get it.
-func DomainQuotaLimit(ctx context.Context, packages PackageFinder, owner *models.User) uint32 {
-	if owner == nil || owner.PackageID == nil || *owner.PackageID == "" || packages == nil {
-		return 0
+// CheckDomainQuota: 0 when the owner is unrestricted (no package, a package id
+// that no longer exists, or a package with max_domains 0), ErrQuotaUnavailable
+// when the package cannot be read. CheckDomainQuota refuses early;
+// PersistDomain enforces the limit again at the insert, under a lock, so two
+// creates racing for the last slot cannot both get it.
+func DomainQuotaLimit(ctx context.Context, packages PackageFinder, owner *models.User) (uint32, error) {
+	if owner == nil || owner.PackageID == nil || *owner.PackageID == "" {
+		return 0, nil
 	}
-	pkg, err := packages.FindByID(ctx, *owner.PackageID)
-	if err != nil || pkg == nil {
-		return 0
+	if packages == nil {
+		return 0, ErrQuotaDeps
 	}
-	return pkg.MaxDomains
+	return packageDomainLimit(ctx, packages, *owner.PackageID)
+}
+
+func packageDomainLimit(ctx context.Context, packages PackageFinder, packageID string) (uint32, error) {
+	pkg, err := packages.FindByID(ctx, packageID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, &kindError{kind: ErrQuotaUnavailable, cause: err}
+	}
+	if pkg == nil {
+		return 0, fmt.Errorf("%w: package %s loaded as nil", ErrQuotaUnavailable, packageID)
+	}
+	return pkg.MaxDomains, nil
 }
