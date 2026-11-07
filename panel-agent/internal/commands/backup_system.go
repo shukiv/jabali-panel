@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 )
@@ -833,13 +836,17 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 		return fmt.Errorf("manifest stage missing db name")
 	}
 	db := st.Items[0]
+	// Only the panel's own databases are loaded, whatever a backup names.
+	if !isSystemPanelDatabase(db) {
+		return fmt.Errorf("%q is not a panel database (%s)", db, strings.Join(systemPanelDatabases, ", "))
+	}
 	candidates := []string{
 		filepath.Join(stageDir, db+".sql"),
 		filepath.Join(stageDir, "stdin"), // restic default name when StdinName empty
 	}
 	var src string
 	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
+		if _, err := os.Lstat(p); err == nil {
 			src = p
 			break
 		}
@@ -847,14 +854,19 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 	if src == "" {
 		return fmt.Errorf("no SQL file in %s", stageDir)
 	}
-	f, err := os.Open(src) // #nosec G304 — path built from server-controlled stage dir
+	// The dump must be a file of the backup's own, never a link to one.
+	f, err := os.OpenFile(src, os.O_RDONLY|unix.O_NOFOLLOW, 0) // #nosec G304 — path built from server-controlled stage dir
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 	defer f.Close()
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", src)
+	}
 	cmd := execCommandContext(ctx, "mariadb",
 		"--protocol=socket",
 		"--socket=/run/mysqld/mysqld.sock",
+		"--",
 		db,
 	)
 	cmd.Stdin = f
@@ -871,14 +883,34 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 // copy — used for restic-repo.password which the operator already
 // installed manually before the restore dispatch (see
 // install_disaster_restore in install.sh).
+//
+// The staged tree is checked first, and nothing is applied when it fails:
+// every folder from stageDir down to the staged target must be a folder, not
+// a link, and no link in it may point outside target once in place (see
+// linkStaysIn).
 func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) error {
 	// The staged tree mirrors the original absolute path: e.g.
 	// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
 	// holds <stageDir>/etc/jabali-panel/... — we want to sync the
 	// inner /etc/jabali-panel/... part onto /etc/jabali-panel.
 	src := filepath.Join(stageDir, target) + "/"
-	if _, err := os.Stat(src); err != nil {
-		return fmt.Errorf("staged source %s missing: %w", src, err)
+	p := stageDir
+	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
+		p = filepath.Join(p, c)
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return fmt.Errorf("staged source %s missing: %w", src, err)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("staged source %s: %s is not a folder", src, p)
+		}
+	}
+	bad, err := outsideLinks(filepath.Join(stageDir, target), target)
+	if err != nil {
+		return fmt.Errorf("check staged links: %w", err)
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
 	}
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("mkdir target: %w", err)
@@ -895,6 +927,83 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 			strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// isSystemPanelDatabase reports whether db is one of systemPanelDatabases.
+func isSystemPanelDatabase(db string) bool {
+	for _, d := range systemPanelDatabases {
+		if d == db {
+			return true
+		}
+	}
+	return false
+}
+
+// restoreLinkRoots are folders a restored link may point into besides the
+// restore target itself: Debian's nginx modules-enabled links point at
+// /usr/share/nginx/modules-available.
+var restoreLinkRoots = map[string][]string{
+	"/etc/nginx": {"/usr/share/nginx"},
+}
+
+// outsideLinks lists the links in the staged tree src, which is restored onto
+// target, that would point outside target (and its restoreLinkRoots) once in
+// place. The links a backup normally holds stay inside: nginx sites-enabled,
+// letsencrypt live/, php conf.d, the crowdsec hub, a user's default.cred.
+func outsideLinks(src, target string) ([]string, error) {
+	roots := append([]string{target}, restoreLinkRoots[target]...)
+	var bad []string
+	err := filepath.WalkDir(src, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		dest, err := os.Readlink(p)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		if live := filepath.Join(target, rel); !linkStaysIn(live, dest, roots) {
+			bad = append(bad, live+" -> "+dest)
+		}
+		return nil
+	})
+	return bad, err
+}
+
+// linkStaysIn reports whether a link at live pointing at dest lands inside
+// one of roots. ".." is taken only at the start of a relative dest: after a
+// name, the name may itself be a link and ".." would climb from wherever it
+// points, which a lexical check can't follow.
+func linkStaysIn(live, dest string, roots []string) bool {
+	leading := !filepath.IsAbs(dest)
+	for _, c := range strings.Split(dest, "/") {
+		switch c {
+		case "", ".":
+		case "..":
+			if !leading {
+				return false
+			}
+		default:
+			leading = false
+		}
+	}
+	resolved := dest
+	if !filepath.IsAbs(dest) {
+		resolved = filepath.Join(filepath.Dir(live), dest)
+	}
+	resolved = filepath.Clean(resolved)
+	for _, r := range roots {
+		if resolved == r || strings.HasPrefix(resolved, r+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // runSystemMultiPathStage is the multi-path variant of runSystemPathStage.
