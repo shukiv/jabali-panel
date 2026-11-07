@@ -13,32 +13,26 @@ import (
 // stored mysql.db Db values (hex-encoded, as the handler asks for), every other
 // `mysql -e <sql>` call is recorded and succeeds — unless its SQL contains
 // failOn. Non-parallel; restored on cleanup.
-func shadowMySQL(t *testing.T, stored []string, failOn string) *[]string {
+func shadowMySQL(t *testing.T, stored []string, failOn string) func() []string {
 	t.Helper()
-	var execs []string
+	rec := newSQLRecorder(t)
+	var rules [][2]string
+	if failOn != "" {
+		rules = append(rules, [2]string{failOn, "ERROR: refused in test"})
+	}
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		sql := ""
-		for i := 0; i < len(args)-1; i++ {
-			if args[i] == "-e" {
-				sql = args[i+1]
-			}
-		}
-		if strings.HasPrefix(sql, "SELECT HEX(Db)") {
+		if strings.HasPrefix(dashE(args), "SELECT HEX(Db)") {
 			lines := make([]string, 0, len(stored))
 			for _, s := range stored {
 				lines = append(lines, strings.ToUpper(hex.EncodeToString([]byte(s))))
 			}
 			return exec.CommandContext(ctx, "printf", "%s", strings.Join(lines, "\n"))
 		}
-		execs = append(execs, sql)
-		if failOn != "" && strings.Contains(sql, failOn) {
-			return exec.CommandContext(ctx, "false")
-		}
-		return exec.CommandContext(ctx, "true")
+		return rec.cmd(ctx, name, args, rules...)
 	}
 	t.Cleanup(func() { execCommandContext = prev })
-	return &execs
+	return rec.sqls
 }
 
 func TestMysqladminEnsure_GrantsNoDatabase(t *testing.T) {
@@ -46,7 +40,7 @@ func TestMysqladminEnsure_GrantsNoDatabase(t *testing.T) {
 	if _, err := dbMysqladminEnsureHandler(context.Background(), json.RawMessage(`{"panel_username":"alice"}`)); err != nil {
 		t.Fatalf("ensure: %v", err)
 	}
-	for _, sql := range *execs {
+	for _, sql := range execs() {
 		if strings.Contains(sql, "GRANT") || strings.Contains(sql, `\_%`) {
 			t.Fatalf("ensure must not grant any database (the old alice\\_%% wildcard matched sibling tenants):\n%s", sql)
 		}
@@ -62,7 +56,7 @@ func TestMysqladminSyncGrants_GrantsExactNamesAndRevokesEverythingElse(t *testin
 	if err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	all := strings.Join(*execs, "\n")
+	all := strings.Join(execs(), "\n")
 
 	for _, want := range []string{
 		"REVOKE ALL PRIVILEGES ON `alice\\_%`.* FROM 'alice_mysqladmin'@'localhost';",
@@ -100,7 +94,7 @@ func TestMysqladminSyncGrants_EmptyListRevokesAll(t *testing.T) {
 		json.RawMessage(`{"panel_username":"alice","db_names":[]}`)); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	all := strings.Join(*execs, "\n")
+	all := strings.Join(execs(), "\n")
 	if !strings.Contains(all, "REVOKE ALL PRIVILEGES ON `alice\\_%`.*") || strings.Contains(all, "GRANT ALL") {
 		t.Fatalf("an empty list must revoke the stored wildcard and grant nothing:\n%s", all)
 	}
@@ -113,7 +107,7 @@ func TestMysqladminSyncGrants_NothingToDoRunsNothing(t *testing.T) {
 		t.Fatalf("sync: %v", err)
 	}
 	// The grant is re-issued (idempotent) but nothing is revoked.
-	for _, sql := range *execs {
+	for _, sql := range execs() {
 		if strings.Contains(sql, "REVOKE") {
 			t.Fatalf("nothing should be revoked:\n%s", sql)
 		}
@@ -126,7 +120,7 @@ func TestMysqladminSyncGrants_RevokeFailureFails(t *testing.T) {
 		json.RawMessage(`{"panel_username":"alice","db_names":["alice_shop"]}`)); err == nil {
 		t.Fatal("a failed revoke must fail the sync so the panel refuses the phpMyAdmin open")
 	}
-	for _, sql := range *execs {
+	for _, sql := range execs() {
 		if strings.Contains(sql, "GRANT ALL") {
 			t.Fatalf("nothing may be granted after a failed revoke:\n%s", sql)
 		}
@@ -150,7 +144,7 @@ func TestRenameUser_ShadowRoleGetsNoWildcard(t *testing.T) {
 		`{"old_name":"old_mysqladmin","new_name":"new_mysqladmin","old_prefix":"old","new_prefix":"new"}`)); err != nil {
 		t.Fatalf("rename: %v", err)
 	}
-	all := strings.Join(*execs, "\n")
+	all := strings.Join(execs(), "\n")
 	if strings.Contains(all, "GRANT ALL") || strings.Contains(all, "`new\\_%`") {
 		t.Fatalf("rename must not grant a wildcard:\n%s", all)
 	}

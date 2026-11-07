@@ -3,7 +3,6 @@ package commands
 import (
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strings"
 	"testing"
 )
@@ -51,7 +50,7 @@ func TestDBUserCommands_AcceptHyphenatedNames(t *testing.T) {
 			if _, err := c.handler(context.Background(), raw); err != nil {
 				t.Fatalf("%s refused a hyphenated name: %v", c.name, err)
 			}
-			if all := strings.Join(*execs, "\n"); !strings.Contains(all, c.want) {
+			if all := strings.Join(execs(), "\n"); !strings.Contains(all, c.want) {
 				t.Fatalf("want %q in:\n%s", c.want, all)
 			}
 		})
@@ -61,21 +60,15 @@ func TestDBUserCommands_AcceptHyphenatedNames(t *testing.T) {
 // The Postgres shadow-admin role of a hyphenated panel username is made, and
 // its name is a double-quoted identifier.
 func TestPostgresShadowadmin_AcceptsHyphenatedUsername(t *testing.T) {
-	var sqls []string
-	prev := execCommandContext
-	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		for i := 0; i < len(args)-1; i++ {
-			if args[i] == "-c" {
-				sqls = append(sqls, args[i+1])
-			}
-		}
-		return exec.CommandContext(ctx, "true")
-	}
-	t.Cleanup(func() { execCommandContext = prev })
+	execs := recordSQLExecs(t)
 
 	raw, _ := json.Marshal(dbPostgresShadowadminParams{PanelUsername: "alice-x"})
 	if _, err := dbPostgresShadowadminEnsureHandler(context.Background(), raw); err != nil {
 		t.Fatalf("ensure refused a hyphenated username: %v", err)
+	}
+	var sqls []string
+	for _, e := range execs() {
+		sqls = append(sqls, e.sql)
 	}
 	if all := strings.Join(sqls, "\n"); !strings.Contains(all, `CREATE ROLE "alice-x_pgadmin" LOGIN`) {
 		t.Fatalf("want a quoted alice-x_pgadmin role in:\n%s", all)

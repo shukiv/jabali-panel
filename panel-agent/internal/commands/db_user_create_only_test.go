@@ -35,12 +35,12 @@ func TestDBUserCreate_CreateOnlyNeverChangesAnExistingAccount(t *testing.T) {
 		"password": {"db_user_name": "alice_u", "password": "Secret123!x", "create_only": true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			calls := stubMySQLResult(t, "", 0)
+			execs := recordSQLExecs(t)
 			raw, _ := json.Marshal(p)
 			if _, err := dbUserCreateHandler(context.Background(), raw); err != nil {
 				t.Fatal(err)
 			}
-			sql := strings.Join((*calls)[0], " ")
+			sql := execs()[0].sql
 			if !strings.Contains(sql, "CREATE USER 'alice_u'@'localhost'") || strings.Contains(sql, "IF NOT EXISTS") || strings.Contains(sql, "ALTER USER") {
 				t.Fatalf("create_only ran %q: want a plain CREATE USER", sql)
 			}

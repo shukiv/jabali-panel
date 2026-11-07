@@ -125,7 +125,7 @@ func dbMysqladminEnsureHandler(ctx context.Context, params json.RawMessage) (any
 		escapedUser, escapedPassword,
 	)
 
-	cmd := execCommandContext(ctx, "mysql", "-e", sql)
+	cmd := sqlOnStdin(ctx, sql, "mysql")
 	if err := cmd.Run(); err != nil {
 		// Do not echo mysql's stderr — it may contain the password.
 		return nil, &agentwire.AgentError{

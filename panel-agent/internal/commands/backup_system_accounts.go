@@ -337,13 +337,13 @@ func readMetaBundle(userStaging string) *backup.AccountMetadata {
 	return nil
 }
 
-// runMariaDBStmt fires one --execute= statement over the unix socket
-// and returns the combined stdout+stderr when it fails. Used by every
-// reconstruction INSERT below.
+// runMariaDBStmt runs one statement over the unix socket and returns the
+// combined stdout+stderr when it fails. Used by every reconstruction INSERT
+// below. Some of them carry password hashes and private keys, so the
+// statement goes on stdin, not the command line.
 func runMariaDBStmt(ctx context.Context, stmt string) error {
-	cmd := execCommandContext(ctx, "mariadb",
+	cmd := sqlOnStdin(ctx, stmt, "mariadb",
 		"--protocol=socket", "--socket=/run/mysqld/mysqld.sock",
-		"-e", stmt,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

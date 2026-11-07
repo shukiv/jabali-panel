@@ -8,31 +8,26 @@ import (
 	"testing"
 )
 
-// grantExecRecorder swaps the exec seam: every `mysql`/`mariadb -e <sql>` is
-// recorded; a statement containing noSuchGrantOn fails with MariaDB error
-// 1141, and one containing failOn fails with a generic error.
-func grantExecRecorder(t *testing.T, noSuchGrantOn, failOn string) *[]string {
+// grantExecRecorder swaps the exec seam: the SQL of every `mysql`/`mariadb`
+// call is recorded (-e or stdin); a statement containing noSuchGrantOn fails
+// with MariaDB error 1141, and one containing failOn fails with a generic
+// error.
+func grantExecRecorder(t *testing.T, noSuchGrantOn, failOn string) func() []string {
 	t.Helper()
-	var sqls []string
+	rec := newSQLRecorder(t)
+	var rules [][2]string
+	if noSuchGrantOn != "" {
+		rules = append(rules, [2]string{noSuchGrantOn, "ERROR 1141 (42000) at line 1: There is no such grant defined for user 'u' on host 'localhost'"})
+	}
+	if failOn != "" {
+		rules = append(rules, [2]string{failOn, "ERROR 1045: Access denied"})
+	}
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		sql := ""
-		for i := 0; i < len(args)-1; i++ {
-			if args[i] == "-e" {
-				sql = args[i+1]
-			}
-		}
-		sqls = append(sqls, sql)
-		switch {
-		case noSuchGrantOn != "" && strings.Contains(sql, noSuchGrantOn):
-			return exec.CommandContext(ctx, "sh", "-c", "echo \"ERROR 1141 (42000) at line 1: There is no such grant defined for user 'u' on host 'localhost'\" >&2; exit 1")
-		case failOn != "" && strings.Contains(sql, failOn):
-			return exec.CommandContext(ctx, "sh", "-c", "echo 'ERROR 1045: Access denied' >&2; exit 1")
-		}
-		return exec.CommandContext(ctx, "true")
+		return rec.cmd(ctx, name, args, rules...)
 	}
 	t.Cleanup(func() { execCommandContext = prev })
-	return &sqls
+	return rec.sqls
 }
 
 // A database-level grant must name the database with `_` escaped. MariaDB
@@ -44,8 +39,8 @@ func TestDBUserGrant_EscapesTheWildcardInTheDatabaseName(t *testing.T) {
 	if _, err := dbUserGrantHandler(context.Background(), raw); err != nil {
 		t.Fatalf("grant: %v", err)
 	}
-	if len(*sqls) != 1 || !strings.Contains((*sqls)[0], "ON `ab\\_c\\_d`.* TO 'ab_app'@'localhost'") {
-		t.Fatalf("grant SQL = %v, want the escaped name ab\\_c\\_d", *sqls)
+	if len(sqls()) != 1 || !strings.Contains(sqls()[0], "ON `ab\\_c\\_d`.* TO 'ab_app'@'localhost'") {
+		t.Fatalf("grant SQL = %v, want the escaped name ab\\_c\\_d", sqls())
 	}
 }
 
@@ -60,12 +55,12 @@ func TestDBUserRevoke_RevokesBothFormsOfTheName(t *testing.T) {
 			t.Fatalf("absent %s: revoke: %v", absent, err)
 		}
 		var escaped, plain bool
-		for _, sql := range *sqls {
+		for _, sql := range sqls() {
 			escaped = escaped || strings.Contains(sql, "REVOKE ALL PRIVILEGES ON `ab\\_c\\_d`.* FROM 'ab_app'@'localhost'")
 			plain = plain || strings.Contains(sql, "REVOKE ALL PRIVILEGES ON `ab_c_d`.* FROM 'ab_app'@'localhost'")
 		}
 		if !escaped || !plain {
-			t.Fatalf("absent %s: revokes = %v, want both forms", absent, *sqls)
+			t.Fatalf("absent %s: revokes = %v, want both forms", absent, sqls())
 		}
 	}
 }
@@ -87,7 +82,7 @@ func TestProvisionScopedShadow_GrantsTheEscapedNameAndDropsTheOldGrant(t *testin
 	if err := provisionScopedShadow(context.Background(), "ab_c_d", "jb_s_ab_c_d", "00ff"); err != nil {
 		t.Fatalf("provision: %v", err)
 	}
-	all := strings.Join(*sqls, "\n")
+	all := strings.Join(sqls(), "\n")
 	if !strings.Contains(all, "GRANT ALL PRIVILEGES ON `ab\\_c\\_d`.* TO 'jb_s_ab_c_d'@'localhost'") {
 		t.Fatalf("provision SQL = %s, want the escaped grant", all)
 	}
