@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -229,6 +230,9 @@ func newDBMaintenanceCmd() *cobra.Command {
 			}
 			job := &models.DBAdminJob{ID: ulid.Make().String(), Engine: engine, Kind: "maintenance", Scope: scope, Status: "running", ActorUserID: "cli"}
 			if err := adminRepo.CreateJob(ctx, job); err != nil {
+				if errors.Is(err, repository.ErrConflict) {
+					return fmt.Errorf("maintenance already running for %s", engine)
+				}
 				return fmt.Errorf("create job: %w", err)
 			}
 			verb := "db.maintenance"
@@ -247,7 +251,11 @@ func newDBMaintenanceCmd() *cobra.Command {
 				_ = json.Unmarshal(raw, &r)
 				summary = r.Summary
 			}
-			_ = adminRepo.FinishJob(ctx, job.ID, status, summary)
+			// A fresh context: when the run hit the 30-minute limit, ctx is
+			// already done, and the job must still finish and free the engine.
+			fctx, fcancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			_ = adminRepo.FinishJob(fctx, job.ID, status, summary)
+			fcancel()
 			// JAB-305: audit exactly one true outcome. This recorded
 			// cliAuditOK unconditionally — a false success audit when the Agent
 			// call failed. Mirror the kill command: OK only on success, Err on

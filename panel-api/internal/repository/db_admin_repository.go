@@ -32,7 +32,11 @@ type DBAdminRepository interface {
 	MarkTuningApplied(ctx context.Context, engine, byUserID string, at time.Time) error
 
 	// --- jobs (ADR-0100) ---
+	// CreateJob inserts a job. A running job claims its engine (a unique
+	// key), so a second running job for the same engine is refused with
+	// ErrConflict even when two callers passed RunningJob at once.
 	CreateJob(ctx context.Context, j *models.DBAdminJob) error
+	// FinishJob records the outcome and releases the engine.
 	FinishJob(ctx context.Context, id, status, summary string) error
 	GetJob(ctx context.Context, id string) (*models.DBAdminJob, error)
 	// RunningJob returns the in-flight job for an engine, or
@@ -117,7 +121,15 @@ func (r *dbAdminRepo) CreateJob(ctx context.Context, j *models.DBAdminJob) error
 	if j.Status == "" {
 		j.Status = "running"
 	}
+	j.RunningEngine = nil
+	if j.Status == "running" {
+		engine := j.Engine
+		j.RunningEngine = &engine
+	}
 	if err := r.db.WithContext(ctx).Create(j).Error; err != nil {
+		if errors.Is(translate(err), ErrConflict) {
+			return ErrConflict
+		}
 		return fmt.Errorf("create db admin job: %w", err)
 	}
 	return nil
@@ -127,7 +139,7 @@ func (r *dbAdminRepo) FinishJob(ctx context.Context, id, status, summary string)
 	now := time.Now().UTC()
 	err := r.db.WithContext(ctx).Model(&models.DBAdminJob{}).
 		Where("id = ?", id).
-		Updates(map[string]any{"status": status, "summary": summary, "finished_at": now}).Error
+		Updates(map[string]any{"status": status, "summary": summary, "finished_at": now, "running_engine": nil}).Error
 	if err != nil {
 		return fmt.Errorf("finish db admin job: %w", err)
 	}
