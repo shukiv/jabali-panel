@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -167,41 +166,13 @@ func (h *backupHandler) restoreUploadChunk(c *gin.Context) {
 		return
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o640)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "open_staging_failed"})
+	written, status, errBody := appendRestoreChunk(path, offset, c.Request.Body)
+	if status != 0 {
+		c.JSON(status, errBody)
 		return
-	}
-	defer f.Close()
-	if _, err := f.Seek(offset, 0); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "seek_failed"})
-		return
-	}
-	// LimitReader bounds the write so a chunk can't push the file past the cap;
-	// the extractor enforces the real decompression-bomb budget later.
-	remaining := maxRestoreUploadBytes - offset
-	written, werr := io.Copy(f, io.LimitReader(c.Request.Body, remaining))
-	if werr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "write_failed", "detail": werr.Error()})
-		return
-	}
-	// If we wrote exactly up to the cap AND the body still has bytes, the chunk
-	// would have been silently truncated — reject instead so no partial archive
-	// is ever restored.
-	if written == remaining {
-		var probe [1]byte
-		if n, _ := c.Request.Body.Read(probe[:]); n > 0 {
-			_ = os.Remove(path)
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "archive_too_large"})
-			return
-		}
 	}
 	if c.Query("final") == "1" {
-		size := offset + written
-		if fi, serr := f.Stat(); serr == nil {
-			size = fi.Size()
-		}
-		c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "size": size})
+		c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "size": offset + written})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"upload_id": uploadID, "written": written, "offset": offset + written})
