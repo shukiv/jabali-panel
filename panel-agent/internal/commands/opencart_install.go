@@ -111,11 +111,11 @@ func findOpenCartWebroot(stagingDir string) (string, error) {
 	return "", fmt.Errorf("opencart webroot (dir with index.php + admin/) not found under %s — release zip layout may have changed", stagingDir)
 }
 
-func computeOpenCartInstallPath(docroot, subdirectory string) string {
+func computeOpenCartInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 func downloadOpenCartZip(ctx context.Context, dest string) error {
@@ -323,7 +323,10 @@ func opencartInstallHandler(ctx context.Context, params json.RawMessage) (any, e
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computeOpenCartInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeOpenCartInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)

@@ -74,7 +74,10 @@ func joomlaDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid docroot: %v", err)}
 	}
 
-	installPath := computeJoomlaInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeJoomlaInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", installPath)

@@ -98,11 +98,11 @@ var mediawikiLanguagePattern = regexp.MustCompile(`^[a-z]{2,3}(-[a-z0-9]{1,8})?$
 
 // computeMediaWikiInstallPath joins docroot + subdir, returning the
 // install root the tarball will land under after --strip-components=1.
-func computeMediaWikiInstallPath(docroot, subdirectory string) string {
+func computeMediaWikiInstallPath(docroot, subdirectory string) (string, error) {
 	if subdirectory == "" {
-		return docroot
+		return docroot, nil
 	}
-	return filepath.Join(docroot, subdirectory)
+	return appInstallPath(docroot, subdirectory)
 }
 
 // computeMediaWikiScriptPath derives the URL-prefix MediaWiki should
@@ -296,7 +296,10 @@ func mediawikiInstallHandler(ctx context.Context, params json.RawMessage) (any, 
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
 	}
 
-	installPath := computeMediaWikiInstallPath(req.Docroot, req.Subdirectory)
+	installPath, err := computeMediaWikiInstallPath(req.Docroot, req.Subdirectory)
+	if err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 
 	if req.Subdirectory != "" {
 		mkdirCmd := buildSystemdRunCmd(ctx, req.OSUser, "mkdir", "-p", installPath)
