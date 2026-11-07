@@ -51,6 +51,8 @@ type InstallError struct {
 	Code       string
 	Detail     string
 	HTTPStatus int
+	// Extra holds further body fields (quota_exceeded: resource, limit).
+	Extra map[string]any
 }
 
 func (e *InstallError) Error() string {
@@ -190,7 +192,9 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		chain, err = provisionDBChain(ctx, deps, limits, p.UserID, osUser, descriptor.Name, dbPassword)
 		var quotaErr *appDBQuotaError
 		if errors.As(err, &quotaErr) {
-			return nil, newInstallErr(http.StatusConflict, "quota_exceeded", quotaErr.Error())
+			ie := newInstallErr(http.StatusConflict, "quota_exceeded", quotaErr.Error())
+			ie.Extra = map[string]any{"resource": quotaErr.resource, "limit": int64(quotaErr.limit)}
+			return nil, ie
 		}
 		if err != nil {
 			slog.ErrorContext(ctx, "applications create: provision db chain", "err", err)

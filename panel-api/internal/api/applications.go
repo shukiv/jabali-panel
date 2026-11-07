@@ -203,6 +203,9 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		if cerr.Detail != "" {
 			body["detail"] = cerr.Detail
 		}
+		for k, v := range cerr.Extra {
+			body[k] = v
+		}
 		c.JSON(cerr.HTTPStatus, body)
 		return
 	}
@@ -353,12 +356,11 @@ type provisionedDB struct {
 	DBPassword string
 }
 
-// provisionDBChain mirrors the inline DB-create chain in
-// wordPressHandler.create: panel rows + MariaDB CREATE DATABASE/USER/
-// GRANT via the agent. Each step rolls back the prior ones on failure
-// before returning the error. The two rows are held to the owner's package
-// limits (an *appDBQuotaError when one is reached), before the agent makes
-// anything.
+// provisionDBChain creates an install's database: panel rows + MariaDB
+// CREATE DATABASE/USER/GRANT via the agent. Each step rolls back the prior
+// ones on failure before returning the error. The two rows are held to the
+// owner's package limits (an *appDBQuotaError when one is reached), before
+// the agent makes anything.
 func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, limits appDBLimits, userID, osUser, appType, dbPassword string) (provisionedDB, error) {
 	now := time.Now().UTC()
 	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, cfg.Databases, cfg.DatabaseUsers, userID, osUser, appType)

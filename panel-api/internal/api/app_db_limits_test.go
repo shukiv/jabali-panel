@@ -14,6 +14,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/apps"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -179,7 +180,7 @@ func requireQuotaExceeded(t *testing.T, w *httptest.ResponseRecorder, resource s
 
 func TestAppInstall_OverDatabaseLimitIsRefusedBeforeTheAgent(t *testing.T) {
 	f := newAppLimitsFixture(t, 1, 5, nil)
-	requireQuotaExceeded(t, f.install(t), "", 0)
+	requireQuotaExceeded(t, f.install(t), "databases", 1)
 	if len(f.dbs.databases) != 1 || f.dbUsers.count() != 1 {
 		t.Fatalf("rows changed: %d databases, %d database users", len(f.dbs.databases), f.dbUsers.count())
 	}
@@ -190,7 +191,7 @@ func TestAppInstall_OverDatabaseLimitIsRefusedBeforeTheAgent(t *testing.T) {
 
 func TestAppInstall_OverDatabaseUserLimitIsRefusedBeforeTheAgent(t *testing.T) {
 	f := newAppLimitsFixture(t, 5, 1, nil)
-	requireQuotaExceeded(t, f.install(t), "", 0)
+	requireQuotaExceeded(t, f.install(t), "database_users", 1)
 	if f.dbUsers.count() != 1 {
 		t.Fatalf("a database user row was added: %d", f.dbUsers.count())
 	}
@@ -206,6 +207,24 @@ func TestAppInstall_UnderTheLimitsInstalls(t *testing.T) {
 	}
 	if f.dbUsers.count() != 2 {
 		t.Fatalf("want the install's database user row, have %d rows", f.dbUsers.count())
+	}
+}
+
+// A package that sets no limits installs; its rows skip the capped insert.
+func TestAppInstall_PackageWithoutLimitsInstalls(t *testing.T) {
+	f := newAppLimitsFixture(t, 0, 0, nil)
+	if w := f.install(t); w.Code != http.StatusAccepted {
+		t.Fatalf("want 202, got %d: %s", w.Code, w.Body.String())
+	}
+	if f.dbUsers.count() != 2 {
+		t.Fatalf("want the install's database user row, have %d rows", f.dbUsers.count())
+	}
+}
+
+func TestLoadAppDBLimits_NoOwnerIsUnavailable(t *testing.T) {
+	_, err := loadAppDBLimits(context.Background(), &mockPackageRepo{}, nil)
+	if !errors.Is(err, dbops.ErrQuotaUnavailable) {
+		t.Fatalf("want ErrQuotaUnavailable, got %v", err)
 	}
 }
 

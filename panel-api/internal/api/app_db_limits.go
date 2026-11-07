@@ -26,6 +26,9 @@ type appDBLimits struct {
 // loadAppDBLimits reads owner's limits. An error wraps dbops.ErrQuotaUnavailable:
 // the package could not be read, so the install is refused, not let through.
 func loadAppDBLimits(ctx context.Context, pkgs repository.PackageRepository, owner *models.User) (appDBLimits, error) {
+	if owner == nil {
+		return appDBLimits{}, fmt.Errorf("%w: no owner", dbops.ErrQuotaUnavailable)
+	}
 	dbs, err := dbops.PackageLimit(ctx, pkgs, owner, dbops.MaxDatabases)
 	if err != nil {
 		return appDBLimits{}, err
@@ -48,7 +51,7 @@ func (e *appDBQuotaError) Error() string {
 	if e.resource == "database_users" {
 		noun = "database users"
 	}
-	return fmt.Sprintf("the hosting package allows %d %s", e.limit, noun)
+	return fmt.Sprintf("the hosting package allows no more %s (limit %d)", noun, e.limit)
 }
 
 // createDatabase inserts row, held to the databases limit at the insert (the

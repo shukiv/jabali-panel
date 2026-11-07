@@ -833,6 +833,7 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 	}
 	limits, err := loadAppDBLimits(ctx, h.cfg.Packages, owner)
 	if err != nil {
+		slog.ErrorContext(ctx, "wordpress clone: load package limits", "err", err, "user_id", targetUserID)
 		return nil, err
 	}
 
