@@ -25,6 +25,7 @@ func bodyLimitRouter(limit int64, exempt map[string]struct{}) *gin.Engine {
 	r.POST("/small", echo)
 	r.POST("/big/:id/upload", echo)
 	r.GET("/get", echo)
+	r.DELETE("/del", echo)
 	return r
 }
 
@@ -107,5 +108,32 @@ func TestBodyLimit_GetIgnored(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET with body: got %d, want 200 (method gate)", w.Code)
+	}
+}
+
+// DELETE handlers can bind a JSON body (the web-push unsubscribe does), so a
+// DELETE body is capped like POST/PUT/PATCH.
+func TestBodyLimit_DeleteOversizedIs413(t *testing.T) {
+	for name, body := range map[string]io.Reader{
+		"declared": strings.NewReader(strings.Repeat("x", 200)),
+		"chunked":  io.NopCloser(strings.NewReader(strings.Repeat("x", 200))),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := bodyLimitRouter(64, nil)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/del", body))
+			if w.Code != http.StatusRequestEntityTooLarge {
+				t.Fatalf("DELETE oversized: got %d, want 413", w.Code)
+			}
+		})
+	}
+}
+
+func TestBodyLimit_DeleteSmallBodyPasses(t *testing.T) {
+	r := bodyLimitRouter(64, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/del", strings.NewReader(`{"endpoint":"x"}`)))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"n":16`) {
+		t.Fatalf("DELETE small: got %d %s", w.Code, w.Body.String())
 	}
 }
