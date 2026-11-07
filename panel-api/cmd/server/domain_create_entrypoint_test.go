@@ -36,6 +36,12 @@ func (s *cliCreateStore) CountByUserID(context.Context, string) (int64, error) {
 func (s *cliCreateStore) ListPreviewEnabled(context.Context) ([]models.Domain, error) {
 	return nil, nil
 }
+func (s *cliCreateStore) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	if s.count >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return s.Create(ctx, d)
+}
 func (s *cliCreateStore) Create(_ context.Context, d *models.Domain) error {
 	if s.createErr != nil {
 		return s.createErr

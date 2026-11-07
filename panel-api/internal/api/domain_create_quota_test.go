@@ -27,6 +27,14 @@ func (r *quotaDomains) CountByUserID(_ context.Context, userID string) (int64, e
 	return r.count, r.countErr
 }
 
+// CreateWithinCap counts with the same stub count as CountByUserID.
+func (r *quotaDomains) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	if r.count >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return r.dcDomains.Create(ctx, d)
+}
+
 // errPackages is a PackageRepository whose lookup always fails with a store error.
 type errPackages struct {
 	repository.PackageRepository

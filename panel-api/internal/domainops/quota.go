@@ -89,3 +89,20 @@ func CheckDomainQuota(ctx context.Context, d QuotaDeps, owner *models.User) erro
 	}
 	return nil
 }
+
+// DomainQuotaLimit returns the owner's domain cap under the same rules as
+// CheckDomainQuota, or 0 when the owner is unrestricted (no package, a package
+// with max_domains 0, or a package that cannot be read). CheckDomainQuota
+// refuses early, before anything is allocated; PersistDomain enforces the
+// limit again at the insert, under a lock, so two creates racing for the last
+// slot cannot both get it.
+func DomainQuotaLimit(ctx context.Context, packages PackageFinder, owner *models.User) uint32 {
+	if owner == nil || owner.PackageID == nil || *owner.PackageID == "" || packages == nil {
+		return 0
+	}
+	pkg, err := packages.FindByID(ctx, *owner.PackageID)
+	if err != nil || pkg == nil {
+		return 0
+	}
+	return pkg.MaxDomains
+}

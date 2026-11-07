@@ -45,6 +45,19 @@ func (r *dcDomains) FindStrictSubdomains(_ context.Context, name string) ([]mode
 	return out, nil
 }
 
+func (r *dcDomains) CreateWithinCap(ctx context.Context, d *models.Domain, maxDomains uint32) error {
+	var n int64
+	for _, x := range r.byName {
+		if x.UserID == d.UserID {
+			n++
+		}
+	}
+	if n >= int64(maxDomains) {
+		return repository.ErrDomainCapExceeded
+	}
+	return r.Create(ctx, d)
+}
+
 func (r *dcDomains) Create(_ context.Context, d *models.Domain) error {
 	if r.createErr != nil {
 		return r.createErr

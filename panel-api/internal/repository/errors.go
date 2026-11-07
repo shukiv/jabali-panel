@@ -42,6 +42,12 @@ var ErrFtpQuotaSplitExceeded = errors.New("repository: ftp isolated quota split 
 // a deterministic error instead of racing past the cap (JAB-347).
 var ErrLogStreamCapExceeded = errors.New("repository: log stream cap exceeded")
 
+// ErrDomainCapExceeded is returned by DomainRepository.CreateWithinCap when the
+// owner already has as many domains as the cap allows. Like the FTP and
+// log-stream caps, the owner's users row is locked FOR UPDATE around the count
+// and the insert, so concurrent creates cannot both pass the last free slot.
+var ErrDomainCapExceeded = errors.New("repository: domain cap exceeded")
+
 // ErrPanelPrimaryNotFound is returned by DomainRepository.FindPanelPrimary
 // when no row has is_panel_primary=1. Distinct from ErrNotFound so the
 // Settings → Email endpoint can differentiate "row missing, return 202

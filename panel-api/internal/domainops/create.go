@@ -478,8 +478,10 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 		}
 	}
 
-	// PersistDomain releases the reverse-proxy port on any insert failure.
-	if err := PersistDomain(ctx, d.Domains, d.Ports, dom); err != nil {
+	// PersistDomain releases the reverse-proxy port on any insert failure, and
+	// re-checks the domain cap under a lock on the owner (the check above can
+	// race another create for the last slot).
+	if err := PersistDomain(ctx, d.Domains, d.Ports, dom, DomainQuotaLimit(ctx, d.Packages, owner)); err != nil {
 		return nil, err
 	}
 
