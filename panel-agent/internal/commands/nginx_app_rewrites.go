@@ -34,7 +34,8 @@ func DomainFromSiteURL(siteURL string) (string, error) {
 	return strings.TrimPrefix(host, "www."), nil
 }
 
-const nginxJabaliDir = "/etc/nginx/jabali"
+// nginxJabaliDir is a var so tests can point the per-domain snippets at a temp dir.
+var nginxJabaliDir = "/etc/nginx/jabali"
 
 // subdirSlugRE matches a Drupal/Joomla-friendly subdir slug (the portion
 // between leading/trailing slashes). Keep in sync with what the panel's
