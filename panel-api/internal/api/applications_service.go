@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -144,7 +145,9 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 
 	var osUser string
 	var suspended bool
+	var owner *models.User
 	if u, uErr := deps.Users.FindByID(ctx, p.UserID); uErr == nil && u != nil {
+		owner = u
 		if u.Username != nil {
 			osUser = *u.Username
 		}
@@ -179,7 +182,16 @@ func InstallApplication(ctx context.Context, deps ApplicationHandlerConfig, p In
 		// password (GH #226). The admin password (above) is only for the
 		// app's admin account; the DB credential is independent.
 		dbPassword := ids.NewSecret()
-		chain, err = provisionDBChain(ctx, deps, p.UserID, osUser, descriptor.Name, dbPassword)
+		limits, lerr := loadAppDBLimits(ctx, deps.Packages, owner)
+		if lerr != nil {
+			slog.ErrorContext(ctx, "applications create: load package limits", "err", lerr, "user_id", p.UserID)
+			return nil, newInstallErr(http.StatusServiceUnavailable, "quota_unavailable", "the hosting package's limits cannot be loaded right now")
+		}
+		chain, err = provisionDBChain(ctx, deps, limits, p.UserID, osUser, descriptor.Name, dbPassword)
+		var quotaErr *appDBQuotaError
+		if errors.As(err, &quotaErr) {
+			return nil, newInstallErr(http.StatusConflict, "quota_exceeded", quotaErr.Error())
+		}
 		if err != nil {
 			slog.ErrorContext(ctx, "applications create: provision db chain", "err", err)
 			// JAB-114: err here is agent-origin (db.create) — logged above,

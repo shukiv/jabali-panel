@@ -226,7 +226,7 @@ func TestProvisionDBChain_RefusedLoginIsNeverDropped(t *testing.T) {
 	dbs := &provDBs{}
 	rows := &ownerDBUsers{}
 	cfg := ApplicationHandlerConfig{Databases: dbs, DatabaseUsers: rows, DatabaseGrants: provGrants{}, Agent: ag}
-	if _, err := provisionDBChain(context.Background(), cfg, "u1", "alice", "wordpress", "pw-123456"); err == nil {
+	if _, err := provisionDBChain(context.Background(), cfg, appDBLimits{}, "u1", "alice", "wordpress", "pw-123456"); err == nil {
 		t.Fatal("expected the refused create to fail the install")
 	}
 	if ag.called("db_user.drop") {
