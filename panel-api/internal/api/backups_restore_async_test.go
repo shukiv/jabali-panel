@@ -30,6 +30,9 @@ type sealCapture struct {
 	sealed   chan struct{}
 }
 
+// No job is pending in these tests.
+func (*sealCapture) HasActiveOfKind(context.Context, string, string) (bool, error) { return false, nil }
+
 func newSealCapture() *sealCapture { return &sealCapture{sealed: make(chan struct{})} }
 
 func (r *sealCapture) MarkFinished(_ context.Context, _, status string, _, _ string,

@@ -274,6 +274,12 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 	if derr != nil {
 		return
 	}
+	release, ok := claimBackupSubmit(c, h.cfg.Jobs, h.cfg.logErr, "system", models.BackupJobKindSystemBackup,
+		"backup_in_progress", "a system backup is already queued or running")
+	if !ok {
+		return
+	}
+	defer release()
 	destID := dest.ID
 	runID := ids.NewULID()
 	job := &models.BackupJob{
@@ -506,6 +512,12 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 	if derr != nil {
 		return
 	}
+	release, ok := claimBackupSubmit(c, h.cfg.Jobs, h.cfg.logErr, user.ID, models.BackupJobKindAccountBackup,
+		"backup_in_progress", "a backup of this account is already queued or running")
+	if !ok {
+		return
+	}
+	defer release()
 	destID := dest.ID
 	job := &models.BackupJob{
 		ID:            ids.NewULID(),
@@ -1251,6 +1263,12 @@ func (h *backupHandler) restore(c *gin.Context) {
 		return
 	}
 
+	release, ok := claimBackupSubmit(c, h.cfg.Jobs, h.cfg.logErr, req.TargetUserID, models.BackupJobKindAccountRestore,
+		"restore_in_progress", "a restore into this account is already queued or running")
+	if !ok {
+		return
+	}
+	defer release()
 	destID := dest.ID
 	// GH #1044: inherit the SOURCE backup's content so restoring a
 	// database-only backup reads "Database Restore", not a generic "Account
@@ -2068,6 +2086,12 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "destination_not_allowed", "detail": fmt.Sprintf("your hosting plan does not allow the %q backup destination", destKind)})
 		return
 	}
+	release, ok := claimBackupSubmit(c, h.cfg.Jobs, h.cfg.logErr, user.ID, models.BackupJobKindAccountBackup,
+		"backup_in_progress", "a backup of your account is already queued or running")
+	if !ok {
+		return
+	}
+	defer release()
 	job := &models.BackupJob{
 		ID:        ids.NewULID(),
 		UserID:    user.ID,
@@ -2975,6 +2999,12 @@ func (h *meBackupHandler) restoreSelective(c *gin.Context) {
 		}
 	}
 
+	release, ok := claimBackupSubmit(c, h.cfg.Jobs, h.cfg.logErr, claims.UserID, models.BackupJobKindAccountRestore,
+		"restore_in_progress", "a restore into your account is already queued or running")
+	if !ok {
+		return
+	}
+	defer release()
 	// Track the restore as its own job so the jobs list + notifications cover it.
 	restoreJob := &models.BackupJob{
 		ID:     ids.NewULID(),

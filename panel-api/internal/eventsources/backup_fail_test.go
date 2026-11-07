@@ -45,6 +45,9 @@ func (f *fakeBackupJobs) CountByStatus(context.Context, string) (int64, error) {
 func (f *fakeBackupJobs) HasPendingForTarget(context.Context, string, string, string) (bool, error) {
 	return false, nil
 }
+func (f *fakeBackupJobs) HasActiveOfKind(context.Context, string, string) (bool, error) {
+	return false, nil
+}
 func (f *fakeBackupJobs) ListRunning(context.Context, int) ([]models.BackupJob, error) {
 	return nil, nil
 }

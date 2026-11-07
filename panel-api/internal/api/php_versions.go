@@ -174,7 +174,13 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 		// though the install completes (GH #293). Detach it: dispatch the agent
 		// install in the background and return 202 immediately; the SPA polls
 		// /admin/php/versions/status until the version shows installed.
+		release, ok := phpInstalls.TryAcquire(version)
+		if !ok {
+			c.JSON(http.StatusConflict, gin.H{"error": "install_in_progress", "detail": "PHP " + version + " is already being installed"})
+			return
+		}
 		go func() {
+			defer release()
 			bgctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 30*time.Minute)
 			defer cancel()
 			if _, err := cli.Call(bgctx, "php.version.install", map[string]string{"version": version}); err != nil {
