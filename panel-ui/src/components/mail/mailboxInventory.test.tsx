@@ -84,6 +84,21 @@ describe("useMailboxWebmail", () => {
     openSpy.mockRestore();
   });
 
+  it("closes the popup and says so when the minted link is not a web address", async () => {
+    const popup = fakePopup();
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(popup as unknown as Window);
+    post.mockResolvedValue({ data: { url: "javascript:alert(document.cookie)" } });
+
+    const { wrapper } = makeWrapper();
+    const { result } = renderHook(() => useMailboxWebmail(), { wrapper });
+    act(() => result.current.launch("mb-1"));
+
+    await waitFor(() => expect(popup.close).toHaveBeenCalled());
+    expect(popup.location.href).toBe("");
+    expect(feedback.message.error).toHaveBeenCalledWith("Could not open webmail");
+    openSpy.mockRestore();
+  });
+
   it("does NOT mint when the popup is blocked (would burn a one-shot URL)", () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
