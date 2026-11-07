@@ -487,6 +487,33 @@ func TestChannels_Broadcast_BadSeverityIs422(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
+func TestChannels_Broadcast_DeeplinkOutsidePanelIs422(t *testing.T) {
+	t.Parallel()
+	q, mr := newQueueForChannelTest(t)
+	repo := &fakeChannelsRepo{}
+	r := newChannelsRouter(t, repo, q, newAdminCtx())
+	for _, link := range []string{"https://example.test/x", "//example.test", "javascript:alert(1)"} {
+		rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/admin/notifications/broadcast", map[string]any{
+			"title":    "t",
+			"severity": "info",
+			"deeplink": link,
+		})
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, link)
+	}
+	require.False(t, mr.Exists("jabali:notifications:queue"), "nothing queued")
+
+	rec := doNotifJSON(t, r, http.MethodPost, "/api/v1/admin/notifications/broadcast", map[string]any{
+		"title":    "t",
+		"severity": "info",
+		"deeplink": "/jabali-admin/updates",
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	entries, err := mr.DB(0).Stream("jabali:notifications:queue")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Contains(t, entries[0].Values, "/jabali-admin/updates")
+}
+
 // JAB-171 phase 3: a channel's secret is never echoed by create or list.
 func TestChannels_Create_SecretNotEchoed(t *testing.T) {
 	t.Parallel()

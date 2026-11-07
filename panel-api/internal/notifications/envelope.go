@@ -64,7 +64,8 @@ const (
 // fields stay absent (Redis doesn't need empty placeholders). Arrays
 // are comma-joined — go-redis does not preserve structured types in
 // stream values so we pick a stable on-wire format the consumer can
-// split on.
+// split on. A deeplink that is not a panel path (see PanelPath) is left
+// out.
 func (e Envelope) StreamMap() map[string]any {
 	m := map[string]any{
 		fieldEventKind: e.EventKind,
@@ -72,8 +73,8 @@ func (e Envelope) StreamMap() map[string]any {
 		fieldTitle:     e.Title,
 		fieldBody:      e.Body,
 	}
-	if e.Deeplink != "" {
-		m[fieldDeeplink] = e.Deeplink
+	if link := PanelPath(e.Deeplink); link != "" {
+		m[fieldDeeplink] = link
 	}
 	if len(e.ChannelIDs) > 0 {
 		m[fieldChannelIDs] = strings.Join(e.ChannelIDs, ",")
@@ -102,8 +103,10 @@ func envelopeFromStream(values map[string]any) (Envelope, error) {
 		Severity:  get(fieldSeverity),
 		Title:     get(fieldTitle),
 		Body:      get(fieldBody),
-		Deeplink:  get(fieldDeeplink),
-		UserID:    get(fieldUserID),
+		// Re-checked here too: entries queued before this check, or added
+		// to the stream by anything but Publish, reach the senders this way.
+		Deeplink: PanelPath(get(fieldDeeplink)),
+		UserID:   get(fieldUserID),
 	}
 	if ids := get(fieldChannelIDs); ids != "" {
 		env.ChannelIDs = strings.Split(ids, ",")

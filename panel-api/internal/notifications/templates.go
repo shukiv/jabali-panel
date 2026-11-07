@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"fmt"
+	"html"
 	"strings"
 )
 
@@ -48,13 +49,14 @@ func RenderForChannel(env Envelope, kind string) (title, body string) {
 		return
 	case "email":
 		title = env.Title
-		// Minimal HTML wrapper. Admin-configured channel, not public —
-		// no sanitisation needed beyond the html.EscapeString the
-		// email sender applies before template substitution.
+		// Minimal HTML wrapper. The email sender sends this body as
+		// text/html verbatim, and the body can carry text the panel did
+		// not write (a file path, a journal tail), so every value is
+		// escaped here before it goes into the markup.
 		body = fmt.Sprintf(
 			"<p>%s</p><p>Severity: %s</p>%s",
-			strings.ReplaceAll(env.Body, "\n", "<br>"),
-			env.Severity,
+			strings.ReplaceAll(html.EscapeString(env.Body), "\n", "<br>"),
+			html.EscapeString(env.Severity),
 			deeplinkHTML(env.Deeplink),
 		)
 		return
@@ -83,7 +85,7 @@ func deeplinkHTML(url string) string {
 	if url == "" {
 		return ""
 	}
-	return fmt.Sprintf(`<p><a href=%q>Open in Jabali</a></p>`, url)
+	return `<p><a href="` + html.EscapeString(url) + `">Open in Jabali</a></p>`
 }
 
 func truncate(s string, n int) string {
