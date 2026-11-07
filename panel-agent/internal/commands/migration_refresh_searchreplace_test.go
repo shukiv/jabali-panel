@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -15,6 +16,7 @@ import (
 // and fails with "Couldn't find any tables matching: <new_url>"), so a
 // regression here would silently break every site-URL rewrite (GH #1579 / #646).
 func TestRefreshReconcile_SearchReplaceArgs(t *testing.T) {
+	b := newRefreshBox(t)
 	var srArgs []string
 	prev := execCommandContext
 	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
@@ -26,8 +28,8 @@ func TestRefreshReconcile_SearchReplaceArgs(t *testing.T) {
 	t.Cleanup(func() { execCommandContext = prev })
 
 	raw, _ := json.Marshal(refreshReconcileParams{
-		OSUser:      "u1",
-		InstallPath: "/home/u1/public_html/site",
+		OSUser:      "alice",
+		InstallPath: filepath.Join(b.aliceDoc, "site"),
 		Domain:      "new.com",
 		OldURL:      "https://old.com",
 		NewURL:      "https://new.com",
