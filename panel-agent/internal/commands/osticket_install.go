@@ -285,6 +285,11 @@ func writeOsTicketNginx(ctx context.Context, domain, osUser string) error {
 	if !osUserSafeRE.MatchString(osUser) {
 		return fmt.Errorf("invalid os_user %q", osUser)
 	}
+
+	// JAB-71: serialize write→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	domainDir := filepath.Join(nginxJabaliDir, domain)
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
@@ -302,6 +307,11 @@ func removeOsTicketNginx(ctx context.Context, domain string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
+
+	// JAB-71: serialize remove→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	dest := osticketSnippetPath(domain)
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)

@@ -123,6 +123,9 @@ func invoiceshelfInstallHandler(ctx context.Context, params json.RawMessage) (an
 	if derr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("derive domain from site_url: %v", derr)}
 	}
+	if err := checkInvoiceShelfSnippetParams(domain, req.OSUser, req.Subdirectory, installPath); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: err.Error()}
+	}
 	dbHost := req.DBHost
 	if dbHost == "" {
 		dbHost = "localhost"

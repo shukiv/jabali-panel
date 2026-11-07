@@ -264,6 +264,11 @@ func writeFlarumNginx(ctx context.Context, domain, osUser, subdir string) error 
 	if !osUserSafeRE.MatchString(osUser) {
 		return fmt.Errorf("invalid os_user %q", osUser)
 	}
+
+	// JAB-71: serialize write→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	domainDir := filepath.Join(nginxJabaliDir, domain)
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
@@ -287,6 +292,11 @@ func removeFlarumNginx(ctx context.Context, domain, subdir string) error {
 	if subdir != "" && !subdirSlugRE.MatchString(subdir) {
 		return fmt.Errorf("invalid subdir slug %q", subdir)
 	}
+
+	// JAB-71: serialize remove→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	dest := flarumSnippetPath(domain, subdir)
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)
