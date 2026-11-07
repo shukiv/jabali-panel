@@ -373,6 +373,8 @@ func mapUserOpsErr(c *gin.Context, err error) {
 		autoErr(c, http.StatusUnprocessableEntity, "unsupported", "invalid username or password: "+err.Error())
 	case errorsIsAny(err, userops.ErrInvalidPackage):
 		autoErr(c, http.StatusNotFound, "not_found", "hosting package not found")
+	case errorsIsAny(err, userops.ErrPasswordTooLong):
+		autoErr(c, http.StatusUnprocessableEntity, "unsupported", "password must be at most "+strconv.Itoa(userops.MaxPasswordBytes)+" bytes")
 	case errorsIsAny(err, userops.ErrKratosFailed, userops.ErrKratosSetPassword, userops.ErrKratosUnavailable):
 		autoErr(c, http.StatusBadGateway, "internal", "identity provider error")
 	case errorsIsAny(err, userops.ErrNoKratosIdentity):

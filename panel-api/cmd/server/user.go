@@ -18,6 +18,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 func newUserCmd() *cobra.Command {
@@ -337,6 +338,9 @@ func newUserPasswordCmd() *cobra.Command {
 			}
 			if len(newPwd) < 10 {
 				return fmt.Errorf("password must be at least 10 characters")
+			}
+			if err := userops.CheckPasswordLength(newPwd); err != nil {
+				return err
 			}
 
 			hash, err := bcrypt.GenerateFromPassword([]byte(newPwd), 12)

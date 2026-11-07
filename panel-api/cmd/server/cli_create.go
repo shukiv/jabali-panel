@@ -18,6 +18,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
 // cliUserInput covers the one-shot fields `jabali user create` accepts. It
@@ -110,6 +111,9 @@ func createUserDirect(ctx context.Context, in cliUserInput) (*models.User, strin
 	}
 	if len(in.Password) < 10 {
 		return nil, "", fmt.Errorf("password must be at least 10 characters")
+	}
+	if err := userops.CheckPasswordLength(in.Password); err != nil {
+		return nil, "", err
 	}
 
 	effectiveUsername, email, err := resolveCreateIdentity(in.Username, in.Email, cliPanelHostname(ctx))
