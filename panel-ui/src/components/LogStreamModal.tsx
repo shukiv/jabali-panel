@@ -8,6 +8,14 @@ import type { LogType } from "./logs/domainLogStreams";
 
 const { Text } = Typography;
 
+// Messages exchanged with the script panel-api adds to the GoAccess report
+// (goaccessScrollBridge in panel-api/internal/api/websocket_logs.go).
+const GOACCESS_SCROLL = "jabali-goaccess-scroll";
+const GOACCESS_RESTORE = "jabali-goaccess-restore";
+
+const isScrollOffset = (v: unknown): v is number =>
+  typeof v === "number" && Number.isFinite(v) && v >= 0;
+
 interface LogStreamModalProps {
   visible: boolean;
   onClose: () => void;
@@ -30,20 +38,26 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
   const goAccessFrameRef = useRef<HTMLIFrameElement>(null);
   const scrollPosRef = useRef<{ top: number; left: number }>({ top: 0, left: 0 });
 
-  // Snapshot the iframe scroll before each GoAccess poll swaps the src, so the
-  // onLoad handler below can restore it after the reload.
-  const saveGoAccessScroll = () => {
-    const el = goAccessFrameRef.current?.contentDocument?.scrollingElement;
-    if (el) {
-      scrollPosRef.current = { top: el.scrollTop, left: el.scrollLeft };
-    }
-  };
+  // The GoAccess report runs in an opaque-origin sandbox, so its document is
+  // out of reach here. The report posts its scroll position as the user
+  // scrolls (panel-api adds that script); keep the latest, so the onLoad
+  // handler below can send it back after each refresh.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const frame = goAccessFrameRef.current?.contentWindow;
+      if (!frame || event.source !== frame) return;
+      const d = event.data as { type?: unknown; top?: unknown; left?: unknown } | null;
+      if (d?.type !== GOACCESS_SCROLL || !isScrollOffset(d.top) || !isScrollOffset(d.left)) return;
+      scrollPosRef.current = { top: d.top, left: d.left };
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   const stream = useLogStream({
     streamUrl,
     logType,
     active: visible,
-    onBeforeGoAccessRefresh: saveGoAccessScroll,
   });
 
   const scrollToBottom = () => {
@@ -96,12 +110,18 @@ export const LogStreamModal = ({ visible, onClose, streamUrl, title, logType }: 
               display: "block",
             }}
             title={t("logstreammodal.goaccess_dashboard")}
-            sandbox="allow-scripts allow-same-origin"
+            // No allow-same-origin: the report gets an opaque origin, so
+            // its scripts never run as the panel.
+            sandbox="allow-scripts"
             onLoad={() => {
-              const el = goAccessFrameRef.current?.contentDocument?.scrollingElement;
-              if (el && scrollPosRef.current.top > 0) {
-                el.scrollTop = scrollPosRef.current.top;
-                el.scrollLeft = scrollPosRef.current.left;
+              const { top, left } = scrollPosRef.current;
+              if (top > 0 || left > 0) {
+                // An opaque origin cannot be named as a target, hence "*";
+                // the message is only two numbers.
+                goAccessFrameRef.current?.contentWindow?.postMessage(
+                  { type: GOACCESS_RESTORE, top, left },
+                  "*",
+                );
               }
             }}
           />

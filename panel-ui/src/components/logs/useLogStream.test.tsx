@@ -159,38 +159,25 @@ describe("GoAccess polling cadence (AC5)", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("bumps the tick and snapshots scroll every 10s, not before", () => {
-    const onBeforeGoAccessRefresh = vi.fn();
+  it("bumps the tick every 10s, not before", () => {
     const { result } = renderHook(() =>
-      useLogStream({
-        streamUrl: "wss://host/s/1",
-        logType: "goaccess",
-        active: true,
-        onBeforeGoAccessRefresh,
-      }),
+      useLogStream({ streamUrl: "wss://host/s/1", logType: "goaccess", active: true }),
     );
     const first = result.current.goAccessTick;
 
     act(() => vi.advanceTimersByTime(9999));
-    expect(onBeforeGoAccessRefresh).not.toHaveBeenCalled();
     expect(result.current.goAccessTick).toBe(first);
 
     act(() => vi.advanceTimersByTime(1));
-    expect(onBeforeGoAccessRefresh).toHaveBeenCalledTimes(1);
     expect(result.current.goAccessTick).not.toBe(first);
   });
 
   it("does not poll when inactive", () => {
-    const onBeforeGoAccessRefresh = vi.fn();
-    renderHook(() =>
-      useLogStream({
-        streamUrl: "wss://host/s/1",
-        logType: "goaccess",
-        active: false,
-        onBeforeGoAccessRefresh,
-      }),
+    const { result } = renderHook(() =>
+      useLogStream({ streamUrl: "wss://host/s/1", logType: "goaccess", active: false }),
     );
+    const first = result.current.goAccessTick;
     act(() => vi.advanceTimersByTime(30000));
-    expect(onBeforeGoAccessRefresh).not.toHaveBeenCalled();
+    expect(result.current.goAccessTick).toBe(first);
   });
 });

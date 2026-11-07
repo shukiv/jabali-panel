@@ -106,8 +106,9 @@ server {
   # parent block add_headers are NOT inherited — must re-declare every
   # security header we still want.
   #
-  # Sandboxed inside the panel iframe (sandbox="allow-scripts
-  # allow-same-origin"), CSP frame-ancestors 'self' limits embedding
+  # The CSP's `sandbox allow-scripts` (and the panel iframe's matching
+  # sandbox attribute) gives the report an opaque origin, so its scripts
+  # never run as the panel. CSP frame-ancestors 'self' limits embedding
   # to the panel itself.
   # Internal-only API surface. These routes are called by jabali-agent dialling
   # /run/jabali-panel/api.sock DIRECTLY; their only in-app gate is
@@ -155,7 +156,9 @@ server {
     # Scoped relaxed CSP — the panel-api response also sets this header
     # (renderGoAccessHTTP); nginx hides the upstream copy to avoid two
     # CSP headers in the response (browsers intersect — would re-block).
-    add_header Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; form-action 'self';" always;
+    # Must stay identical to goaccessCSP in panel-api/internal/api/
+    # websocket_logs.go (TestGoAccessCSP_VhostSendsTheSamePolicy).
+    add_header Content-Security-Policy "sandbox allow-scripts; default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; form-action 'self';" always;
     # SAMEORIGIN (not DENY) so the panel SPA can frame this URL.
     add_header X-Frame-Options "SAMEORIGIN" always;
     proxy_hide_header Content-Security-Policy;
