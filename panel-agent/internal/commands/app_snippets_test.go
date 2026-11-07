@@ -35,6 +35,11 @@ func withSnippetSeams(t *testing.T) func() []string {
 	}
 }
 
+// lockWait is how long a writer gets to (wrongly) finish while the lock is
+// held. An unlocked writer finishes in well under a millisecond here, so a
+// loaded machine can only make a missing lock pass, never a present one fail.
+const lockWait = 100 * time.Millisecond
+
 // Every app snippet writer changes nginx config and runs nginx -t + reload, so
 // it must hold nginxOpMu across the whole sequence (JAB-71): while another
 // nginx op holds the lock, a writer may not finish.
@@ -68,7 +73,7 @@ func TestAppSnippetWritersWaitForTheNginxLock(t *testing.T) {
 		case err := <-done:
 			nginxOpMu.Unlock()
 			t.Fatalf("%s finished (err %v) while another nginx op held the lock", name, err)
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(lockWait):
 		}
 		nginxOpMu.Unlock()
 		if err := <-done; err != nil {

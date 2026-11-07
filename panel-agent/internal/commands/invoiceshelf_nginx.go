@@ -102,7 +102,7 @@ func checkInvoiceShelfSnippetParams(domain, osUser, subdir, installPath string) 
 		return fmt.Errorf("invalid install path %q", installPath)
 	}
 	if err := validateDocRootForNginx(installPath); err != nil {
-		return fmt.Errorf("invalid install path %q: %v", installPath, err)
+		return fmt.Errorf("invalid install path %q: %w", installPath, err)
 	}
 	return nil
 }
