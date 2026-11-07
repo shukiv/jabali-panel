@@ -1,8 +1,10 @@
 // domain.reown — move a domain's served docroot tree from the old owner's home
 // to the new owner's home and re-own it to the new uid (GH #1238 owner-change).
 //
-// Same-filesystem move (both docroots live under /home) so os.Rename is instant
-// and preserves the docroot's setgid bit; chownTreeRecursive then repoints every
+// Same-filesystem move (both docroots live under /home) so the rename is instant
+// and preserves the docroot's setgid bit. fsperm.MoveDirUnder reaches both
+// parents from their homes without following a link, and the docroot must be a
+// real directory. chownTreeRecursive then repoints every
 // entry to new_uid:www-data (Lchown-based, symlink-safe — never follows a tenant
 // -planted symlink out of the tree). The uid change is the point here: after the
 // move the old owner owns nothing in the tree and cannot traverse into the new
@@ -69,9 +71,14 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	oldExists := oldErr == nil
 	newExists := newErr == nil
 
-	// Idempotent: already moved. Still attempt the empty-parent prune — a prior
-	// run may have moved the docroot but died before pruning.
+	anchor := homeOf(p.NewDocRoot) // /home/<new>: root owns /home, so the tenant can't swap it
+
+	// Idempotent: already moved. A prior run may have moved the docroot but died
+	// before re-owning or pruning it, so finish both (each is a no-op when done).
 	if !oldExists && newExists {
+		if err := reownMovedTree(anchor, p.NewDocRoot, p.NewUID, wwwGID); err != nil {
+			return nil, err
+		}
 		pruneEmptyRenameDir(p.PruneEmptyDir, p.OldDocRoot)
 		return domainReownResponse{NewDocRoot: p.NewDocRoot, AlreadyDone: true}, nil
 	}
@@ -87,24 +94,21 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	// wrapper). Re-owning an already-correct dir is a no-op.
 	parent := filepath.Dir(p.NewDocRoot) // /home/<new>/domains/<name>
 	grandparent := filepath.Dir(parent)  // /home/<new>/domains
-	anchor := filepath.Dir(grandparent)  // /home/<new>, owned by the new owner
 	for _, d := range []string{grandparent, parent} {
+		if rel, err := filepath.Rel(anchor, d); err != nil || rel == ".." || strings.HasPrefix(rel, "../") {
+			continue // /home itself, for a docroot right under the home: nothing to make
+		}
 		if err := ensureOwnedSetgidDir(anchor, d, p.NewUID, wwwGID); err != nil {
 			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("prepare destination dir %q: %v", d, err)}
 		}
 	}
 
 	// Move (same fs → instant; preserves the docroot's own setgid), then re-own.
-	if err := os.Rename(p.OldDocRoot, p.NewDocRoot); err != nil {
+	if err := fsperm.MoveDirUnder(homeOf(p.OldDocRoot), p.OldDocRoot, anchor, p.NewDocRoot); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("move docroot %q -> %q: %v", p.OldDocRoot, p.NewDocRoot, err)}
 	}
-	if err := chownTreeRecursive(filepath.Dir(grandparent), p.NewDocRoot, p.NewUID, wwwGID); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-own moved tree (docroot moved to %q; re-run to resume): %v", p.NewDocRoot, err)}
-	}
-	// Re-assert setgid 2750 on the docroot itself so new files keep inheriting the
-	// www-data group (rename preserved it, but be explicit).
-	if err := chmodDirUnder(anchor, p.NewDocRoot, os.ModeSetgid|0o750); err != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
+	if err := reownMovedTree(anchor, p.NewDocRoot, p.NewUID, wwwGID); err != nil {
+		return nil, err
 	}
 
 	// The docroot leaf has moved out of its old-name wrapper dir (nested layout);
@@ -122,13 +126,20 @@ func domainReownHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 //   - refuses a dir that is not a strict ANCESTOR of oldDocRoot (so it can only
 //     ever be the wrapper the move emptied, never the docroot or an unrelated
 //     path);
-//   - uses os.Remove, which removes an EMPTY directory and fails (ignored) on a
-//     non-empty one — so extra sibling files the rename did not move are kept.
+//   - removes only an EMPTY directory, reached from the old owner's home without
+//     following a link (fsperm.RemoveEmptyDirUnder); a non-empty one fails
+//     (ignored), so extra sibling files the rename did not move are kept.
 func pruneEmptyRenameDir(dir, oldDocRoot string) {
 	if !shouldPruneRenameDir(dir, oldDocRoot) {
 		return
 	}
-	_ = os.Remove(dir) // rmdir; no-op (error ignored) when non-empty or absent.
+	_ = fsperm.RemoveEmptyDirUnder(homeOf(oldDocRoot), dir) // no-op when non-empty or absent.
+}
+
+// homeOf returns /home/<user> for a path under /home/<user>/.
+func homeOf(p string) string {
+	user, _, _ := strings.Cut(strings.TrimPrefix(p, "/home/"), "/")
+	return "/home/" + user
 }
 
 // shouldPruneRenameDir is the pure guard for pruneEmptyRenameDir: it returns
@@ -161,10 +172,25 @@ func ensureOwnedSetgidDir(anchor, dir string, uid, gid int) error {
 	return f.Close()
 }
 
+// reownMovedTree re-owns a moved docroot to uid:gid and re-asserts setgid 2750
+// on it, so new files keep inheriting the www-data group (rename preserved it,
+// but be explicit). Both steps reach the tree from anchor without following a
+// link, and both are no-ops once done, so a re-run resumes here.
+func reownMovedTree(anchor, docroot string, uid, gid int) error {
+	if err := chownTreeRecursive(anchor, docroot, uid, gid); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("re-own moved tree (docroot moved to %q; re-run to resume): %v", docroot, err)}
+	}
+	if err := chmodDirUnder(anchor, docroot, os.ModeSetgid|0o750); err != nil {
+		return &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("set docroot mode: %v", err)}
+	}
+	return nil
+}
+
 // chmodDirUnder sets the mode of an existing directory through its file
 // descriptor, after walking to it from anchor without following links.
+// Nothing is created.
 func chmodDirUnder(anchor, dir string, mode os.FileMode) error {
-	f, err := fsperm.OpenDirUnder(anchor, dir, uint32(mode.Perm()), 0, 0)
+	f, err := fsperm.OpenExistingDirUnder(anchor, dir)
 	if err != nil {
 		return err
 	}

@@ -29,6 +29,19 @@ func TestDomainReown_ValidatesInput(t *testing.T) {
 	}
 }
 
+// The move and the prune are anchored at the owner's home.
+func TestHomeOf(t *testing.T) {
+	for in, want := range map[string]string{
+		"/home/alice/domains/a.example/public_html": "/home/alice",
+		"/home/alice/public_html/a.example":         "/home/alice",
+		"/home/alice":                               "/home/alice",
+	} {
+		if got := homeOf(in); got != want {
+			t.Errorf("homeOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // TestShouldPruneRenameDir covers the GH #1579 empty-old-wrapper prune guard:
 // it must fire only for a clean, /home-rooted STRICT ancestor of the old
 // docroot, so it can never remove the docroot itself or an unrelated path.
