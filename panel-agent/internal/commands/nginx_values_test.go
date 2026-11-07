@@ -48,6 +48,7 @@ func TestWebmailVhostApply_RefusesNginxSyntaxInParams(t *testing.T) {
 		"relative key path":          func(p *webmailVhostApplyParams) { p.SSLKeyPath = "privkey.pem" },
 		"block end in doc root":      func(p *webmailVhostApplyParams) { p.DocRoot = "/home/alice/public_html;}" },
 		"newline in doc root":        func(p *webmailVhostApplyParams) { p.DocRoot = "/home/alice/public_html\n" },
+		"parent dir in doc root":     func(p *webmailVhostApplyParams) { p.DocRoot = "/home/alice/../bob/public_html" },
 		"quote in panel hostname":    func(p *webmailVhostApplyParams) { p.PanelHostname = `mx.example.net"` },
 		"newline in panel hostname":  func(p *webmailVhostApplyParams) { p.PanelHostname = "mx.example.net\nserver {" },
 		"not an IPv4 listen address": func(p *webmailVhostApplyParams) { p.ListenIPv4 = "203.0.113.5:80 default_server" },
@@ -63,9 +64,19 @@ func TestWebmailVhostApply_RefusesNginxSyntaxInParams(t *testing.T) {
 		requireNothingWritten(t, name, av)
 	}
 
-	raw, _ := json.Marshal(base())
-	if _, err := webmailVhostApplyHandler(context.Background(), raw); err != nil {
-		t.Fatalf("well-formed params: %v", err)
+	for name, mutate := range map[string]func(*webmailVhostApplyParams){
+		"well-formed params":      func(*webmailVhostApplyParams) {},
+		"IPv4-mapped IPv6 listen": func(p *webmailVhostApplyParams) { p.ListenIPv6 = "::ffff:203.0.113.5" },
+		"challenge only, no cert yet": func(p *webmailVhostApplyParams) {
+			*p = webmailVhostApplyParams{DomainName: p.DomainName, ChallengeOnly: true}
+		},
+	} {
+		p := base()
+		mutate(&p)
+		raw, _ := json.Marshal(p)
+		if _, err := webmailVhostApplyHandler(context.Background(), raw); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
 	}
 }
 
@@ -126,4 +137,26 @@ func TestMailWebadminApply_RefusesNginxSyntaxInParams(t *testing.T) {
 		requireInvalidArgument(t, name, err)
 		requireNothingWritten(t, name, av)
 	}
+
+	raw, _ := json.Marshal(map[string]any{
+		"enabled": true, "server_name": "mx.example.com", "port": 8449,
+		"ssl_cert_path": "/etc/jabali/tls/panel.crt", "ssl_key_path": "/etc/jabali/tls/panel.key",
+	})
+	if _, err := mailWebadminApplyHandler(context.Background(), raw); err != nil {
+		t.Fatalf("well-formed params: %v", err)
+	}
+}
+
+// The fallback only checks that the certificate file exists; the key path is
+// rendered as given.
+func TestPreviewFallbackApply_RefusesNginxSyntaxInKeyPath(t *testing.T) {
+	cert := filepath.Join(t.TempDir(), "fullchain.pem")
+	if err := os.WriteFile(cert, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(previewFallbackApplyParams{
+		Base: "preview.host.tld", SSLCertPath: cert, SSLKeyPath: "/etc/ssl/k.pem; return 200",
+	})
+	_, err := previewFallbackApplyHandler(context.Background(), raw)
+	requireInvalidArgument(t, "key path", err)
 }

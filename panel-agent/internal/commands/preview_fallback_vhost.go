@@ -111,6 +111,14 @@ func previewFallbackApplyHandler(ctx context.Context, params json.RawMessage) (a
 	if p.ListenIPv6 != "" && net.ParseIP(p.ListenIPv6) == nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("invalid listen_ipv6 %q", p.ListenIPv6)}
 	}
+	for _, f := range [][2]string{{"ssl_cert_path", p.SSLCertPath}, {"ssl_key_path", p.SSLKeyPath}} {
+		if f[1] == "" {
+			continue
+		}
+		if err := validateNginxPath(f[0], f[1]); err != nil {
+			return nil, err
+		}
+	}
 	// Cert paths travel together; a missing file downgrades to HTTP-only
 	// exactly like the per-domain preview blocks.
 	if p.SSLCertPath != "" {

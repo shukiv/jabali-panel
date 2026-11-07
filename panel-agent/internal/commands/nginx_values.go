@@ -36,13 +36,13 @@ func validateNginxPath(field, v string) error {
 }
 
 // validateListenIP checks a listen address: empty, or a plain IPv4 (want4) or
-// IPv6 address.
+// IPv6 address. The family goes by the written form, as the panel stores it:
+// an IPv4-mapped IPv6 address is IPv6.
 func validateListenIP(field, v string, want4 bool) error {
 	if v == "" {
 		return nil
 	}
-	ip := net.ParseIP(v)
-	if ip == nil || (ip.To4() != nil) != want4 {
+	if net.ParseIP(v) == nil || strings.Contains(v, ":") == want4 {
 		return &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: fmt.Sprintf("%s %q is not a valid address", field, v)}
 	}
 	return nil
