@@ -98,24 +98,33 @@ func systemFullbackupExtractUploadedHandler(_ context.Context, raw json.RawMessa
 	}
 
 	out := systemFullbackupExtractResult{Stage: stage, RunID: man.RunID}
+	out.Users, out.SystemInner = containerInnerArchives(stage, man)
+	return out, nil
+}
+
+// containerInnerArchives maps the container manifest's entries to the inner
+// archives extracted under stage. A username names a file under stage/users,
+// so only a valid account name is used; any other entry is skipped, like one
+// whose inner archive is missing.
+func containerInnerArchives(stage string, man fullContainerManifest) (users []extractedContainerUser, systemInner string) {
 	for _, e := range man.Entries {
 		if e.Label == "system" {
 			sp := filepath.Join(stage, "system.tar.zst")
 			if fi, serr := os.Stat(sp); serr == nil && fi.Mode().IsRegular() {
-				out.SystemInner = sp
+				systemInner = sp
 			}
 			continue
 		}
-		if e.Username == "" {
+		if !backupUsernameRE.MatchString(e.Username) {
 			continue
 		}
 		inner := filepath.Join(stage, "users", e.Username+".tar.zst")
 		if fi, serr := os.Stat(inner); serr != nil || !fi.Mode().IsRegular() {
 			continue // inner archive missing from the container — skip; the loop reports it
 		}
-		out.Users = append(out.Users, extractedContainerUser{Username: e.Username, InnerPath: inner})
+		users = append(users, extractedContainerUser{Username: e.Username, InnerPath: inner})
 	}
-	return out, nil
+	return users, systemInner
 }
 
 type systemFullbackupCleanupParams struct {
