@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -117,7 +119,11 @@ func (h *auditHandler) prune(c *gin.Context) {
 	var req struct {
 		Days int `json:"days"`
 	}
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		// An empty body means the default window; a malformed one is refused.
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_json"})
+		return
+	}
 	if req.Days < 1 {
 		req.Days = 365
 	}
@@ -136,7 +142,7 @@ func (h *auditHandler) prune(c *gin.Context) {
 	meta, _ := json.Marshal(map[string]any{
 		"cutoff": cutoff.Format(time.RFC3339), "pruned": n, "days": req.Days,
 	})
-	_ = h.cfg.Repo.Create(ctx, &models.AuditEvent{
+	if err := h.cfg.Repo.Create(ctx, &models.AuditEvent{
 		ID:          ids.NewULID(),
 		TS:          time.Now().UTC(),
 		ActorKind:   models.AuditActorAdmin,
@@ -145,7 +151,11 @@ func (h *auditHandler) prune(c *gin.Context) {
 		TargetType:  "audit",
 		Result:      models.AuditResultOK,
 		Meta:        meta,
-	})
+	}); err != nil && h.cfg.Log != nil {
+		// The rows are already gone; the record of the prune must not vanish silently.
+		h.cfg.Log.Error("audit.retention.prune: recording the prune failed",
+			"pruned", n, "cutoff", cutoff.Format(time.RFC3339), "err", err)
+	}
 	c.JSON(http.StatusOK, gin.H{"pruned": n, "cutoff": cutoff.Format(time.RFC3339), "days": req.Days})
 }
 
