@@ -111,6 +111,9 @@ type Reconciler struct {
 	// ftpConfigChecking singleflights the per-tick JAB-260 TLS-drift check so a
 	// hung agent socket cannot stack goroutines across ticks.
 	ftpConfigChecking atomic.Bool
+	// snippetDirsPruned is set once the agent has pruned the snippet dirs of
+	// names with no domain row (pruneSnippetDirs), so it runs once per process.
+	snippetDirsPruned atomic.Bool
 	// sanDriftAttempt gates the JAB-226 SAN-drift reissue pass: cert ID -> last
 	// attempt, so a cert whose missing SAN isn't reachable yet isn't re-probed
 	// (or re-issued) more than once per sslSANDriftCooldown.
@@ -1243,7 +1246,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	}
 
 	// Fetch all domains from DB. Repository.List returns (domains, total, err).
-	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
+	allDomains, totalDomains, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		return fmt.Errorf("failed to list domains: %w", err)
 	}
@@ -1343,6 +1346,7 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// A domain's derived vhosts, which only Jabali writes, are not orphans;
 	// the MTA-STS and Docker app ones are removed once their row is gone.
 	r.sweepAgentSites(ctx, agentSites, enabledDomains, disabledDomains, pendingTeardowns)
+	r.pruneSnippetDirs(ctx, allDomains, totalDomains)
 
 	tt.mark("disable_orphan_sweep")
 
