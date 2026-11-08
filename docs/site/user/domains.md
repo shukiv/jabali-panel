@@ -4,7 +4,7 @@
 
 ## List
 
-Columns: domain name, PHP version, SSL state, DNSSEC state, listen IP, last modified.
+Columns: domain name, PHP version, SSL state, DNSSEC state, listen IP, last modified. Under each name is the domain's document root, or its [aliases](#aliases) when it has any.
 
 Filter by SSL state, DNSSEC state, or free-text on the name.
 
@@ -75,6 +75,17 @@ Disallow: /
 Subdomains are first-class domains in the panel. Add a subdomain by creating a new domain with the subdomain name (e.g. `blog.example.com`). The DNS zone for `blog.example.com` is created independently from `example.com` — you may need to delegate via `NS` records if both zones are hosted here.
 
 By default only you (and the administrator) can add a subdomain of a domain you own. If another account on the server needs one — for example a client who runs `shop.example.com` from their own account — open the domain, and on its **Overview** tab turn on **Allow subdomains by other accounts**. Any account on the server can then add subdomains of that domain without asking you. Turning it off stops new ones; subdomains already created by other accounts stay. Each parent domain needs its own consent: allowing it on `b.example.com` does not let another account create `c.b.example.com` if `example.com` belongs to a third account that has not allowed it.
+
+## Aliases
+
+An alias is another name for the same site: `example.net` serves the same files as `example.com`. Open the domain, go to the **Aliases** tab, enter the name and click **Add alias**. A domain without web hosting has no Aliases tab.
+
+- For `www.example.com`, use the domain's www option; the panel refuses it as an alias.
+- A name that is already a domain or an alias on this server is refused, and so are the panel's own hostnames and the `www.`, `mail.` and similar names of other domains here.
+- An alias under a domain you have already verified (for example `shop.example.com` under a verified `example.com`) is live at once. Any other name is **Unverified** until you prove you control it, the same way as a [new domain](#verifying-a-new-domain): the tab shows its TXT record, and **Verify now** checks it. An alias that is never verified is removed after 14 days.
+- A live alias is added to the domain's certificate once its A or AAAA record points directly at this server. Until then the tab shows **Certificate pending**, and browsers warn on HTTPS for that name. A name behind a CDN is not added to the certificate.
+
+To remove an alias, click its delete button on the tab.
 
 ## Statistics
 
