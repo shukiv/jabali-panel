@@ -43,14 +43,54 @@ func wireMailVhostPaths(t *testing.T) (string, string) {
 	if err := os.MkdirAll(enabl, 0755); err != nil {
 		t.Fatal(err)
 	}
-	origA, origE := mailVhostSitesAvailable, mailVhostSitesEnabled
+	// A server with Bulwark installed: its upstream is declared.
+	upstream := filepath.Join(t.TempDir(), "jabali-bulwark-upstream.conf")
+	if err := os.WriteFile(upstream, []byte("upstream jabali_bulwark {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	origA, origE, origU := mailVhostSitesAvailable, mailVhostSitesEnabled, bulwarkUpstreamConf
 	mailVhostSitesAvailable = avail
 	mailVhostSitesEnabled = enabl
+	bulwarkUpstreamConf = upstream
 	t.Cleanup(func() {
 		mailVhostSitesAvailable = origA
 		mailVhostSitesEnabled = origE
+		bulwarkUpstreamConf = origU
 	})
 	return avail, enabl
+}
+
+// A server without Bulwark has no jabali_bulwark upstream. A vhost naming it
+// fails `nginx -t`, and a reload signalled just before is refused with it
+// (jtest, 2026-11-08: a changed domain's vhost never went live). The mail-app
+// endpoints are still served.
+func TestWebmailVhostApply_WithoutBulwarkLeavesWebmailOut(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	bulwarkUpstreamConf = filepath.Join(t.TempDir(), "missing.conf")
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:  "example.com",
+		SSLCertPath: "/etc/letsencrypt/live/example.com/fullchain.pem",
+		SSLKeyPath:  "/etc/letsencrypt/live/example.com/privkey.pem",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "example.com-mail.conf"))
+	if err != nil {
+		t.Fatalf("read vhost: %v", err)
+	}
+	vhost := string(b)
+	if strings.Contains(vhost, "jabali_bulwark") {
+		t.Error("vhost names the jabali_bulwark upstream on a server without Bulwark")
+	}
+	if !strings.Contains(vhost, "proxy_pass http://127.0.0.1:8446") {
+		t.Error("vhost lost the Stalwart mail-app endpoints")
+	}
+	if !strings.Contains(vhost, "return 404;") {
+		t.Error("vhost / should answer 404 without webmail")
+	}
 }
 
 func TestWebmailVhostApply_WritesAndReloads(t *testing.T) {
