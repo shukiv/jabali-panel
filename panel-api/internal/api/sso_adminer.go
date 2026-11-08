@@ -36,11 +36,18 @@ type SSOAdminerHandlerConfig struct {
 	Adminer   dbconsoleops.AdminerConsole
 	Log       *slog.Logger
 	SSOConfig config.SSOConfig
+	// SSORateLimit bounds minting, per user. Wire from rl.SSOPerActor();
+	// nil disables it.
+	SSORateLimit gin.HandlerFunc
 }
 
 func RegisterSSOAdminerRoutes(g *gin.RouterGroup, cfg SSOAdminerHandlerConfig) {
 	h := &ssoAdminerHandler{cfg: cfg}
-	g.POST("/sso/adminer", h.issueSSOToken)
+	limit := cfg.SSORateLimit
+	if limit == nil {
+		limit = func(c *gin.Context) { c.Next() }
+	}
+	g.POST("/sso/adminer", limit, h.issueSSOToken)
 }
 
 type ssoAdminerHandler struct{ cfg SSOAdminerHandlerConfig }

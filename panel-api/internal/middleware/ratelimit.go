@@ -37,6 +37,13 @@ type RateLimiterConfig struct {
 	// runs SCANs. Unset, ScanPerActor falls back to the Strict tier.
 	ScanRate  rate.Limit
 	ScanBurst int
+	// SSORate/SSOBurst gate the routes that mint a one-time sign-in link
+	// (phpMyAdmin, Adminer, webmail, app logins), per user. Every mint writes
+	// a token row and the database consoles set up a temporary login, so a
+	// user gets a few at once and then a steady trickle. Unset, SSOPerActor
+	// falls back to the Strict tier.
+	SSORate  rate.Limit
+	SSOBurst int
 }
 
 // RateLimiter holds per-IP, per-tier token buckets and returns middleware
@@ -61,6 +68,7 @@ const (
 	tierStrict
 	tierKratos
 	tierScan
+	tierSSO
 )
 
 type entry struct {
@@ -96,6 +104,11 @@ func (l *RateLimiter) StrictPerActor() gin.HandlerFunc { return l.perActor(tierS
 // ScanPerActor enforces the scan tier keyed by the authenticated user, like
 // StrictPerActor, in a bucket of its own (GH #2165).
 func (l *RateLimiter) ScanPerActor() gin.HandlerFunc { return l.perActor(tierScan) }
+
+// SSOPerActor enforces the SSO tier keyed by the authenticated user, like
+// StrictPerActor, in a bucket of its own: one budget for every route that
+// mints a one-time sign-in link.
+func (l *RateLimiter) SSOPerActor() gin.HandlerFunc { return l.perActor(tierSSO) }
 
 func (l *RateLimiter) perActor(t tier) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -199,6 +212,12 @@ func (l *RateLimiter) limiterFor(ip string, t tier) *rate.Limiter {
 }
 
 func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
+	if t == tierSSO {
+		if l.cfg.SSOBurst > 0 {
+			return l.cfg.SSORate, l.cfg.SSOBurst
+		}
+		t = tierStrict
+	}
 	if t == tierScan {
 		if l.cfg.ScanBurst > 0 {
 			return l.cfg.ScanRate, l.cfg.ScanBurst

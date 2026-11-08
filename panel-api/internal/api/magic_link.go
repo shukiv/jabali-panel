@@ -44,6 +44,9 @@ type MagicLinkHandlerConfig struct {
 	Domains             repository.DomainRepository
 	Users               repository.UserRepository
 	Agent               agent.AgentInterface
+	// SSORateLimit bounds minting, per user. Wire from rl.SSOPerActor();
+	// nil disables it.
+	SSORateLimit gin.HandlerFunc
 }
 
 // ssoTTLSeconds mirrors the agent-side constant (panel-agent
@@ -99,7 +102,11 @@ const SSOTTLSeconds = ssoTTLSeconds
 
 func RegisterMagicLinkRoutes(v1 *gin.RouterGroup, cfg MagicLinkHandlerConfig) {
 	h := &magicLinkHandlers{cfg: cfg}
-	v1.POST("/applications/:id/magic-link", h.mint)
+	limit := cfg.SSORateLimit
+	if limit == nil {
+		limit = func(c *gin.Context) { c.Next() }
+	}
+	v1.POST("/applications/:id/magic-link", limit, h.mint)
 }
 
 type magicLinkHandlers struct {

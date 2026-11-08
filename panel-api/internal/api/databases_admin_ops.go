@@ -58,6 +58,9 @@ type DatabaseAdminOpsHandlerConfig struct {
 	// db-admin ops dual-write here (fold-in); db_admin_audit stays a
 	// one-release alias-view. Optional — nil disables emission.
 	Recorder audit.Recorder
+	// SSORateLimit bounds the admin SSO handoffs, per admin. Wire from
+	// rl.SSOPerActor(); nil disables it.
+	SSORateLimit gin.HandlerFunc
 }
 
 func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHandlerConfig) {
@@ -70,11 +73,15 @@ func RegisterDatabaseAdminOpsRoutes(g *gin.RouterGroup, cfg DatabaseAdminOpsHand
 	grp.POST("/root-password", h.rootPassword)
 	grp.GET("/config", h.getConfig)
 	grp.PUT("/config", h.putConfig)
+	ssoLimit := cfg.SSORateLimit
+	if ssoLimit == nil {
+		ssoLimit = func(c *gin.Context) { c.Next() }
+	}
 	if cfg.SSO != nil {
-		grp.POST("/sso/phpmyadmin", h.ssoPhpMyAdminAdmin)
+		grp.POST("/sso/phpmyadmin", ssoLimit, h.ssoPhpMyAdminAdmin)
 	}
 	if cfg.AdminerSSO != nil {
-		grp.POST("/sso/adminer", h.ssoAdminerAdmin)
+		grp.POST("/sso/adminer", ssoLimit, h.ssoAdminerAdmin)
 	}
 	grp.POST("/maintenance", h.runMaintenance)
 	grp.GET("/maintenance/:id", h.maintenanceStatus)
