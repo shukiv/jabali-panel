@@ -7981,7 +7981,9 @@ scrub_bootstrap_passwords() {
      && chmod --reference="$ENV_FILE" "$tmp" \
      && chown --reference="$ENV_FILE" "$tmp" \
      && mv -f "$tmp" "$ENV_FILE"; then
-    _ok "removed the one-time bootstrap password(s) from $ENV_FILE"
+    # A re-run after a failed install, or an update, removes a password no
+    # banner showed; the operator can always set a new one.
+    _ok "removed the one-time bootstrap password(s) from $ENV_FILE; the accounts exist (a new password: jabali user password <user>)"
   else
     [[ -n "${tmp:-}" ]] && rm -f "$tmp"
     _warn "could not rewrite $ENV_FILE; the bootstrap passwords stay for now"

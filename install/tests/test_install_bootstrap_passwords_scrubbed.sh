@@ -60,9 +60,10 @@ run_scrub() {
   chmod 0640 "$tmp/panel.env"
   cp "$tmp/panel.env" "$tmp/panel.env.before"
   {
-    printf 'set -Eeuo pipefail\n'
+    # install.sh's own ERR trap aborts the install; a stand-in records a fire.
+    printf 'set -Eeuo pipefail\ntrap "echo err-trap-fired" ERR\n'
     printf 'ENV_FILE=%q\nPATH=%q\n' "$tmp/panel.env" "$tmp/bin:$PATH"
-    printf '_ok() { :; }\n_log() { :; }\n_warn() { :; }\n'
+    printf '_ok() { echo "ok: $*"; }\n_log() { :; }\n_warn() { :; }\n'
     printf '%s\n' "$src"
     printf 'scrub_bootstrap_passwords\necho scrub-returned\n'
   } >"$tmp/run.sh"
@@ -74,7 +75,7 @@ expect() { # expect <desc> <cond...>
   local desc="$1"; shift
   if ! "$@"; then echo "FAIL: $desc"; fail=1; fi
 }
-returned() { grep -q '^scrub-returned$' "$tmp/out"; }
+returned() { grep -q '^scrub-returned$' "$tmp/out" && ! grep -q 'err-trap-fired' "$tmp/out"; }
 unchanged() { cmp -s "$tmp/panel.env" "$tmp/panel.env.before"; }
 mode_kept() { [[ "$(stat -c %a "$tmp/panel.env")" == 640 ]]; }
 no_temp_left() { [[ -z "$(find "$tmp" -maxdepth 1 -name '.panel.env.*' -print -quit)" ]]; }
@@ -92,6 +93,7 @@ expect "admin exists: admin email kept" has JABALI_BOOTSTRAP_ADMIN_EMAIL=admin@h
 expect "admin exists: other settings kept" has DATABASE_URL=dsn-placeholder
 expect "admin exists: mode kept" mode_kept
 expect "admin exists: no temp file left" no_temp_left
+expect "admin exists: says how to set a new password" grep -q 'jabali user password' "$tmp/out"
 expect "admin exists: only the password line removed" \
   eval '[[ "$(diff "$tmp/panel.env.before" "$tmp/panel.env" | grep -c "^[<>]")" == 1 ]]'
 
