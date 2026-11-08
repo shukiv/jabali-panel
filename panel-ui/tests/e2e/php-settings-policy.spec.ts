@@ -298,8 +298,9 @@ test("tenant PHP settings: inherited display_errors, sticky Save, reset and the 
   await lastSection.scrollIntoViewIfNeeded();
   await expect(save).toBeInViewport();
 
-  // Leaving the tab asks; keeping the edits stays on the tab with them.
-  await page.getByRole("tab", { name: "Caching" }).click();
+  // Leaving the tab asks; keeping the edits stays on the tab with them. Logs
+  // sits at the start of the strip, so it's in view however many tabs follow.
+  await page.getByRole("tab", { name: "Logs" }).click();
   const dialog = page.getByRole("dialog").filter({ hasText: "Discard unsaved PHP settings?" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Keep editing" }).click();
