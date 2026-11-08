@@ -313,6 +313,9 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
 var (
 	mailVhostSitesAvailable = "/etc/nginx/sites-available"
 	mailVhostSitesEnabled   = "/etc/nginx/sites-enabled"
+	// bulwarkUpstreamConf declares the jabali_bulwark upstream. install.sh
+	// installs it with Bulwark.
+	bulwarkUpstreamConf = "/etc/nginx/conf.d/jabali-bulwark-upstream.conf"
 )
 
 type webmailVhostApplyParams struct {
@@ -485,6 +488,15 @@ func webmailVhostApplyHandler(ctx context.Context, params json.RawMessage) (any,
 
 	if err := p.resolveMailHostnames(); err != nil {
 		return nil, err
+	}
+	// A server without Bulwark (installed with mail off, say) has no
+	// jabali_bulwark upstream, and a vhost naming it fails `nginx -t`. The
+	// write lands right after the previous op's reload, which nginx applies
+	// asynchronously: that reload then read this file too and was refused,
+	// so another domain's vhost change never went live. Serve the mail-app
+	// endpoints without webmail instead.
+	if !p.NoWebmail && !p.ChallengeOnly && !fileExists(bulwarkUpstreamConf) {
+		p.NoWebmail = true
 	}
 	if !p.IsPanelPrimary {
 		p.PanelHostGuard = panelHostGuard(append([]string{"mail." + p.DomainName, "autoconfig." + p.DomainName,
