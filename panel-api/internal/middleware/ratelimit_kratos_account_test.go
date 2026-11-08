@@ -3,6 +3,7 @@ package middleware_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,8 +17,8 @@ import (
 )
 
 // The /.ory login and recovery POSTs also spend a budget kept per account
-// they name, so guessing one account's password from many addresses is held
-// to what one address may try.
+// they name, twice an address's, so guessing one account's password from
+// many addresses is held to what two addresses may try.
 
 const (
 	kratosLogin    = "/.ory/self-service/login?flow=x"
@@ -50,7 +51,8 @@ func serveKratos(mw gin.HandlerFunc, p kratosPost) (*httptest.ResponseRecorder, 
 	return w, got
 }
 
-// kratosLimiter allows burst POSTs per address and per account, no refill.
+// kratosLimiter allows burst POSTs per address and twice that per account,
+// no refill.
 func kratosLimiter(burst int) *middleware.RateLimiter {
 	return middleware.NewRateLimiter(middleware.RateLimiterConfig{
 		DefaultRate: 1000, DefaultBurst: 1000,
@@ -67,43 +69,94 @@ func passwordLogin(identifier string) string {
 	return kratosBody(map[string]string{"method": "password", "identifier": identifier, "password": "wrong"})
 }
 
+// addr is the n-th test address of a /24.
+func addr(prefix string, n int) string { return fmt.Sprintf("%s.%d", prefix, n) }
+
 func TestKratosFlows_AccountBudgetHoldsAcrossAddresses(t *testing.T) {
 	mw := kratosLimiter(3).KratosFlows(nil)
-	for _, ip := range []string{"10.0.1.1", "10.0.1.2", "10.0.1.3"} {
-		if w, _ := serveKratos(mw, kratosPost{kratosLogin, ip, jsonType, passwordLogin("alice")}); w.Code != http.StatusOK {
-			t.Fatalf("login for alice from %s = %d, want 200 within the account's budget", ip, w.Code)
+	for n := 1; n <= 6; n++ {
+		if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.1", n), jsonType, passwordLogin("alice")}); w.Code != http.StatusOK {
+			t.Fatalf("login %d for alice = %d, want 200 within the account's budget of 6", n, w.Code)
 		}
 	}
-	w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.1.4", jsonType, passwordLogin("alice")})
+	w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.1", 7), jsonType, passwordLogin("alice")})
 	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("4th login for alice, from a 4th address = %d, want 429", w.Code)
+		t.Fatalf("7th login for alice, from a 7th address = %d, want 429", w.Code)
 	}
 	// The same answer as the per-address limit: nothing tells a known
 	// account from an unknown name.
 	if w.Header().Get("Retry-After") != "60" || strings.TrimSpace(w.Body.String()) != `{"error":"rate_limited"}` {
 		t.Errorf("429 = Retry-After %q body %q, want 60 and rate_limited", w.Header().Get("Retry-After"), w.Body.String())
 	}
-	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.1.4", jsonType, passwordLogin("bob")}); w.Code != http.StatusOK {
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.1", 7), jsonType, passwordLogin("bob")}); w.Code != http.StatusOK {
 		t.Errorf("login for bob = %d, want 200: each account has its own budget", w.Code)
 	}
 }
 
-func TestKratosFlows_AccountNameIsNormalised(t *testing.T) {
+// One address at its own limit can't spend all of an account's budget: the
+// owner, from another address, still gets in.
+func TestKratosFlows_OneAddressCannotLockAnAccount(t *testing.T) {
 	mw := kratosLimiter(3).KratosFlows(nil)
-	for i, name := range []string{"Alice@Example.com", " alice@example.com", "ALICE@EXAMPLE.COM\t"} {
-		if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.2." + string(rune('1'+i)), jsonType, passwordLogin(name)}); w.Code != http.StatusOK {
+	for i := 0; i < 8; i++ {
+		serveKratos(mw, kratosPost{kratosLogin, "10.0.8.1", jsonType, passwordLogin("alice")})
+	}
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.8.2", jsonType, passwordLogin("alice")}); w.Code != http.StatusOK {
+		t.Errorf("alice's login from her own address, after another address hit its limit = %d, want 200", w.Code)
+	}
+}
+
+func TestKratosFlows_AccountNameIsNormalised(t *testing.T) {
+	mw := kratosLimiter(2).KratosFlows(nil)
+	for n, name := range []string{"Alice@Example.com", " alice@example.com", "ALICE@EXAMPLE.COM\t", "alice@example.com "} {
+		if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.2", n+1), jsonType, passwordLogin(name)}); w.Code != http.StatusOK {
 			t.Fatalf("login %q = %d, want 200", name, w.Code)
 		}
 	}
-	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.2.9", jsonType, passwordLogin("alice@example.com")}); w.Code != http.StatusTooManyRequests {
-		t.Errorf("4th login for the same account, spelled another way = %d, want 429", w.Code)
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.2", 9), jsonType, passwordLogin("alice@example.com")}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("5th login for the same account, spelled another way = %d, want 429", w.Code)
+	}
+}
+
+// Kratos's other fields that name the account share its budget, and must
+// agree with the usual one.
+func TestKratosFlows_EveryFieldThatNamesTheAccountCounts(t *testing.T) {
+	mw := kratosLimiter(1).KratosFlows(nil)
+	legacy := kratosBody(map[string]string{"method": "password", "password_identifier": "alice", "password": "x"})
+	for n := 1; n <= 2; n++ {
+		if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.9", n), jsonType, legacy}); w.Code != http.StatusOK {
+			t.Fatalf("password_identifier login %d = %d, want 200", n, w.Code)
+		}
+	}
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.9", 3), jsonType, passwordLogin("Alice")}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("identifier login after two password_identifier ones = %d, want 429 (one account)", w.Code)
+	}
+
+	v2 := func(field string) string {
+		return kratosBody(map[string]string{"method": "code", field: "bob@example.com"})
+	}
+	for n, f := range []string{"recovery_address", "recovery_confirm_address"} {
+		if w, _ := serveKratos(mw, kratosPost{kratosRecovery, addr("10.0.10", n+1), jsonType, v2(f)}); w.Code != http.StatusOK {
+			t.Fatalf("recovery with %s = %d, want 200", f, w.Code)
+		}
+	}
+	if w, _ := serveKratos(mw, kratosPost{kratosRecovery, addr("10.0.10", 3), jsonType, v2("email")}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("recovery by email after two by the v2 fields = %d, want 429 (one account)", w.Code)
+	}
+
+	for name, p := range map[string]kratosPost{
+		"login":    {kratosLogin, "10.0.11.1", jsonType, `{"identifier":"decoy","password_identifier":"carol","password":"x"}`},
+		"recovery": {kratosRecovery, "10.0.11.2", jsonType, `{"email":"decoy","recovery_confirm_address":"carol"}`},
+	} {
+		if w, _ := serveKratos(mw, p); w.Code != http.StatusBadRequest {
+			t.Errorf("%s naming two accounts = %d, want 400", name, w.Code)
+		}
 	}
 }
 
 // The second-factor steps and the recovery code step name no account: only
 // the per-address limit applies to them.
 func TestKratosFlows_StepsThatNameNoAccountAreNotAccountLimited(t *testing.T) {
-	mw := kratosLimiter(2).KratosFlows(nil)
+	mw := kratosLimiter(1).KratosFlows(nil)
 	serveKratos(mw, kratosPost{kratosLogin, "10.0.3.1", jsonType, passwordLogin("alice")})
 	serveKratos(mw, kratosPost{kratosLogin, "10.0.3.2", jsonType, passwordLogin("alice")})
 	steps := []kratosPost{
@@ -123,7 +176,7 @@ func TestKratosFlows_StepsThatNameNoAccountAreNotAccountLimited(t *testing.T) {
 // Recovery is kept per email, apart from login: guessing an account's
 // password doesn't stop its recovery, and the reverse.
 func TestKratosFlows_RecoveryHasItsOwnAccountBudget(t *testing.T) {
-	mw := kratosLimiter(2).KratosFlows(nil)
+	mw := kratosLimiter(1).KratosFlows(nil)
 	recoverFrom := func(ip string) int {
 		w, _ := serveKratos(mw, kratosPost{kratosRecovery, ip, jsonType, kratosBody(map[string]string{"method": "code", "email": "Alice@example.com"})})
 		return w.Code
@@ -183,11 +236,12 @@ func TestKratosFlows_AccountLimitLogsItsOwnMarker(t *testing.T) {
 	var buf bytes.Buffer
 	mw := kratosLimiter(1).KratosFlows(slog.New(slog.NewTextHandler(&buf, nil)))
 	serveKratos(mw, kratosPost{kratosLogin, "10.0.7.1", jsonType, passwordLogin("alice@example.com")})
-	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.7.2", jsonType, passwordLogin("alice@example.com")}); w.Code != http.StatusTooManyRequests {
-		t.Fatalf("2nd login for alice = %d, want 429", w.Code)
+	serveKratos(mw, kratosPost{kratosLogin, "10.0.7.2", jsonType, passwordLogin("alice@example.com")})
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.7.3", jsonType, passwordLogin("alice@example.com")}); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("3rd login for alice = %d, want 429", w.Code)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "marker=kratos_account_rate_limited") || !strings.Contains(out, "client_ip=10.0.7.2") {
+	if !strings.Contains(out, "marker=kratos_account_rate_limited") || !strings.Contains(out, "client_ip=10.0.7.3") {
 		t.Errorf("log %q: want the account marker and the address", out)
 	}
 	if strings.Contains(out, "kratos_flow_rate_limited") || strings.Contains(out, "alice") {

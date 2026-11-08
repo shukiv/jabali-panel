@@ -14,10 +14,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// kratosAccountField is the body field that names the account a login or
-// recovery POST is for. The second-factor login steps and the recovery code
-// step carry none.
-var kratosAccountField = map[string]string{"login": "identifier", "recovery": "email"}
+// kratosAccountFields are the body fields that name the account a login or
+// recovery POST is for, Kratos's deprecated and recovery-v2 ones included.
+// The second-factor login steps and the recovery code step carry none.
+var kratosAccountFields = map[string][]string{
+	"login":    {"identifier", "password_identifier"},
+	"recovery": {"email", "recovery_address", "recovery_confirm_address"},
+}
 
 // kratosAccountKey returns the bucket key of the account a login or recovery
 // POST names, "" when it names none. The body is put back for the proxy.
@@ -45,7 +48,7 @@ func kratosAccountKey(c *gin.Context, flow string) (key string, status int, code
 	if mt, _, err := mime.ParseMediaType(c.GetHeader("Content-Type")); err != nil || mt != "application/json" {
 		return "", http.StatusUnsupportedMediaType, "unsupported_content_type"
 	}
-	values, err := topLevelStrings(body, kratosAccountField[flow])
+	values, err := topLevelStrings(body, kratosAccountFields[flow])
 	if err != nil {
 		return "", http.StatusBadRequest, "invalid_request"
 	}
@@ -72,9 +75,9 @@ func kratosAccountKey(c *gin.Context, flow string) (key string, status int, code
 var errNotJSONObject = errors.New("not a single JSON object")
 
 // topLevelStrings returns the string values of every top-level key of the
-// JSON object body that matches field, ignoring case as encoding/json does
-// when it decodes into a struct.
-func topLevelStrings(body []byte, field string) ([]string, error) {
+// JSON object body that matches one of fields, ignoring case as encoding/json
+// does when it decodes into a struct.
+func topLevelStrings(body []byte, fields []string) ([]string, error) {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	if tok, err := dec.Token(); err != nil {
 		return nil, err
@@ -92,9 +95,11 @@ func topLevelStrings(body []byte, field string) ([]string, error) {
 		if err := dec.Decode(&v); err != nil {
 			return nil, err
 		}
-		var s string
-		if strings.EqualFold(key, field) && json.Unmarshal(v, &s) == nil {
-			out = append(out, s)
+		for _, f := range fields {
+			var s string
+			if strings.EqualFold(key, f) && json.Unmarshal(v, &s) == nil {
+				out = append(out, s)
+			}
 		}
 	}
 	if _, err := dec.Token(); err != nil { // the closing brace

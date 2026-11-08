@@ -70,7 +70,7 @@ const (
 	tierScan
 	tierSSO
 	// tierKratosAccount keys the /.ory login and recovery POSTs on the
-	// account they name, with the Kratos tier's settings.
+	// account they name, with twice the Kratos tier's settings.
 	tierKratosAccount
 )
 
@@ -134,9 +134,10 @@ func (l *RateLimiter) perActor(t tier) gin.HandlerFunc {
 // attack in Security → CrowdSec.
 //
 // Past the per-address check, a POST that names an account (the login
-// identifier, the recovery email) also spends that account's budget, with the
-// same settings: guessing one account from many addresses is held to what one
-// address may try, and one address never reaches it first. Its WARN line has
+// identifier, the recovery email) also spends that account's budget, twice an
+// address's: guessing one account from many addresses is held to what two
+// addresses may try, and one address at its own limit can't spend it all and
+// lock the owner out. Its WARN line has
 // its own marker (kratos_account_rate_limited): the account's owner retrying
 // while someone else guesses must not have the owner's address banned. The
 // answer is the same 429 either way, whether the account exists or not.
@@ -245,7 +246,10 @@ func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
 		t = tierStrict
 	}
 	if t == tierKratosAccount {
-		t = tierKratos
+		// Twice an address's budget: one address at its own limit can't
+		// spend all of an account's, so it can't lock the owner out.
+		r, b := l.tierSettings(tierKratos)
+		return r * 2, b * 2
 	}
 	if t == tierScan {
 		if l.cfg.ScanBurst > 0 {
