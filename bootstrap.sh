@@ -3,36 +3,54 @@
 #
 #   curl -fsSL https://get.jabali-panel.com | sudo bash
 #
-# Downloads the latest sha256-verified release tarball, extracts the prebuilt
-# jabali-installer binary + install.sh, and launches the Bubble Tea installer.
+# Downloads the current stable release's sha256-verified tarball, extracts the
+# prebuilt jabali-installer binary + install.sh, and launches the Bubble Tea
+# installer.
 # The installer collects a deploy profile + modules + config, then runs
 # install.sh (JABALI_MODULES=…) with a live progress pane.
 #
-# Release resolution uses GitHub's releases/latest/download REDIRECT — served by
-# github.com, NOT api.github.com — so it does NOT consume the API's 60 req/hr/IP
-# unauthenticated limit that made `curl … | bash` fail with "403 API rate limit
-# exceeded" on cloud VMs behind shared-egress IPs. No hosting, no token, no cost.
-# The GitHub releases API is kept only as a fallback for the brief window right
-# after a release, before the fixed-name asset is attached.
+# Which release: the stable channel's by default, the release built for the
+# commit the `stable` tag names, which is what a new server then follows.
+# JABALI_RELEASE_CHANNEL=development installs the newest main build instead.
+# Neither touches api.github.com, whose 60 req/hr/IP unauthenticated limit made
+# `curl … | bash` fail with "403 API rate limit exceeded" on cloud VMs behind
+# shared-egress IPs:
+#   - stable reads the tag from <repo>.git/info/refs (the ref list `git
+#     ls-remote` reads, served by github.com) and fetches release-<short>'s
+#     assets by name;
+#   - development uses GitHub's releases/latest/download redirect. The
+#     releases API is kept only as its fallback for the brief window right
+#     after a release, before the fixed-name asset is attached.
 #
 # Non-interactive parity: pipe with no TTY, pass --unattended, or preset
 # JABALI_MODULES and the installer skips the TUI and runs install.sh directly.
 # Any args after `bash -s --` are forwarded to the installer (e.g. --dry-run).
 #
 # Overrides:
+#   JABALI_RELEASE_CHANNEL        stable (default) or development
+#   JABALI_RELEASE_REPO           default https://github.com/shukiv/jabali-panel
+#                                 (the stable channel's tag and assets)
 #   JABALI_RELEASE_DOWNLOAD_BASE  default
 #       https://github.com/shukiv/jabali-panel/releases/latest/download
-#   JABALI_RELEASE_API_BASE       GitHub fallback repo API (used only if the
-#                                 fixed-name latest asset isn't attached yet)
+#   JABALI_RELEASE_API_BASE       GitHub fallback repo API (development only,
+#                                 used only if the fixed-name latest asset
+#                                 isn't attached yet)
 #   JABALI_GITHUB_TOKEN / GITHUB_TOKEN  auth for the GitHub fallback (raises the
 #                                 60/hr unauthenticated limit to 5000/hr)
 set -euo pipefail
 
+CHANNEL="${JABALI_RELEASE_CHANNEL:-stable}"
+REPO_WEB="${JABALI_RELEASE_REPO:-https://github.com/shukiv/jabali-panel}"
 DL_BASE="${JABALI_RELEASE_DOWNLOAD_BASE:-https://github.com/shukiv/jabali-panel/releases/latest/download}"
 API_BASE="${JABALI_RELEASE_API_BASE:-https://api.github.com/repos/shukiv/jabali-panel}"
 
 die() { printf '\033[1;31m[bootstrap] %s\033[0m\n' "$*" >&2; exit 1; }
 log() { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
+
+case "$CHANNEL" in
+  stable|development) ;;
+  *) die "JABALI_RELEASE_CHANNEL must be stable or development, not '$CHANNEL'" ;;
+esac
 
 [[ $EUID -eq 0 ]] || die "must run as root (curl … | sudo bash)"
 for bin in curl tar sha256sum; do
@@ -44,23 +62,71 @@ trap 'rm -rf "$tmp"' EXIT
 
 tar_url=""      # resolved release tarball URL
 sum_url=""      # its .sha256 sidecar URL
+stable_sha=""   # the commit the `stable` tag names (stable channel)
 
-# ---- primary: releases/latest/download (github.com redirect, no API) -------
+# stable_commit — print the commit the `stable` tag names, from a git ref list
+# (the file <repo>.git/info/refs?service=git-upload-pack returns). Each ref is a
+# pkt-line, "<4 hex length><40 hex commit> <ref>\n"; an annotated tag is
+# followed by its peeled "<ref>^{}" line, which names the commit. Prints
+# nothing when there is no `stable` tag.
+stable_commit() {
+  local c
+  c="$(grep -a -m1 -o -E '[0-9a-f]{40} refs/tags/stable\^\{\}$' "$1" | cut -c1-40)" || c=""
+  if [[ -z "$c" ]]; then
+    c="$(grep -a -m1 -o -E '[0-9a-f]{40} refs/tags/stable$' "$1" | cut -c1-40)" || c=""
+  fi
+  printf '%s' "$c"
+}
+
+# release_for_commit — set tar_url/sum_url to the release built for a commit,
+# release-<short sha>. The short length is whatever the release build used (9
+# today), so try a few on the small .sha256 sidecar, as `jabali update` does
+# (byCommitDownloadURLs in panel-api/cmd/server/update_release_direct.go).
+release_for_commit() {
+  local n short cand
+  for n in 9 8 10 7 11 12; do
+    short="${1:0:$n}"
+    cand="${REPO_WEB}/releases/download/release-${short}/jabali-release-${short}.tar.gz"
+    if curl -fsIL --connect-timeout 15 "${cand}.sha256" >/dev/null 2>&1; then
+      tar_url="$cand"
+      sum_url="${cand}.sha256"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# ---- stable: the release built for the commit the `stable` tag names --------
+if [[ "$CHANNEL" == "stable" ]]; then
+  log "resolving the stable release via ${REPO_WEB}.git/info/refs"
+  curl -fsSL --connect-timeout 20 --retry 3 -o "$tmp/refs" \
+    "${REPO_WEB}.git/info/refs?service=git-upload-pack" \
+    || die "could not read the release tags from ${REPO_WEB}"
+  stable_sha="$(stable_commit "$tmp/refs")"
+  [[ -n "$stable_sha" ]] \
+    || die "no stable release has been published yet (JABALI_RELEASE_CHANNEL=development installs the newest build)"
+  release_for_commit "$stable_sha" \
+    || die "the stable release (${stable_sha:0:9}) has no published tarball yet — retry shortly"
+fi
+
+# ---- development, primary: releases/latest/download (github.com redirect) --
 # The fixed-name asset "jabali-release.tar.gz" is (re)attached to every release,
 # so /releases/latest/download/jabali-release.tar.gz always points at the newest
 # published release. -f makes curl fail if the redirect target 404s (the asset
 # isn't attached yet), which drops us to the API fallback.
-cand="${DL_BASE}/jabali-release.tar.gz"
-log "resolving latest release via ${cand}"
-if curl -fsIL --connect-timeout 15 "$cand" >/dev/null 2>&1 \
-   && curl -fsIL --connect-timeout 15 "${cand}.sha256" >/dev/null 2>&1; then
-  tar_url="$cand"
-  sum_url="${cand}.sha256"
-else
-  log "fixed-name latest asset not found — falling back to the GitHub API"
+if [[ "$CHANNEL" == "development" ]]; then
+  cand="${DL_BASE}/jabali-release.tar.gz"
+  log "resolving latest release via ${cand}"
+  if curl -fsIL --connect-timeout 15 "$cand" >/dev/null 2>&1 \
+     && curl -fsIL --connect-timeout 15 "${cand}.sha256" >/dev/null 2>&1; then
+    tar_url="$cand"
+    sum_url="${cand}.sha256"
+  else
+    log "fixed-name latest asset not found — falling back to the GitHub API"
+  fi
 fi
 
-# ---- fallback: GitHub releases API (rate-limited; optional token) ----------
+# ---- development, fallback: GitHub releases API (rate-limited) -------------
 # Scan the releases list (newest first) rather than /releases/latest: the very
 # newest tag may be published seconds before its build finishes, so it can be
 # asset-less. Walk candidates until one has both a tarball and a .sha256 sidecar.
@@ -142,9 +208,19 @@ chmod +x "$tmp/bin"/* 2>/dev/null || true
 manifest=""
 tar -C "$tmp" -xzf "$tmp/release.tar.gz" MANIFEST 2>/dev/null && manifest="$tmp/MANIFEST"
 
+# The stable release is found by its name; its MANIFEST says which commit it
+# was built from, and install.sh checks that commit out.
+if [[ "$CHANNEL" == "stable" ]]; then
+  built_from=""
+  [[ -n "$manifest" ]] && built_from="$(awk -F= '/^full_sha=/{print $2; exit}' "$manifest")"
+  [[ "$built_from" == "$stable_sha" ]] \
+    || die "the release tarball was built from ${built_from:-an unknown commit}, not the stable commit ${stable_sha}"
+fi
+
 log "launching installer"
 exec env \
   JABALI_INSTALL_SH="$tmp/install.sh" \
   JABALI_PREBUILT_BIN="$tmp/bin" \
   JABALI_RELEASE_MANIFEST="$manifest" \
+  JABALI_RELEASE_CHANNEL="$CHANNEL" \
   "$tmp/bin/jabali-installer" "$@"

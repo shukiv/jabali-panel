@@ -101,6 +101,11 @@ auto-updating needs a deliberate deploy step after every merge that matters, and
 - **Security fixes** reach boxes on both channels within the hour, through a
   signed hotfix release and the signed advisory feed (see below).
 
+A new server installs the current stable release and follows the stable
+channel. Installed with `JABALI_RELEASE_CHANNEL=development`, it installs the
+newest main build and follows the development channel
+([Installation](../installation.md)).
+
 Builds from 35d7d468d to ae219af25 (22 and 23 October 2026) require the
 signature on every channel. A development box on one of them moves once, to the
 first signed release that carries this change, and streams main from there.

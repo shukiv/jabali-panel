@@ -8308,6 +8308,20 @@ start_and_verify() {
 # mid-flow, must rebuild". Fresh install is by definition a successful
 # build against the current HEAD, so we seed it here.
 
+# set_release_channel_from_install — a server installed from the newest main
+# (bootstrap.sh or install.sh, with JABALI_RELEASE_CHANNEL=development) follows main
+# from the start. Otherwise the panel's default channel, stable, stands. Only
+# that explicit request changes the setting, so a re-run never moves a server
+# to another channel by itself.
+set_release_channel_from_install() {
+  [[ "${JABALI_RELEASE_CHANNEL:-}" == "development" ]] || return 0
+  if "$BIN_PATH" settings set release_channel=development >/dev/null 2>&1; then
+    _ok "release channel: development (follows main)"
+  else
+    _warn "could not set the release channel to development — set it on the Updates page"
+  fi
+}
+
 seed_last_built_sha() {
   local sha
   sha="$(root_git rev-parse HEAD 2>/dev/null || true)"
@@ -19206,6 +19220,7 @@ main() {
   # picks it up. Idempotent for SERVICE_USER + www-data which were added
   # earlier (post clone_or_update_repo).
   ensure_jabali_sockets_group
+  set_release_channel_from_install
   seed_last_built_sha
   jh_first_checkin
   _ok "jabali-panel + jabali-agent installed. Status:"

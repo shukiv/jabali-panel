@@ -26,6 +26,12 @@ If outbound `:53/udp` is blocked (some labs), set `JABALI_DNS_FORWARDER=<a-reach
 curl -fsSL https://get.jabali-panel.com | bash
 ```
 
+It installs the current stable release, and the server then follows the stable channel (see [Server Updates](./admin/server-updates.md#release-channels-and-signatures)). To install the newest build from main instead, and have the server follow the development channel, set `JABALI_RELEASE_CHANNEL=development`:
+
+```bash
+curl -fsSL https://get.jabali-panel.com | JABALI_RELEASE_CHANNEL=development bash
+```
+
 The installer is idempotent — safe to re-run. It writes drop-ins, never overwrites manual edits to host configs outside of the files it owns.
 
 It installs the release's code at the commit the release was built from. On a server that already runs a newer build, a re-run stops before it replaces the panel's code or binaries; update an installed server with `jabali update`.
@@ -35,6 +41,7 @@ It installs the release's code at the commit the release was built from. On a se
 | Variable | Effect |
 |---|---|
 | `JABALI_DNS_FORWARDER=<ip>` | Force pdns-recursor to forward `.` to this resolver (use when outbound :53/udp is blocked). Installer also rewrites `/etc/resolv.conf` to point at the same IP and masks systemd-resolved. |
+| `JABALI_RELEASE_CHANNEL=development` | Install the newest main build instead of the stable release, and set the server's release channel to development. The default is `stable`. |
 | `JABALI_HOSTNAME=<fqdn>` | The server's hostname, same as `--hostname <fqdn>`; skips the prompt. The installer sets the system hostname to it and uses it for the server's own DNS zone and the panel's primary mail domain. |
 | `JABALI_SKIP_*` (various) | Skip individual install steps. Generally avoid — supported only for debugging. |
 
