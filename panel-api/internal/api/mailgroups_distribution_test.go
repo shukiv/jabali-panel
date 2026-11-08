@@ -28,6 +28,35 @@ type mgGroupsFake struct {
 	internalOnlyWritten bool
 	createdGroup        *models.MailGroup
 	createErr           error
+
+	external      []string // current outside addresses (GH #1833)
+	externalSaved bool
+}
+
+func (f *mgGroupsFake) ListExternalMembers(context.Context, string) ([]string, error) {
+	if f.external == nil {
+		return []string{}, nil
+	}
+	return f.external, nil
+}
+func (f *mgGroupsFake) SetExternalMembers(_ context.Context, _ string, addrs []string) error {
+	f.externalSaved = true
+	f.external = addrs
+	return nil
+}
+
+// mgSettingsFake serves the admin's outside-address cap; a nil row is a
+// server with no settings row yet.
+type mgSettingsFake struct {
+	repository.ServerSettingsRepository
+	row *models.ServerSettings
+}
+
+func (f *mgSettingsFake) Get(context.Context) (*models.ServerSettings, error) {
+	if f.row == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.row, nil
 }
 
 func (f *mgGroupsFake) FindByID(context.Context, string) (*models.MailGroup, error) {
@@ -82,6 +111,15 @@ func (f *mgMbFake) FindByID(_ context.Context, id string) (*models.Mailbox, erro
 func (f *mgMbFake) ExistsByDomainAndLocalPart(context.Context, string, string) (bool, error) {
 	return false, nil
 }
+func (f *mgMbFake) FindByIDs(_ context.Context, ids []string) ([]models.Mailbox, error) {
+	out := make([]models.Mailbox, 0, len(ids))
+	for _, id := range ids {
+		if mb, ok := f.byID[id]; ok {
+			out = append(out, *mb)
+		}
+	}
+	return out, nil
+}
 
 // mgAgentFake records every agent command with its params.
 type mgAgentFake struct {
@@ -109,10 +147,11 @@ func (a *mgAgentFake) lastParams(cmd string) map[string]any {
 }
 
 type mgFixture struct {
-	groups *mgGroupsFake
-	ag     *mgAgentFake
-	dom    *srDomFake
-	router *gin.Engine
+	groups   *mgGroupsFake
+	ag       *mgAgentFake
+	dom      *srDomFake
+	settings *mgSettingsFake
+	router   *gin.Engine
 }
 
 // newMGFixture wires the mail group routes over fakes. mailboxes mb1..mbN
@@ -136,8 +175,9 @@ func newMGFixture(t *testing.T, kind string, internalOnly bool, mailboxes int) *
 	}
 	dom := &srDomFake{dom: &models.Domain{ID: "dom1", UserID: "user1", Name: "example.org", EmailEnabled: true, OwnershipState: models.OwnershipState{OwnershipStatus: models.OwnershipVerified}}}
 	ag := &mgAgentFake{}
-	RegisterMailGroupRoutes(v1, MailGroupHandlerConfig{Groups: groups, Mailboxes: mb, Domains: dom, Agent: ag})
-	return &mgFixture{groups: groups, ag: ag, dom: dom, router: r}
+	settings := &mgSettingsFake{}
+	RegisterMailGroupRoutes(v1, MailGroupHandlerConfig{Groups: groups, Mailboxes: mb, Domains: dom, Agent: ag, Settings: settings})
+	return &mgFixture{groups: groups, ag: ag, dom: dom, settings: settings, router: r}
 }
 
 func mailboxIDs(n int) []string {

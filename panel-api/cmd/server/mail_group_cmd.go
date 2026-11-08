@@ -339,10 +339,10 @@ func resolveMembers(ctx context.Context, domainID string, refs []string) (ids []
 // the handler: a distribution group is re-applied as a mailing list with its
 // member list (GH #1818), a resource group pushes members_set.
 func projectMembers(ctx context.Context, g *models.MailGroup, desiredIDs, desiredEmails []string) error {
-	if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, len(desiredIDs)); err != nil {
+	repo := mailGroupRepoFromDB()
+	if err := mailgroupops.CheckMailboxMemberCap(ctx, repo, g, g.InternalOnly, len(desiredIDs)); err != nil {
 		return err
 	}
-	repo := mailGroupRepoFromDB()
 	prevEmails, err := repo.ListMemberEmails(ctx, g.ID)
 	if err != nil {
 		return fmt.Errorf("load current members: %w", err)

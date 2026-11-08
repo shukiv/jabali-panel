@@ -40,6 +40,11 @@ type mailGroupApplyParams struct {
 	HasFiles     bool     `json:"has_files"`     // GH #350: name the shared file folder too
 	GroupKind    string   `json:"group_kind"`
 	MemberEmails []string `json:"member_emails"`
+
+	// ExternalEmails (GH #1833) are a distribution list's addresses on other
+	// mail servers. The list delivers to them like to MemberEmails, but they
+	// have no account here, so stored group mail is never drained to them.
+	ExternalEmails []string `json:"external_emails"`
 }
 
 func mailGroupApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {

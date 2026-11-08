@@ -40,7 +40,14 @@ type MailGroupHandlerConfig struct {
 	Mailboxes repository.MailboxRepository
 	Domains   repository.DomainRepository
 	Agent     agent.AgentInterface
+	// Settings supplies the admin's cap on outside addresses per list (GH
+	// #1833). nil, or no settings row yet, means the migration default.
+	Settings repository.ServerSettingsRepository
 }
+
+// defaultExternalMemberCap is server_settings.mail_list_external_member_cap's
+// migration default, used before the settings row exists.
+const defaultExternalMemberCap = 25
 
 // RegisterMailGroupRoutes mounts the mail-group endpoints under g:
 //
@@ -50,6 +57,7 @@ type MailGroupHandlerConfig struct {
 //   - GET    /mailgroups/:gid               group detail + members
 //   - PATCH  /mailgroups/:gid               update meta + resource toggles
 //   - PUT    /mailgroups/:gid/members       replace the member set
+//   - PUT    /mailgroups/:gid/external-members  replace a list's outside addresses (GH #1833)
 //   - DELETE /mailgroups/:gid               destroy the group
 func RegisterMailGroupRoutes(g *gin.RouterGroup, cfg MailGroupHandlerConfig) {
 	h := &mailGroupHandler{cfg: cfg}
@@ -67,6 +75,7 @@ func RegisterMailGroupRoutes(g *gin.RouterGroup, cfg MailGroupHandlerConfig) {
 	grp.GET("/:gid", h.get)
 	grp.PATCH("/:gid", h.update)
 	grp.PUT("/:gid/members", h.setMembers)
+	grp.PUT("/:gid/external-members", h.setExternalMembers)
 	grp.POST("/:gid/members/:mbid", h.addMember)
 	grp.DELETE("/:gid/members/:mbid", h.removeMember)
 	grp.DELETE("/:gid", h.delete)
@@ -102,6 +111,10 @@ type setMailGroupMembersRequest struct {
 	MailboxIDs []string `json:"mailbox_ids"`
 }
 
+type setMailGroupExternalMembersRequest struct {
+	Addresses []string `json:"addresses"`
+}
+
 type mailGroupResponse struct {
 	ID             string    `json:"id"`
 	DomainID       string    `json:"domain_id"`
@@ -118,6 +131,10 @@ type mailGroupResponse struct {
 	MemberCount    int64     `json:"member_count"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	// ExternalMemberCount is how many outside addresses a distribution list
+	// delivers to (GH #1833).
+	ExternalMemberCount int64 `json:"external_member_count"`
 }
 
 type mailGroupMemberDTO struct {
@@ -128,9 +145,13 @@ type mailGroupMemberDTO struct {
 type mailGroupDetailResponse struct {
 	mailGroupResponse
 	Members []mailGroupMemberDTO `json:"members"`
+	// ExternalMembers are the list's outside addresses and ExternalMemberCap
+	// the admin's per-list cap on them (GH #1833).
+	ExternalMembers   []string `json:"external_members"`
+	ExternalMemberCap int      `json:"external_member_cap"`
 }
 
-func toMailGroupResponse(g models.MailGroup, memberCount int64) mailGroupResponse {
+func toMailGroupResponse(g models.MailGroup, memberCount, externalCount int64) mailGroupResponse {
 	return mailGroupResponse{
 		ID:             g.ID,
 		DomainID:       g.DomainID,
@@ -147,6 +168,8 @@ func toMailGroupResponse(g models.MailGroup, memberCount int64) mailGroupRespons
 		MemberCount:    memberCount,
 		CreatedAt:      g.CreatedAt,
 		UpdatedAt:      g.UpdatedAt,
+
+		ExternalMemberCount: externalCount,
 	}
 }
 
@@ -186,7 +209,7 @@ func (h *mailGroupHandler) list(c *gin.Context) {
 	}
 	out := make([]mailGroupResponse, len(rows))
 	for i, r := range rows {
-		out[i] = toMailGroupResponse(r.MailGroup, r.MemberCount)
+		out[i] = toMailGroupResponse(r.MailGroup, r.MemberCount, r.ExternalMemberCount)
 	}
 	c.JSON(http.StatusOK, gin.H{"data": out, "total": len(out)})
 }
@@ -206,7 +229,7 @@ func (h *mailGroupHandler) listAllAdmin(c *gin.Context) {
 	out := make([]adminRow, len(rows))
 	for i, r := range rows {
 		out[i] = adminRow{
-			mailGroupResponse: toMailGroupResponse(r.MailGroup, r.MemberCount),
+			mailGroupResponse: toMailGroupResponse(r.MailGroup, r.MemberCount, r.ExternalMemberCount),
 			DomainName:        r.DomainName,
 			UserUsername:      r.UserUsername,
 		}
@@ -355,7 +378,7 @@ func (h *mailGroupHandler) create(c *gin.Context) {
 	g.EmailCached = canonLocal + "@" + dom.Name
 	h.projectGroup(ctx, g)
 
-	c.JSON(http.StatusCreated, toMailGroupResponse(*g, 0))
+	c.JSON(http.StatusCreated, toMailGroupResponse(*g, 0, 0))
 }
 
 func (h *mailGroupHandler) get(c *gin.Context) {
@@ -385,9 +408,21 @@ func (h *mailGroupHandler) get(c *gin.Context) {
 		}
 		members = append(members, mailGroupMemberDTO{MailboxID: mb.ID, Email: mb.EmailCached})
 	}
+	external, err := h.cfg.Groups.ListExternalMembers(ctx, g.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	capN, err := h.externalMemberCap(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
 	c.JSON(http.StatusOK, mailGroupDetailResponse{
-		mailGroupResponse: toMailGroupResponse(*g, int64(len(members))),
+		mailGroupResponse: toMailGroupResponse(*g, int64(len(members)), int64(len(external))),
 		Members:           members,
+		ExternalMembers:   external,
+		ExternalMemberCap: capN,
 	})
 }
 
@@ -415,8 +450,7 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 			return
 		}
-		if err := mailgroupops.CheckMemberCap(g.GroupKind, true, len(memberIDs)); err != nil {
-			respondMemberCap(c, err)
+		if !h.checkMemberCap(c, g, true, len(memberIDs)) {
 			return
 		}
 	}
@@ -472,7 +506,8 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 	}
 	_ = dom
 	count, _ := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
-	c.JSON(http.StatusOK, toMailGroupResponse(*g, int64(len(count))))
+	external, _ := h.cfg.Groups.ListExternalMembers(ctx, g.ID)
+	c.JSON(http.StatusOK, toMailGroupResponse(*g, int64(len(count)), int64(len(external))))
 }
 
 func (h *mailGroupHandler) setMembers(c *gin.Context) {
@@ -516,8 +551,7 @@ func (h *mailGroupHandler) setMembers(c *gin.Context) {
 		desiredIDs = append(desiredIDs, mb.ID)
 		desiredEmails = append(desiredEmails, mb.EmailCached)
 	}
-	if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, len(desiredIDs)); err != nil {
-		respondMemberCap(c, err)
+	if !h.checkMemberCap(c, g, g.InternalOnly, len(desiredIDs)) {
 		return
 	}
 
@@ -564,6 +598,74 @@ func (h *mailGroupHandler) setMembers(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": gin.H{"member_count": len(desiredIDs)}})
 }
 
+// setExternalMembers replaces a distribution list's outside addresses (GH
+// #1833): a Gmail address, say, that receives the list next to its member
+// mailboxes. Shared Workspace groups have none; their members share one
+// mailbox. The admin caps how many a list may hold.
+func (h *mailGroupHandler) setExternalMembers(c *gin.Context) {
+	ctx := c.Request.Context()
+	claims := ginctx.Claims(c)
+	if claims == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+	var req setMailGroupExternalMembersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request", "detail": err.Error()})
+		return
+	}
+	g, _, ok := h.loadGroupWithAuth(c, c.Param("gid"), claims)
+	if !ok {
+		return
+	}
+	capN, err := h.externalMemberCap(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	current, err := h.cfg.Groups.ListExternalMembers(ctx, g.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	addrs, err := mailgroupops.NormalizeExternalMembers(g, req.Addresses, capN, current)
+	if err != nil {
+		var e *mailgroupops.ExternalMemberError
+		if errors.As(err, &e) {
+			body := gin.H{"error": e.Code, "detail": e.Detail}
+			if e.Address != "" {
+				body["address"] = e.Address
+			}
+			c.JSON(http.StatusUnprocessableEntity, body)
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	// An internal-only list redirects to every recipient through Sieve, which
+	// caps mailboxes and outside addresses together.
+	if g.InternalOnly {
+		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+			return
+		}
+		if err := mailgroupops.CheckMemberCap(g.GroupKind, true, len(memberIDs)+len(addrs)); err != nil {
+			respondMemberCap(c, err)
+			return
+		}
+	}
+	if err := h.cfg.Groups.SetExternalMembers(ctx, g.ID, addrs); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+		return
+	}
+	h.projectGroup(ctx, g)
+	c.JSON(http.StatusOK, gin.H{"data": gin.H{
+		"external_members":      addrs,
+		"external_member_count": len(addrs),
+	}})
+}
+
 // addMember adds a single mailbox to a group without disturbing existing
 // members (used by the create-mailbox wizard's "add to groups" step). The
 // member-set agent call carries only the added email.
@@ -597,8 +699,7 @@ func (h *mailGroupHandler) addMember(c *gin.Context) {
 		if !slices.Contains(memberIDs, mb.ID) {
 			count++
 		}
-		if err := mailgroupops.CheckMemberCap(g.GroupKind, g.InternalOnly, count); err != nil {
-			respondMemberCap(c, err)
+		if !h.checkMemberCap(c, g, g.InternalOnly, count) {
 			return
 		}
 	}
@@ -714,6 +815,37 @@ func (h *mailGroupHandler) projectGroup(ctx context.Context, g *models.MailGroup
 // distribution list past the mail server's redirect limit.
 func respondMemberCap(c *gin.Context, err error) {
 	c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "too_many_members", "detail": err.Error()})
+}
+
+// checkMemberCap refuses a change that leaves g with mailboxCount member
+// mailboxes over the internal-only limit, outside addresses included. It
+// writes the response and returns false when the change must stop.
+func (h *mailGroupHandler) checkMemberCap(c *gin.Context, g *models.MailGroup, internalOnly bool, mailboxCount int) bool {
+	err := mailgroupops.CheckMailboxMemberCap(c.Request.Context(), h.cfg.Groups, g, internalOnly, mailboxCount)
+	switch {
+	case err == nil:
+		return true
+	case mailgroupops.IsMemberCapErr(err):
+		respondMemberCap(c, err)
+	default:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+	}
+	return false
+}
+
+// externalMemberCap is the admin's cap on a list's outside addresses.
+func (h *mailGroupHandler) externalMemberCap(ctx context.Context) (int, error) {
+	if h.cfg.Settings == nil {
+		return defaultExternalMemberCap, nil
+	}
+	s, err := h.cfg.Settings.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		return defaultExternalMemberCap, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return int(s.MailListExternalMemberCap), nil
 }
 
 func (h *mailGroupHandler) notifyAgent(ctx context.Context, command string, params any) {

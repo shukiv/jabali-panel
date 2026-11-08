@@ -55,6 +55,14 @@ type MailGroupRepository interface {
 	// ListAllDeliverableMembers is ListDeliverableMemberEmails for every group
 	// in one query, for the reconcile pass.
 	ListAllDeliverableMembers(ctx context.Context) ([]MailGroupMemberEmail, error)
+
+	// External members (GH #1833): addresses outside this server that a
+	// distribution list delivers to. Callers validate and lower-case them.
+	ListExternalMembers(ctx context.Context, groupID string) ([]string, error)
+	SetExternalMembers(ctx context.Context, groupID string, addresses []string) error
+	// ListAllExternalMembers is ListExternalMembers for every group in one
+	// query, for the reconcile pass. Email holds the address.
+	ListAllExternalMembers(ctx context.Context) ([]MailGroupMemberEmail, error)
 }
 
 // MailGroupMemberEmail is one deliverable (group, member address) pair.
@@ -74,7 +82,8 @@ type MailboxGroupMembership struct {
 // MailGroupWithCount is a group plus its member count, for list views.
 type MailGroupWithCount struct {
 	models.MailGroup
-	MemberCount int64 `gorm:"column:member_count" json:"member_count"`
+	MemberCount         int64 `gorm:"column:member_count" json:"member_count"`
+	ExternalMemberCount int64 `gorm:"column:external_member_count" json:"external_member_count"`
 }
 
 // MailGroupWithDomain is a group joined with its domain + owner, for the
@@ -85,6 +94,8 @@ type MailGroupWithDomain struct {
 	OwnerUserID  string `gorm:"column:owner_user_id" json:"owner_user_id"`
 	UserUsername string `gorm:"column:user_username" json:"user_username"`
 	MemberCount  int64  `gorm:"column:member_count" json:"member_count"`
+	// ExternalMemberCount counts the list's outside addresses (GH #1833).
+	ExternalMemberCount int64 `gorm:"column:external_member_count" json:"external_member_count"`
 	// DomainEmailEnabled is domains.email_enabled — the mail-group reconcile
 	// pass skips groups whose domain has mail turned off (GH #1818).
 	DomainEmailEnabled bool `gorm:"column:domain_email_enabled" json:"domain_email_enabled"`
@@ -111,7 +122,8 @@ func (r *mailGroupRepo) ListByDomainID(ctx context.Context, domainID string) ([]
 	var rows []MailGroupWithCount
 	err := r.db.WithContext(ctx).
 		Table("mail_groups g").
-		Select("g.*, (SELECT COUNT(*) FROM mail_group_members m WHERE m.group_id = g.id) AS member_count").
+		Select("g.*, (SELECT COUNT(*) FROM mail_group_members m WHERE m.group_id = g.id) AS member_count, "+
+			externalMemberCountSQL).
 		Where("g.domain_id = ?", domainID).
 		Order("g.email_cached ASC").
 		Scan(&rows).Error
@@ -124,7 +136,8 @@ func (r *mailGroupRepo) ListAllWithDomain(ctx context.Context) ([]MailGroupWithD
 		Table("mail_groups g").
 		Select("g.*, d.name AS domain_name, d.user_id AS owner_user_id, COALESCE(u.username, '') AS user_username, " +
 			"d.email_enabled AS domain_email_enabled, " +
-			"(SELECT COUNT(*) FROM mail_group_members m WHERE m.group_id = g.id) AS member_count").
+			"(SELECT COUNT(*) FROM mail_group_members m WHERE m.group_id = g.id) AS member_count, " +
+			externalMemberCountSQL).
 		Joins("JOIN domains d ON d.id = g.domain_id").
 		Joins("LEFT JOIN users u ON u.id = d.user_id").
 		Order("g.email_cached ASC").
@@ -308,6 +321,50 @@ func (r *mailGroupRepo) ListDeliverableMemberEmails(ctx context.Context, groupID
 		Order("mb.email_cached ASC").
 		Pluck("mb.email_cached", &emails).Error
 	return emails, err
+}
+
+// externalMemberCountSQL is the list views' count of a group's outside
+// addresses (GH #1833).
+const externalMemberCountSQL = "(SELECT COUNT(*) FROM mail_group_external_members x WHERE x.group_id = g.id) AS external_member_count"
+
+func (r *mailGroupRepo) ListExternalMembers(ctx context.Context, groupID string) ([]string, error) {
+	addrs := []string{}
+	err := r.db.WithContext(ctx).
+		Model(&models.MailGroupExternalMember{}).
+		Where("group_id = ?", groupID).
+		Order("address ASC").
+		Pluck("address", &addrs).Error
+	return addrs, err
+}
+
+// SetExternalMembers replaces the group's outside addresses in one
+// transaction, like SetMembers.
+func (r *mailGroupRepo) SetExternalMembers(ctx context.Context, groupID string, addresses []string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if len(addresses) == 0 {
+			return tx.Where("group_id = ?", groupID).Delete(&models.MailGroupExternalMember{}).Error
+		}
+		if err := tx.Where("group_id = ? AND address NOT IN ?", groupID, addresses).
+			Delete(&models.MailGroupExternalMember{}).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		rows := make([]models.MailGroupExternalMember, 0, len(addresses))
+		for _, a := range addresses {
+			rows = append(rows, models.MailGroupExternalMember{GroupID: groupID, Address: a, CreatedAt: now})
+		}
+		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
+	})
+}
+
+func (r *mailGroupRepo) ListAllExternalMembers(ctx context.Context) ([]MailGroupMemberEmail, error) {
+	var rows []MailGroupMemberEmail
+	err := r.db.WithContext(ctx).
+		Table("mail_group_external_members").
+		Select("group_id, address AS email").
+		Order("group_id ASC, address ASC").
+		Scan(&rows).Error
+	return rows, err
 }
 
 func (r *mailGroupRepo) ListAllDeliverableMembers(ctx context.Context) ([]MailGroupMemberEmail, error) {

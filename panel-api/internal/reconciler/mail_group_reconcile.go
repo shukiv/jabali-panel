@@ -90,6 +90,16 @@ func (r *Reconciler) reconcileMailGroups(ctx context.Context) {
 	for _, m := range members {
 		byGroup[m.GroupID] = append(byGroup[m.GroupID], m.Email)
 	}
+	// GH #1833: outside addresses travel apart from the member mailboxes.
+	external, err := r.mailGroups.ListAllExternalMembers(ctx)
+	if err != nil {
+		r.log.Warn("mail-groups: list outside addresses failed", "error", err)
+		return
+	}
+	externalByGroup := make(map[string][]string)
+	for _, m := range external {
+		externalByGroup[m.GroupID] = append(externalByGroup[m.GroupID], m.Email)
+	}
 
 	r.mailGroupMu.Lock()
 	if r.mailGroupDone == nil {
@@ -114,7 +124,7 @@ func (r *Reconciler) reconcileMailGroups(ctx context.Context) {
 		if applied >= mailGroupApplyBudgetPerTick || time.Now().After(deadline) {
 			return // the rest are applied on following ticks
 		}
-		params := mailgroupops.BuildApplyParams(g, byGroup[g.ID])
+		params := mailgroupops.BuildApplyParams(g, byGroup[g.ID], externalByGroup[g.ID])
 		want := mailGroupFingerprint(params)
 
 		r.mailGroupMu.Lock()
