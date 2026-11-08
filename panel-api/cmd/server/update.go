@@ -1116,16 +1116,19 @@ fi
 					// usermod is idempotent; 'groups | grep -w' avoids an
 					// unnecessary write when already a member.
 					"groups "+serviceUser+" | grep -qw www-data || usermod -aG www-data "+serviceUser+"; "+
-					// M13 SSH sandbox: refresh wrapper + nspawn-enter +
-					// sudoers + mode files on every update. Idempotent.
+					// M13 SSH sandbox: groups + mode files on every update.
+					// Idempotent.
 					"getent group jabali-ssh-sandbox >/dev/null || groupadd --system jabali-ssh-sandbox; "+
 					// GH #1229: opt-in SSH-forwarding group (excluded from the JAB-352
 					// lockdown). Ensure it exists on every update so the sshd drop-in's
 					// Match negation resolves on existing fleet hosts.
 					"getent group jabali-ssh-forward >/dev/null || groupadd --system jabali-ssh-forward; "+
 					"install -d -m 0755 -o root -g root /etc/jabali /etc/jabali/users /var/lib/jabali-nspawn /var/lib/jabali-nspawn/images; "+
-					"install -m 0755 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-enter /usr/local/bin/jabali-nspawn-enter; "+
-					"visudo -cf "+repoDir+"/install/ssh/jabali-nspawn-sudoers >/dev/null && install -m 0440 -o root -g root "+repoDir+"/install/ssh/jabali-nspawn-sudoers /etc/sudoers.d/jabali-nspawn; "+
+					// GH #2440: the nspawn sudo helper is retired (#2395). Remove
+					// it, and the copy of the stub an older update installed,
+					// instead of installing it. The stub file stays in the repo
+					// for the older releases whose update still copies it.
+					"rm -f /etc/sudoers.d/jabali-nspawn /usr/local/bin/jabali-nspawn-enter; "+
 					"[ -f /etc/jabali/ssh-sandbox-mode ] || { echo bubblewrap > /etc/jabali/ssh-sandbox-mode; chmod 0644 /etc/jabali/ssh-sandbox-mode; }; "+
 					"[ -f /etc/jabali/default-nspawn-image ] || { echo debian-12-v1 > /etc/jabali/default-nspawn-image; chmod 0644 /etc/jabali/default-nspawn-image; }")
 		}},
