@@ -25,12 +25,15 @@ type SSOPhpMyAdminHandlerConfig struct {
 	SSO       dbconsoleops.PhpMyAdminConsole
 	Log       *slog.Logger
 	SSOConfig config.SSOConfig
+	// SSORateLimit bounds minting, per user. Wire from rl.SSOPerActor();
+	// nil disables it.
+	SSORateLimit gin.HandlerFunc
 }
 
 // RegisterSSOPhpMyAdminRoutes mounts the POST /api/v1/sso/phpmyadmin endpoint.
 func RegisterSSOPhpMyAdminRoutes(g *gin.RouterGroup, cfg SSOPhpMyAdminHandlerConfig) {
 	h := &ssoPhpMyAdminHandler{cfg: cfg}
-	g.POST("/sso/phpmyadmin", h.issueSSOToken)
+	g.POST("/sso/phpmyadmin", limitedRoute(cfg.SSORateLimit, h.issueSSOToken)...)
 }
 
 type ssoPhpMyAdminHandler struct{ cfg SSOPhpMyAdminHandlerConfig }

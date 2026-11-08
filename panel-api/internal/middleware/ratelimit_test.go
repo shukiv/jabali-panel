@@ -304,3 +304,71 @@ func TestScanPerActor_UnconfiguredFallsBackToStrict(t *testing.T) {
 	assert.Equal(t, http.StatusOK, hit())
 	assert.Equal(t, http.StatusTooManyRequests, hit())
 }
+
+// The SSO tier is per user (not per address) and has its own bucket: a user
+// who used up their sign-in links can still use the strict-tier routes, and
+// another user is not affected.
+func TestSSOPerActor_OwnBucketPerUser(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(100),
+		DefaultBurst: 100,
+		StrictRate:   rate.Limit(0.001),
+		StrictBurst:  1,
+		SSORate:      rate.Limit(0.001),
+		SSOBurst:     3,
+	})
+	r := gin.New()
+	withUser := func(uid string) gin.HandlerFunc {
+		return func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: uid}); c.Next() }
+	}
+	ok := func(c *gin.Context) { c.String(http.StatusOK, "ok") }
+	r.POST("/sso/u1", withUser("u1"), rl.SSOPerActor(), ok)
+	r.POST("/sso/u2", withUser("u2"), rl.SSOPerActor(), ok)
+	r.POST("/strict/u1", withUser("u1"), rl.StrictPerActor(), ok)
+
+	hit := func(path, ip string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.RemoteAddr = ip + ":1000"
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// The burst (3) holds across the user's addresses, then 429 + Retry-After.
+	for i, ip := range []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"} {
+		assert.Equal(t, http.StatusOK, hit("/sso/u1", ip).Code, "mint %d", i+1)
+	}
+	limited := hit("/sso/u1", "10.0.0.4")
+	assert.Equal(t, http.StatusTooManyRequests, limited.Code)
+	assert.NotEmpty(t, limited.Header().Get("Retry-After"))
+	// The strict bucket is separate.
+	assert.Equal(t, http.StatusOK, hit("/strict/u1", "10.0.0.1").Code)
+	// Another user has their own SSO bucket.
+	assert.Equal(t, http.StatusOK, hit("/sso/u2", "10.0.0.1").Code)
+}
+
+// An unconfigured SSO tier falls back to the strict tier, never to the much
+// looser default one.
+func TestSSOPerActor_UnconfiguredFallsBackToStrict(t *testing.T) {
+	t.Parallel()
+
+	rl := middleware.NewRateLimiter(middleware.RateLimiterConfig{
+		DefaultRate:  rate.Limit(100),
+		DefaultBurst: 100,
+		StrictRate:   rate.Limit(0.001),
+		StrictBurst:  1,
+	})
+	r := gin.New()
+	r.POST("/sso", func(c *gin.Context) { ginctx.SetClaims(c, &auth.AccessClaims{UserID: "u1"}); c.Next() },
+		rl.SSOPerActor(), func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	hit := func() int {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sso", nil))
+		return rec.Code
+	}
+	assert.Equal(t, http.StatusOK, hit())
+	assert.Equal(t, http.StatusTooManyRequests, hit())
+}

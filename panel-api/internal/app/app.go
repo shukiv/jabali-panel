@@ -292,6 +292,13 @@ const (
 	rateScanPerSec = 1.0
 	rateScanBurst  = 20
 
+	// SSO tier: per-user routes that mint a one-time sign-in link (phpMyAdmin,
+	// Adminer, webmail, app logins), one budget across all of them. Ten at
+	// once covers opening a handful of consoles and mailboxes in a row; then
+	// one every six seconds.
+	rateSSOPerSec = 10.0 / 60.0
+	rateSSOBurst  = 10
+
 	rateLimiterIdleCleanup = 10 * time.Minute
 	rateLimiterSweepEvery  = 5 * time.Minute
 )
@@ -359,6 +366,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		KratosBurst:  rateKratosBurst,
 		ScanRate:     rate.Limit(rateScanPerSec),
 		ScanBurst:    rateScanBurst,
+		SSORate:      rate.Limit(rateSSOPerSec),
+		SSOBurst:     rateSSOBurst,
 	})
 	startRateLimiterSweeper(rl)
 	r.Use(rl.Default())
@@ -987,6 +996,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// A password change or disable removes the mailbox's app
 				// passwords at once.
 				MailCredentials: deps.MailCredentials,
+				SSORateLimit:    rl.SSOPerActor(),
 			})
 		}
 		if deps.MailGroups != nil && deps.Mailboxes != nil && deps.Domains != nil {
@@ -1227,13 +1237,14 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// processes, admin SSO). Lives in the existing Databases tab.
 		if deps.DBAdmin != nil {
 			api.RegisterDatabaseAdminOpsRoutes(v1, api.DatabaseAdminOpsHandlerConfig{
-				Agent:      deps.Agent,
-				DBAdmin:    deps.DBAdmin,
-				Log:        deps.Log,
-				Queue:      deps.NotificationQueue,
-				SSO:        deps.SSO,
-				AdminerSSO: deps.AdminerSSO,
-				Recorder:   deps.AuditRecorder,
+				Agent:        deps.Agent,
+				DBAdmin:      deps.DBAdmin,
+				Log:          deps.Log,
+				Queue:        deps.NotificationQueue,
+				SSO:          deps.SSO,
+				AdminerSSO:   deps.AdminerSSO,
+				Recorder:     deps.AuditRecorder,
+				SSORateLimit: rl.SSOPerActor(),
 			})
 		}
 		if deps.PageTemplates != nil {
@@ -1511,18 +1522,20 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.SSO != nil && deps.Databases != nil && deps.PhpMyAdminSSOTokens != nil {
 			api.RegisterSSOPhpMyAdminRoutes(v1, api.SSOPhpMyAdminHandlerConfig{
-				Databases: deps.Databases,
-				SSO:       deps.SSO,
-				Log:       deps.Log,
+				Databases:    deps.Databases,
+				SSO:          deps.SSO,
+				Log:          deps.Log,
+				SSORateLimit: rl.SSOPerActor(),
 			})
 		}
 		// M37 Phase 4: Adminer SSO mint route — engine-aware.
 		if deps.SSO != nil && deps.AdminerSSO != nil && deps.Databases != nil && deps.AdminerSSOTokens != nil {
 			api.RegisterSSOAdminerRoutes(v1, api.SSOAdminerHandlerConfig{
-				Databases: deps.Databases,
-				SSO:       deps.SSO,
-				Adminer:   deps.AdminerSSO,
-				Log:       deps.Log,
+				Databases:    deps.Databases,
+				SSO:          deps.SSO,
+				Adminer:      deps.AdminerSSO,
+				Log:          deps.Log,
+				SSORateLimit: rl.SSOPerActor(),
 			})
 		}
 		if deps.PHPPools != nil && deps.PHPPoolIniOverrides != nil {
@@ -1670,6 +1683,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Domains:             deps.Domains,
 				Users:               deps.Users,
 				Agent:               deps.Agent,
+				SSORateLimit:        rl.SSOPerActor(),
 			})
 		}
 

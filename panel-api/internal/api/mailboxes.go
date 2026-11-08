@@ -51,6 +51,9 @@ type MailboxHandlerConfig struct {
 	// mailbox may no longer use (mailcreds.Sweeper) when one is disabled.
 	// Optional: nil leaves it to the reconciler's next tick.
 	MailCredentials userops.MailCredentialSweeper
+	// SSORateLimit bounds minting webmail sign-in links, per user. Wire from
+	// rl.SSOPerActor(); nil disables it.
+	SSORateLimit gin.HandlerFunc
 }
 
 // MailAddressReleaser takes an address off the Stalwart accounts that still
@@ -113,7 +116,7 @@ func RegisterMailboxRoutes(g *gin.RouterGroup, cfg MailboxHandlerConfig) {
 	mbox.GET("/:mbid", h.get)
 	mbox.PATCH("/:mbid", h.update)
 	mbox.POST("/:mbid/rotate-password", h.rotatePassword)
-	mbox.POST("/:mbid/sso", h.mintSSO)
+	mbox.POST("/:mbid/sso", limitedRoute(cfg.SSORateLimit, h.mintSSO)...)
 	mbox.DELETE("/:mbid", h.delete)
 }
 
