@@ -196,6 +196,9 @@ function humanizeErrorCode(code: string): string {
     upload_unreachable:
       "The server could not reach the report upload service (enclosed.jabali-panel.com) — check outbound HTTPS/DNS from the server, then retry",
     agent_timeout: "The operation timed out on the server — try again shortly",
+    // A per-address or per-user rate limit (429), e.g. too many sign-in links
+    // to phpMyAdmin, Adminer or webmail in a row.
+    rate_limited: "Too many requests — wait a few seconds and try again",
     // GH #2276: Composer runs.
     composer_requires_package: "Composer runs come with a hosting package, and this account has none",
     composer_not_in_package: "Your hosting package doesn't include Composer runs",
