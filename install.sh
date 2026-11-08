@@ -6146,7 +6146,14 @@ ensure_user_and_dirs() {
     usermod -aG mysql "$SERVICE_USER" 2>/dev/null || true
   fi
 
-  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" "$REPO_DIR"
+  # The checkout keeps the owner it has. Every `jabali update` runs this
+  # function, under the steps of the binary the server already runs. Those
+  # binaries run git as root on a root-owned checkout (#2399 on), or as
+  # $SERVICE_USER on one it owns (before #2399). Either git refuses a checkout
+  # whose top directory has the other owner, so a chown here breaks the next
+  # step of one of them (GH #2440). On a fresh install the directory is
+  # created empty, and clone_or_update_repo replaces it with the clone.
+  [[ -d "$REPO_DIR" ]] || install -d -m 0755 "$REPO_DIR"
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   # Working folder root (server_settings.working_folder default).
   # Migration staging + backup repo subdirs live underneath; admin can
