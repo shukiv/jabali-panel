@@ -52,7 +52,7 @@ stack was deleted — do NOT re-introduce them.
 | `KRATOS_PUBLIC_URL` | No | `unix:/run/jabali-kratos/public.sock` | Base URL of the Kratos public API. The panel-api whoami client dials this to validate session cookies. M25 ships the unix-socket form; TCP `http://localhost:4433` is the dev fallback. |
 | `KRATOS_ADMIN_URL` | No | `unix:/run/jabali-kratos/admin.sock` | Base URL of the Kratos admin API. Used by impersonation + admin identity ops. M25 ships the unix-socket form; TCP `http://localhost:4434` is the dev fallback. |
 | `JABALI_BOOTSTRAP_ADMIN_EMAIL` | No | *(unset)* | If set at first boot, creates an admin with this email. Paired with `JABALI_BOOTSTRAP_ADMIN_PASSWORD`. |
-| `JABALI_BOOTSTRAP_ADMIN_PASSWORD` | No | *(unset)* | Plaintext bootstrap password. Used once; the row is seeded and the var can be removed. |
+| `JABALI_BOOTSTRAP_ADMIN_PASSWORD` | No | *(unset)* | Plaintext bootstrap password, read only by the boot that creates the admin. install.sh removes it from panel.env once an admin exists (at the end of the install, after showing it, and on every update). `JABALI_BOOTSTRAP_TENANT_PASSWORD` is removed the same way once the tenant exists. |
 <!-- /AUTO-GENERATED -->
 
 ## Agent (panel-api → agent client)
