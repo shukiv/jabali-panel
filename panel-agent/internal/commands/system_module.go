@@ -232,11 +232,15 @@ func systemModuleInstallHandler(ctx context.Context, raw json.RawMessage) (any, 
 
 	// A per-key transient unit name keeps concurrent (post-lock, sequential)
 	// installs of different modules from colliding on the unit name.
+	// JABALI_MODULE_INSTALL_BY_PANEL: the panel owns the module flag, so
+	// install.sh leaves it alone; an operator's `install.sh --install-module`
+	// turns the module on.
 	unit := "jabali-module-install-" + req.Key
 	cmd := execCommandContext(ctx, "systemd-run",
 		"--pipe", "--wait", "--quiet", "--collect",
 		"--unit="+unit,
 		"--service-type=oneshot",
+		"--setenv=JABALI_MODULE_INSTALL_BY_PANEL=1",
 		"--", "bash", moduleInstallScript, "--install-module", req.Key)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

@@ -80,7 +80,7 @@ curl -fsSL https://get.jabali-panel.com | JABALI_MODULES=dns,mail,security bash 
 
 If `docker`, `docker_apps` or `postgres` fails to install, the installer warns and finishes the rest. That module's switch in the panel stays off, so you can turn it on there later.
 
-**After the install.** Server Settings → Modules turns `dns`, `mail`, `security`, `quota` and `api` on or off. Docker, Docker apps for users and Python apps are under Server Settings → Apps; PostgreSQL is under Server Settings → Databases. From the shell, `install.sh --install-module KEY` installs `dns`, `mail`, `security`, `quota` or `ftp` on an installed server.
+**After the install.** Server Settings → Modules turns `dns`, `mail`, `security`, `quota` and `api` on or off. Docker, Docker apps for users and Python apps are under Server Settings → Apps; PostgreSQL is under Server Settings → Databases. From the shell, `install.sh --install-module KEY` installs `dns`, `mail`, `security`, `quota` or `ftp` on an installed server and turns it on, as Server Settings → Modules does.
 
 ## What the installer does
 
