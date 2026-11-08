@@ -40,7 +40,7 @@ export type DomainAlias = {
 
 type AliasList = { data: DomainAlias[]; total: number };
 
-export const aliasesQueryKey = (domainID: string) => ["domain-aliases", domainID];
+const aliasesQueryKey = (domainID: string) => ["domain-aliases", domainID];
 
 const aliasVerified = (a: DomainAlias) => a.ownership?.status === "verified";
 
