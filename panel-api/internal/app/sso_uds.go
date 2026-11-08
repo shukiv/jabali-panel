@@ -15,10 +15,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 )
+
+// ssoUDSBodyLimitBytes caps a validate request body. The body is one token
+// ({"token":"<base64url>"}), so this is far above any real request.
+const ssoUDSBodyLimitBytes int64 = 16 << 10
 
 // StartSSOUDSListener starts a Unix domain socket HTTP server for phpMyAdmin
 // SSO validation. The listener binds to socketPath with mode 0660 and
@@ -48,6 +53,7 @@ func StartSSOUDSListener(
 	// Create the router
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(middleware.BodyLimit(ssoUDSBodyLimitBytes, nil))
 
 	cfg := api.SSOPhpMyAdminValidateHandlerConfig{
 		Databases: databases,
