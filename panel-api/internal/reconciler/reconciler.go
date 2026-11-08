@@ -2083,8 +2083,10 @@ func (r *Reconciler) regenerateNginxForPool(ctx context.Context, pool *models.PH
 // if it has no binding yet. This is a no-op if the domain already has a PHPPoolID
 // or if the user has no pools.
 func (r *Reconciler) ensureDomainPHPBinding(ctx context.Context, domain *models.Domain) {
-	// If domain already has a pool binding, nothing to do.
+	// A domain with a pool binding keeps it, unless the pool is another
+	// account's.
 	if domain.PHPPoolID != nil {
+		r.rebindForeignPHPPool(ctx, domain)
 		return
 	}
 
@@ -2130,6 +2132,40 @@ func (r *Reconciler) ensureDomainPHPBinding(ctx context.Context, domain *models.
 
 	r.log.Info("ensure domain PHP binding: auto-bound domain to pool",
 		"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID)
+}
+
+// rebindForeignPHPPool moves a domain bound to another account's pool to its
+// owner's pool for the same PHP version (GH #2421). A change of owner left the
+// binding behind: the vhost then points at a socket of the new owner's that no
+// pool serves, and PHP fails on the domain until its version is picked again.
+// A pool created here is pending; the pool pass applies it, and re-renders the
+// domain once its socket is up.
+func (r *Reconciler) rebindForeignPHPPool(ctx context.Context, domain *models.Domain) {
+	if r.phpPools == nil {
+		return
+	}
+	poolCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	bound, err := r.phpPools.FindByID(poolCtx, *domain.PHPPoolID)
+	if err != nil || bound == nil || bound.UserID == domain.UserID {
+		return
+	}
+	pool, created, err := phppoolops.PoolForVersion(poolCtx, r.phpPools, domain.UserID, bound.PHPVersion)
+	if err != nil {
+		if !errors.Is(err, phppoolops.ErrNoUserPool) {
+			r.log.Warn("ensure domain PHP binding: no pool of the owner's to move the domain to",
+				"domain_id", domain.ID, "domain", domain.Name, "user_id", domain.UserID, "php_version", bound.PHPVersion, "err", err)
+		}
+		return
+	}
+	if err := r.domains.UpdatePHPPoolID(poolCtx, domain.ID, &pool.ID); err != nil {
+		r.log.Error("ensure domain PHP binding: failed to update domain",
+			"domain_id", domain.ID, "domain", domain.Name, "pool_id", pool.ID, "err", err)
+		return
+	}
+	domain.PHPPoolID = &pool.ID
+	r.log.Info("ensure domain PHP binding: moved domain off another account's pool",
+		"domain_id", domain.ID, "domain", domain.Name, "old_pool_id", bound.ID, "pool_id", pool.ID, "php_version", pool.PHPVersion, "pool_created", created)
 }
 
 // effectiveInterceptErrors resolves the branded-application-error toggle for

@@ -15,6 +15,7 @@ package phppoolops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -22,6 +23,7 @@ import (
 	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -317,6 +319,45 @@ func AddPoolDisableFunctions(params map[string]any, pkg *models.HostingPackage) 
 	if disable := models.PoolDisableFunctions(pkg); disable != nil {
 		params["disable_functions"] = *disable
 	}
+}
+
+// ErrNoUserPool: the user has no PHP pool yet. The reconciler creates every
+// user's default pool, and a versioned pool is based on it.
+var ErrNoUserPool = errors.New("user has no PHP pool yet")
+
+// PoolForVersion is userID's pool for phpVersion (GH #329). The user's default
+// pool (the earliest) serves its own version; another version gets the user's
+// versioned pool, created pending from the default's tuning (JAB-344) when
+// there is none. created reports that. The caller validates phpVersion: it
+// becomes part of the pool's slug and socket.
+func PoolForVersion(ctx context.Context, pools interface {
+	ListByUserID(ctx context.Context, userID string) ([]models.PHPPool, error)
+	FindByUserAndVersion(ctx context.Context, userID, phpVersion string) (*models.PHPPool, error)
+	Create(ctx context.Context, p *models.PHPPool) error
+}, userID, phpVersion string) (pool *models.PHPPool, created bool, err error) {
+	list, err := pools.ListByUserID(ctx, userID)
+	if err != nil {
+		return nil, false, fmt.Errorf("list pools: %w", err)
+	}
+	if len(list) == 0 {
+		return nil, false, ErrNoUserPool
+	}
+	def := &list[0]
+	if phpVersion == def.PHPVersion {
+		return def, false, nil
+	}
+	existing, err := pools.FindByUserAndVersion(ctx, userID, phpVersion)
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, repository.ErrNotFound) {
+		return nil, false, fmt.Errorf("lookup pool: %w", err)
+	}
+	pool = models.NewVersionedPHPPool(ids.NewULID(), phpVersion, def)
+	if err := pools.Create(ctx, pool); err != nil {
+		return nil, false, fmt.Errorf("create pool: %w", err)
+	}
+	return pool, true, nil
 }
 
 // RemoveSlug is the agent slug of pool, one of username's pools: the user's
