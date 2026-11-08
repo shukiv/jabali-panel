@@ -504,6 +504,16 @@ components:
         block_ai_crawlers: { type: boolean, description: "The site answers 403 to AI crawlers and assistants that name themselves in the User-Agent header." }
         rate_limit_rps:    { type: integer, minimum: 0, description: "Requests per second per visitor IP (burst to twice this, then 503). 0 = off." }
         connection_limit:  { type: integer, minimum: 0, description: "Open connections per visitor IP (past it, 503). 0 = off." }
+        aliases:
+          type: array
+          readOnly: true
+          description: "The domain's web aliases, on list rows only. Absent when it has none."
+          items:
+            type: object
+            properties:
+              id:               { type: string, format: ulid }
+              hostname:         { type: string, example: example.net }
+              ownership_status: { type: string, enum: [verified, pending] }
         created_at:  { type: string, format: date-time }
     Mailbox:
       type: object
@@ -2711,13 +2721,13 @@ paths:
       summary: List web domain aliases
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "200": { description: OK } }
+      responses: { "200": { description: "`data`: each alias with `cert_status`, `pending_reason` and `ownership` (its proof state and the TXT record that proves it), and `total`" } }
     post:
       tags: [Aliases]
       summary: Add a web domain alias
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
-      responses: { "201": { description: Created } }
+      responses: { "201": { description: "The new alias, in the list's shape" } }
 
   /domains/{id}/aliases/{alias_id}:
     delete:
