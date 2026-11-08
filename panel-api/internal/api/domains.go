@@ -475,6 +475,20 @@ type domainListRow struct {
 	// only when AppInstalls is wired; admin and tenant share this list handler,
 	// admin simply doesn't render the column.
 	Applications []domainAppSummary `json:"applications,omitempty"`
+	// Aliases lists the domain's web aliases (GH #1625) so the Web Domains
+	// list can show them under the name, in place of the document root.
+	// Same rules as Applications: one batch lookup, omitempty, dropped on
+	// error.
+	Aliases []domainAliasSummary `json:"aliases,omitempty"`
+}
+
+// domainAliasSummary is the per-row alias view (GH #1625): the hostname and
+// whether its ownership is proven. The cert state and the TXT record stay on
+// GET /domains/:id/aliases.
+type domainAliasSummary struct {
+	ID              string `json:"id"`
+	Hostname        string `json:"hostname"`
+	OwnershipStatus string `json:"ownership_status"`
 }
 
 // domainAppSummary is the per-row app view (GH #1543): just what the Web
@@ -697,6 +711,32 @@ func (h *domainHandler) list(c *gin.Context) {
 			}
 			for i := range rows {
 				rows[i].Applications = appsByDomain[rows[i].ID]
+			}
+		}
+	}
+
+	// GH #1625: each domain's web aliases, for the list's secondary line.
+	if h.cfg.WebDomainAliases != nil && len(domains) > 0 {
+		domainIDs := make([]string, len(domains))
+		for i := range domains {
+			domainIDs[i] = domains[i].ID
+		}
+		if aliases, aErr := h.cfg.WebDomainAliases.ListByDomainIDs(c.Request.Context(), domainIDs); aErr == nil {
+			aliasesByDomain := make(map[string][]domainAliasSummary, len(domains))
+			for i := range aliases {
+				a := &aliases[i]
+				status := a.OwnershipStatus
+				if status != models.OwnershipVerified {
+					status = models.OwnershipPending // as ownershipView reads it
+				}
+				aliasesByDomain[a.DomainID] = append(aliasesByDomain[a.DomainID], domainAliasSummary{
+					ID:              a.ID,
+					Hostname:        a.Hostname,
+					OwnershipStatus: status,
+				})
+			}
+			for i := range rows {
+				rows[i].Aliases = aliasesByDomain[rows[i].ID]
 			}
 		}
 	}

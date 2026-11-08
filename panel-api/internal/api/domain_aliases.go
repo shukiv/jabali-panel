@@ -71,11 +71,14 @@ type createAliasRequest struct {
 // aliasRow is the wire shape: the stored alias plus its live certificate
 // coverage so the UI can show "cert pending — point DNS here" without a
 // second call. cert_status is "active" when the issued leaf cert already
-// names the alias, else "pending" (with pending_reason).
+// names the alias, else "pending" (with pending_reason). ownership is the
+// alias's own proof state (GH #1816) with the TXT record to publish, so the
+// Aliases tab can show it without a call per alias.
 type aliasRow struct {
 	models.WebDomainAlias
-	CertStatus    string `json:"cert_status"`
-	PendingReason string `json:"pending_reason,omitempty"`
+	CertStatus    string        `json:"cert_status"`
+	PendingReason string        `json:"pending_reason,omitempty"`
+	Ownership     ownershipView `json:"ownership"`
 }
 
 const (
@@ -97,7 +100,7 @@ func (h *domainAliasHandler) list(c *gin.Context) {
 	covered := h.coveredSANs(c.Request.Context(), dom.ID)
 	reason := h.pendingReason(c.Request.Context())
 	for _, r := range rows {
-		row := aliasRow{WebDomainAlias: r, CertStatus: aliasCertPending, PendingReason: reason}
+		row := aliasRow{WebDomainAlias: r, CertStatus: aliasCertPending, PendingReason: reason, Ownership: aliasOwnershipView(&r)}
 		if _, ok := covered[strings.ToLower(r.Hostname)]; ok {
 			row.CertStatus = aliasCertActive
 			row.PendingReason = ""
@@ -161,6 +164,7 @@ func (h *domainAliasHandler) create(c *gin.Context) {
 		WebDomainAlias: *row,
 		CertStatus:     aliasCertPending,
 		PendingReason:  h.pendingReason(ctx),
+		Ownership:      aliasOwnershipView(row),
 	})
 }
 

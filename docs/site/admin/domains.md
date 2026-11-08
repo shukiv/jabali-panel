@@ -62,6 +62,8 @@ Domains that existed before the update were marked verified (`legacy`).
 
 The domain's **Edit** page shows its ownership state. A verified domain has **Revoke verification**, which sends it back to pending (its zone, mail and certificate come down on the next reconcile pass, and its mailboxes can no longer sign in; their mail is kept) together with the subdomains and aliases that were verified through it. The panel's own domain and docker-app domains cannot be revoked. A revoked domain is never removed automatically.
 
+The Edit page's **Aliases** tab lists the domain's web aliases. You can add and remove them there; an alias you add is verified at once. An unverified alias has **Approve**, and a verified one **Revoke**, which takes it off the site until its owner proves it again.
+
 A never-verified name is removed after **14 days** (its owner is told 4 days before); the site files are kept. Approvals, revokes and the switch are written to the audit log, and so are the changes the panel makes on its own (a name verified by its DNS record or through its parent, and a name removed after 14 days, recorded with the actor `system`), and the `domain.ownership.*` notification events report verifications, removals and names that need your approval.
 
 ## CLI
