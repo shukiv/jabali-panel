@@ -918,6 +918,31 @@ func TestMailGroupApplyDistribution_LegacyDrainSkipsOutsideAddresses(t *testing.
 	}
 }
 
+// An internal-only list of outside addresses only keeps its Group account,
+// which collects the bounces of its outside deliveries. With no mailbox to
+// drain them into, the apply must still succeed and keep the account (and its
+// mail), or every later change would fail to reach the mail server.
+func TestMailGroupApplyDistribution_InternalOnlyOutsideOnlyKeepsStoredMail(t *testing.T) {
+	f := newMGFake()
+	gid := f.addAccount("sales@example.com", "Group")
+	f.emails[gid] = []string{"bounce1"}
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", true, []string{}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, ok := f.accounts[gid]; !ok {
+		t.Fatalf("the internal-only list's account must be kept")
+	}
+	if len(f.emails[gid]) != 1 {
+		t.Fatalf("stored mail must stay in the account: %v", f.emails[gid])
+	}
+	script := f.blobs[f.activeScript(gid).blobID]
+	if !strings.Contains(script, `redirect "partner@gmail.com";`) {
+		t.Fatalf("script missing the outside redirect:\n%s", script)
+	}
+}
+
 func TestMailGroupApplyDistribution_InternalOnlyCapCountsOutsideAddresses(t *testing.T) {
 	f := newMGFake()
 	wireJMAP(t, f.server(t))

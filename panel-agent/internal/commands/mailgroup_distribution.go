@@ -99,8 +99,14 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		return nil, err
 	}
 	if gid != "" {
-		if err := drainGroupMailToMembers(ctx, gid, members); err != nil {
-			return nil, err
+		// An internal-only list of outside addresses only keeps its account
+		// and has no mailbox to drain into: mail stays in the account (bounces
+		// of its outside deliveries land there) instead of failing every apply.
+		keepUndrained := wantGroup && len(members) == 0
+		if !keepUndrained {
+			if err := drainGroupMailToMembers(ctx, gid, members); err != nil {
+				return nil, err
+			}
 		}
 		if !wantGroup {
 			if err := unlinkGroupMembers(ctx, gid, members); err != nil {
