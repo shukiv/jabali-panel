@@ -143,8 +143,16 @@ func mailWebadminApplyHandler(ctx context.Context, params json.RawMessage) (any,
 	if err := validateDomainNameForShell(p.ServerName); err != nil {
 		return nil, err
 	}
+	if err := validateNginxName("server_name", p.ServerName); err != nil {
+		return nil, err
+	}
 	if p.SSLCertPath == "" || p.SSLKeyPath == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: "ssl_cert_path and ssl_key_path required"}
+	}
+	for _, f := range [][2]string{{"ssl_cert_path", p.SSLCertPath}, {"ssl_key_path", p.SSLKeyPath}} {
+		if err := validateNginxPath(f[0], f[1]); err != nil {
+			return nil, err
+		}
 	}
 	for _, c := range p.AllowCIDRs {
 		if !validCIDROrIP(c) {

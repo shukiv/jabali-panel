@@ -150,6 +150,23 @@ func dockerAppVhostApplyHandler(ctx context.Context, params json.RawMessage) (an
 	if err := validateDomainNameForShell(p.DomainName); err != nil {
 		return nil, err
 	}
+	if err := validateNginxName("domain_name", p.DomainName); err != nil {
+		return nil, err
+	}
+	for _, f := range [][2]string{{"ssl_cert_path", p.SSLCertPath}, {"ssl_key_path", p.SSLKeyPath}} {
+		if f[1] == "" {
+			continue
+		}
+		if err := validateNginxPath(f[0], f[1]); err != nil {
+			return nil, err
+		}
+	}
+	if err := validateListenIP("listen_ipv4", p.ListenIPv4, true); err != nil {
+		return nil, err
+	}
+	if err := validateListenIP("listen_ipv6", p.ListenIPv6, false); err != nil {
+		return nil, err
+	}
 	if !dockerAppUpstreamRE.MatchString(p.Upstream) {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInvalidArgument,
