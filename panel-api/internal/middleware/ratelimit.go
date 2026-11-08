@@ -54,6 +54,10 @@ type RateLimiter struct {
 
 	mu      sync.Mutex
 	buckets map[bucketKey]*entry
+	// signedIn is when each address last signed in to each account through
+	// KratosFlows, so that address keeps its way in while others use up the
+	// account's budget.
+	signedIn map[signInKey]time.Time
 }
 
 type bucketKey struct {
@@ -82,7 +86,7 @@ type entry struct {
 // NewRateLimiter returns a ready limiter. Callers typically call this once
 // at boot and reuse the same limiter across middleware registrations.
 func NewRateLimiter(cfg RateLimiterConfig) *RateLimiter {
-	return &RateLimiter{cfg: cfg, buckets: map[bucketKey]*entry{}}
+	return &RateLimiter{cfg: cfg, buckets: map[bucketKey]*entry{}, signedIn: map[signInKey]time.Time{}}
 }
 
 // Default returns a middleware enforcing the default-tier bucket per client IP.
@@ -137,7 +141,10 @@ func (l *RateLimiter) perActor(t tier) gin.HandlerFunc {
 // identifier, the recovery email) also spends that account's budget, twice an
 // address's: guessing one account from many addresses is held to what two
 // addresses may try, and one address at its own limit can't spend it all and
-// lock the owner out. Its WARN line has
+// lock the owner out. An address whose login to the account set a session
+// keeps its way in past the account's budget (signedInFor), under its own
+// per-address one, so the owner's usual address still signs in while
+// several others use the budget up. Its WARN line has
 // its own marker (kratos_account_rate_limited): the account's owner retrying
 // while someone else guesses must not have the owner's address banned. The
 // answer is the same 429 either way, whether the account exists or not.
@@ -169,22 +176,25 @@ func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
 			return
 		}
-		account, status, code := kratosAccountKey(c, flow)
+		acct, status, code := kratosAccountOf(c, flow)
 		if status != 0 {
 			c.AbortWithStatusJSON(status, gin.H{"error": code})
 			return
 		}
-		if account != "" && !l.limiterFor(account, tierKratosAccount).Allow() {
+		if acct.key != "" && !l.hasSignedIn(acct.key, ip) && !l.limiterFor(acct.key, tierKratosAccount).Allow() {
 			c.Header("Retry-After", "60")
 			if log != nil {
 				log.Warn("kratos account rate limited",
 					"marker", "kratos_account_rate_limited",
-					"flow", flow, "client_ip", ip, "account_hash", account[len(flow)+1:len(flow)+13])
+					"flow", flow, "client_ip", ip, "account_hash", acct.logHash)
 			}
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
 			return
 		}
 		c.Next()
+		if flow == "login" && acct.key != "" && setsKratosSession(c.Writer.Header()) {
+			l.noteSignIn(acct.key, ip)
+		}
 	}
 }
 
@@ -276,6 +286,11 @@ func (l *RateLimiter) Cleanup(idleFor time.Duration) {
 	for k, e := range l.buckets {
 		if e.seen.Before(cutoff) {
 			delete(l.buckets, k)
+		}
+	}
+	for k, at := range l.signedIn {
+		if time.Since(at) >= signedInFor {
+			delete(l.signedIn, k)
 		}
 	}
 }

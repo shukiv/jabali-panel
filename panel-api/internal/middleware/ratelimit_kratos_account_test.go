@@ -248,3 +248,150 @@ func TestKratosFlows_AccountLimitLogsItsOwnMarker(t *testing.T) {
 		t.Errorf("log %q: must not carry the per-address marker or the account name", out)
 	}
 }
+
+// kratosLoginStandIn answers a login with the password "right" as Kratos does: 200
+// and a session cookie. Anything else is 400 without one.
+func kratosLoginStandIn(c *gin.Context) {
+	var b struct {
+		Password string `json:"password"`
+	}
+	_ = json.NewDecoder(c.Request.Body).Decode(&b)
+	if b.Password == "right" {
+		http.SetCookie(c.Writer, &http.Cookie{Name: "ory_kratos_session", Value: "s", Path: "/"})
+		c.Status(http.StatusOK)
+		return
+	}
+	c.Status(http.StatusBadRequest)
+}
+
+func serveKratosTo(mw, next gin.HandlerFunc, p kratosPost) int {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Any("/*any", mw, next)
+	req := httptest.NewRequest(http.MethodPost, p.path, strings.NewReader(p.body))
+	req.Header.Set("Content-Type", p.contentType)
+	req.RemoteAddr = p.ip + ":54321"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w.Code
+}
+
+// An address whose login to the account set a session keeps its way in while
+// other addresses use up the account's budget; a new address doesn't, and a
+// failed login doesn't count as signing in.
+func TestKratosFlows_AnAddressThatSignedInKeepsItsWay(t *testing.T) {
+	mw := kratosLimiter(2).KratosFlows(nil)
+	login := func(n int, password string) int {
+		body := kratosBody(map[string]string{"method": "password", "identifier": "alice", "password": password})
+		return serveKratosTo(mw, kratosLoginStandIn, kratosPost{kratosLogin, addr("10.0.12", n), jsonType, body})
+	}
+	if code := login(1, "right"); code != http.StatusOK {
+		t.Fatalf("alice's login = %d, want 200", code)
+	}
+	login(2, "wrong")
+	login(2, "wrong")
+	login(3, "wrong")
+	if code := login(4, "wrong"); code != http.StatusTooManyRequests {
+		t.Fatalf("login with the account's budget used up = %d, want 429", code)
+	}
+	if code := login(1, "right"); code != http.StatusOK {
+		t.Errorf("alice's login from the address she signed in from = %d, want 200", code)
+	}
+	if code := login(5, "right"); code != http.StatusTooManyRequests {
+		t.Errorf("a login from a new address = %d, want 429", code)
+	}
+	if code := login(3, "wrong"); code != http.StatusTooManyRequests {
+		t.Errorf("a login from an address whose login failed = %d, want 429", code)
+	}
+}
+
+// Kratos takes the form from the body; a name in the query string is refused
+// rather than left out of the account budget.
+func TestKratosFlows_RefusesAccountNamesInTheQueryString(t *testing.T) {
+	mw := kratosLimiter(100).KratosFlows(nil)
+	for name, c := range map[string]struct {
+		p    kratosPost
+		want int
+	}{
+		"identifier":          {kratosPost{kratosLogin + "&identifier=alice", "10.0.13.1", jsonType, passwordLogin("bob")}, http.StatusBadRequest},
+		"password_identifier": {kratosPost{kratosLogin + "&Password_Identifier=alice", "10.0.13.2", "", ""}, http.StatusBadRequest},
+		"email":               {kratosPost{kratosRecovery + "&email=alice", "10.0.13.3", jsonType, `{"method":"code"}`}, http.StatusBadRequest},
+		"other parameters":    {kratosPost{kratosLogin + "&return_to=%2Fdashboard", "10.0.13.4", jsonType, passwordLogin("bob")}, http.StatusOK},
+	} {
+		if w, _ := serveKratos(mw, c.p); w.Code != c.want {
+			t.Errorf("%s: %d, want %d", name, w.Code, c.want)
+		}
+	}
+}
+
+func TestKratosFlows_RefusesANameThatIsNotAString(t *testing.T) {
+	mw := kratosLimiter(100).KratosFlows(nil)
+	for i, body := range []string{`{"identifier":123}`, `{"identifier":{"a":"alice"}}`, `{"identifier":["alice"]}`, `{"identifier":true}`} {
+		if w, _ := serveKratos(mw, kratosPost{kratosLogin, addr("10.0.14", i+1), jsonType, body}); w.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", body, w.Code)
+		}
+	}
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.14.9", jsonType, `{"identifier":null,"method":"totp"}`}); w.Code != http.StatusOK {
+		t.Errorf("a null name = %d, want 200 (names no account)", w.Code)
+	}
+}
+
+// Recovery addresses compare as utf8mb4_unicode_ci: case, accents and width
+// don't count, and ß is ss. Spellings that are one address to Kratos share
+// one budget.
+func TestKratosFlows_NamesFoldAsTheirColumnCompares(t *testing.T) {
+	mw := kratosLimiter(1).KratosFlows(nil)
+	recoverAs := func(n int, email string) int {
+		w, _ := serveKratos(mw, kratosPost{kratosRecovery, addr("10.0.15", n), jsonType, kratosBody(map[string]string{"method": "code", "email": email})})
+		return w.Code
+	}
+	if recoverAs(1, "Alícé@Example.com") != http.StatusOK || recoverAs(2, "ａlice@example.com") != http.StatusOK {
+		t.Fatal("the first two recoveries should pass")
+	}
+	if code := recoverAs(3, "alice@example.com"); code != http.StatusTooManyRequests {
+		t.Errorf("3rd recovery for one address, spelled three ways = %d, want 429", code)
+	}
+	if recoverAs(4, "straße@example.com") != http.StatusOK || recoverAs(5, "STRASSE@example.com") != http.StatusOK {
+		t.Fatal("the first two recoveries for straße should pass")
+	}
+	if code := recoverAs(6, "strasse@example.com"); code != http.StatusTooManyRequests {
+		t.Errorf("3rd recovery for straße/strasse = %d, want 429", code)
+	}
+}
+
+func TestKratosFlows_TheAPILoginPathIsAccountLimitedToo(t *testing.T) {
+	mw := kratosLimiter(1).KratosFlows(nil)
+	const api = "/.ory/self-service/login/api?flow=x"
+	serveKratos(mw, kratosPost{api, "10.0.16.1", jsonType, passwordLogin("alice")})
+	serveKratos(mw, kratosPost{api, "10.0.16.2", jsonType, passwordLogin("alice")})
+	if w, _ := serveKratos(mw, kratosPost{api, "10.0.16.3", jsonType, passwordLogin("alice")}); w.Code != http.StatusTooManyRequests {
+		t.Errorf("3rd API login for alice = %d, want 429", w.Code)
+	}
+	if w, _ := serveKratos(mw, kratosPost{kratosLogin, "10.0.16.4", "application/json;x", passwordLogin("bob")}); w.Code != http.StatusUnsupportedMediaType {
+		t.Errorf("a malformed JSON content type = %d, want 415", w.Code)
+	}
+}
+
+// A chunked body (no Content-Length) is read for the account and passed on
+// whole.
+func TestKratosFlows_PassesAChunkedBodyOn(t *testing.T) {
+	mw := kratosLimiter(5).KratosFlows(nil)
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	var got string
+	r.Any("/*any", mw, func(c *gin.Context) {
+		b, _ := io.ReadAll(c.Request.Body)
+		got = string(b)
+		c.Status(http.StatusOK)
+	})
+	body := passwordLogin("alice")
+	req := httptest.NewRequest(http.MethodPost, kratosLogin, strings.NewReader(body))
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", jsonType)
+	req.RemoteAddr = "10.0.17.1:54321"
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || got != body {
+		t.Errorf("code %d, next handler read %q, want 200 and %q", w.Code, got, body)
+	}
+}
