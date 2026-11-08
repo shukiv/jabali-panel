@@ -198,6 +198,14 @@ grep -q "JABALI_RELEASE_CHANNEL=development" "$tmp/follow.err" \
 refs "$S refs/tags/stable"
 expect "GitHub unreachable stops the install" "$(follow FAKE_REFS_DOWN=1)" died
 expect "an unknown channel stops the install" "$(follow JABALI_RELEASE_CHANNEL=nightly)" died
+# A box without curl: PATH holds only what the check needs, and no curl.
+mkdir -p "$tmp/nocurl"
+ln -s "$(command -v mktemp)" "$tmp/nocurl/mktemp"
+ln -s "$tmp/bin/mariadb" "$tmp/nocurl/mariadb"
+expect "no curl stops the install" "$(follow PATH="$tmp/nocurl")" died
+grep -q "curl is needed" "$tmp/follow.err" \
+  && echo "ok       ... and says curl is needed" \
+  || { echo "FAIL     ... without saying curl is needed"; fail=1; }
 unset -f exec
 
 # --- clone_or_update_repo checks out JABALI_INSTALL_COMMIT ------------------

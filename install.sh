@@ -6934,6 +6934,8 @@ follow_stable_release() {
   esac
   [[ "$(_installed_release_channel)" == "development" ]] && return 0
 
+  command -v curl >/dev/null 2>&1 \
+    || _die "curl is needed to find the stable release: install curl and run install.sh again"
   local dir sha
   dir="$(mktemp -d)" || _die "could not create a temporary directory"
   curl -fsSL --retry 3 -o "$dir/refs" \
