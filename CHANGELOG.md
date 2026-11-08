@@ -30,6 +30,121 @@ Add a line by hand when servers do something on their first update with it:
 a data migration, a service restart, a new alert. The entry reaches stable
 servers with the next move.
 
+## 2026-11-08 — early cut: `5e6b69867`
+
+`stable` moved from `db6d0f4da` to `5e6b69867`: 94 changes.
+
+Migrations 000342–000346 (5). Changing rows: 000342.
+
+- `0281aaf4b` Changelog: the November 2026 stable cut ([#2347](https://github.com/shukiv/jabali-panel/pull/2347))
+- `e2a618387` Backups: Days to keep keeps every backup from those days, not one per day (GH #2300) ([#2329](https://github.com/shukiv/jabali-panel/pull/2329))
+- `f5d8b89f8` Bot detection: paths of a domain that skip the challenge (GH #2328) ([#2348](https://github.com/shukiv/jabali-panel/pull/2348))
+- `4c0503d12` Node.js apps on the Application Manager: backend (ADR-0175) ([#2232](https://github.com/shukiv/jabali-panel/pull/2232))
+- `57558055f` DNS: zones are not sent NOTIFY to this server's own address ([#2349](https://github.com/shukiv/jabali-panel/pull/2349))
+- `0fb22377a` Mail: a domain whose mail is off or hosted elsewhere gets its mail sent to its MX ([#2350](https://github.com/shukiv/jabali-panel/pull/2350))
+- `cebbbd672` CLI: python-app list names a Node.js app's runtime ([#2351](https://github.com/shukiv/jabali-panel/pull/2351))
+- `acde59f74` Node.js apps on the Application Manager: the UI (ADR-0175) ([#2352](https://github.com/shukiv/jabali-panel/pull/2352))
+- `5f71e8589` Mail: ask before email goes off while mailboxes are left ([#2353](https://github.com/shukiv/jabali-panel/pull/2353))
+- `2661c58ac` Docs: fix pages that disagree with each other or with the panel ([#2354](https://github.com/shukiv/jabali-panel/pull/2354))
+- `eb40c4b12` Build(deps): bump the github-actions group with 2 updates ([#2342](https://github.com/shukiv/jabali-panel/pull/2342))
+- `f1ad01390` Docs: keep a reverse-proxied app running; the mail tab is Accounts ([#2355](https://github.com/shukiv/jabali-panel/pull/2355))
+- `2c276c93b` Deps: micro-key-producer 0.8.6 → 0.10.2 (browser SSH key generation) ([#2356](https://github.com/shukiv/jabali-panel/pull/2356))
+- `4f7e7ce27` deps: Go 1.27.3 (GH #2338) ([#2357](https://github.com/shukiv/jabali-panel/pull/2357))
+- `16228799c` deps: Stalwart 0.16.27 (GH #2338) ([#2358](https://github.com/shukiv/jabali-panel/pull/2358))
+- `beb883749` CrowdSec: read Stalwart's mail log lines in any field order, and keep the log feed on every box ([#2359](https://github.com/shukiv/jabali-panel/pull/2359))
+- `081a5ac17` Mail: new mail domains, mail statistics and DMARC reports work on Stalwart 1.0 as well as 0.16 ([#2360](https://github.com/shukiv/jabali-panel/pull/2360))
+- `4e26e1fd7` Mail: a deleted alias, a removed group member or a changed catch-all applies at once on Stalwart 1.0 ([#2361](https://github.com/shukiv/jabali-panel/pull/2361))
+- `897110dd8` Mail logs: the delivery log runs at debug, so delivered mail stays in Mail > Logs on Stalwart 1.0 ([#2362](https://github.com/shukiv/jabali-panel/pull/2362))
+- `2189f3ecc` Install: the mail server plan and cache sizes fit Stalwart 1.0 as well as 0.16 ([#2363](https://github.com/shukiv/jabali-panel/pull/2363))
+- `244437458` Mail: jabali update moves a host from Stalwart 0.16 to 1.0 ([#2364](https://github.com/shukiv/jabali-panel/pull/2364))
+- `c2391d1f1` Mail: port 25 offers STARTTLS on hosts without IPv6 too ([#2365](https://github.com/shukiv/jabali-panel/pull/2365))
+- `52ce87d81` CrowdSec: Stalwart events from port 25, 465 and 995 carry their protocol ([#2366](https://github.com/shukiv/jabali-panel/pull/2366))
+- `7ccadea3c` Domains: each Add button on the Security tab sits above its list (GH #2328) ([#2367](https://github.com/shukiv/jabali-panel/pull/2367))
+- `c8882d5c1` Mail: the move to Stalwart 1.0 skips a store on its own disk or with blobs elsewhere ([#2368](https://github.com/shukiv/jabali-panel/pull/2368))
+- `bbc76d5eb` Docs: the Directory Privacy steps match the panel ([#2369](https://github.com/shukiv/jabali-panel/pull/2369))
+- `be53f1a02` Updates: jabali update refreshes Jabali's CrowdSec parsers ([#2370](https://github.com/shukiv/jabali-panel/pull/2370))
+- `aaddc3c3f` Mail: rotating the Stalwart admin login also updates webmail's copy ([#2371](https://github.com/shukiv/jabali-panel/pull/2371))
+- `7f411b50e` Secrets: rotating the PowerDNS password also restarts jabali-agent ([#2372](https://github.com/shukiv/jabali-panel/pull/2372))
+- `830e9f023` Docs: secret rotation says when to skip the root-password step, and why the mailhook token stays ([#2373](https://github.com/shukiv/jabali-panel/pull/2373))
+- `c1b74fc15` TLS: jabali panel-cert new-key replaces a self-signed panel certificate's key ([#2375](https://github.com/shukiv/jabali-panel/pull/2375))
+- `0c76301a1` CLI: panel-cert issue requests the certificate on the next pass, not after 10 minutes ([#2376](https://github.com/shukiv/jabali-panel/pull/2376))
+- `3add03283` Agent: reconnect to the PowerDNS database instead of failing until restart (GH #2377) ([#2379](https://github.com/shukiv/jabali-panel/pull/2379))
+- `a14f1b79b` DNS Zones: show whether the DNS server holds each zone (GH #2377) ([#2378](https://github.com/shukiv/jabali-panel/pull/2378))
+- `6db4db7b0` Domains: Save limits gets its own row, and long values wrap in the Security lists (GH #2328) ([#2386](https://github.com/shukiv/jabali-panel/pull/2386))
+- `92201cb47` chore(docker-apps): Forgejo 17.0.1 on track 17, 16 held (GH #2338) ([#2382](https://github.com/shukiv/jabali-panel/pull/2382))
+- `85fb74555` chore(docker-apps): Memos 26.11.0 on a 26 track, 0.31 held (GH #2338) ([#2383](https://github.com/shukiv/jabali-panel/pull/2383))
+- `b796ed61e` Logs: list every domain, not just the first 20 (GH #2381) ([#2387](https://github.com/shukiv/jabali-panel/pull/2387))
+- `ad8d9d256` Webmail: AppSec skips every webmail host, including a new domain's and a custom mail hostname (GH #2380) ([#2388](https://github.com/shukiv/jabali-panel/pull/2388))
+- `b6a73b223` Security: AppSec's panel-path allowlist names the panel by host name, port and address ([#2389](https://github.com/shukiv/jabali-panel/pull/2389))
+- `5e25e01bb` Security: domain vhosts refuse a request that names the panel ([#2390](https://github.com/shukiv/jabali-panel/pull/2390))
+- `9a942d783` Catalog: n8n 2.46.6 on track 2, n8n 3.x held (GH #2338) ([#2384](https://github.com/shukiv/jabali-panel/pull/2384))
+- `453d2d8a8` Catalog: ONLYOFFICE Docs 10 for new installs, 9.4.0 held (GH #2338) ([#2385](https://github.com/shukiv/jabali-panel/pull/2385))
+- `0caa24140` Security tab: narrow columns keep their width at Safari zoom (GH #2328) ([#2391](https://github.com/shukiv/jabali-panel/pull/2391))
+- `c4d7b64dd` hostedsvc deploy: create secret and backup files owner-only ([#2392](https://github.com/shukiv/jabali-panel/pull/2392))
+- `07ec6c5e4` Domains: restrict document root to plain path characters ([#2393](https://github.com/shukiv/jabali-panel/pull/2393))
+- `110e0440c` Agent: open tenant paths through their directory descriptor ([#2394](https://github.com/shukiv/jabali-panel/pull/2394))
+- `88ae282cf` Install: remove the nspawn sudo helper; retire it on update ([#2395](https://github.com/shukiv/jabali-panel/pull/2395))
+- `a43100c3d` Catalog: ONLYOFFICE Update moves a 9 install to 10 (GH #2338) ([#2396](https://github.com/shukiv/jabali-panel/pull/2396))
+- `41bb5ab39` Domains: a new owner's domain folders are 2750 again after an owner change ([#2397](https://github.com/shukiv/jabali-panel/pull/2397))
+- `9a4e315e6` Domains: an owner change removes the old owner's emptied domain folder ([#2398](https://github.com/shukiv/jabali-panel/pull/2398))
+- `fae2d2ff8` Panel checkout: root owns the whole tree ([#2399](https://github.com/shukiv/jabali-panel/pull/2399))
+- `383fe8921` Agent: app installers keep a subdirectory inside the docroot ([#2400](https://github.com/shukiv/jabali-panel/pull/2400))
+- `7be0dc4c5` Agent: domain.reown moves the docroot through directory descriptors ([#2401](https://github.com/shukiv/jabali-panel/pull/2401))
+- `3dcbc97cb` Agent: login shells are set only for hosting users, and only to the SSH wrapper ([#2402](https://github.com/shukiv/jabali-panel/pull/2402))
+- `2a8fe657c` Agent: a migration refresh writes only inside the dest user's home, from the staging folder ([#2403](https://github.com/shukiv/jabali-panel/pull/2403))
+- `40f7aa1e1` Agent: a system restore loads only the panel's databases and refuses a staged tree with outside links ([#2404](https://github.com/shukiv/jabali-panel/pull/2404))
+- `bbd221a4a` Docker apps: a port created without the reverse proxy, or disabled, is stored that way ([#2405](https://github.com/shukiv/jabali-panel/pull/2405))
+- `443267c30` Logs: run the GoAccess report in an isolated frame ([#2406](https://github.com/shukiv/jabali-panel/pull/2406))
+- `25ef1c960` Mail: say which groups, aliases and forwards a new mailbox did not get ([#2407](https://github.com/shukiv/jabali-panel/pull/2407))
+- `fb27b134d` Open the tab before minting a one-time sign-in link ([#2408](https://github.com/shukiv/jabali-panel/pull/2408))
+- `d7f4212cc` Domains: hold the package's domain limit at the insert ([#2409](https://github.com/shukiv/jabali-panel/pull/2409))
+- `f262063f6` Databases: one maintenance run per engine, held at the insert ([#2410](https://github.com/shukiv/jabali-panel/pull/2410))
+- `e9f0db7f0` Backups: refuse a second submit while the first is queued or running ([#2411](https://github.com/shukiv/jabali-panel/pull/2411))
+- `28b6e8137` Agent: database statements with a password go to the client on stdin ([#2412](https://github.com/shukiv/jabali-panel/pull/2412))
+- `9da4f2fd7` Free hostname service: one count per code try, hourly claim limits, IPv6 by /64 ([#2413](https://github.com/shukiv/jabali-panel/pull/2413))
+- `d831b6d8a` Databases and database users: package limits hold when creates overlap ([#2414](https://github.com/shukiv/jabali-panel/pull/2414))
+- `00178a71d` Backup restore upload: chunks land in order ([#2415](https://github.com/shukiv/jabali-panel/pull/2415))
+- `b7b9794f6` Request body limit covers DELETE ([#2416](https://github.com/shukiv/jabali-panel/pull/2416))
+- `a470b0d0b` Notifications: links stay inside the panel, and the email body is escaped ([#2417](https://github.com/shukiv/jabali-panel/pull/2417))
+- `2c15f079b` Mail queue: a page past the end is an empty page, however large ([#2418](https://github.com/shukiv/jabali-panel/pull/2418))
+- `c99ed34ee` Users: a password over 72 bytes gets a 400, not a 500 ([#2419](https://github.com/shukiv/jabali-panel/pull/2419))
+- `159c4b77e` Apps: an install or clone counts against the package's database limits ([#2426](https://github.com/shukiv/jabali-panel/pull/2426))
+- `2e1b40293` PHP versions: a background install takes the request's context before the handler returns ([#2427](https://github.com/shukiv/jabali-panel/pull/2427))
+- `82fee3d4d` Domains: a hosting package that cannot be read refuses the create instead of lifting its domain limit ([#2428](https://github.com/shukiv/jabali-panel/pull/2428))
+- `c7559f7f9` Docker apps: the package caps skip a tenant whose package cannot be read, and the allowlist applies within the disk quota ([#2429](https://github.com/shukiv/jabali-panel/pull/2429))
+- `eca10bd5b` Agent: vhost renderers refuse a param that would change their nginx config ([#2430](https://github.com/shukiv/jabali-panel/pull/2430))
+- `caf578037` Agent: app nginx snippets wait for the nginx lock, and InvoiceShelf checks its snippet values first ([#2431](https://github.com/shukiv/jabali-panel/pull/2431))
+- `d1b5d5edc` Agent: a domain delete takes its app snippets with it, and waits for the nginx lock ([#2432](https://github.com/shukiv/jabali-panel/pull/2432))
+- `de7c365ff` Reconciler: prune the snippet dirs of deleted domains once per start ([#2433](https://github.com/shukiv/jabali-panel/pull/2433))
+- `3fe590f26` Agent: a full-server container's entries map to inner archives only for valid account names ([#2434](https://github.com/shukiv/jabali-panel/pull/2434))
+- `fe1b8db84` SSO validate socket: request bodies are capped like the panel's other routes ([#2435](https://github.com/shukiv/jabali-panel/pull/2435))
+- `eaa27ca21` Installer: panel.env, the SSO key and kratos.yml are created private ([#2436](https://github.com/shukiv/jabali-panel/pull/2436))
+- `45ea9e606` Installer and free-hostname scripts: tokens go in the request body, not the command line ([#2437](https://github.com/shukiv/jabali-panel/pull/2437))
+- `37288ce9c` Databases: phpMyAdmin and Adminer open through the shared sign-in tab helper ([#2438](https://github.com/shukiv/jabali-panel/pull/2438))
+- `fe8aa2e05` Backups and audit prune: a malformed request body is refused, an empty one means the defaults ([#2439](https://github.com/shukiv/jabali-panel/pull/2439))
+- `e75e23903` Installer: the one-time bootstrap passwords leave panel.env once the accounts exist ([#2441](https://github.com/shukiv/jabali-panel/pull/2441))
+- `a0ef6593e` Backups: the CLI account restore sets up the agent client before it rebuilds the panel rows ([#2443](https://github.com/shukiv/jabali-panel/pull/2443))
+- `0533e86dd` Restore: databases and database users keep to the account's package limits ([#2444](https://github.com/shukiv/jabali-panel/pull/2444))
+- `3a537b938` SSO: a per-user limit on minting one-time sign-in links ([#2442](https://github.com/shukiv/jabali-panel/pull/2442))
+- `28fdd88a4` Sign-in: login and recovery attempts are also counted per account ([#2445](https://github.com/shukiv/jabali-panel/pull/2445))
+- `d440fc337` Install: a prebuilt release is installed from the commit it was built from ([#2446](https://github.com/shukiv/jabali-panel/pull/2446))
+- `f1c6d190a` Install: install.sh --install-module turns the module on in the panel ([#2447](https://github.com/shukiv/jabali-panel/pull/2447))
+- `5e6b69867` Install: the classic source install builds the stable release ([#2448](https://github.com/shukiv/jabali-panel/pull/2448))
+
+This cut comes before the December 1 cut so that new servers install the stable release. From this cut on, the classic `install.sh` command installs `stable`, and get.jabali-panel.com does too once its own change follows. The December 1 cut still happens.
+
+What servers do on the first update with it:
+
+- Stalwart moves to 1.0 in this update. A server on 0.16.24 first gets 0.16.27, and its mail is then copied into a 1.0 store while 0.16.27 keeps serving. Mail stops for the final copy, about half a minute on a small server. The copy needs free space for about one and a half times the mail store, plus 1 GB. The 0.16 store stays at `/var/lib/stalwart-0.16` and its binary at `/opt/stalwart-0.16`. A server whose `/var/lib/stalwart` is a mount point or a symlink, or whose blob store is elsewhere, stays on 0.16.27, and the update says why. See [Moving to Stalwart 1.0](docs/site/mail.md#moving-to-stalwart-10).
+- After the move, mail apps that signed in with OAuth sign in again once, and calendar and contact apps fetch their data again once. Search in mail is incomplete until Stalwart has rebuilt its index. A mailbox that turned on encryption at rest itself has to turn it on again.
+- Jabali's CrowdSec parsers are rewritten where they differ from the release, and CrowdSec reloads if one changed. Without it, a server on Stalwart 1.0 would stop banning mail brute force.
+- Port 25 offers STARTTLS where it didn't (servers without IPv6), and Stalwart's delivery log moves to debug, so delivered mail shows in Mail > Logs.
+- Migration 000342 moves an account backup schedule's daily count to Days to keep, which now keeps every backup from those days.
+- The admin password the installer wrote to `/etc/jabali/panel.env` is removed from it. `jabali user password <user>` sets a new one.
+- The unused nspawn sudo helper and its sudoers grant are removed.
+
+On the update after it, the first one run by the new `jabali update`: a panel checkout at `/opt/jabali-panel` whose `.git` isn't owned by root is moved to `/opt/jabali-panel.quarantine-<UTC>`, cloned again owned by root, and that update rebuilds everything. Remove the quarantined copy once the server works.
+
 ## 2026-11-01 — monthly cut: `db6d0f4da`
 
 `stable` moved from `51fd7fc25` to `db6d0f4da`: 302 changes.
