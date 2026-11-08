@@ -179,9 +179,12 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 			c.JSON(http.StatusConflict, gin.H{"error": "install_in_progress", "detail": "PHP " + version + " is already being installed"})
 			return
 		}
+		// gin reuses c for the next request once this handler returns, so
+		// the install takes the request's context now, not from c later.
+		reqCtx := context.WithoutCancel(c.Request.Context())
 		go func() {
 			defer release()
-			bgctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), 30*time.Minute)
+			bgctx, cancel := context.WithTimeout(reqCtx, 30*time.Minute)
 			defer cancel()
 			if _, err := cli.Call(bgctx, "php.version.install", map[string]string{"version": version}); err != nil {
 				slog.Warn("php.version.install failed", "version", version, "err", err)
