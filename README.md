@@ -103,8 +103,8 @@ curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh
 ```
 
 It builds the current stable release from source, with that release's own
-`install.sh`. To build the newest main instead, run it as
-`sudo JABALI_RELEASE_CHANNEL=development bash`.
+`install.sh`. To build the newest main instead, and set the server to the
+development channel, run it as `sudo JABALI_RELEASE_CHANNEL=development bash`.
 
 Both run the same engine. `install.sh` fetches Go 1.27, builds the panel + agent
 binaries, builds the SPA with Vite, writes systemd units, provisions MariaDB +

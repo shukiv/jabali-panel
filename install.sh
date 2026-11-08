@@ -8309,7 +8309,7 @@ start_and_verify() {
 # build against the current HEAD, so we seed it here.
 
 # set_release_channel_from_install — a server installed from the newest main
-# build (bootstrap.sh with JABALI_RELEASE_CHANNEL=development) follows main
+# (bootstrap.sh or install.sh, with JABALI_RELEASE_CHANNEL=development) follows main
 # from the start. Otherwise the panel's default channel, stable, stands. Only
 # that explicit request changes the setting, so a re-run never moves a server
 # to another channel by itself.
