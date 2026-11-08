@@ -2483,19 +2483,36 @@ EARLYDNS
     fi
   done
 
-  # Install Composer from getcomposer.org using the configured PHP binary.
-  # Do NOT use the Debian `composer` apt package — it depends on php-cli meta
-  # which re-installs php8.4-cli and fights our update-alternatives settings.
-  #
-  # GH #1332 item 13: provide TWO selectable versions. composer-latest and
-  # composer-lts (2.2 LTS, for legacy/older-PHP apps) are installed side by side,
-  # and /usr/local/bin/composer becomes a small dispatcher that reads the tenant's
-  # chosen channel (/etc/jabali-panel/user-composer/<user>, written by the agent)
-  # and execs the matching phar — defaulting to latest for anyone (incl. root)
-  # with no choice. Idempotent: only (re)download when a version binary is missing.
+  ensure_composer_versions "php${primary_version}"
+
+  _ok "base packages ready"
+}
+
+# ensure_composer_versions PHP [BIN_DIR] — install Composer from
+# getcomposer.org with the given PHP binary. Do NOT use the Debian `composer`
+# apt package — it depends on php-cli meta which re-installs php8.4-cli and
+# fights our update-alternatives settings.
+#
+# GH #1332 item 13: provide TWO selectable versions. composer-latest and
+# composer-lts (2.2 LTS, for legacy/older-PHP apps) are installed side by side,
+# and /usr/local/bin/composer becomes a small dispatcher that reads the tenant's
+# chosen channel (/etc/jabali-panel/user-composer/<user>, written by the agent)
+# and execs the matching phar — defaulting to latest for anyone (incl. root)
+# with no choice. Idempotent: only (re)download when a version binary is missing.
+#
+# Composer's installer refuses to run without HOME or COMPOSER_HOME ("The HOME
+# or COMPOSER_HOME environment variable must be set for composer to run
+# correctly"), and install.sh is not always started from a login shell:
+# systemd-run leaves HOME unset. Both versions failed there, the dispatcher
+# was never installed, and the box had no `composer` at all. HOME falls back
+# to /root (install.sh runs as root). provision_new_software calls this too,
+# so `jabali update` brings Composer back on a box installed that way.
+ensure_composer_versions() {
+  local _php="$1" _bin="${2:-/usr/local/bin}"
+  local _home="${HOME:-/root}"
   local _need_composer=0
-  [[ -x /usr/local/bin/composer-latest ]] || _need_composer=1
-  [[ -x /usr/local/bin/composer-lts ]] || _need_composer=1
+  [[ -x "$_bin/composer-latest" ]] || _need_composer=1
+  [[ -x "$_bin/composer-lts" ]] || _need_composer=1
   if [[ "$_need_composer" == 1 ]]; then
     _log "installing Composer versions (latest + LTS 2.2) from getcomposer.org"
     local _composer_tmp
@@ -2515,11 +2532,12 @@ EARLYDNS
         rm -f "$_composer_tmp"
         _err "composer installer checksum mismatch (expected $_composer_sig, got $_composer_sum) — NOT executing it"
       else
-        "php${primary_version}" "$_composer_tmp" \
-          --install-dir=/usr/local/bin --filename=composer-latest --quiet \
-          && _ok "composer-latest installed (installer signature verified)"
-        "php${primary_version}" "$_composer_tmp" \
-          --install-dir=/usr/local/bin --filename=composer-lts --2.2 --quiet \
+        HOME="$_home" "$_php" "$_composer_tmp" \
+          --install-dir="$_bin" --filename=composer-latest --quiet \
+          && _ok "composer-latest installed (installer signature verified)" \
+          || _warn "composer-latest install failed — no composer command until the next update retries it"
+        HOME="$_home" "$_php" "$_composer_tmp" \
+          --install-dir="$_bin" --filename=composer-lts --2.2 --quiet \
           && _ok "composer-lts (2.2) installed" \
           || _warn "composer-lts install failed — LTS channel will fall back to latest"
         rm -f "$_composer_tmp"
@@ -2533,7 +2551,7 @@ EARLYDNS
   fi
 
   # Install (or refresh) the dispatcher at /usr/local/bin/composer. Idempotent.
-  if [[ -x /usr/local/bin/composer-latest ]]; then
+  if [[ -x "$_bin/composer-latest" ]]; then
     install -d -m 0755 /etc/jabali-panel/user-composer
     local _disp
     _disp="$(mktemp)"
@@ -2549,12 +2567,10 @@ if [ -r "$_choice" ]; then
 fi
 exec /usr/local/bin/composer-latest "$@"
 COMPOSER_DISPATCH
-    install -m 0755 "$_disp" /usr/local/bin/composer
+    install -m 0755 "$_disp" "$_bin/composer"
     rm -f "$_disp"
     _ok "composer dispatcher installed (latest + LTS selectable per user)"
   fi
-
-  _ok "base packages ready"
 }
 
 # Note: systemd-resolved is installed, unmasked, enabled, started, and
@@ -18645,6 +18661,18 @@ EOF
   # download failure can't skip the rest of provision.
   if declare -f install_wp_cli >/dev/null 2>&1; then
     ( install_wp_cli ) || _warn "provision: wp-cli install failed (will retry next update)"
+  fi
+  # Composer was installed only by install_base_packages, so a box whose
+  # install lost it (no HOME, a failed download) never got it back. Downloads
+  # only when a version is missing; subshell-isolated like wp-cli above.
+  local _upd_php_bin=""
+  if [[ -x "/usr/bin/php${_upd_primary}" ]]; then
+    _upd_php_bin="php${_upd_primary}"
+  elif command -v php >/dev/null 2>&1; then
+    _upd_php_bin="php"
+  fi
+  if [[ -n "$_upd_php_bin" ]] && declare -f ensure_composer_versions >/dev/null 2>&1; then
+    ( ensure_composer_versions "$_upd_php_bin" ) || _warn "provision: Composer install failed (will retry next update)"
   fi
   if declare -f ensure_wpcli_symlink >/dev/null 2>&1; then
     ensure_wpcli_symlink
