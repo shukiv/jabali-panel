@@ -226,6 +226,8 @@ EXAMPLES
 USAGE_EOF
 }
 
+# The arguments as given, for follow_stable_release to pass on.
+_cli_args=("$@")
 _cli_hostname=""
 _cli_token=""
 _cli_debug=""
@@ -6348,9 +6350,14 @@ clone_or_update_repo() {
 
   # Installing a prebuilt release: the checkout goes to the commit the release
   # was built from, not to the newest $REPO_BRANCH, so the install/ payloads,
-  # units and templates installed from it match the binaries.
+  # units and templates installed from it match the binaries. Installing the
+  # stable release from source (follow_stable_release), it goes to that commit.
   local release_commit
   release_commit="$(_prebuilt_commit)"
+  if [[ -z "$release_commit" ]]; then
+    release_commit="$(_source_install_commit)" \
+      || _die "JABALI_INSTALL_COMMIT must be a full 40-character commit id"
+  fi
 
   if [[ -d "$REPO_DIR/.git" ]]; then
     _log "pulling latest $REPO_BRANCH into $REPO_DIR"
@@ -6870,6 +6877,84 @@ _prebuilt_commit() {
     printf '%s' "$v"
   fi
   return 0
+}
+
+# _source_install_commit prints the commit a source install of the stable
+# release checks out (JABALI_INSTALL_COMMIT, set by follow_stable_release), or
+# nothing when it is unset. It fails on a value that isn't a full commit id.
+# follow_stable_release looks for this function in the stable release's
+# install.sh: one without it doesn't know JABALI_INSTALL_COMMIT.
+_source_install_commit() {
+  local c="${JABALI_INSTALL_COMMIT:-}"
+  [[ -n "$c" ]] || return 0
+  [[ "$c" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s' "$c"
+}
+
+# _stable_tag_commit prints the commit the `stable` tag names in a ref
+# advertisement (<repo>.git/info/refs), or nothing. An annotated tag's peeled
+# line (stable^{}) names the commit; a lightweight tag's own line does.
+_stable_tag_commit() {
+  local c
+  c="$(grep -a -m1 -o -E '[0-9a-f]{40} refs/tags/stable\^\{\}$' "$1" | cut -c1-40)" || c=""
+  if [[ -z "$c" ]]; then
+    c="$(grep -a -m1 -o -E '[0-9a-f]{40} refs/tags/stable$' "$1" | cut -c1-40)" || c=""
+  fi
+  printf '%s' "$c"
+}
+
+# _installed_release_channel prints this server's release channel, or nothing
+# on a new server.
+_installed_release_channel() {
+  command -v mariadb >/dev/null 2>&1 || return 0
+  mariadb -N -B jabali_panel -e 'SELECT release_channel FROM server_settings WHERE id = 1' 2>/dev/null || true
+}
+
+# follow_stable_release: a source install (README's classic `curl …/main/
+# install.sh | bash`, no prebuilt release) installs the stable release, as
+# get.jabali-panel.com does, so a new server doesn't start ahead of the stable
+# channel it follows. It runs the stable release's own install.sh, so the
+# script matches the code it installs, and that one checks the stable commit
+# out (_source_install_commit), refusing to move the server to an older release.
+#
+# The newest $REPO_BRANCH stays the target with JABALI_RELEASE_CHANNEL=
+# development, on a server already on the development channel, with
+# JABALI_REPO_URL or JABALI_REPO_BRANCH set, and while the stable release's
+# install.sh predates this. An install from get.jabali-panel.com (bootstrap.sh)
+# is left alone: it runs the chosen release's install.sh already.
+follow_stable_release() {
+  [[ -n "${JABALI_INSTALL_COMMIT:-}" ]] && return 0
+  # get.jabali-panel.com already chose a release.
+  [[ -n "${JABALI_PREBUILT_BIN:-}${JABALI_RELEASE_MANIFEST:-}" ]] && return 0
+  [[ -n "${JABALI_REPO_URL:-}${JABALI_REPO_BRANCH:-}" ]] && return 0
+  case "${JABALI_RELEASE_CHANNEL:-stable}" in
+    stable) ;;
+    development) return 0 ;;
+    *) _die "JABALI_RELEASE_CHANNEL must be stable or development, not '${JABALI_RELEASE_CHANNEL}'" ;;
+  esac
+  [[ "$(_installed_release_channel)" == "development" ]] && return 0
+
+  command -v curl >/dev/null 2>&1 \
+    || _die "curl is needed to find the stable release: install curl and run install.sh again"
+  local dir sha
+  dir="$(mktemp -d)" || _die "could not create a temporary directory"
+  curl_ipv4_retry -fsSL --retry 3 -o "$dir/refs" \
+    "https://github.com/shukiv/jabali-panel.git/info/refs?service=git-upload-pack" \
+    || _die "could not read the stable release's commit from GitHub. To install the newest main instead, set JABALI_RELEASE_CHANNEL=development"
+  sha="$(_stable_tag_commit "$dir/refs")"
+  [[ -n "$sha" ]] \
+    || _die "GitHub lists no stable release. To install the newest main instead, set JABALI_RELEASE_CHANNEL=development"
+  curl_ipv4_retry -fsSL --retry 3 -o "$dir/install.sh" \
+    "https://raw.githubusercontent.com/shukiv/jabali-panel/$sha/install.sh" \
+    || _die "could not download the stable release's install.sh (${sha:0:9})"
+  if ! grep -q '^_source_install_commit() {$' "$dir/install.sh"; then
+    _warn "the stable release (${sha:0:9}) can't be installed from source; installing the newest $REPO_BRANCH"
+    rm -rf "$dir"
+    return 0
+  fi
+  _log "installing the stable release ${sha:0:9} with its own install.sh"
+  exec env JABALI_INSTALL_COMMIT="$sha" JABALI_RELEASE_CHANNEL=stable \
+    bash "$dir/install.sh" "${_cli_args[@]}"
 }
 
 # _fetch_release_commit makes sure the release commit is in the checkout. A
@@ -18834,6 +18919,9 @@ clear_installer_marker() {
 }
 
 main() {
+  # A source install continues as the stable release's install.sh. First, so
+  # nothing has run yet.
+  follow_stable_release
   print_banner
   # GH #760: default a fresh, no-selection install to the lean "webhost" profile
   # (mail/docker/python/postgres/api opt-in). Must run BEFORE the dry-run print
