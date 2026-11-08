@@ -47,3 +47,40 @@ describe("service badge on the name column (GH #1606)", () => {
     expect(screen.queryByText("External DNS")).toBeNull();
   });
 });
+
+// GH #1625 (johnnyq): a domain with web aliases lists them under its name in
+// place of the document root, which stays in the line's tooltip.
+describe("aliases on the name column (GH #1625)", () => {
+  const nameCell = (record: Domain): ReactNode => {
+    const col = buildDomainDataColumns({ kind: "admin", ownerId: "u1" }, ctx).find((c) => c.key === "name");
+    const r = (col as { render: (v: unknown, rec: Domain, i: number) => ReactNode }).render;
+    return r("", record, 0);
+  };
+  const base = { name: "site.tld", doc_root: "/home/u/domains/site.tld/public_html", email_enabled: true } as Domain;
+
+  it("shows the document root when the domain has no aliases", () => {
+    render(<>{nameCell(base)}</>);
+    expect(screen.getByText("domains/site.tld/public_html")).toBeTruthy();
+  });
+
+  it("shows two aliases and a count instead of the document root, marking an unverified one", () => {
+    const { container } = render(
+      <>
+        {nameCell({
+          ...base,
+          aliases: [
+            { id: "a1", hostname: "site.net", ownership_status: "verified" },
+            { id: "a2", hostname: "shop.brandy.io", ownership_status: "pending" },
+            { id: "a3", hostname: "site.org", ownership_status: "verified" },
+          ],
+        })}
+      </>,
+    );
+    const line = container.querySelector("[title^='Aliases:']");
+    expect(line?.textContent).toBe("site.net, shop.brandy.io (unverified) +1 more");
+    expect(screen.queryByText("domains/site.tld/public_html")).toBeNull();
+    const title = line?.getAttribute("title") ?? "";
+    expect(title).toContain("site.org");
+    expect(title).toContain("Document root: domains/site.tld/public_html");
+  });
+});

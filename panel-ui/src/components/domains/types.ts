@@ -34,6 +34,14 @@ export type DomainApplicationSummary = {
   subdirectory: string;
 };
 
+// GH #1625: one web alias as the domains list carries it. The cert state and
+// the TXT record come from GET /domains/:id/aliases.
+export type DomainAliasSummary = {
+  id: string;
+  hostname: string;
+  ownership_status: string;
+};
+
 export type Domain = {
   id: string;
   user_id: string;
@@ -77,6 +85,9 @@ export type Domain = {
   // for the tenant Web Domains Application column. Absent (never null) when the
   // domain has none or the module is unwired; ordered docroot-first.
   applications?: DomainApplicationSummary[];
+  // GH #1625: the domain's web aliases, on list rows only. Absent (never null)
+  // when it has none.
+  aliases?: DomainAliasSummary[];
   // Shared across both audiences.
   bytes_30d?: number;
   temp_url_enabled?: boolean;

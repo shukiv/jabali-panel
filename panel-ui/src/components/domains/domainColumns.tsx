@@ -13,7 +13,7 @@ import { columnSearchProps } from "../columnSearch";
 import { humanBytes } from "../../utils/bytes";
 import { getSSLTag } from "../../utils/sslState";
 import { adminLinks } from "../admin/entityLinks";
-import { serviceBadge, type Domain, type DomainApplicationSummary } from "./types";
+import { serviceBadge, type Domain, type DomainAliasSummary, type DomainApplicationSummary } from "./types";
 import { DomainApplicationCell } from "./DomainApplicationCell";
 import { OwnershipTag } from "./DomainOwnershipPanel";
 
@@ -29,6 +29,41 @@ const stripHomePrefix = (path: string): string => {
     return match ? match[1] : path;
   }
   return path;
+};
+
+// GH #1625 (johnnyq): a domain with web aliases shows them under its name in
+// place of the document root, which moves into the line's tooltip. Two names,
+// then "+N more".
+const renderSecondaryLine = (record: Domain) => {
+  const docRoot = stripHomePrefix(record.doc_root);
+  const aliases = record.aliases ?? [];
+  if (aliases.length === 0) {
+    return (
+      <Typography.Text type="secondary" ellipsis title={docRoot} style={{ display: "block", maxWidth: 280 }}>
+        {docRoot}
+      </Typography.Text>
+    );
+  }
+  const unverified = (a: DomainAliasSummary) => a.ownership_status !== "verified";
+  const names = aliases.map((a) => (unverified(a) ? `${a.hostname} (unverified)` : a.hostname));
+  const shown = aliases.slice(0, 2);
+  return (
+    <Typography.Text
+      type="secondary"
+      ellipsis
+      title={`Aliases: ${names.join(", ")}${docRoot ? `\nDocument root: ${docRoot}` : ""}`}
+      style={{ display: "block", maxWidth: 280 }}
+    >
+      {shown.map((a, i) => (
+        <span key={a.id}>
+          {i > 0 ? ", " : ""}
+          {a.hostname}
+          {unverified(a) ? <Typography.Text type="warning"> (unverified)</Typography.Text> : null}
+        </span>
+      ))}
+      {aliases.length > shown.length ? ` +${aliases.length - shown.length} more` : null}
+    </Typography.Text>
+  );
 };
 
 // The name/docroot cell. The unified docroot line uses the admin list's
@@ -71,14 +106,7 @@ const renderDomainCell = (record: Domain, audience: DomainInventoryAudience) => 
       {/* GH #1816: an unverified domain is offline until its owner proves it. */}
       <OwnershipTag status={record.ownership_status} />
     </div>
-    <Typography.Text
-      type="secondary"
-      ellipsis
-      title={stripHomePrefix(record.doc_root)}
-      style={{ display: "block", maxWidth: 280 }}
-    >
-      {stripHomePrefix(record.doc_root)}
-    </Typography.Text>
+    {renderSecondaryLine(record)}
   </div>
 );
 

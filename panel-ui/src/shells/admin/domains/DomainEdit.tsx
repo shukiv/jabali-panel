@@ -25,6 +25,7 @@ import { DomainNginxSection } from "../../DomainSettingsButton";
 import { DomainSSLSection } from "./DomainSSLSection";
 import { PANEL_SSL_TAB } from "../../../components/ssl/panelCertStatus";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
+import { DomainAliasesPanel } from "../../../components/domains/DomainAliasesPanel";
 import { DomainSkipAutoSANToggle } from "./DomainSkipAutoSANToggle";
 import { DomainCacheSection } from "../../../components/DomainCacheSection";
 import { DomainMTASTSSection } from "./DomainMTASTSSection";
@@ -355,6 +356,10 @@ export const DomainEdit = () => {
         // Requests and bandwidth per day and visitors by country.
         { key: "statistics", label: "Statistics", children: <DomainStatsPanel domainId={domain.id} /> },
         sslTab,
+        // GH #1625: web aliases, with Approve / Revoke. None without web hosting.
+        ...(domain.web_disabled
+          ? []
+          : [{ key: "aliases", label: "Aliases", children: <DomainAliasesPanel domain={domain} admin /> }]),
         cacheTab,
         networkTab,
         nginxTab,

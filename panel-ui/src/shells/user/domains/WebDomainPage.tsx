@@ -5,7 +5,7 @@
 // the browser Back button walks the tabs.
 //
 // Tabs here: Overview (facts + the preview-URL / bot-challenge toggles), Logs,
-// Statistics, SSL, PHP Settings, Redirects, Index Files, Caching
+// Statistics, SSL, Aliases (GH #1625), PHP Settings, Redirects, Index Files, Caching
 // and Directory Privacy, plus three tabs gated on the same caps as the old row
 // menu — Domain options and Rewrite rules (tenant_domain_options_enabled) and
 // Document root (tenant_docroot_editable) — and Composer and Git when the
@@ -44,6 +44,7 @@ import { DomainPHPSettingsPanel } from "../../../components/domains/DomainPHPSet
 import { RenameDomainButton } from "../../../components/domains/RenameDomainButton";
 import { DomainEnvVarsCard } from "../php-settings/DomainEnvVarsCard";
 import { DomainOwnershipPanel } from "../../../components/domains/DomainOwnershipPanel";
+import { DomainAliasesPanel } from "../../../components/domains/DomainAliasesPanel";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 import { ComposerTab } from "./tabs/ComposerTab";
 import { GitTab } from "./tabs/GitTab";
@@ -155,6 +156,9 @@ export const WebDomainPage = () => {
     // renew or retry issuance (GH #1543, lxsdevcode). Certificate mode is shown
     // read-only; switching mode is an admin action.
     { key: "ssl", label: "SSL", node: <SSLTab domain={domain} /> },
+    // GH #1625: more names for this site. A domain without web hosting has no
+    // vhost to serve them, so it gets no tab.
+    ...(domain.web_disabled ? [] : [{ key: "aliases", label: "Aliases", node: <DomainAliasesPanel domain={domain} /> }]),
     // PHP Settings — this domain's PHP version + php.ini limit overrides and its
     // env vars. The account/pool-level PHP tabs (Performance, OPcache,
     // Extensions, Xdebug, CLI/Composer) are per-version-pool and stay on the
