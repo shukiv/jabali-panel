@@ -662,6 +662,16 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 			r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", listErr))
 			dbRows, dbUserRows = nil, nil
 		}
+		// The account's package limits on databases and database users hold
+		// here as in the panel; unreadable, nothing is added.
+		var limits restoreDBLimits
+		if len(dbRows) > 0 || len(dbUserRows) > 0 {
+			var limErr error
+			if limits, limErr = readRestoreDBLimits(ctx, d, m.User.ID); limErr != nil {
+				r.Errors = append(r.Errors, fmt.Sprintf("databases: not restored: %v", limErr))
+				dbRows, dbUserRows = nil, nil
+			}
+		}
 		dbNameToID := make(map[string]string, len(dbRows))
 		// ownByName is the account's own databases and database users by
 		// name, loaded on the first name conflict (GH #1993).
@@ -703,7 +713,22 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 				CreatedAt: now,
 				UpdatedAt: now,
 			}
-			if err := d.Databases.Create(ctx, row); err != nil {
+			err := limits.createDatabase(ctx, d.Databases, row)
+			var limitErr *restoreLimitError
+			if errors.As(err, &limitErr) {
+				// The limit is checked before the insert, so a database
+				// already here reads as over it: it is the conflict below.
+				if existing, ferr := d.Databases.FindByID(ctx, db.ID); ferr == nil && existing != nil {
+					err = repository.ErrConflict
+				} else if _, ok := lookupOwn().dbs[db.Name]; ok {
+					err = repository.ErrConflict
+				}
+			}
+			if err != nil {
+				if errors.As(err, &limitErr) {
+					r.Errors = append(r.Errors, fmt.Sprintf("database %s (%s): not restored: %v", db.ID, db.Name, limitErr))
+					continue
+				}
 				if errors.Is(err, repository.ErrConflict) {
 					if existing, ferr := d.Databases.FindByID(ctx, db.ID); ferr == nil && existing != nil && existing.UserID == m.User.ID {
 						ownDatabases[db.ID] = true
@@ -740,7 +765,20 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 					CreatedAt:    now,
 					UpdatedAt:    now,
 				}
-				if err := d.DatabaseUsers.Create(ctx, dbu); err != nil {
+				err := limits.createDatabaseUser(ctx, d.DatabaseUsers, dbu)
+				var limitErr *restoreLimitError
+				if errors.As(err, &limitErr) {
+					// As for databases: one already here is the conflict below.
+					if existing, ferr := d.DatabaseUsers.FindByID(ctx, du.ID); ferr == nil && existing != nil {
+						err = repository.ErrConflict
+					} else if _, ok := lookupOwn().users[du.Username]; ok {
+						err = repository.ErrConflict
+					} else {
+						r.Errors = append(r.Errors, fmt.Sprintf("db_user %s (%s): not restored: %v", du.ID, du.Username, limitErr))
+						continue
+					}
+				}
+				if err != nil {
 					if errors.Is(err, repository.ErrConflict) {
 						// Grants below attach to this user id: only to one
 						// that is this account's own.

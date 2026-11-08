@@ -73,7 +73,10 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		DNSZones:       repository.NewDNSZoneRepository(sharedDB),
 		DNSRecords:     repository.NewDNSRecordRepository(sharedDB),
 		KratosClient:   kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL),
-		Agent:          sharedAgent, // push restored forwarders to Stalwart (GH #1795)
+		// The account's package limits on databases and database users hold
+		// for what the restore adds.
+		Packages: repository.NewPackageRepository(sharedDB),
+		Agent:    sharedAgent, // push restored forwarders to Stalwart (GH #1795)
 		// GH #1898: a restored domain passes the create-time checks.
 		CheckDomain: api.RestoreDomainCheck(repository.NewDomainRepository(sharedDB),
 			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB),
