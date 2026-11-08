@@ -32,8 +32,11 @@ func readRestoreDBLimits(ctx context.Context, d Deps, userID string) (restoreDBL
 		// no row can be added for it: each references it (users.id).
 		return restoreDBLimits{}, nil
 	}
-	if err != nil || u == nil {
+	if err != nil {
 		return restoreDBLimits{}, fmt.Errorf("look up the account: %v", err)
+	}
+	if u == nil {
+		return restoreDBLimits{}, errors.New("look up the account: not found")
 	}
 	dbs, err := dbops.PackageLimit(ctx, d.Packages, u, dbops.MaxDatabases)
 	if err != nil {

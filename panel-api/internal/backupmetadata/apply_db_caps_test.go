@@ -93,12 +93,16 @@ func capMeta() *internalbackup.AccountMetadata {
 	}
 }
 
-func applyWithPackage(f *maFixture, pkgs capPackages, meta *internalbackup.AccountMetadata) ApplyResult {
+func capDeps(f *maFixture, pkgs capPackages) Deps {
 	pkgID := "pkg1"
-	return Apply(context.Background(), meta, Deps{
+	return Deps{
 		Users: capUsers{pkg: &pkgID}, Packages: pkgs,
 		Databases: capDBs{f.dbs}, DatabaseUsers: capDBUsers{f.users}, DatabaseGrants: f.grants, Agent: f.agent,
-	})
+	}
+}
+
+func applyWithPackage(f *maFixture, pkgs capPackages, meta *internalbackup.AccountMetadata) ApplyResult {
+	return Apply(context.Background(), meta, capDeps(f, pkgs))
 }
 
 func hasErrorWith(r ApplyResult, parts ...string) bool {
@@ -182,6 +186,61 @@ func TestApply_RestoreWithAnUnreadablePackageRestoresNoDatabases(t *testing.T) {
 	}
 	if len(f.agent.dbUserCalls()) != 0 {
 		t.Errorf("agent calls %v: want none", f.agent.dbUserCalls())
+	}
+}
+
+// The limits can't be read without the package repository either: a door
+// that leaves it out restores no database and no database user for an
+// account on a package rather than restore them without the limits.
+func TestApply_RestoreWithoutThePackageRepoRestoresNoDatabases(t *testing.T) {
+	f := newMAFixture()
+	d := capDeps(f, capPackages{pkg: &models.HostingPackage{MaxDatabases: 1, MaxDatabaseUsers: 1}})
+	d.Packages = nil
+	r := Apply(context.Background(), capMeta(), d)
+	if len(f.dbs.rows) != 0 || len(f.users.rows) != 0 || len(f.grants.rows) != 0 {
+		t.Fatalf("rows dbs=%v users=%v grants=%v: want none", f.dbs.rows, f.users.rows, f.grants.rows)
+	}
+	if !hasErrorWith(r, "databases", "not restored") {
+		t.Errorf("errors %v: want the databases refused", r.Errors)
+	}
+}
+
+// At its limit, a database the account already has under another id (made
+// before the restore) is matched by name: not reported over the limit, and
+// the backup's grant on it comes back on the account's own row.
+func TestApply_RestoreAtTheLimitMatchesTheAccountsDatabaseByName(t *testing.T) {
+	f := newMAFixture()
+	f.dbs.rows["dbX"] = &models.Database{ID: "dbX", UserID: "u1", Name: "alice_wp", Engine: "mariadb"}
+	r := applyWithPackage(f, capPackages{pkg: &models.HostingPackage{MaxDatabases: 1}}, capMeta())
+
+	if len(f.dbs.rows) != 1 || f.dbs.rows["dbX"] == nil {
+		t.Fatalf("database rows %v: want the account's dbX only", f.dbs.rows)
+	}
+	if hasErrorWith(r, "db1", "allows") {
+		t.Errorf("errors %v: alice_wp is the account's own, not over the limit", r.Errors)
+	}
+	if !hasErrorWith(r, "db2", "alice_shop", "allows 1 database") {
+		t.Errorf("errors %v: want db2 refused for the limit", r.Errors)
+	}
+	if g := f.grants.rows["g1"]; g == nil || g.DatabaseID != "dbX" {
+		t.Errorf("grant rows %v: want g1 on the account's dbX", f.grants.rows)
+	}
+}
+
+// Each limit holds on its own: a package that limits only database users
+// restores every database.
+func TestApply_RestoreKeepsToEachLimitOnItsOwn(t *testing.T) {
+	f := newMAFixture()
+	r := applyWithPackage(f, capPackages{pkg: &models.HostingPackage{MaxDatabaseUsers: 1}}, capMeta())
+
+	if len(f.dbs.rows) != 2 {
+		t.Fatalf("database rows %v (errors %v): no database limit, want both", f.dbs.rows, r.Errors)
+	}
+	if f.users.rows["du1"] == nil || f.users.rows["du2"] != nil {
+		t.Fatalf("database user rows %v: want du1 only", f.users.rows)
+	}
+	if hasErrorWith(r, "db1", "allows") || hasErrorWith(r, "db2", "allows") {
+		t.Errorf("errors %v: no database is over a limit", r.Errors)
 	}
 }
 
