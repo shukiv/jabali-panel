@@ -69,6 +69,9 @@ const (
 	tierKratos
 	tierScan
 	tierSSO
+	// tierKratosAccount keys the /.ory login and recovery POSTs on the
+	// account they name, with the Kratos tier's settings.
+	tierKratosAccount
 )
 
 type entry struct {
@@ -129,6 +132,14 @@ func (l *RateLimiter) perActor(t tier) gin.HandlerFunc {
 // (marker=kratos_flow_rate_limited) carrying the same clientIP() the audit log
 // + CrowdSec use, so a journalctl-sourced CrowdSec scenario can surface the
 // attack in Security → CrowdSec.
+//
+// Past the per-address check, a POST that names an account (the login
+// identifier, the recovery email) also spends that account's budget, with the
+// same settings: guessing one account from many addresses is held to what one
+// address may try, and one address never reaches it first. Its WARN line has
+// its own marker (kratos_account_rate_limited): the account's owner retrying
+// while someone else guesses must not have the owner's address banned. The
+// answer is the same 429 either way, whether the account exists or not.
 func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost {
@@ -153,6 +164,21 @@ func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 				log.Warn("kratos flow rate limited",
 					"marker", "kratos_flow_rate_limited",
 					"flow", flow, "client_ip", ip, "path", p)
+			}
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+			return
+		}
+		account, status, code := kratosAccountKey(c, flow)
+		if status != 0 {
+			c.AbortWithStatusJSON(status, gin.H{"error": code})
+			return
+		}
+		if account != "" && !l.limiterFor(account, tierKratosAccount).Allow() {
+			c.Header("Retry-After", "60")
+			if log != nil {
+				log.Warn("kratos account rate limited",
+					"marker", "kratos_account_rate_limited",
+					"flow", flow, "client_ip", ip, "account_hash", account[len(flow)+1:len(flow)+13])
 			}
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
 			return
@@ -217,6 +243,9 @@ func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
 			return l.cfg.SSORate, l.cfg.SSOBurst
 		}
 		t = tierStrict
+	}
+	if t == tierKratosAccount {
+		t = tierKratos
 	}
 	if t == tierScan {
 		if l.cfg.ScanBurst > 0 {

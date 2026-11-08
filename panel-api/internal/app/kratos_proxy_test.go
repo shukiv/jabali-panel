@@ -60,11 +60,13 @@ func TestRegisterKratosProxy_StripsPrefixAndForwards(t *testing.T) {
 		t.Errorf("expected csrf_token_abc cookie in response, got %+v", cookies)
 	}
 
-	// POST: flow submit path with body.
-	body := strings.NewReader(`identifier=a&password=b`)
+	// POST: flow submit path with body, JSON as the panel UI sends it (the
+	// limiter reads the account from it and refuses other body types).
+	const submitted = `{"method":"password","identifier":"a","password":"b"}`
+	body := strings.NewReader(submitted)
 	resp2, err := http.Post(
 		srv.URL+"/.ory/self-service/login?flow=abc",
-		"application/x-www-form-urlencoded",
+		"application/json",
 		body,
 	)
 	if err != nil {
@@ -77,8 +79,8 @@ func TestRegisterKratosProxy_StripsPrefixAndForwards(t *testing.T) {
 	if gotPath != "/self-service/login" {
 		t.Errorf("path=%q, want /self-service/login (query preserved separately)", gotPath)
 	}
-	if string(gotBody) != "identifier=a&password=b" {
-		t.Errorf("body=%q, want identifier=a&password=b", gotBody)
+	if string(gotBody) != submitted {
+		t.Errorf("body=%q, want %s", gotBody, submitted)
 	}
 }
 
