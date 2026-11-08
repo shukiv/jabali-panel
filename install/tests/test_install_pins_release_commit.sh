@@ -45,8 +45,15 @@ _ok()   { echo "ok: $*" >&2; }
 _die()  { echo "die: $*" >&2; exit 1; }
 root_repo_layout() { :; }
 getent() { return 0; }
-# The test runs unprivileged: report the checkout as root-owned.
-stat() { if [[ "$1" == "-c" && "$2" == "%u" ]]; then echo 0; else command stat "$@"; fi; }
+# The test runs unprivileged: report an existing checkout as root-owned.
+stat() {
+  if [[ "$1" == "-c" && "$2" == "%u" ]]; then
+    [[ -e "$3" ]] || return 1
+    echo 0
+  else
+    command stat "$@"
+  fi
+}
 mkdir -p "$tmp/bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/sudo"
 # The panel database's schema version comes from $FAKE_SCHEMA_FILE: empty is
@@ -125,6 +132,17 @@ prebuilt=1
 manifest "$c2"
 expect "fresh install of a release older than main gets the release's commit" \
   "$(run_install "$tmp/fresh-older")" "$c2"
+
+# ensure_user_and_dirs creates the checkout's directory, empty, before this.
+mkdir "$tmp/fresh-empty-dir"
+expect "fresh install into the empty directory made earlier" \
+  "$(run_install "$tmp/fresh-empty-dir")" "$c2"
+if compgen -G "$tmp/fresh-empty-dir.quarantine-*" >/dev/null; then
+  echo "FAIL   ... the empty directory was moved aside as a checkout"
+  fail=1
+else
+  echo "ok     ... and nothing was moved aside"
+fi
 
 prebuilt=0
 expect "fresh source install (no prebuilt release) still gets the newest main" \

@@ -6306,6 +6306,13 @@ clone_or_update_repo() {
     )
   fi
 
+  # On a fresh install ensure_user_and_dirs has created $REPO_DIR empty; that
+  # is no checkout to keep, and the clone goes into its place. rmdir removes
+  # only an empty directory.
+  if [[ -d "$REPO_DIR" && ! -e "$REPO_DIR/.git" ]]; then
+    rmdir "$REPO_DIR" 2>/dev/null || true
+  fi
+
   # A checkout whose .git is not root-owned is moved aside (kept) and cloned
   # fresh below, so root's git only ever reads a root-owned .git.
   if [[ -e "$REPO_DIR" && "$(stat -c %u "$REPO_DIR/.git" 2>/dev/null || echo none)" != "0" ]]; then
