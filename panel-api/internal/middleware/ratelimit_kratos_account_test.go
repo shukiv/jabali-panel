@@ -402,7 +402,7 @@ func TestKratosFlows_PassesAChunkedBodyOn(t *testing.T) {
 // session may be that session's account; and two methods in one body are
 // two answers. None of them counts as signing in to the named account.
 func TestKratosFlows_OnlyAPasswordLoginSignsInTheNamedAccount(t *testing.T) {
-	mw := kratosLimiter(2).KratosFlows(nil)
+	mw := kratosLimiter(3).KratosFlows(nil)
 	// Kratos stand-in that signs someone in for anything but a wrong password.
 	signsIn := func(c *gin.Context) {
 		var b struct {
@@ -416,28 +416,31 @@ func TestKratosFlows_OnlyAPasswordLoginSignsInTheNamedAccount(t *testing.T) {
 		http.SetCookie(c.Writer, &http.Cookie{Name: "ory_kratos_session", Value: "s", Path: "/"})
 		c.Status(http.StatusOK)
 	}
-	post := func(n int, body, cookie string) int {
+	post := func(n int, body, header string) int {
 		gin.SetMode(gin.TestMode)
 		r := gin.New()
 		r.Any("/*any", mw, signsIn)
 		req := httptest.NewRequest(http.MethodPost, kratosLogin, strings.NewReader(body))
 		req.Header.Set("Content-Type", jsonType)
-		if cookie != "" {
-			req.Header.Set("Cookie", cookie)
+		if name, value, ok := strings.Cut(header, ": "); ok {
+			req.Header.Set(name, value)
 		}
 		req.RemoteAddr = addr("10.0.18", n) + ":54321"
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 		return w.Code
 	}
-	tries := []struct{ body, cookie string }{
+	const password = `{"method":"password","identifier":"alice","password":"x"}`
+	tries := []struct{ body, header string }{
 		{`{"method":"passkey","identifier":"alice","passkey_login":"{}"}`, ""},
 		{`{"method":"totp","identifier":"alice","totp_code":"123456"}`, ""},
-		{`{"method":"password","identifier":"alice","password":"x"}`, "ory_kratos_session=mallory"},
+		{password, "Cookie: ory_kratos_session=mallory"},
+		{password, "X-Session-Token: mallory"},
+		{password, "Authorization: Bearer mallory"},
 		{`{"method":"passkey","Method":"password","identifier":"alice","password":"x"}`, ""},
 	}
 	for i, tr := range tries {
-		if code := post(i+1, tr.body, tr.cookie); code != http.StatusOK {
+		if code := post(i+1, tr.body, tr.header); code != http.StatusOK {
 			t.Fatalf("%s = %d, want 200", tr.body, code)
 		}
 	}

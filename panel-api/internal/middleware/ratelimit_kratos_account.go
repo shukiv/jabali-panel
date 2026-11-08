@@ -191,6 +191,15 @@ func setsKratosSession(h http.Header) bool {
 	return false
 }
 
+// bringsKratosSession reports whether a request carries a session in any way
+// Kratos takes one: its cookie, or a session token header.
+func bringsKratosSession(r *http.Request) bool {
+	if _, err := r.Cookie("ory_kratos_session"); err == nil {
+		return true
+	}
+	return r.Header.Get("X-Session-Token") != "" || r.Header.Get("Authorization") != ""
+}
+
 type signInKey struct {
 	account, ip string
 }

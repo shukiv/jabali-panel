@@ -193,9 +193,9 @@ func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 		}
 		// Only a password login that brought no session signs in the
 		// account the body names; noted once Kratos has set its session.
-		_, noSession := c.Request.Cookie("ory_kratos_session")
+		broughtSession := bringsKratosSession(c.Request)
 		c.Next()
-		if flow == "login" && acct.byPassword && noSession != nil && setsKratosSession(c.Writer.Header()) {
+		if flow == "login" && acct.byPassword && !broughtSession && setsKratosSession(c.Writer.Header()) {
 			l.noteSignIn(acct.key, ip)
 		}
 	}
