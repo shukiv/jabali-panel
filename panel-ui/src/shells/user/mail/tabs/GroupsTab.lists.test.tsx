@@ -138,6 +138,16 @@ describe("MembersModal outside addresses (GH #1833)", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalled());
   });
 
+  it("Enter adds the typed address", async () => {
+    serve();
+    render(<MembersModal group={LIST} onClose={() => {}} />, { wrapper });
+    await screen.findByLabelText("Outside addresses");
+
+    typeOutside("typed@gmail.com");
+    fireEvent.keyDown(outsideInput(), { key: "Enter", code: "Enter", keyCode: 13, which: 13 });
+    expect(await screen.findByText("1 of 25 outside addresses")).toBeTruthy();
+  });
+
   it("does not save a typo", async () => {
     serve();
     render(<MembersModal group={LIST} onClose={() => {}} />, { wrapper });
