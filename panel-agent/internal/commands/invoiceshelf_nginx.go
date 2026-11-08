@@ -83,7 +83,12 @@ func invoiceShelfNginxConf(osUser, subdir, installPath string) string {
 	return b.String()
 }
 
-func writeInvoiceShelfNginx(ctx context.Context, domain, osUser, subdir, installPath string) error {
+// checkInvoiceShelfSnippetParams refuses the values the snippet cannot carry.
+// installPath lands verbatim in an alias directive, so it must be an absolute
+// clean path with none of the characters nginx reads as syntax. The install
+// runs this before any step, so a value refused here never leaves a half-done
+// install behind; the writer runs it again because it is reachable on its own.
+func checkInvoiceShelfSnippetParams(domain, osUser, subdir, installPath string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
@@ -93,14 +98,24 @@ func writeInvoiceShelfNginx(ctx context.Context, domain, osUser, subdir, install
 	if !osUserSafeRE.MatchString(osUser) {
 		return fmt.Errorf("invalid os_user %q", osUser)
 	}
-	// installPath lands verbatim in an nginx alias directive; it was
-	// validated upstream (validateDocrootPath + appInstallPath), but this
-	// writer is also reachable on its own, so re-assert the shape: an
-	// absolute clean path with no nginx-meaningful characters.
-	if installPath == "" || !filepath.IsAbs(installPath) || installPath != filepath.Clean(installPath) ||
-		strings.ContainsAny(installPath, " \t\r\n\"';{}") {
+	if installPath == "" || !filepath.IsAbs(installPath) || installPath != filepath.Clean(installPath) {
 		return fmt.Errorf("invalid install path %q", installPath)
 	}
+	if err := validateDocRootForNginx(installPath); err != nil {
+		return fmt.Errorf("invalid install path %q: %w", installPath, err)
+	}
+	return nil
+}
+
+func writeInvoiceShelfNginx(ctx context.Context, domain, osUser, subdir, installPath string) error {
+	if err := checkInvoiceShelfSnippetParams(domain, osUser, subdir, installPath); err != nil {
+		return err
+	}
+
+	// JAB-71: serialize write→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	domainDir := filepath.Join(nginxJabaliDir, domain)
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
@@ -124,6 +139,11 @@ func removeInvoiceShelfNginx(ctx context.Context, domain, subdir string) error {
 	if subdir != "" && !subdirSlugRE.MatchString(subdir) {
 		return fmt.Errorf("invalid subdir slug %q", subdir)
 	}
+
+	// JAB-71: serialize remove→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	dest := invoiceShelfSnippetPath(domain, subdir)
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)

@@ -34,7 +34,8 @@ func DomainFromSiteURL(siteURL string) (string, error) {
 	return strings.TrimPrefix(host, "www."), nil
 }
 
-const nginxJabaliDir = "/etc/nginx/jabali"
+// nginxJabaliDir is a var so tests can point the per-domain snippets at a temp dir.
+var nginxJabaliDir = "/etc/nginx/jabali"
 
 // subdirSlugRE matches a Drupal/Joomla-friendly subdir slug (the portion
 // between leading/trailing slashes). Keep in sync with what the panel's
@@ -196,6 +197,11 @@ func writeWordPressXmlrpcBlock(ctx context.Context, domain string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
+
+	// JAB-71: serialize write→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	domainDir := filepath.Join(nginxJabaliDir, domain)
 	if err := os.MkdirAll(domainDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", domainDir, err)
@@ -216,6 +222,11 @@ func removeWordPressXmlrpcBlock(ctx context.Context, domain string) error {
 	if !domainRegex.MatchString(domain) {
 		return fmt.Errorf("invalid domain %q", domain)
 	}
+
+	// JAB-71: serialize remove→test→reload against every other nginx op.
+	nginxOpMu.Lock()
+	defer nginxOpMu.Unlock()
+
 	dest := filepath.Join(nginxJabaliDir, domain, "wordpress-xmlrpc.conf")
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove %s: %w", dest, err)
