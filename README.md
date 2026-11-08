@@ -90,9 +90,11 @@ curl -fsSL https://get.jabali-panel.com | sudo bash
 ```
 
 `get.jabali-panel.com` serves [`bootstrap.sh`](bootstrap.sh): it downloads the
-latest sha256-verified release tarball, extracts the prebuilt `jabali-installer`
-binary + `install.sh`, and runs the installer against the real terminal (works
-even piped through `curl | bash`). Add args after `-s --`, e.g. `--dry-run`.
+current stable release's sha256-verified tarball, extracts the prebuilt
+`jabali-installer` binary + `install.sh`, and runs the installer against the
+real terminal (works even piped through `curl | bash`). Add args after `-s --`,
+e.g. `--dry-run`. `JABALI_RELEASE_CHANNEL=development` installs the newest main
+build instead and sets the server to the development channel.
 
 Classic / scripted install (no TUI — the proven bash installer directly):
 
