@@ -203,6 +203,9 @@ func (h *applicationsHandler) create(c *gin.Context) {
 		if cerr.Detail != "" {
 			body["detail"] = cerr.Detail
 		}
+		for k, v := range cerr.Extra {
+			body[k] = v
+		}
 		c.JSON(cerr.HTTPStatus, body)
 		return
 	}
@@ -353,11 +356,12 @@ type provisionedDB struct {
 	DBPassword string
 }
 
-// provisionDBChain mirrors the inline DB-create chain in
-// wordPressHandler.create: panel rows + MariaDB CREATE DATABASE/USER/
-// GRANT via the agent. Each step rolls back the prior ones on failure
-// before returning the error.
-func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID, osUser, appType, dbPassword string) (provisionedDB, error) {
+// provisionDBChain creates an install's database: panel rows + MariaDB
+// CREATE DATABASE/USER/GRANT via the agent. Each step rolls back the prior
+// ones on failure before returning the error. The two rows are held to the
+// owner's package limits (an *appDBQuotaError when one is reached), before
+// the agent makes anything.
+func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, limits appDBLimits, userID, osUser, appType, dbPassword string) (provisionedDB, error) {
 	now := time.Now().UTC()
 	dbName, dbUsername, nameErr := allocateAppDBNames(ctx, cfg.Databases, cfg.DatabaseUsers, userID, osUser, appType)
 	if nameErr != nil {
@@ -374,7 +378,7 @@ func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := cfg.Databases.Create(ctx, database); err != nil {
+	if err := limits.createDatabase(ctx, cfg.Databases, database); err != nil {
 		return provisionedDB{}, fmt.Errorf("database row: %w", err)
 	}
 
@@ -392,7 +396,7 @@ func provisionDBChain(ctx context.Context, cfg ApplicationHandlerConfig, userID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := cfg.DatabaseUsers.Create(ctx, databaseUser); err != nil {
+	if err := limits.createDatabaseUser(ctx, cfg.DatabaseUsers, databaseUser); err != nil {
 		cfg.Databases.Delete(ctx, dbID)
 		return provisionedDB{}, fmt.Errorf("database user row: %w", err)
 	}

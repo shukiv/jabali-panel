@@ -752,6 +752,7 @@ func (h *wordPressHandler) clone(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "install_exists"})
 	case errors.Is(err, errCloneUserNotProvisioned):
 		c.JSON(http.StatusConflict, gin.H{"error": "user_not_provisioned"})
+	case respondAppDBLimitErr(c, err):
 	case errors.As(err, &agentErr):
 		respondAgentErr(c, "agent_failed", agentErr)
 	default:
@@ -821,12 +822,19 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 	// as the install path uses. Required for DB naming and future systemd-run
 	// targeting.
 	var osUser string
+	var owner *models.User
 	if u, uErr := h.cfg.Users.FindByID(ctx, targetUserID); uErr == nil && u != nil && u.Username != nil {
 		osUser = *u.Username
+		owner = u
 	}
 	if osUser == "" {
 		slog.ErrorContext(ctx, "wordpress clone: user has no linux username", "user_id", targetUserID)
 		return nil, errCloneUserNotProvisioned
+	}
+	limits, err := loadAppDBLimits(ctx, h.cfg.Packages, owner)
+	if err != nil {
+		slog.ErrorContext(ctx, "wordpress clone: load package limits", "err", err, "user_id", targetUserID)
+		return nil, err
 	}
 
 	// Provision destination database
@@ -843,7 +851,7 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := h.cfg.Databases.Create(ctx, destDatabase); err != nil {
+	if err := limits.createDatabase(ctx, h.cfg.Databases, destDatabase); err != nil {
 		return nil, fmt.Errorf("create dest database: %w", err)
 	}
 
@@ -865,7 +873,7 @@ func (h *wordPressHandler) cloneCore(ctx context.Context, sourceInstallID, destD
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := h.cfg.DatabaseUsers.Create(ctx, destDatabaseUser); err != nil {
+	if err := limits.createDatabaseUser(ctx, h.cfg.DatabaseUsers, destDatabaseUser); err != nil {
 		h.cfg.Databases.Delete(ctx, destDBID)
 		return nil, fmt.Errorf("create dest db user: %w", err)
 	}
