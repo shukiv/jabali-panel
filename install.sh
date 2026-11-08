@@ -6306,6 +6306,13 @@ clone_or_update_repo() {
     )
   fi
 
+  # On a fresh install ensure_user_and_dirs has created $REPO_DIR empty; that
+  # is no checkout to keep, and the clone goes into its place. rmdir removes
+  # only an empty directory.
+  if [[ -d "$REPO_DIR" && ! -e "$REPO_DIR/.git" ]]; then
+    rmdir "$REPO_DIR" 2>/dev/null || true
+  fi
+
   # A checkout whose .git is not root-owned is moved aside (kept) and cloned
   # fresh below, so root's git only ever reads a root-owned .git.
   if [[ -e "$REPO_DIR" && "$(stat -c %u "$REPO_DIR/.git" 2>/dev/null || echo none)" != "0" ]]; then
@@ -6313,6 +6320,12 @@ clone_or_update_repo() {
     _warn "checkout $REPO_DIR is not root-owned — kept at $old_repo, re-cloning"
     mv "$REPO_DIR" "$old_repo" || _die "could not move $REPO_DIR aside"
   fi
+
+  # Installing a prebuilt release: the checkout goes to the commit the release
+  # was built from, not to the newest $REPO_BRANCH, so the install/ payloads,
+  # units and templates installed from it match the binaries.
+  local release_commit
+  release_commit="$(_prebuilt_commit)"
 
   if [[ -d "$REPO_DIR/.git" ]]; then
     _log "pulling latest $REPO_BRANCH into $REPO_DIR"
@@ -6323,8 +6336,15 @@ clone_or_update_repo() {
     # No --quiet: under `set -e` a failed fetch/clone aborts install.sh silently.
     root_git "${git_args[@]}" fetch origin "$REPO_BRANCH" \
       || _die "git fetch origin $REPO_BRANCH failed (see the git error above)"
-    root_git reset --hard "origin/$REPO_BRANCH" \
-      || _die "git reset --hard origin/$REPO_BRANCH failed"
+    if [[ -n "$release_commit" ]]; then
+      _fetch_release_commit "$release_commit" "${git_args[@]}"
+      _refuse_older_release "$release_commit" "$(root_git rev-parse --verify --quiet 'HEAD^{commit}' || true)"
+      root_git reset --hard "$release_commit" \
+        || _die "git reset --hard $release_commit failed"
+    else
+      root_git reset --hard "origin/$REPO_BRANCH" \
+        || _die "git reset --hard origin/$REPO_BRANCH failed"
+    fi
   else
     _log "cloning $REPO_URL into $REPO_DIR"
     # umask 022 so the tree is readable by $SERVICE_USER (panel-ui, assets).
@@ -6334,6 +6354,14 @@ clone_or_update_repo() {
         git -c core.hooksPath=/dev/null "${git_args[@]}" clone --branch "$REPO_BRANCH" \
         "$REPO_URL" "$REPO_DIR"
     ) || _die "git clone $REPO_URL failed (check connectivity, cert trust, and that $REPO_DIR can be created)"
+    if [[ -n "$release_commit" ]]; then
+      _fetch_release_commit "$release_commit" "${git_args[@]}"
+      # A fresh clone says nothing about what this server runs; the
+      # database does (a checkout moved aside above, or one deleted).
+      _refuse_older_release "$release_commit" ""
+      root_git reset --hard "$release_commit" \
+        || _die "git reset --hard $release_commit failed"
+    fi
   fi
   root_repo_layout
   _ok "repo at $(root_git rev-parse --short HEAD)"
@@ -6805,9 +6833,96 @@ _prebuilt_ready() {
   return 0
 }
 
+# _prebuilt_commit prints the commit the prebuilt release was built from
+# (MANIFEST full_sha), or nothing when there is no prebuilt release or its
+# MANIFEST has no full_sha. clone_or_update_repo checks that commit out.
+_prebuilt_commit() {
+  _prebuilt_ready || return 0
+  local mf="${JABALI_RELEASE_MANIFEST:-}" v
+  [[ -n "$mf" && -r "$mf" ]] || return 0
+  v="$(awk -F= '/^full_sha=/{print $2; exit}' "$mf" 2>/dev/null)"
+  if [[ "$v" =~ ^[0-9a-f]{40}$ ]]; then
+    printf '%s' "$v"
+  fi
+  return 0
+}
+
+# _fetch_release_commit makes sure the release commit is in the checkout. A
+# stable hotfix commit is not on main, so fetching main doesn't bring it; it
+# is fetched by itself, or with the tags that point at it. The remaining
+# arguments are the git options for the fetch (credentials).
+_fetch_release_commit() {
+  local commit="$1"
+  shift
+  root_git cat-file -e "${commit}^{commit}" 2>/dev/null && return 0
+  # The tag fetch can exit non-zero over a local tag that moved on origin
+  # (stable); the objects still arrive, and cat-file below is the check.
+  root_git "$@" fetch origin "$commit" >/dev/null 2>&1 \
+    || root_git "$@" fetch --tags origin >/dev/null 2>&1 \
+    || true
+  root_git cat-file -e "${commit}^{commit}" 2>/dev/null \
+    || _die "the release's commit ${commit:0:9} is not in $REPO_URL (fetching it failed)"
+}
+
+# _max_migration_at prints the newest migration version in a commit's tree,
+# or 0 when it has none.
+_max_migration_at() {
+  local names n max=0
+  names="$(root_git ls-tree --name-only "$1" panel-api/internal/db/migrations/ 2>/dev/null)" || names=""
+  while IFS= read -r n; do
+    n="${n##*/}"
+    [[ "$n" =~ ^([0-9]+)_.*\.up\.sql$ ]] || continue
+    if (( 10#${BASH_REMATCH[1]} > max )); then
+      max=$((10#${BASH_REMATCH[1]}))
+    fi
+  done <<<"$names"
+  printf '%s' "$max"
+}
+
+# _live_schema_version prints the panel database's schema version, or 0 when
+# the server has no panel database yet. A database it can't read returns 1:
+# that is an error, not a fresh server.
+_live_schema_version() {
+  local exists v
+  exists="$(mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='jabali_panel' AND table_name='schema_migrations'" 2>/dev/null)" || exists=""
+  if [[ "$exists" != "1" ]]; then
+    printf 0
+    return 0
+  fi
+  v="$(mariadb jabali_panel -N -B -e 'SELECT version FROM schema_migrations LIMIT 1' 2>/dev/null)" || v=""
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$((10#$v))"
+}
+
+# _refuse_older_release stops the install when the release would move this
+# server backwards: when the panel database is at a newer migration than the
+# release knows, or, given the checkout's previous HEAD, when that checkout
+# already contains the release or has newer migrations. A newer build than the
+# release is updated with `jabali update`, which never moves a server
+# backwards either. Runs before the checkout moves and before any binary is
+# installed.
+_refuse_older_release() {
+  local release="$1" head="$2" live want have
+  want="$(_max_migration_at "$release")"
+  live="$(_live_schema_version)" \
+    || _die "could not read the panel database's schema version, so the install can't tell whether the release is older than this server. Its code and binaries were not changed."
+  if (( want < live )); then
+    _die "this server's database is at schema version ${live}, but the release this installer carries (${release:0:9}) only knows migrations up to ${want}. Its code and binaries were not changed; update it with 'jabali update'."
+  fi
+  [[ -n "$head" && "$head" != "$release" ]] || return 0
+  if root_git merge-base --is-ancestor "$release" "$head" 2>/dev/null; then
+    _die "this server already runs ${head:0:9}, a newer build than the release this installer carries (${release:0:9}). Its code and binaries were not changed; update it with 'jabali update'."
+  fi
+  have="$(_max_migration_at "$head")"
+  if (( want < have )); then
+    _die "this server's build ${head:0:9} has migrations up to ${have}, but the release this installer carries (${release:0:9}) only knows migrations up to ${want}. Its code and binaries were not changed; update it with 'jabali update'."
+  fi
+}
+
 # _prebuilt_version reads the release short SHA from the tarball MANIFEST, so the
-# installed binary reports the commit it was actually built from. The git clone
-# can sit on a newer commit than the release, so rev-parse would lie here.
+# installed binary reports the commit it was actually built from. A MANIFEST
+# without full_sha leaves the checkout on the newest $REPO_BRANCH, which can be
+# newer than the release, so rev-parse would lie there.
 _prebuilt_version() {
   local mf="${JABALI_RELEASE_MANIFEST:-}"
   if [[ -n "$mf" && -r "$mf" ]]; then
