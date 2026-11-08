@@ -24,12 +24,17 @@ type fakePackages struct {
 	rows  map[string]*models.HostingPackage
 	err   error
 	calls int
+	// failFrom, when set, fails this call and every later one.
+	failFrom int
 }
 
 func (f *fakePackages) FindByID(_ context.Context, id string) (*models.HostingPackage, error) {
 	f.calls++
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.failFrom != 0 && f.calls >= f.failFrom {
+		return nil, errors.New("hosting_packages: connection refused")
 	}
 	if p, ok := f.rows[id]; ok {
 		return p, nil
@@ -43,6 +48,7 @@ func TestCheckDomainQuota(t *testing.T) {
 	rows := map[string]*models.HostingPackage{
 		"two":   {ID: "two", MaxDomains: 2},
 		"unlim": {ID: "unlim", MaxDomains: 0},
+		"nil":   nil,
 	}
 
 	cases := []struct {
@@ -60,7 +66,8 @@ func TestCheckDomainQuota(t *testing.T) {
 		{name: "at the limit", owner: owner(strp("two")), count: 2, want: ErrDomainQuotaExceeded, wantCounted: true},
 		{name: "over the limit", owner: owner(strp("two")), count: 5, want: ErrDomainQuotaExceeded, wantCounted: true},
 		{name: "no domain limit", owner: owner(strp("unlim")), count: 500, wantCounted: true},
-		{name: "unreadable package does not block", owner: owner(strp("two")), count: 5, pkgErr: errors.New("db down"), wantCounted: true},
+		{name: "unreadable package blocks", owner: owner(strp("two")), count: 1, pkgErr: errors.New("db down"), want: ErrQuotaUnavailable, wantCounted: true},
+		{name: "package loaded as nil blocks", owner: owner(strp("nil")), count: 1, want: ErrQuotaUnavailable, wantCounted: true},
 		{name: "dangling package does not block", owner: owner(strp("gone")), count: 5, wantCounted: true},
 		{name: "count failure blocks", owner: owner(strp("two")), countErr: errors.New("db down"), want: ErrDomainCount, wantCounted: true},
 		{name: "nil owner", owner: nil, want: ErrOwnerNil},
@@ -124,4 +131,39 @@ func TestCheckDomainQuota(t *testing.T) {
 			t.Fatalf("an owner with no package needs no dependencies, got %v", err)
 		}
 	})
+}
+
+func TestDomainQuotaLimit(t *testing.T) {
+	strp := func(s string) *string { return &s }
+	owner := func(pkg *string) *models.User { return &models.User{ID: "u1", PackageID: pkg} }
+	pkgs := func() *fakePackages {
+		return &fakePackages{rows: map[string]*models.HostingPackage{"two": {ID: "two", MaxDomains: 2}, "nil": nil}}
+	}
+	cases := []struct {
+		name     string
+		owner    *models.User
+		packages PackageFinder
+		want     uint32
+		wantErr  error
+	}{
+		{name: "nil owner", owner: nil, packages: pkgs()},
+		{name: "no package", owner: owner(nil), packages: pkgs()},
+		{name: "no package needs no repository", owner: owner(nil)},
+		{name: "the package's limit", owner: owner(strp("two")), packages: pkgs(), want: 2},
+		{name: "dangling package id", owner: owner(strp("gone")), packages: pkgs()},
+		{name: "unreadable package", owner: owner(strp("two")), packages: &fakePackages{err: errors.New("db down")}, wantErr: ErrQuotaUnavailable},
+		{name: "package loaded as nil", owner: owner(strp("nil")), packages: pkgs(), wantErr: ErrQuotaUnavailable},
+		{name: "no repository", owner: owner(strp("two")), wantErr: ErrQuotaDeps},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := DomainQuotaLimit(context.Background(), tc.packages, tc.owner)
+			if !errors.Is(err, tc.wantErr) || (tc.wantErr == nil && err != nil) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+			if got != tc.want {
+				t.Fatalf("limit = %d, want %d", got, tc.want)
+			}
+		})
+	}
 }

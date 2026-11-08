@@ -371,6 +371,12 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 	if err := CheckDomainQuota(ctx, QuotaDeps{Domains: d.Domains, Packages: d.Packages}, owner); err != nil {
 		return nil, err
 	}
+	// The limit PersistDomain holds the insert to, read before a reverse-proxy
+	// port is reserved so a failed read has nothing to release.
+	domainLimit, err := DomainQuotaLimit(ctx, d.Packages, owner)
+	if err != nil {
+		return nil, err
+	}
 
 	// CheckOwnerEligible rejected a nil or empty username above.
 	docRoot, err := resolveDocRoot(in, *owner.Username, webEnabled)
@@ -481,7 +487,7 @@ func Create(ctx context.Context, d CreateDeps, hooks CreateHooks, in CreateInput
 	// PersistDomain releases the reverse-proxy port on any insert failure, and
 	// re-checks the domain cap under a lock on the owner (the check above can
 	// race another create for the last slot).
-	if err := PersistDomain(ctx, d.Domains, d.Ports, dom, DomainQuotaLimit(ctx, d.Packages, owner)); err != nil {
+	if err := PersistDomain(ctx, d.Domains, d.Ports, dom, domainLimit); err != nil {
 		return nil, err
 	}
 

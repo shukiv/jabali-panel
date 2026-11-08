@@ -53,6 +53,19 @@ func TestCreate_DomainCapHeldAtTheInsert(t *testing.T) {
 		}
 	})
 
+	t.Run("a package that cannot be read for the insert's limit refuses the create", func(t *testing.T) {
+		s := newCreateStore(existing)
+		p := packages(2)
+		p.failFrom = 2 // the early check reads it, the insert's limit cannot
+		_, err := Create(ctx, deps(s, withPkg, p), CreateHooks{}, in)
+		if !errors.Is(err, ErrQuotaUnavailable) {
+			t.Fatalf("want ErrQuotaUnavailable, got %v", err)
+		}
+		if len(s.created) != 0 || len(s.caps) != 0 {
+			t.Fatalf("nothing may be inserted: created=%d caps=%v", len(s.created), s.caps)
+		}
+	})
+
 	t.Run("no package, or a package without a domain limit: plain insert", func(t *testing.T) {
 		noPkg := &models.User{ID: "u1", Username: &uname}
 		for name, d := range map[string]CreateDeps{
