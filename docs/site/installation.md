@@ -28,6 +28,8 @@ curl -fsSL https://get.jabali-panel.com | bash
 
 The installer is idempotent — safe to re-run. It writes drop-ins, never overwrites manual edits to host configs outside of the files it owns.
 
+It installs the release's code at the commit the release was built from. On a server that already runs a newer build, a re-run stops before changing anything; update an installed server with `jabali update`.
+
 ### Environment variables
 
 | Variable | Effect |
