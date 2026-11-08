@@ -8,10 +8,11 @@
 # install/ payloads, units and templates, and `jabali update` then compared the
 # stable tag with main's HEAD. It now checks out MANIFEST full_sha, fetching it
 # when it is not on main (a stable hotfix), and refuses a release older than the
-# checkout already there, before anything moves.
+# server, before the checkout moves: older than the panel database's schema, or
+# than the checkout already there.
 #
 # Behavioural: runs the real clone_or_update_repo against a local git remote.
-# Only sudo, DNS, the root-ownership check and the chown are stubbed.
+# Only sudo, DNS, MariaDB, the root-ownership check and the chown are stubbed.
 #
 # Run from repo root:
 #     bash install/tests/test_install_pins_release_commit.sh
@@ -27,7 +28,7 @@ trap 'rm -rf "$tmp"' EXIT
 fn() { awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{$" {p=1} p {print} p && /^\}$/ {exit}' install.sh; }
 
 for f in root_git clone_or_update_repo _prebuilt_commit _fetch_release_commit \
-         _max_migration_at _refuse_older_release; do
+         _max_migration_at _live_schema_version _refuse_older_release; do
   src=$(fn "$f")
   if [[ -z "$src" ]]; then
     echo "FAIL: $f() not found in install.sh"
@@ -48,8 +49,21 @@ getent() { return 0; }
 stat() { if [[ "$1" == "-c" && "$2" == "%u" ]]; then echo 0; else command stat "$@"; fi; }
 mkdir -p "$tmp/bin"
 printf '#!/bin/sh\nexit 0\n' >"$tmp/bin/sudo"
-chmod +x "$tmp/bin/sudo"
+# The panel database's schema version comes from $FAKE_SCHEMA_FILE: empty is
+# a server with no panel database yet.
+cat >"$tmp/bin/mariadb" <<'EOF'
+#!/bin/sh
+s=$(cat "$FAKE_SCHEMA_FILE" 2>/dev/null)
+case "$*" in
+  *information_schema*) if [ -n "$s" ]; then echo 1; else echo 0; fi ;;
+  *schema_migrations*) echo "$s" ;;
+esac
+EOF
+chmod +x "$tmp/bin/sudo" "$tmp/bin/mariadb"
 PATH="$tmp/bin:$PATH"
+export FAKE_SCHEMA_FILE="$tmp/schema"
+schema() { printf '%s' "$1" >"$FAKE_SCHEMA_FILE"; }
+schema ""
 
 prebuilt=0
 _prebuilt_ready() { [[ $prebuilt -eq 1 ]]; }
@@ -125,11 +139,33 @@ printf 'full_sha=%s;x\n' "$c2" >"$JABALI_RELEASE_MANIFEST"
 expect "a malformed full_sha is not used" \
   "$(run_install "$tmp/fresh-bad-full-sha")" "$c3"
 
+# --- a fresh clone on a server whose database is already there --------------
+# (its checkout was moved aside as not root-owned, or deleted)
+manifest "$c2"
+schema 2
+expect "fresh clone, database at the release's migrations" \
+  "$(run_install "$tmp/fresh-db-same")" "$c2"
+schema 3
+expect "fresh clone, database at a newer migration than the release: refused" \
+  "$(run_install "$tmp/fresh-db-newer")" refused
+schema "dirty?"
+expect "fresh clone, database schema version unreadable: refused" \
+  "$(run_install "$tmp/fresh-db-unreadable")" refused
+schema ""
+
 # --- re-runs on an installed server -------------------------------------------
 manifest "$c2"
 checkout_at "$tmp/rerun-forward" "$c1"
 expect "re-run with a newer release moves the checkout to it, not to main" \
   "$(run_install "$tmp/rerun-forward")" "$c2"
+
+checkout_at "$tmp/rerun-db-newer" "$c1"
+schema 3
+expect "re-run with a release older than the database is refused" \
+  "$(run_install "$tmp/rerun-db-newer")" refused
+expect "  ... and the checkout is left where it was" \
+  "$(git -C "$tmp/rerun-db-newer" rev-parse HEAD)" "$c1"
+schema ""
 
 checkout_at "$tmp/rerun-older" "$c3"
 expect "re-run with a release older than the checkout is refused" \
@@ -174,5 +210,32 @@ manifest "$c3"
 checkout_at "$tmp/rerun-from-hotfix" "$h1"
 expect "re-run from a hotfix to a newer main release" \
   "$(run_install "$tmp/rerun-from-hotfix")" "$c3"
+
+# A git server that won't hand out a commit by its id: the release commit then
+# comes with the tags, including a `stable` tag that moved since this checkout
+# last fetched it.
+git -C "$remote" tag stable "$c1"
+checkout_at "$tmp/rerun-moved-tag" "$c1"
+git -C "$remote" checkout -q -b hotfix2 "$c1"
+echo fix2 >"$remote/fix2.txt"
+git -C "$remote" add -A
+git -C "$remote" commit -q -m hotfix2
+h2=$(git -C "$remote" rev-parse HEAD)
+git -C "$remote" tag -f stable "$h2" >/dev/null
+git -C "$remote" checkout -q main
+git -C "$remote" branch -q -D hotfix2
+manifest "$h2"
+got=$(
+  eval "real_$(fn root_git)"
+  root_git() {
+    if [[ "$1" == "fetch" && "$2" == "origin" && "$3" =~ ^[0-9a-f]{40}$ ]]; then
+      return 1
+    fi
+    real_root_git "$@"
+  }
+  run_install "$tmp/rerun-moved-tag"
+)
+expect "without fetch by id, the tags bring the release, though a local tag moved" \
+  "$got" "$h2"
 
 exit $fail

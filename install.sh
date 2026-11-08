@@ -6331,7 +6331,7 @@ clone_or_update_repo() {
       || _die "git fetch origin $REPO_BRANCH failed (see the git error above)"
     if [[ -n "$release_commit" ]]; then
       _fetch_release_commit "$release_commit" "${git_args[@]}"
-      _refuse_older_release "$release_commit"
+      _refuse_older_release "$release_commit" "$(root_git rev-parse --verify --quiet 'HEAD^{commit}' || true)"
       root_git reset --hard "$release_commit" \
         || _die "git reset --hard $release_commit failed"
     else
@@ -6349,6 +6349,9 @@ clone_or_update_repo() {
     ) || _die "git clone $REPO_URL failed (check connectivity, cert trust, and that $REPO_DIR can be created)"
     if [[ -n "$release_commit" ]]; then
       _fetch_release_commit "$release_commit" "${git_args[@]}"
+      # A fresh clone says nothing about what this server runs; the
+      # database does (a checkout moved aside above, or one deleted).
+      _refuse_older_release "$release_commit" ""
       root_git reset --hard "$release_commit" \
         || _die "git reset --hard $release_commit failed"
     fi
@@ -6845,6 +6848,8 @@ _fetch_release_commit() {
   local commit="$1"
   shift
   root_git cat-file -e "${commit}^{commit}" 2>/dev/null && return 0
+  # The tag fetch can exit non-zero over a local tag that moved on origin
+  # (stable); the objects still arrive, and cat-file below is the check.
   root_git "$@" fetch origin "$commit" >/dev/null 2>&1 \
     || root_git "$@" fetch --tags origin >/dev/null 2>&1 \
     || true
@@ -6867,24 +6872,43 @@ _max_migration_at() {
   printf '%s' "$max"
 }
 
-# _refuse_older_release stops the install when the release would move this
-# server's checkout backwards: to a commit it already contains, or to a tree
-# whose newest migration is older than the current one's, which the database
-# may already be at. A newer build than the release is updated with
-# `jabali update`, which never moves a server backwards either. Runs before
-# the checkout moves and before any binary is installed.
-_refuse_older_release() {
-  local release="$1" head
-  head="$(root_git rev-parse --verify --quiet 'HEAD^{commit}')" || return 0
-  [[ "$head" == "$release" ]] && return 0
-  if root_git merge-base --is-ancestor "$release" "$head" 2>/dev/null; then
-    _die "this server already runs ${head:0:9}, a newer build than the release this installer carries (${release:0:9}). Nothing was changed; update it with 'jabali update'."
+# _live_schema_version prints the panel database's schema version, or 0 when
+# the server has no panel database yet. A database it can't read returns 1:
+# that is an error, not a fresh server.
+_live_schema_version() {
+  local exists v
+  exists="$(mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='jabali_panel' AND table_name='schema_migrations'" 2>/dev/null)" || exists=""
+  if [[ "$exists" != "1" ]]; then
+    printf 0
+    return 0
   fi
-  local have want
-  have="$(_max_migration_at "$head")"
+  v="$(mariadb jabali_panel -N -B -e 'SELECT version FROM schema_migrations LIMIT 1' 2>/dev/null)" || v=""
+  [[ "$v" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$((10#$v))"
+}
+
+# _refuse_older_release stops the install when the release would move this
+# server backwards: when the panel database is at a newer migration than the
+# release knows, or, given the checkout's previous HEAD, when that checkout
+# already contains the release or has newer migrations. A newer build than the
+# release is updated with `jabali update`, which never moves a server
+# backwards either. Runs before the checkout moves and before any binary is
+# installed.
+_refuse_older_release() {
+  local release="$1" head="$2" live want have
   want="$(_max_migration_at "$release")"
+  live="$(_live_schema_version)" \
+    || _die "could not read the panel database's schema version, so the install can't tell whether the release is older than this server. Its code and binaries were not changed."
+  if (( want < live )); then
+    _die "this server's database is at schema version ${live}, but the release this installer carries (${release:0:9}) only knows migrations up to ${want}. Its code and binaries were not changed; update it with 'jabali update'."
+  fi
+  [[ -n "$head" && "$head" != "$release" ]] || return 0
+  if root_git merge-base --is-ancestor "$release" "$head" 2>/dev/null; then
+    _die "this server already runs ${head:0:9}, a newer build than the release this installer carries (${release:0:9}). Its code and binaries were not changed; update it with 'jabali update'."
+  fi
+  have="$(_max_migration_at "$head")"
   if (( want < have )); then
-    _die "this server's build ${head:0:9} has migrations up to ${have}, but the release this installer carries (${release:0:9}) only knows migrations up to ${want}. Nothing was changed; update it with 'jabali update'."
+    _die "this server's build ${head:0:9} has migrations up to ${have}, but the release this installer carries (${release:0:9}) only knows migrations up to ${want}. Its code and binaries were not changed; update it with 'jabali update'."
   fi
 }
 
