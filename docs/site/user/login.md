@@ -27,3 +27,5 @@ The panel does not integrate with third-party identity providers (Google, GitHub
 ## Brute-force protection
 
 Repeated failed logins from one IP cause CrowdSec to record a `kratos-bf` decision and ban the IP for four hours. Recovery requests are rate-limited similarly.
+
+Sign-in attempts are also counted per account, from whatever address they come: twice the budget one address has (20 at once, then one every two seconds), so one address at its own limit can't use up an account's. Past it, sign-in to that account answers "Too many attempts — try again in a minute" until the budget refills, except from an address that signed in to the account in the last 30 days: that address keeps its own limit only, so the owner's usual address still gets in. This doesn't ban any address, so the account's owner isn't banned while someone else tries the account. Password recovery requests are counted per email address the same way, apart from sign-in. The second sign-in step (an authenticator code or a recovery code) is counted per address only.
