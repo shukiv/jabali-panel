@@ -54,8 +54,9 @@ expect() { # expect <case> <got> <want>
 main_src=$(fn main)
 first=$(awk 'NR > 1 && !/^[[:space:]]*(#|$)/ {print; exit}' <<<"$main_src")
 expect "main() starts with follow_stable_release" "$first" "  follow_stable_release"
-args_line=$(grep -n -m1 -F '_cli_args=("$@")' install.sh | cut -d: -f1)
-loop_line=$(grep -n -m1 -F 'while [[ $# -gt 0 ]]; do' install.sh | cut -d: -f1)
+first_line() { awk -v s="$1" 'index($0, s) == 1 {print NR; exit}' install.sh; }
+args_line=$(first_line '_cli_args=("$@")')
+loop_line=$(first_line 'while [[ $# -gt 0 ]]; do')
 if [[ -n "$args_line" && -n "$loop_line" && "$args_line" -lt "$loop_line" ]]; then
   echo "ok   the arguments are kept before the flag parsing consumes them"
 else
