@@ -22,8 +22,9 @@ FQDN="$(jh_env FQDN)"
 [[ -n "${TOKEN:-}" && -n "${API:-}" ]] || exit 0
 
 # -4: the service compares the IPv4 source with the label to notice an IP move.
-resp="$(curl -4 -sS --max-time 30 -w $'\n%{http_code}' -H 'Content-Type: application/json' \
-        -d "{\"token\":\"${TOKEN}\"}" "${API}/v1/heartbeat" 2>/dev/null)" || exit 0
+# The token goes in the body on stdin, never in argv.
+resp="$(printf '{"token":"%s"}' "$TOKEN" | curl -4 -sS --max-time 30 -w $'\n%{http_code}' -H 'Content-Type: application/json' \
+        --data-binary @- "${API}/v1/heartbeat" 2>/dev/null)" || exit 0
 code="${resp##*$'\n'}"
 body="${resp%$'\n'*}"
 

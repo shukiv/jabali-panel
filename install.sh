@@ -1682,9 +1682,10 @@ JH_TOKEN_FILE=/etc/jabali-panel/hostname.env
 # arrives and then every claim is refused.
 jh_post() {
   local path="$1" body="$2"
-  curl -4 -sS --max-time 30 -w $'\n%{http_code}' \
+  # The body (it carries the emailed code) goes on stdin, never in argv.
+  printf '%s' "$body" | curl -4 -sS --max-time 30 -w $'\n%{http_code}' \
     -H 'Content-Type: application/json' \
-    -d "$body" "${JH_API}${path}" 2>/dev/null || printf '\n000'
+    --data-binary @- "${JH_API}${path}" 2>/dev/null || printf '\n000'
 }
 jh_field() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get(sys.argv[1],""))' "$2" 2>/dev/null; }
 
@@ -4634,7 +4635,7 @@ ACL
   if systemctl is-active --quiet jabali-panel 2>/dev/null; then
     systemctl restart jabali-panel
     sleep 2
-    if ! redis-cli -s "$sock" --user jabali_panel --pass "$panel_token" --no-auth-warning PING >/dev/null 2>&1; then
+    if ! REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning PING >/dev/null 2>&1; then
       _warn "jabali_panel Redis auth check failed — leaving default ON (notifications safe); investigate before relying on tenant isolation"
       return 0
     fi
@@ -4642,7 +4643,7 @@ ACL
 
   # 4. Lock default. Socket access alone is now inert (NOAUTH).
   sed -i 's|^user default on nopass.*|user default off nopass ~* resetchannels -@all|' "$aclfile"
-  redis-cli -s "$sock" --user jabali_panel --pass "$panel_token" --no-auth-warning ACL LOAD >/dev/null 2>&1 || systemctl restart redis-server
+  REDISCLI_AUTH="$panel_token" redis-cli -s "$sock" --user jabali_panel --no-auth-warning ACL LOAD >/dev/null 2>&1 || systemctl restart redis-server
   _ok "Redis ACLs configured: default locked, jabali_panel scoped, per-tenant users ready"
 }
 

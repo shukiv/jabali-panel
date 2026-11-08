@@ -22,9 +22,10 @@ TOKEN="$(jh_env TOKEN)"
 API="$(jh_env API)"
 : "${TOKEN:?}" "${API:?}"
 
-code=$(curl -4 -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+# The token goes in the body on stdin, never in argv.
+code=$(printf '{"token":"%s","txt":"%s"}' "$TOKEN" "$CERTBOT_VALIDATION" | curl -4 -sS --max-time 30 -o /dev/null -w '%{http_code}' \
   -H 'Content-Type: application/json' \
-  -d "{\"token\":\"${TOKEN}\",\"txt\":\"${CERTBOT_VALIDATION}\"}" \
+  --data-binary @- \
   "${API}/v1/acme/present")
 [[ "$code" == "200" ]] || { echo "certbot-auth-hook: present failed ($code)" >&2; exit 1; }
 
