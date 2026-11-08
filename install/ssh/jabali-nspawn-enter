@@ -1,0 +1,12 @@
+#!/bin/sh
+# Jabali Panel — retired nspawn enter helper (GH #2440).
+#
+# The SSH sandbox's nspawn mode was never wired, and its sudo-bridged helper
+# was removed (#2395). This file stays only because `jabali update` in every
+# release up to the 2026-11-08 stable copies install/ssh/jabali-nspawn-enter
+# under `set -e`: without it their update stops at "sync static assets" and
+# the server never gets a new build. It does nothing, and nothing grants sudo
+# to it: provision_new_software deletes the sudoers file and newer updates
+# delete this copy too. Remove it once no server runs such a release.
+echo "jabali-nspawn-enter is retired" >&2
+exit 1
