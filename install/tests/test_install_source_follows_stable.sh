@@ -26,7 +26,7 @@ trap 'rm -rf "$tmp"' EXIT
 # Captured into a variable, never piped: see test_nginx_server_names_hash_on_update.sh.
 fn() { awk -v name="$1" '$0 ~ "^"name"\\(\\) \\{$" {p=1} p {print} p && /^\}$/ {exit}' install.sh; }
 
-for f in follow_stable_release _stable_tag_commit _installed_release_channel _source_install_commit \
+for f in follow_stable_release _stable_tag_commit _installed_release_channel _source_install_commit curl_ipv4_retry \
          root_git clone_or_update_repo _prebuilt_commit _fetch_release_commit \
          _max_migration_at _live_schema_version _refuse_older_release; do
   src=$(fn "$f")

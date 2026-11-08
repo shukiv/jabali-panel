@@ -6938,13 +6938,13 @@ follow_stable_release() {
     || _die "curl is needed to find the stable release: install curl and run install.sh again"
   local dir sha
   dir="$(mktemp -d)" || _die "could not create a temporary directory"
-  curl -fsSL --retry 3 -o "$dir/refs" \
+  curl_ipv4_retry -fsSL --retry 3 -o "$dir/refs" \
     "https://github.com/shukiv/jabali-panel.git/info/refs?service=git-upload-pack" \
     || _die "could not read the stable release's commit from GitHub. To install the newest main instead, set JABALI_RELEASE_CHANNEL=development"
   sha="$(_stable_tag_commit "$dir/refs")"
   [[ -n "$sha" ]] \
     || _die "GitHub lists no stable release. To install the newest main instead, set JABALI_RELEASE_CHANNEL=development"
-  curl -fsSL --retry 3 -o "$dir/install.sh" \
+  curl_ipv4_retry -fsSL --retry 3 -o "$dir/install.sh" \
     "https://raw.githubusercontent.com/shukiv/jabali-panel/$sha/install.sh" \
     || _die "could not download the stable release's install.sh (${sha:0:9})"
   if ! grep -q '^_source_install_commit() {$' "$dir/install.sh"; then
