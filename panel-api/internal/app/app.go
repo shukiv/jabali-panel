@@ -1237,11 +1237,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// processes, admin SSO). Lives in the existing Databases tab.
 		if deps.DBAdmin != nil {
 			api.RegisterDatabaseAdminOpsRoutes(v1, api.DatabaseAdminOpsHandlerConfig{
-				Agent:      deps.Agent,
-				DBAdmin:    deps.DBAdmin,
-				Log:        deps.Log,
-				Queue:      deps.NotificationQueue,
-				SSO:        deps.SSO,
+				Agent:        deps.Agent,
+				DBAdmin:      deps.DBAdmin,
+				Log:          deps.Log,
+				Queue:        deps.NotificationQueue,
+				SSO:          deps.SSO,
 				AdminerSSO:   deps.AdminerSSO,
 				Recorder:     deps.AuditRecorder,
 				SSORateLimit: rl.SSOPerActor(),

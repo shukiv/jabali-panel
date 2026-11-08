@@ -33,11 +33,7 @@ type SSOPhpMyAdminHandlerConfig struct {
 // RegisterSSOPhpMyAdminRoutes mounts the POST /api/v1/sso/phpmyadmin endpoint.
 func RegisterSSOPhpMyAdminRoutes(g *gin.RouterGroup, cfg SSOPhpMyAdminHandlerConfig) {
 	h := &ssoPhpMyAdminHandler{cfg: cfg}
-	limit := cfg.SSORateLimit
-	if limit == nil {
-		limit = func(c *gin.Context) { c.Next() }
-	}
-	g.POST("/sso/phpmyadmin", limit, h.issueSSOToken)
+	g.POST("/sso/phpmyadmin", limitedRoute(cfg.SSORateLimit, h.issueSSOToken)...)
 }
 
 type ssoPhpMyAdminHandler struct{ cfg SSOPhpMyAdminHandlerConfig }

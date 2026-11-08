@@ -43,11 +43,7 @@ type SSOAdminerHandlerConfig struct {
 
 func RegisterSSOAdminerRoutes(g *gin.RouterGroup, cfg SSOAdminerHandlerConfig) {
 	h := &ssoAdminerHandler{cfg: cfg}
-	limit := cfg.SSORateLimit
-	if limit == nil {
-		limit = func(c *gin.Context) { c.Next() }
-	}
-	g.POST("/sso/adminer", limit, h.issueSSOToken)
+	g.POST("/sso/adminer", limitedRoute(cfg.SSORateLimit, h.issueSSOToken)...)
 }
 
 type ssoAdminerHandler struct{ cfg SSOAdminerHandlerConfig }

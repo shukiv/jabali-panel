@@ -116,11 +116,7 @@ func RegisterMailboxRoutes(g *gin.RouterGroup, cfg MailboxHandlerConfig) {
 	mbox.GET("/:mbid", h.get)
 	mbox.PATCH("/:mbid", h.update)
 	mbox.POST("/:mbid/rotate-password", h.rotatePassword)
-	ssoLimit := cfg.SSORateLimit
-	if ssoLimit == nil {
-		ssoLimit = func(c *gin.Context) { c.Next() }
-	}
-	mbox.POST("/:mbid/sso", ssoLimit, h.mintSSO)
+	mbox.POST("/:mbid/sso", limitedRoute(cfg.SSORateLimit, h.mintSSO)...)
 	mbox.DELETE("/:mbid", h.delete)
 }
 

@@ -102,11 +102,7 @@ const SSOTTLSeconds = ssoTTLSeconds
 
 func RegisterMagicLinkRoutes(v1 *gin.RouterGroup, cfg MagicLinkHandlerConfig) {
 	h := &magicLinkHandlers{cfg: cfg}
-	limit := cfg.SSORateLimit
-	if limit == nil {
-		limit = func(c *gin.Context) { c.Next() }
-	}
-	v1.POST("/applications/:id/magic-link", limit, h.mint)
+	v1.POST("/applications/:id/magic-link", limitedRoute(cfg.SSORateLimit, h.mint)...)
 }
 
 type magicLinkHandlers struct {
