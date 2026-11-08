@@ -762,6 +762,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		// at error level but don't abort panel startup; the operator
 		// can re-run install.sh after fixing the upstream issue.
 		bootstrapTenantFromEnv(log)
+		clearBootstrapPasswordEnv()
 
 		// GH #231: seed the default Tier 1/2/3 hosting packages on a fresh
 		// install. EnsureDefaults is a no-op once any package exists, so

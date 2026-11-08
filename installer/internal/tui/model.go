@@ -1160,6 +1160,12 @@ func renderSummaryCard(lines []string, width int) string {
 			fields = append(fields, fieldLabelStyle.Render("Username")+credValueStyle.Render(strings.TrimSpace(strings.TrimPrefix(t, "Username:"))))
 		case strings.HasPrefix(t, "Password:"):
 			fields = append(fields, fieldLabelStyle.Render("Password")+credValueStyle.Render(strings.TrimSpace(strings.TrimPrefix(t, "Password:"))))
+		case strings.HasPrefix(t, "Tenant:"):
+			// A tenant seeded at install time (JABALI_BOOTSTRAP_TENANT_*),
+			// set apart from the admin's fields by a blank line.
+			fields = append(fields, "", fieldLabelStyle.Render("Tenant")+credValueStyle.Render(strings.TrimSpace(strings.TrimPrefix(t, "Tenant:"))))
+		case strings.HasPrefix(t, "Tenant password:"):
+			fields = append(fields, fieldLabelStyle.Render("Password")+credValueStyle.Render(strings.TrimSpace(strings.TrimPrefix(t, "Tenant password:"))))
 		case strings.HasPrefix(t, ">"):
 			notes = append(notes, "• "+strings.TrimSpace(strings.TrimPrefix(t, ">")))
 		default:

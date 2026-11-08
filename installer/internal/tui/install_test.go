@@ -54,6 +54,33 @@ func TestCaptureSummary(t *testing.T) {
 	}
 }
 
+// A tenant seeded at install time gets its own labelled fields, after the
+// admin's, instead of being dropped from the card.
+func TestRenderSummaryCardTenant(t *testing.T) {
+	card := stripANSI(renderSummaryCard([]string{
+		"  URL:       https://host:8443",
+		"  Username:  admin",
+		"  Password:  admin-pw-placeholder",
+		"  Tenant:    tenant",
+		"  Tenant password:  tenant-pw-placeholder",
+		"  > Change this password immediately after first login.",
+	}, 80))
+	admin, label, user, pw := indexOf(card, "admin-pw-placeholder"), indexOf(card, "Tenant"),
+		indexOf(card, "tenant\n"), indexOf(card, "tenant-pw-placeholder")
+	if admin < 0 || label < admin || user < label || pw < user {
+		t.Errorf("want the tenant's login and password after the admin's; got:\n%s", card)
+	}
+}
+
+func indexOf(hay, needle string) int {
+	for i := 0; i+len(needle) <= len(hay); i++ {
+		if hay[i:i+len(needle)] == needle {
+			return i
+		}
+	}
+	return -1
+}
+
 func contains(hay, needle string) bool {
 	return len(hay) >= len(needle) && (func() bool {
 		for i := 0; i+len(needle) <= len(hay); i++ {

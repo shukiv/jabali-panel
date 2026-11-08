@@ -15,9 +15,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -64,16 +62,7 @@ func bootstrapTenantFromEnv(log *slog.Logger) {
 	if existing != nil {
 		userID = existing.ID
 	} else {
-		// Generate a strong random password when the operator didn't pass one.
-		// The generated value is logged at WARN so the operator can see it
-		// in the install log; production deployments should always pass an
-		// explicit JABALI_BOOTSTRAP_TENANT_PASSWORD.
-		if password == "" {
-			password = generateBootstrapPassword()
-			log.Warn("tenant bootstrap: generated random password",
-				"email", email, "password", password,
-				"hint", "set JABALI_BOOTSTRAP_TENANT_PASSWORD to override")
-		}
+		password = tenantBootstrapPassword(log, email, password)
 
 		first, last := splitNameFromEmail(email)
 		u, warn, err := createUserDirect(ctx, cliUserInput{
@@ -123,19 +112,34 @@ func bootstrapTenantFromEnv(log *slog.Logger) {
 		"domain", d.Name, "id", d.ID, "owner_id", userID)
 }
 
-// generateBootstrapPassword returns a 24-char URL-safe random string.
-// Used only when the operator runs install.sh without setting
-// JABALI_BOOTSTRAP_TENANT_PASSWORD. The value is logged at WARN so the
-// operator can grab it from the install log.
-func generateBootstrapPassword() string {
-	b := make([]byte, 18) // 18 bytes -> 24 base64url chars without padding
-	if _, err := rand.Read(b); err != nil {
-		// Crypto-PRNG failure is exceptional. Fall back to a clearly-
-		// flagged placeholder so the install doesn't die — operator must
-		// rotate immediately.
-		return fmt.Sprintf("changeme-%d", time.Now().Unix())
+// tenantBootstrapPassword returns the password for a new bootstrap tenant:
+// the operator's JABALI_BOOTSTRAP_TENANT_PASSWORD, or a random one when that
+// is empty. install.sh always passes one (and shows a generated one in its
+// final banner), so the random one is for panel.env written by hand. It is
+// never logged: the operator sets a known password with the CLI.
+func tenantBootstrapPassword(log *slog.Logger, email, password string) string {
+	if password != "" {
+		return password
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	log.Warn("tenant bootstrap: no password given, the tenant gets a random one",
+		"email", email,
+		"hint", "set one with: jabali user password "+email)
+	return generateBootstrapPassword()
+}
+
+// generateBootstrapPassword returns a random 26-character password (128 bits,
+// base32).
+func generateBootstrapPassword() string {
+	return rand.Text()
+}
+
+// clearBootstrapPasswordEnv drops the bootstrap passwords from this process's
+// environment once the bootstrap has run, so nothing the panel starts
+// inherits them. The email variables stay; with no password the bootstrap is
+// a no-op on the next boot anyway.
+func clearBootstrapPasswordEnv() {
+	_ = os.Unsetenv("JABALI_BOOTSTRAP_ADMIN_PASSWORD")
+	_ = os.Unsetenv("JABALI_BOOTSTRAP_TENANT_PASSWORD")
 }
 
 // splitNameFromEmail derives a first/last name from the local part of
