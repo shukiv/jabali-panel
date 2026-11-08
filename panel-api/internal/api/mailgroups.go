@@ -45,10 +45,6 @@ type MailGroupHandlerConfig struct {
 	Settings repository.ServerSettingsRepository
 }
 
-// defaultExternalMemberCap is server_settings.mail_list_external_member_cap's
-// migration default, used before the settings row exists.
-const defaultExternalMemberCap = 25
-
 // RegisterMailGroupRoutes mounts the mail-group endpoints under g:
 //
 //   - GET    /domains/:id/mailgroups        list groups in a domain
@@ -413,7 +409,7 @@ func (h *mailGroupHandler) get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	capN, err := h.externalMemberCap(ctx)
+	capN, err := mailgroupops.ExternalMemberCap(ctx, h.cfg.Settings)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
@@ -618,45 +614,23 @@ func (h *mailGroupHandler) setExternalMembers(c *gin.Context) {
 	if !ok {
 		return
 	}
-	capN, err := h.externalMemberCap(ctx)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	current, err := h.cfg.Groups.ListExternalMembers(ctx, g.ID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	addrs, err := mailgroupops.NormalizeExternalMembers(g, req.Addresses, capN, current)
+	addrs, err := mailgroupops.SetExternalMembers(ctx, h.cfg.Groups, h.cfg.Settings, g, req.Addresses)
 	if err != nil {
 		var e *mailgroupops.ExternalMemberError
-		if errors.As(err, &e) {
+		switch {
+		case errors.As(err, &e):
 			body := gin.H{"error": e.Code, "detail": e.Detail}
 			if e.Address != "" {
 				body["address"] = e.Address
 			}
 			c.JSON(http.StatusUnprocessableEntity, body)
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-		return
-	}
-	// An internal-only list redirects to every recipient through Sieve, which
-	// caps mailboxes and outside addresses together.
-	if g.InternalOnly {
-		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
-			return
-		}
-		if err := mailgroupops.CheckMemberCap(g.GroupKind, true, len(memberIDs)+len(addrs)); err != nil {
+		case mailgroupops.IsMemberCapErr(err):
+			// An internal-only list redirects to every recipient through
+			// Sieve, which caps mailboxes and outside addresses together.
 			respondMemberCap(c, err)
-			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
-	}
-	if err := h.cfg.Groups.SetExternalMembers(ctx, g.ID, addrs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
 	h.projectGroup(ctx, g)
@@ -831,21 +805,6 @@ func (h *mailGroupHandler) checkMemberCap(c *gin.Context, g *models.MailGroup, i
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 	}
 	return false
-}
-
-// externalMemberCap is the admin's cap on a list's outside addresses.
-func (h *mailGroupHandler) externalMemberCap(ctx context.Context) (int, error) {
-	if h.cfg.Settings == nil {
-		return defaultExternalMemberCap, nil
-	}
-	s, err := h.cfg.Settings.Get(ctx)
-	if errors.Is(err, repository.ErrNotFound) {
-		return defaultExternalMemberCap, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	return int(s.MailListExternalMemberCap), nil
 }
 
 func (h *mailGroupHandler) notifyAgent(ctx context.Context, command string, params any) {

@@ -7,6 +7,7 @@
 //   - GET    /mailgroups/:gid               → useMailGroup (detail + members)
 //   - PATCH  /mailgroups/:gid               → useUpdateMailGroup
 //   - PUT    /mailgroups/:gid/members       → useSetMailGroupMembers
+//   - PUT    /mailgroups/:gid/external-members → useSetMailGroupExternalMembers
 //   - DELETE /mailgroups/:gid               → useDeleteMailGroup
 //
 // Wire-contract note (per feedback_verify_wire_contract): list endpoints
@@ -36,6 +37,8 @@ export interface MailGroup {
   has_files: boolean;
   internal_only: boolean;
   member_count: number;
+  /** GH #1833: outside addresses a distribution list delivers to. */
+  external_member_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -47,6 +50,9 @@ export interface MailGroupMember {
 
 export interface MailGroupDetail extends MailGroup {
   members: MailGroupMember[];
+  /** GH #1833: the list's outside addresses, and the admin's cap on them. */
+  external_members: string[];
+  external_member_cap: number;
 }
 
 export interface AdminMailGroup extends MailGroup {
@@ -215,6 +221,28 @@ export function useSetMailGroupMembers(): UseMutationResult<
       // set, so the mailbox table's group badges (mailbox-group-memberships
       // projection) must refresh too — not just the group detail.
       invalidateMemberships(qc);
+      qc.invalidateQueries({ queryKey: ["one", "mailgroup", id] });
+    },
+  });
+}
+
+// useSetMailGroupExternalMembers replaces a distribution list's outside
+// addresses (GH #1833): PUT /mailgroups/:gid/external-members.
+export function useSetMailGroupExternalMembers(): UseMutationResult<
+  { data: { external_members: string[]; external_member_count: number } },
+  unknown,
+  { id: string; domainId?: string; addresses: string[] }
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, addresses }) => {
+      const { data } = await apiClient.put<{
+        data: { external_members: string[]; external_member_count: number };
+      }>(`/mailgroups/${id}/external-members`, { addresses });
+      return data;
+    },
+    onSuccess: (_d, { id, domainId }) => {
+      invalidateGroups(qc, domainId);
       qc.invalidateQueries({ queryKey: ["one", "mailgroup", id] });
     },
   });

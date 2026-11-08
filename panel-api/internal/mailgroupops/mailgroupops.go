@@ -145,6 +145,60 @@ func allIn(addrs, set []string) bool {
 	return true
 }
 
+// DefaultExternalMemberCap is mail_list_external_member_cap's migration
+// default, used before the settings row exists.
+const DefaultExternalMemberCap = 25
+
+// ExternalMemberCap reads the admin's cap on a list's outside addresses. A nil
+// repository, or no settings row yet, gives the default.
+func ExternalMemberCap(ctx context.Context, settings repository.ServerSettingsRepository) (int, error) {
+	if settings == nil {
+		return DefaultExternalMemberCap, nil
+	}
+	s, err := settings.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		return DefaultExternalMemberCap, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return int(s.MailListExternalMemberCap), nil
+}
+
+// SetExternalMembers replaces the outside addresses of the distribution list g
+// with raw after checking them against the admin's cap and, for an
+// internal-only list, the redirect limit shared with its member mailboxes. It
+// saves but does not project the list. A refused set is an
+// *ExternalMemberError or IsMemberCapErr; anything else is a failed read or
+// write.
+func SetExternalMembers(ctx context.Context, groups repository.MailGroupRepository, settings repository.ServerSettingsRepository, g *models.MailGroup, raw []string) ([]string, error) {
+	capN, err := ExternalMemberCap(ctx, settings)
+	if err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+	current, err := groups.ListExternalMembers(ctx, g.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load outside addresses: %w", err)
+	}
+	addrs, err := NormalizeExternalMembers(g, raw, capN, current)
+	if err != nil {
+		return nil, err
+	}
+	if g.InternalOnly {
+		ids, err := groups.ListMemberMailboxIDs(ctx, g.ID)
+		if err != nil {
+			return nil, fmt.Errorf("load group members: %w", err)
+		}
+		if err := CheckMemberCap(g.GroupKind, true, len(ids)+len(addrs)); err != nil {
+			return nil, err
+		}
+	}
+	if err := groups.SetExternalMembers(ctx, g.ID, addrs); err != nil {
+		return nil, fmt.Errorf("save outside addresses: %w", err)
+	}
+	return addrs, nil
+}
+
 func tooManyExternal(capN int) *ExternalMemberError {
 	detail := "the administrator does not allow outside addresses on lists"
 	if capN > 0 {

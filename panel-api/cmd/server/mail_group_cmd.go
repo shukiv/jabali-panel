@@ -62,6 +62,7 @@ func newMailGroupCmd() *cobra.Command {
 		newMailGroupCreateCmd(),
 		newMailGroupSetResourcesCmd(),
 		newMailGroupSetMembersCmd(),
+		newMailGroupSetExternalCmd(),
 		newMailGroupAddMemberCmd(),
 		newMailGroupRemoveMemberCmd(),
 		newMailGroupDeleteCmd(),
@@ -163,14 +164,24 @@ func newMailGroupShowCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("list members: %w", err)
 			}
+			external, err := mailGroupRepoFromDB().ListExternalMembers(ctx, g.ID)
+			if err != nil {
+				return fmt.Errorf("list outside addresses: %w", err)
+			}
 			if jsonOutput {
-				return printJSON(map[string]any{"group": g, "members": emails})
+				return printJSON(map[string]any{"group": g, "members": emails, "external_members": external})
 			}
 			fmt.Printf("email:        %s\nkind:         %s\ndisplay_name: %s\ndescription:  %s\nresources:    mailbox=%v calendar=%v addressbook=%v files=%v\nmembers (%d):\n",
 				g.EmailCached, g.GroupKind, g.DisplayName, g.Description,
 				g.HasMailbox, g.HasCalendar, g.HasAddressbook, g.HasFiles, len(emails))
 			for _, e := range emails {
 				fmt.Printf("  - %s\n", e)
+			}
+			if g.GroupKind == mailgroupops.KindDistribution {
+				fmt.Printf("outside addresses (%d):\n", len(external))
+				for _, e := range external {
+					fmt.Printf("  - %s\n", e)
+				}
 			}
 			return nil
 		},
@@ -395,6 +406,36 @@ func newMailGroupSetMembersCmd() *cobra.Command {
 			}
 			cliAuditOK(ctx, "mail_group.set_members", "mail_group", g.ID, nil)
 			fmt.Printf("%s now has %d member(s)\n", g.EmailCached, len(desiredEmails))
+			return nil
+		},
+	}
+}
+
+// newMailGroupSetExternalCmd replaces a distribution list's outside addresses
+// (GH #1833), with the same checks as the panel: the admin's cap, the
+// internal-only limit, and no address on the list's own domain.
+func newMailGroupSetExternalCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "set-external <group-email|group-id> [address ...]",
+		Short:   "Replace the outside addresses of a distribution list (none clears them)",
+		Args:    cobra.MinimumNArgs(1),
+		PreRunE: requireDBAndAgent,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), cliMailGroupAgentTimeout)
+			defer cancel()
+			g, err := resolveMailGroupCLI(ctx, args[0])
+			if err != nil {
+				return err
+			}
+			addrs, err := mailgroupops.SetExternalMembers(ctx, mailGroupRepoFromDB(),
+				repository.NewServerSettingsRepository(sharedDB), g, args[1:])
+			if err != nil {
+				cliAuditErr(ctx, "mail_group.set_external", "mail_group", g.ID, nil)
+				return err
+			}
+			applyMailGroupCLI(ctx, g)
+			cliAuditOK(ctx, "mail_group.set_external", "mail_group", g.ID, nil)
+			fmt.Printf("%s now delivers to %d outside address(es)\n", g.EmailCached, len(addrs))
 			return nil
 		},
 	}

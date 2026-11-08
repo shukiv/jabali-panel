@@ -81,12 +81,20 @@ are and prints a warning, and such domains stay local.
 
 ## Mail groups
 
-A mail group is an address on a domain whose members are mailboxes on the same domain. **Mail → Groups** creates one; there are two types, fixed at creation. A group cannot take a mailbox's address, and a mailbox cannot take a group's (see [One owner per address](./user/mailboxes.md#one-owner-per-address)).
+A mail group is an address on a domain whose members are mailboxes on the same domain. There are two types, fixed at creation, each on its own tab of the mail domain: **Distribution lists** (next to Forwarders) and **Groups** (shared workspaces). A group cannot take a mailbox's address, and a mailbox cannot take a group's (see [One owner per address](./user/mailboxes.md#one-owner-per-address)).
 
-- **Distribution list** (the default) — every member receives their own copy of each message in their own inbox. Jabali projects it as a Stalwart mailing list whose recipients are the members that can receive mail (disabled and send-only mailboxes are left out). A list with no such members has nothing at its address, so senders get a `550` instead of mail that is accepted and dropped.
-- **Shared workspace** — one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files, and send-as the group address.
+- **Distribution list** — every member receives their own copy of each message in their own inbox. Jabali projects it as a Stalwart mailing list whose recipients are the members that can receive mail (disabled and send-only mailboxes are left out) and its outside addresses. A list with no recipients has nothing at its address, so senders get a `550` instead of mail that is accepted and dropped.
+- **Shared workspace** — one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files, and send-as the group address. It has mailbox members only.
 
-**Internal delivery only** accepts mail from senders in the group's own domain and rejects everyone else. On a distribution list it is delivered through a Sieve script that redirects to each member, and Stalwart allows 20 redirects per message, so an internal-only distribution list is limited to **20 members**: adding a 21st member, or turning internal-only on for a larger list, is refused with `422 too_many_members`.
+### Outside addresses on a distribution list
+
+A distribution list can also deliver to addresses on other mail servers, a Gmail address for example. Add them under **Manage members → Outside addresses** (or `PUT /api/v1/mailgroups/{id}/external-members` with `{"addresses": [...]}`). An address on the list's own domain is refused: add that mailbox as a member instead. A `+tag` is kept, so `someone+lists@gmail.com` receives the list as written.
+
+The administrator sets how many outside addresses one list may hold in **Server Settings → Email → Distribution lists** (default 25, at most 1000, 0 allows none). Lowering the limit keeps the addresses lists already hold; a list over it can remove addresses but not add new ones.
+
+When someone outside your domain writes to the list, the list passes the message on with the sender's address unchanged, so the receiving provider can file it as spam or refuse it: the sender's domain does not list your server as one of its own. Mail that members of your domain send to the list is not affected.
+
+**Internal delivery only** accepts mail from senders in the group's own domain and rejects everyone else; a list's outside addresses still receive what the list accepts. On a distribution list it is delivered through a Sieve script that redirects to each recipient, and Stalwart allows 20 redirects per message, so an internal-only distribution list is limited to **20 recipients, member mailboxes and outside addresses together**: going past that, or turning internal-only on for a larger list, is refused with `422 too_many_members`.
 
 Distribution lists are re-applied to Stalwart by the reconciler whenever the list or a member changes (and every 15 minutes), so a failed save heals on its own. On servers set up by an earlier release, a distribution list was stored as a shared inbox that members could not see. The first reconcile after the update converts each one. Any mail already in that inbox is copied into every member's inbox first, and the old inbox is removed only after every copy succeeded.
 

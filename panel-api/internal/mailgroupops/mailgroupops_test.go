@@ -123,3 +123,59 @@ func TestNormalizeExternalMembers_Refuses(t *testing.T) {
 	_, err = NormalizeExternalMembers(ws, []string{"a@gmail.com"}, 25, nil)
 	require.Equal(t, "not_a_distribution_list", code(err))
 }
+
+func (f *externalFake) ListMemberMailboxIDs(context.Context, string) ([]string, error) {
+	return f.members, nil
+}
+func (f *externalFake) SetExternalMembers(_ context.Context, _ string, addrs []string) error {
+	f.external = addrs
+	return nil
+}
+
+type settingsFake struct {
+	repository.ServerSettingsRepository
+	row *models.ServerSettings
+}
+
+func (f *settingsFake) Get(context.Context) (*models.ServerSettings, error) {
+	if f.row == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.row, nil
+}
+
+func TestExternalMemberCap(t *testing.T) {
+	ctx := context.Background()
+	n, err := ExternalMemberCap(ctx, nil)
+	require.NoError(t, err)
+	require.Equal(t, DefaultExternalMemberCap, n)
+	n, err = ExternalMemberCap(ctx, &settingsFake{})
+	require.NoError(t, err)
+	require.Equal(t, 25, n, "no settings row yet means the migration default")
+	n, err = ExternalMemberCap(ctx, &settingsFake{row: &models.ServerSettings{MailListExternalMemberCap: 0}})
+	require.NoError(t, err)
+	require.Equal(t, 0, n, "0 is a real setting, not unset")
+}
+
+func TestSetExternalMembers_SavesCanonical(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", EmailCached: "sales@example.org", GroupKind: "distribution"}
+	fake := &externalFake{}
+	got, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"B@gmail.com", "a@gmail.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a@gmail.com", "b@gmail.com"}, got)
+	require.Equal(t, got, fake.external)
+}
+
+// An internal-only list counts its member mailboxes and outside addresses
+// against one redirect limit.
+func TestSetExternalMembers_InternalOnlyLimit(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", EmailCached: "sales@example.org", GroupKind: "distribution", InternalOnly: true}
+	members := make([]string, MaxInternalOnlyMembers)
+	for i := range members {
+		members[i] = "mb"
+	}
+	fake := &externalFake{members: members}
+	_, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"a@gmail.com"})
+	require.True(t, IsMemberCapErr(err), "got %v", err)
+	require.Nil(t, fake.external, "a refused set must not be saved")
+}

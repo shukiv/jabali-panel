@@ -1,6 +1,6 @@
 # Email
 
-`/jabali-panel/mail-domains`, then a domain: tabs Accounts, Forwarders, Groups, Shared Folders, Shared Resources, Settings, Logs and Statistics. The mail surface for your domains.
+`/jabali-panel/mail-domains`, then a domain: tabs Accounts, Forwarders, Distribution lists, Groups, Shared Folders, Shared Resources, Settings, Logs and Statistics. The mail surface for your domains.
 
 ## Tabs
 
@@ -11,7 +11,8 @@
 - [Disclaimer](./disclaimer.md) — append a server-side disclaimer to outbound mail.
 - **Settings** — per-domain mail options. Currently the webmail toggle (see below).
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
-- **Groups** — distribution lists (each member gets a copy) and shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups).
+- **Distribution lists** — each member gets a copy; a list can also deliver to outside addresses, a Gmail address for example. See [Outside addresses on a distribution list](../mail.md#outside-addresses-on-a-distribution-list).
+- **Groups** — shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups).
 - [Email Logs](./email-logs.md) — live tail of inbound and outbound mail for your domains.
 
 ## Webmail
