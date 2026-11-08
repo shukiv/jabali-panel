@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -64,6 +65,21 @@ func TestMailServerAbsent(t *testing.T) {
 				t.Fatalf("mailServerAbsent() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// Every `jabali update` installed jabali-stalwart.service, mail module or not.
+// Counted as a marker, it made a box without mail look like a broken Stalwart
+// install, and a deleted domain's teardown retried the purge forever (jtest,
+// 2026-11-08: the domain's vhost stayed live). Only the binary directory counts.
+func TestStalwartMarkers_LeaveOutTheUnitFile(t *testing.T) {
+	for _, m := range stalwartMarkers {
+		if strings.HasSuffix(m, ".service") {
+			t.Errorf("stalwartMarkers includes %s, which every update installs", m)
+		}
+	}
+	if len(stalwartMarkers) != 1 || stalwartMarkers[0] != "/opt/stalwart" {
+		t.Errorf("stalwartMarkers = %v, want [/opt/stalwart]", stalwartMarkers)
 	}
 }
 

@@ -12,9 +12,11 @@ import (
 )
 
 // stalwartMarkers are what install_stalwart leaves on a box with the mail
-// module: the systemd unit and the extracted binary directory. A var so tests
-// can point it at a temp dir.
-var stalwartMarkers = []string{"/etc/systemd/system/jabali-stalwart.service", "/opt/stalwart"}
+// module: the extracted binary directory. Not the systemd unit: every
+// `jabali update` installed it, mail module or not, so on a box without mail
+// it kept a deleted domain's teardown failing forever. A var so tests can
+// point it at a temp dir.
+var stalwartMarkers = []string{"/opt/stalwart"}
 
 // mailServerAbsent reports whether this box has no mail server at all: the
 // admin token does not exist AND no Stalwart marker exists. Only then is there
