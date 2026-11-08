@@ -357,6 +357,11 @@ Examples:
 			if err := initDB(); err != nil {
 				return err
 			}
+			// The panel rebuild creates the database users' accounts and
+			// pushes the forwarders through the shared agent client.
+			if err := initAgent(); err != nil {
+				return err
+			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
