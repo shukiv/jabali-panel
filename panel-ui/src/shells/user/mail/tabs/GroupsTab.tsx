@@ -1,10 +1,15 @@
 // GroupsTab — M51 mail groups (issue #201). Pick a mail-enabled domain,
 // create/edit groups (shared mailbox + calendar + address book + files),
 // manage membership, delete. Mirrors MailboxesTab styling.
+//
+// GH #1833: the Mail domain page shows each kind on its own tab (kind prop):
+// "Distribution lists" next to Forwarders, and "Groups" for Shared
+// Workspaces. A distribution list also delivers to outside addresses.
 import { useTranslation } from "react-i18next";
 import { useMemo, useState } from "react";
 import { RowActions } from "../../../../components/RowActions";
 import {
+  Alert,
   App,
   Button,
   Drawer,
@@ -39,11 +44,37 @@ import {
   useUpdateMailGroup,
   useDeleteMailGroup,
   useSetMailGroupMembers,
+  useSetMailGroupExternalMembers,
   type MailGroup,
 } from "../../../../hooks/useMailGroups";
 
+export type GroupKind = "distribution" | "resource";
 
-export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = {}) {
+const KIND_TEXT: Record<GroupKind, { create: string; search: string; empty: string; deleted: string; deleteDetail: string }> = {
+  distribution: {
+    create: "New distribution list",
+    search: "Search list name…",
+    empty: "No distribution lists",
+    deleted: "Distribution list deleted",
+    deleteDetail: "Mail to the address is no longer delivered. Members keep the mail they already received. This cannot be undone.",
+  },
+  resource: {
+    create: "New group",
+    search: "Search group name…",
+    empty: "No groups",
+    deleted: "Group deleted",
+    deleteDetail: "The shared mailbox, calendar, address book and files are removed. This cannot be undone.",
+  },
+};
+
+// A rough shape check that marks a typo before the save; the panel API is the
+// real check and names the address it refuses.
+const LOOKS_LIKE_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function GroupsTab({
+  domainId: scopedDomainId,
+  kind,
+}: { domainId?: string; kind?: GroupKind } = {}) {
   const { t } = useTranslation();
   const { message } = App.useApp();
 
@@ -58,7 +89,12 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
   const [domainId, setDomainId] = useState<string | undefined>(undefined);
   const effectiveDomain = scopedDomainId ?? domainId ?? mailDomains[0]?.id;
 
-  const { data: groups, isLoading } = useMailGroups(effectiveDomain);
+  const { data: allGroups, isLoading } = useMailGroups(effectiveDomain);
+  const groups = useMemo(
+    () => (kind && allGroups ? allGroups.filter((g) => (g.group_kind === "distribution" ? "distribution" : "resource") === kind) : allGroups),
+    [allGroups, kind],
+  );
+  const text = KIND_TEXT[kind ?? "resource"];
 
   const [editTarget, setEditTarget] = useState<MailGroup | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -92,7 +128,7 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
           />
         )}
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-          New group
+          {text.create}
         </Button>
       </Space>
 
@@ -111,12 +147,17 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
               (g.local_part ?? "").toLowerCase().includes(q)
             );
           })}
-          searchPlaceholder="Search group name…"
+          searchPlaceholder={text.search}
           initialSearch={search}
           onSearchChange={setSearch}
           pagination={{ defaultPageSize: 25 }}
           locale={{
-            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={t("groupstab.no_groups")} />,
+            emptyText: (
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description={kind === "distribution" ? text.empty : t("groupstab.no_groups")}
+              />
+            ),
           }}
           columns={[
             {
@@ -133,23 +174,28 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
                 </Space>
               ),
             },
-            {
-              title: "Type",
-              key: "group_kind",
-              width: 150,
-              render: (_, row) =>
-                row.group_kind === "distribution" ? (
-                  <Tag color="cyan">Distribution list</Tag>
-                ) : (
-                  <Tag color="geekblue">Shared workspace</Tag>
-                ),
-            },
+            // One kind per tab needs no Type column.
+            ...(kind
+              ? []
+              : [
+                  {
+                    title: "Type",
+                    key: "group_kind",
+                    width: 150,
+                    render: (_: unknown, row: MailGroup) =>
+                      row.group_kind === "distribution" ? (
+                        <Tag color="cyan">Distribution list</Tag>
+                      ) : (
+                        <Tag color="geekblue">Shared workspace</Tag>
+                      ),
+                  },
+                ]),
             {
               title: "Members",
               dataIndex: "member_count",
               sorter: (a, b) => (a.member_count ?? 0) - (b.member_count ?? 0),
               width: 110,
-              render: (n: number) => <Tag>{n}</Tag>,
+              render: (n: number, row) => <MemberCountTags members={n} outside={row.external_member_count} />,
             },
             {
               title: "Actions",
@@ -167,12 +213,16 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
                       onClick: async () => {
                         try {
                           await del.mutateAsync({ id: row.id, domainId: row.domain_id });
-                          message.success("Group deleted");
+                          message.success(KIND_TEXT[row.group_kind === "distribution" ? "distribution" : "resource"].deleted);
                         } catch {
                           message.error("Failed to delete group");
                         }
                       },
-                      confirm: { title: `Delete ${row.email}?`, description: "The shared mailbox, calendar, address book and files are removed. This cannot be undone.", okText: "Delete" },
+                      confirm: {
+                        title: `Delete ${row.email}?`,
+                        description: KIND_TEXT[row.group_kind === "distribution" ? "distribution" : "resource"].deleteDetail,
+                        okText: "Delete",
+                      },
                     },
                   ]}
                 />
@@ -186,6 +236,7 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
         open={createOpen}
         domainId={effectiveDomain}
         group={null}
+        kind={kind}
         onClose={() => setCreateOpen(false)}
       />
       <GroupDrawer
@@ -204,17 +255,31 @@ export function GroupsTab({ domainId: scopedDomainId }: { domainId?: string } = 
   );
 }
 
+// MemberCountTags shows a group's member mailboxes and, for a distribution
+// list, how many outside addresses it delivers to (GH #1833).
+export function MemberCountTags({ members, outside }: { members: number; outside?: number }) {
+  return (
+    <Space size={4} wrap>
+      <Tag>{members}</Tag>
+      {(outside ?? 0) > 0 && <Tag color="purple">{`+${outside} outside`}</Tag>}
+    </Space>
+  );
+}
+
 // --- Create / edit drawer ---------------------------------------------
 
 export function GroupDrawer({
   open,
   domainId,
   group,
+  kind,
   onClose,
 }: {
   open: boolean;
   domainId: string | undefined;
   group: MailGroup | null;
+  /** Fixes the type of a new group and hides the picker (GH #1833). */
+  kind?: GroupKind;
   onClose: () => void;
 }) {
   const { message } = App.useApp();
@@ -238,7 +303,7 @@ export function GroupDrawer({
           : {
               name: "",
               display_name: "",
-              group_kind: "distribution",
+              group_kind: kind ?? "distribution",
               description: "",
               internal_only: false,
             },
@@ -286,7 +351,7 @@ export function GroupDrawer({
   return (
     <Drawer
       open={open}
-      title={editing ? `Edit ${group?.email}` : "New group"}
+      title={editing ? `Edit ${group?.email}` : kind ? KIND_TEXT[kind].create : "New group"}
       width={420}
       onClose={onClose}
       destroyOnClose
@@ -311,6 +376,7 @@ export function GroupDrawer({
         <Form.Item
           label="Type"
           name="group_kind"
+          hidden={kind !== undefined}
           tooltip="Distribution list: every member gets their own copy of each message in their own inbox. Shared workspace: one shared inbox that members open in webmail (no copies are delivered), plus a shared calendar, contacts and files. The type cannot be changed later."
         >
           <Segmented
@@ -328,7 +394,7 @@ export function GroupDrawer({
           label="Internal delivery only"
           name="internal_only"
           valuePropName="checked"
-          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348). An internal-only distribution list can have at most 20 members."
+          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348). An internal-only distribution list can have at most 20 members, outside addresses included, and still delivers to its outside addresses."
         >
           <Switch />
         </Form.Item>
@@ -354,17 +420,40 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
     params: { page: 1, pageSize: 500 },
   });
   const setMembers = useSetMailGroupMembers();
+  const setExternal = useSetMailGroupExternalMembers();
+  const isList = group.group_kind === "distribution";
 
   const [selected, setSelected] = useState<string[] | null>(null);
   const value = selected ?? detail?.members.map((m) => m.mailbox_id) ?? [];
 
+  // GH #1833: a distribution list's outside addresses (a Gmail address, say).
+  const [outside, setOutside] = useState<string[] | null>(null);
+  const savedOutside = detail?.external_members ?? [];
+  const outsideValue = outside ?? savedOutside;
+  const outsideCap = detail?.external_member_cap ?? 0;
+  const badOutside = outsideValue.filter((a) => !LOOKS_LIKE_ADDRESS.test(a.trim()));
+  const overCap = outsideValue.length > outsideCap && outsideValue.some((a) => !savedOutside.includes(a.trim().toLowerCase()));
+
   const submit = async () => {
+    if (badOutside.length > 0) {
+      message.error(`Not an email address: ${badOutside.join(", ")}`);
+      return;
+    }
+    const outsideChanged = isList && outside !== null;
+    const saveMailboxes = () =>
+      setMembers.mutateAsync({ id: group.id, domainId: group.domain_id, mailbox_ids: value });
+    const saveOutside = () =>
+      setExternal.mutateAsync({ id: group.id, domainId: group.domain_id, addresses: outsideValue });
     try {
-      await setMembers.mutateAsync({
-        id: group.id,
-        domainId: group.domain_id,
-        mailbox_ids: value,
-      });
+      // An internal-only list counts both kinds toward one limit: save the set
+      // that shrinks first, so a swap between them is not refused half-way.
+      if (outsideChanged && outsideValue.length < savedOutside.length) {
+        await saveOutside();
+        await saveMailboxes();
+      } else {
+        await saveMailboxes();
+        if (outsideChanged) await saveOutside();
+      }
       message.success("Members updated");
       onClose();
     } catch (err) {
@@ -384,7 +473,7 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
         </Space>
       }
       okText="Save"
-      confirmLoading={setMembers.isPending}
+      confirmLoading={setMembers.isPending || setExternal.isPending}
       onOk={submit}
       onCancel={onClose}
       destroyOnClose
@@ -392,15 +481,61 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
       {isLoading ? (
         <Skeleton active paragraph={{ rows: 3 }} />
       ) : (
-        <Select
-          mode="multiple"
-          style={{ width: "100%" }}
-          placeholder="Select member mailboxes"
-          value={value}
-          onChange={setSelected}
-          optionFilterProp="label"
-          options={mailboxes.map((m) => ({ value: m.id, label: m.email }))}
-        />
+        <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+          <div>
+            {isList && <Typography.Text strong>Member mailboxes</Typography.Text>}
+            <Select
+              mode="multiple"
+              style={{ width: "100%" }}
+              aria-label="Member mailboxes"
+              placeholder="Select member mailboxes"
+              value={value}
+              onChange={setSelected}
+              optionFilterProp="label"
+              options={mailboxes.map((m) => ({ value: m.id, label: m.email }))}
+            />
+          </div>
+          {isList && (
+            <div>
+              <Typography.Text strong>Outside addresses</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ margin: "2px 0 6px", fontSize: 12 }}>
+                Addresses on other mail servers, a Gmail address for example, that receive the
+                list too. Type an address and press Enter.
+              </Typography.Paragraph>
+              {outsideCap === 0 && savedOutside.length === 0 ? (
+                <Alert type="info" showIcon message="Your administrator does not allow outside addresses on lists." />
+              ) : (
+                <>
+                  <Select
+                    mode="tags"
+                    style={{ width: "100%" }}
+                    aria-label="Outside addresses"
+                    placeholder="name@example.com"
+                    value={outsideValue}
+                    onChange={(v: string[]) => setOutside(v.map((a) => a.trim()).filter(Boolean))}
+                    tokenSeparators={[",", " ", ";"]}
+                    open={false}
+                    suffixIcon={null}
+                    status={badOutside.length > 0 || overCap ? "error" : undefined}
+                  />
+                  <Typography.Text type={overCap ? "danger" : "secondary"} style={{ fontSize: 12 }}>
+                    {`${outsideValue.length} of ${outsideCap} outside addresses`}
+                    {badOutside.length > 0 && ` · not an email address: ${badOutside.join(", ")}`}
+                  </Typography.Text>
+                  {outsideValue.length > 0 && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: 8 }}
+                      message="Mail from outside senders can land in spam"
+                      description="When someone outside your domain writes to the list, the list passes the message on with the sender's address unchanged. Gmail, Outlook and other providers can file it as spam or refuse it, because the sender's domain does not list this server as one of its own. Mail that members of your domain send to the list is not affected."
+                    />
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </Space>
       )}
     </Modal>
   );

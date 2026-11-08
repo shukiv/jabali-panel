@@ -66,6 +66,7 @@ import { FreeHostnameCard } from "./FreeHostnameCard";
 import { WebmailToggleCard } from "./WebmailToggleCard";
 import { FtpServerCard } from "./FtpServerCard";
 import { Dkim2ToggleCard } from "./Dkim2ToggleCard";
+import { MailListsCard } from "./MailListsCard";
 import { SpamFilterCard } from "./SpamFilterCard";
 import { ModulesCard } from "./ModulesCard";
 import { StalwartWebadminCard } from "./StalwartWebadminCard";
@@ -1130,6 +1131,7 @@ export const ServerSettingsPage = () => {
           <WebsiteMailCard />
           <WebmailToggleCard />
           <Dkim2ToggleCard />
+          <MailListsCard />
           <StalwartWebadminCard />
         </>
       ),

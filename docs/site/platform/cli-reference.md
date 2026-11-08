@@ -3272,6 +3272,14 @@ Remove one member from a mail group
 jabali mail-group remove-member <group-email|group-id> <member-email-or-id>
 ```
 
+#### `jabali mail-group set-external`
+
+Replace the outside addresses of a distribution list (none clears them)
+
+```
+jabali mail-group set-external <group-email|group-id> [address ...]
+```
+
 #### `jabali mail-group set-members`
 
 Replace the full member set of a mail group

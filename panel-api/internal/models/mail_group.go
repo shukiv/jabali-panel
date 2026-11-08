@@ -53,3 +53,13 @@ type MailGroupMember struct {
 }
 
 func (MailGroupMember) TableName() string { return "mail_group_members" }
+
+// MailGroupExternalMember is an address outside this server that a
+// distribution list delivers to (GH #1833). Address is lower-case.
+type MailGroupExternalMember struct {
+	GroupID   string    `gorm:"type:char(26);primaryKey" json:"group_id"`
+	Address   string    `gorm:"type:varchar(320);primaryKey" json:"address"`
+	CreatedAt time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
+}
+
+func (MailGroupExternalMember) TableName() string { return "mail_group_external_members" }

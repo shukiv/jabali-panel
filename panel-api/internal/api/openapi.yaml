@@ -2052,6 +2052,30 @@ paths:
       requestBody: { content: { application/json: { schema: { type: object } } } }
       responses: { "200": { description: OK } }
 
+  /mailgroups/{gid}/external-members:
+    put:
+      tags: [Mail Groups]
+      summary: Set a distribution list's outside addresses
+      description: >
+        Replaces the addresses on other mail servers that a distribution list
+        delivers to, next to its member mailboxes (GH #1833). An address on
+        the list's own domain is refused (add the mailbox as a member). The
+        administrator caps how many one list may hold
+        (mail_list_external_member_cap in the server settings); an
+        internal-only list counts them toward its 20-member limit.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                addresses: { type: array, items: { type: string, format: email } }
+      responses:
+        "200": { description: OK }
+        "422": { description: "invalid_external_member, external_member_on_list_domain, not_a_distribution_list, too_many_external_members or too_many_members" }
+
   /mailgroups/{gid}/members/{mbid}:
     post:
       tags: [Mail Groups]

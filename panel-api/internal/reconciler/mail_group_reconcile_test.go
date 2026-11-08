@@ -18,8 +18,9 @@ import (
 
 type mgReconcileFake struct {
 	repository.MailGroupRepository
-	groups  []repository.MailGroupWithDomain
-	members []repository.MailGroupMemberEmail
+	groups   []repository.MailGroupWithDomain
+	members  []repository.MailGroupMemberEmail
+	external []repository.MailGroupMemberEmail
 }
 
 func (f *mgReconcileFake) ListAllWithDomain(context.Context) ([]repository.MailGroupWithDomain, error) {
@@ -27,6 +28,9 @@ func (f *mgReconcileFake) ListAllWithDomain(context.Context) ([]repository.MailG
 }
 func (f *mgReconcileFake) ListAllDeliverableMembers(context.Context) ([]repository.MailGroupMemberEmail, error) {
 	return f.members, nil
+}
+func (f *mgReconcileFake) ListAllExternalMembers(context.Context) ([]repository.MailGroupMemberEmail, error) {
+	return f.external, nil
 }
 
 func newMailGroupReconciler(t *testing.T, ag *fakeAgent, mg *mgReconcileFake, mailEnabled bool) *Reconciler {
@@ -106,6 +110,30 @@ func TestReconcileMailGroups_SteadyStateIsNoop(t *testing.T) {
 	calls := applyCalls(ag)
 	require.Len(t, calls, 2)
 	require.Equal(t, []any{"alice@example.org", "bob@example.org"}, calls[1]["member_emails"])
+}
+
+// GH #1833: a list's outside addresses reach the agent next to, not mixed
+// into, its member mailboxes, and adding one re-applies the list.
+func TestReconcileMailGroups_SendsOutsideAddresses(t *testing.T) {
+	ag := &fakeAgent{}
+	mg := &mgReconcileFake{
+		groups:   []repository.MailGroupWithDomain{mgRow("g1", "sales@example.org", "distribution")},
+		members:  []repository.MailGroupMemberEmail{{GroupID: "g1", Email: "alice@example.org"}},
+		external: []repository.MailGroupMemberEmail{{GroupID: "g1", Email: "partner@gmail.com"}},
+	}
+	r := newMailGroupReconciler(t, ag, mg, true)
+
+	r.reconcileMailGroups(context.Background())
+	calls := applyCalls(ag)
+	require.Len(t, calls, 1)
+	require.Equal(t, []any{"alice@example.org"}, calls[0]["member_emails"])
+	require.Equal(t, []any{"partner@gmail.com"}, calls[0]["external_emails"])
+
+	mg.external = append(mg.external, repository.MailGroupMemberEmail{GroupID: "g1", Email: "other@outlook.com"})
+	r.reconcileMailGroups(context.Background())
+	calls = applyCalls(ag)
+	require.Len(t, calls, 2, "a new outside address re-applies the list")
+	require.Equal(t, []any{"partner@gmail.com", "other@outlook.com"}, calls[1]["external_emails"])
 }
 
 func TestReconcileMailGroups_StaleEntryReapplies(t *testing.T) {

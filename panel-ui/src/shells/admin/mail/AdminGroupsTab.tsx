@@ -26,7 +26,7 @@ import {
   type AdminMailGroup,
   type MailGroup,
 } from "../../../hooks/useMailGroups";
-import { GroupDrawer, MembersModal } from "../../user/mail/tabs/GroupsTab";
+import { GroupDrawer, MemberCountTags, MembersModal } from "../../user/mail/tabs/GroupsTab";
 
 const RESOURCE_TAGS: { key: keyof MailGroup; label: string; color: string }[] = [
   { key: "has_mailbox", label: "Mailbox", color: "blue" },
@@ -116,7 +116,12 @@ export function AdminGroupsTab() {
               </Space>
             ),
           },
-          { title: "Members", dataIndex: "member_count", width: 100, render: (n: number) => <Tag>{n}</Tag> },
+          {
+            title: "Members",
+            dataIndex: "member_count",
+            width: 100,
+            render: (n: number, row) => <MemberCountTags members={n} outside={row.external_member_count} />,
+          },
           {
             title: "Actions",
             key: "actions",

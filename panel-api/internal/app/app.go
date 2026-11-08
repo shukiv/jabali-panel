@@ -1005,6 +1005,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Mailboxes: deps.Mailboxes,
 				Domains:   deps.Domains,
 				Agent:     deps.Agent,
+				Settings:  deps.ServerSettings,
 			})
 		}
 		if deps.Domains != nil {

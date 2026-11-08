@@ -24,7 +24,8 @@ import (
 // Stalwart 0.16.15). So a distribution group is projected as:
 //
 //   - internal_only=false → a native x:MailingList whose recipients are the
-//     member addresses. Stalwart fans the message out itself.
+//     member addresses and the list's outside addresses (GH #1833). Stalwart
+//     fans the message out itself.
 //   - internal_only=true  → a Group account whose one active Sieve rejects a
 //     sender outside the domain and otherwise redirects to each member. A
 //     MailingList has no sender restriction, so the Sieve carries both rules.
@@ -66,11 +67,18 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	if err != nil {
 		return nil, err
 	}
-	if p.InternalOnly && len(members) > maxInternalOnlyListMembers {
+	// GH #1833: outside addresses receive the list too. They have no account
+	// here, so only members take part in the drain and unlink below.
+	external, err := normalizeMemberEmails(p.ExternalEmails)
+	if err != nil {
+		return nil, err
+	}
+	recipients := unionSorted(members, external)
+	if p.InternalOnly && len(recipients) > maxInternalOnlyListMembers {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("an internal-only distribution list supports at most %d members (got %d)",
-				maxInternalOnlyListMembers, len(members)),
+			Message: fmt.Sprintf("an internal-only distribution list supports at most %d members, outside addresses included (got %d)",
+				maxInternalOnlyListMembers, len(recipients)),
 		}
 	}
 
@@ -79,8 +87,8 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	unlock := lockMailGroup(email)
 	defer unlock()
 
-	wantList := len(members) > 0 && !p.InternalOnly
-	wantGroup := len(members) > 0 && p.InternalOnly
+	wantList := len(recipients) > 0 && !p.InternalOnly
+	wantGroup := len(recipients) > 0 && p.InternalOnly
 	description := groupDescription(p)
 
 	// 1. A Group account at the address holds mail the members never saw.
@@ -91,8 +99,14 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		return nil, err
 	}
 	if gid != "" {
-		if err := drainGroupMailToMembers(ctx, gid, members); err != nil {
-			return nil, err
+		// An internal-only list of outside addresses only keeps its account
+		// and has no mailbox to drain into: mail stays in the account (bounces
+		// of its outside deliveries land there) instead of failing every apply.
+		keepUndrained := wantGroup && len(members) == 0
+		if !keepUndrained {
+			if err := drainGroupMailToMembers(ctx, gid, members); err != nil {
+				return nil, err
+			}
 		}
 		if !wantGroup {
 			if err := unlinkGroupMembers(ctx, gid, members); err != nil {
@@ -111,7 +125,7 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		return nil, err
 	}
 	if wantList {
-		id, err := upsertMailingList(ctx, email, listID, members, description)
+		id, err := upsertMailingList(ctx, email, listID, recipients, description)
 		if err != nil {
 			return nil, err
 		}
@@ -132,7 +146,7 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	if err != nil {
 		return nil, err
 	}
-	script := buildInternalOnlyListSieve(email[strings.LastIndex(email, "@")+1:], members)
+	script := buildInternalOnlyListSieve(email[strings.LastIndex(email, "@")+1:], recipients)
 	blobID, err := uploadSieveBlob(ctx, gid, script)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("sieve blob upload: %v", err)}
@@ -171,6 +185,22 @@ func normalizeMemberEmails(raw []string) ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// unionSorted merges two sorted, de-duplicated address sets.
+func unionSorted(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, s := range [][]string{a, b} {
+		for _, e := range s {
+			if !seen[e] {
+				seen[e] = true
+				out = append(out, e)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // groupDescription is the label stored on the Stalwart object: the display

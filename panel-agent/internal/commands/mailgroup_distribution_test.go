@@ -827,6 +827,148 @@ func TestMailGroupApplyDistribution_RejectsUnsafeMemberAddress(t *testing.T) {
 	}
 }
 
+func applyDistributionWith(t *testing.T, email string, internalOnly bool, members, external []string) error {
+	t.Helper()
+	params, _ := json.Marshal(map[string]any{
+		"email":           email,
+		"display_name":    "Sales",
+		"group_kind":      "distribution",
+		"internal_only":   internalOnly,
+		"member_emails":   members,
+		"external_emails": external,
+	})
+	_, err := mailGroupApplyHandler(context.Background(), params)
+	return err
+}
+
+// GH #1833: a list's outside addresses are list recipients next to its
+// members.
+func TestMailGroupApplyDistribution_OutsideAddressesAreRecipients(t *testing.T) {
+	f := newMGFake()
+	f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{"alice@example.com"}, []string{"Partner@Gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	lists := f.listsByEmail("sales@example.com")
+	if len(lists) != 1 {
+		t.Fatalf("want one MailingList, got %d", len(lists))
+	}
+	if got := recipientsOf(lists[0]); fmt.Sprint(got) != "[alice@example.com partner@gmail.com]" {
+		t.Fatalf("recipients = %v", got)
+	}
+}
+
+// A list of outside addresses only still fans out: it is not "no members".
+func TestMailGroupApplyDistribution_OutsideAddressesOnly(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	lists := f.listsByEmail("sales@example.com")
+	if len(lists) != 1 || fmt.Sprint(recipientsOf(lists[0])) != "[partner@gmail.com]" {
+		t.Fatalf("an outside-only list must still deliver; lists=%d", len(lists))
+	}
+}
+
+func TestMailGroupApplyDistribution_InternalOnlyRedirectsToOutsideAddresses(t *testing.T) {
+	f := newMGFake()
+	f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", true, []string{"alice@example.com"}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	gid := f.accountByEmail("sales@example.com")
+	if gid == "" || f.activeScript(gid) == nil {
+		t.Fatalf("internal-only list needs a Group account with an active Sieve")
+	}
+	script := f.blobs[f.activeScript(gid).blobID]
+	for _, want := range []string{`redirect "alice@example.com";`, `redirect "partner@gmail.com";`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+}
+
+// Mail parked in a legacy Group account is copied to member mailboxes only:
+// an outside address has no account here to copy into, and looking one up
+// must not fail the conversion.
+func TestMailGroupApplyDistribution_LegacyDrainSkipsOutsideAddresses(t *testing.T) {
+	f := newMGFake()
+	gid := f.addAccount("sales@example.com", "Group")
+	f.emails[gid] = []string{"m1"}
+	alice := f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{"alice@example.com"}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if !f.copied[alice]["m1"] {
+		t.Fatalf("the member did not receive the stored group mail: %v", f.copied)
+	}
+	if len(f.copied) != 1 {
+		t.Fatalf("stored mail must be copied to member mailboxes only: %v", f.copied)
+	}
+	if got := recipientsOf(f.listsByEmail("sales@example.com")[0]); fmt.Sprint(got) != "[alice@example.com partner@gmail.com]" {
+		t.Fatalf("recipients = %v", got)
+	}
+}
+
+// An internal-only list of outside addresses only keeps its Group account,
+// which collects the bounces of its outside deliveries. With no mailbox to
+// drain them into, the apply must still succeed and keep the account (and its
+// mail), or every later change would fail to reach the mail server.
+func TestMailGroupApplyDistribution_InternalOnlyOutsideOnlyKeepsStoredMail(t *testing.T) {
+	f := newMGFake()
+	gid := f.addAccount("sales@example.com", "Group")
+	f.emails[gid] = []string{"bounce1"}
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", true, []string{}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, ok := f.accounts[gid]; !ok {
+		t.Fatalf("the internal-only list's account must be kept")
+	}
+	if len(f.emails[gid]) != 1 {
+		t.Fatalf("stored mail must stay in the account: %v", f.emails[gid])
+	}
+	script := f.blobs[f.activeScript(gid).blobID]
+	if !strings.Contains(script, `redirect "partner@gmail.com";`) {
+		t.Fatalf("script missing the outside redirect:\n%s", script)
+	}
+}
+
+func TestMailGroupApplyDistribution_InternalOnlyCapCountsOutsideAddresses(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	members := make([]string, 0, maxInternalOnlyListMembers)
+	for i := 0; i < maxInternalOnlyListMembers; i++ {
+		members = append(members, fmt.Sprintf("m%d@example.com", i))
+	}
+	err := applyDistributionWith(t, "sales@example.com", true, members, []string{"partner@gmail.com"})
+	requireAgentErrorCode(t, err, agentwire.CodeInvalidArgument)
+	if len(f.calls) != 0 {
+		t.Fatalf("an over-cap apply must not reach the mail server: %v", f.calls)
+	}
+}
+
+func TestMailGroupApplyDistribution_RejectsUnsafeOutsideAddress(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	err := applyDistributionWith(t, "sales@example.com", true, []string{}, []string{`x";discard;"@gmail.com`})
+	requireAgentErrorCode(t, err, agentwire.CodeInvalidArgument)
+	if len(f.calls) != 0 {
+		t.Fatalf("an unsafe outside address must be rejected before any mail-server call: %v", f.calls)
+	}
+}
+
 func TestMailGroupApply_UnknownKindRejected(t *testing.T) {
 	_, err := mailGroupApplyHandler(context.Background(),
 		json.RawMessage(`{"email":"sales@example.com","group_kind":"bogus"}`))

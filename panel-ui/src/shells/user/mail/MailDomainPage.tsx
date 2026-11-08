@@ -22,9 +22,12 @@ import { LogsTab } from "./tabs/LogsTab";
 import { StatisticsTab } from "./tabs/StatisticsTab";
 import { CreateMailboxWizardModal } from "./CreateMailboxWizardModal";
 
+// GH #1833: distribution lists have their own tab next to Forwarders; Groups
+// holds the Shared Workspace groups.
 const TAB_KEYS = [
   "mailboxes",
   "forwarders",
+  "lists",
   "groups",
   "shared",
   "resources",
@@ -46,6 +49,7 @@ const MOVED_TABS = new Map<string, TabKey>([
 const TAB_LABELS: Record<TabKey, string> = {
   mailboxes: "Accounts",
   forwarders: "Forwarders",
+  lists: "Distribution lists",
   groups: "Groups",
   shared: "Shared Folders",
   resources: "Shared Resources",
@@ -118,8 +122,10 @@ export const MailDomainPage = () => {
         return <MailboxesTab domainId={domainId} />;
       case "forwarders":
         return <ForwardersTab domainId={domainId} />;
+      case "lists":
+        return <GroupsTab domainId={domainId} kind="distribution" />;
       case "groups":
-        return <GroupsTab domainId={domainId} />;
+        return <GroupsTab domainId={domainId} kind="resource" />;
       case "shared":
         return <SharedFoldersTab domainId={domainId} />;
       case "resources":

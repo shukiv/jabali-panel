@@ -432,7 +432,7 @@ jabali log               access|types
 jabali mail              deliverability|logs|queue|throttle
 jabali mail-cert         disable|enable|reissue|show
 jabali mail-group        add-member|create|delete|list|remove-member|
-                         set-members|set-resources|show
+                         set-external|set-members|set-resources|show
 jabali mailbox           autoresponder|create|delete|forwarder|list|passwd|
                          set-quota|shares
 jabali malware           events|quarantine|scan|scan-status|settings|status|
