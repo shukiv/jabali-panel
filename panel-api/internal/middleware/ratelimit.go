@@ -191,8 +191,11 @@ func (l *RateLimiter) KratosFlows(log *slog.Logger) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
 			return
 		}
+		// Only a password login that brought no session signs in the
+		// account the body names; noted once Kratos has set its session.
+		_, noSession := c.Request.Cookie("ory_kratos_session")
 		c.Next()
-		if flow == "login" && acct.key != "" && setsKratosSession(c.Writer.Header()) {
+		if flow == "login" && acct.byPassword && noSession != nil && setsKratosSession(c.Writer.Header()) {
 			l.noteSignIn(acct.key, ip)
 		}
 	}

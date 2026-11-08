@@ -395,3 +395,59 @@ func TestKratosFlows_PassesAChunkedBodyOn(t *testing.T) {
 		t.Errorf("code %d, next handler read %q, want 200 and %q", w.Code, got, body)
 	}
 }
+
+// Only a password login that brought no session signs in the account the body
+// names. A passkey or second-factor step sets a session for whoever it
+// authenticated, whatever name the body also carries; a login that brought a
+// session may be that session's account; and two methods in one body are
+// two answers. None of them counts as signing in to the named account.
+func TestKratosFlows_OnlyAPasswordLoginSignsInTheNamedAccount(t *testing.T) {
+	mw := kratosLimiter(2).KratosFlows(nil)
+	// Kratos stand-in that signs someone in for anything but a wrong password.
+	signsIn := func(c *gin.Context) {
+		var b struct {
+			Password string `json:"password"`
+		}
+		_ = json.NewDecoder(c.Request.Body).Decode(&b)
+		if b.Password == "wrong" {
+			c.Status(http.StatusBadRequest)
+			return
+		}
+		http.SetCookie(c.Writer, &http.Cookie{Name: "ory_kratos_session", Value: "s", Path: "/"})
+		c.Status(http.StatusOK)
+	}
+	post := func(n int, body, cookie string) int {
+		gin.SetMode(gin.TestMode)
+		r := gin.New()
+		r.Any("/*any", mw, signsIn)
+		req := httptest.NewRequest(http.MethodPost, kratosLogin, strings.NewReader(body))
+		req.Header.Set("Content-Type", jsonType)
+		if cookie != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		req.RemoteAddr = addr("10.0.18", n) + ":54321"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+	tries := []struct{ body, cookie string }{
+		{`{"method":"passkey","identifier":"alice","passkey_login":"{}"}`, ""},
+		{`{"method":"totp","identifier":"alice","totp_code":"123456"}`, ""},
+		{`{"method":"password","identifier":"alice","password":"x"}`, "ory_kratos_session=mallory"},
+		{`{"method":"passkey","Method":"password","identifier":"alice","password":"x"}`, ""},
+	}
+	for i, tr := range tries {
+		if code := post(i+1, tr.body, tr.cookie); code != http.StatusOK {
+			t.Fatalf("%s = %d, want 200", tr.body, code)
+		}
+	}
+	wrong := `{"method":"password","identifier":"alice","password":"wrong"}`
+	if code := post(9, wrong, ""); code != http.StatusTooManyRequests {
+		t.Fatalf("login with alice's budget used up = %d, want 429", code)
+	}
+	for i := range tries {
+		if code := post(i+1, wrong, ""); code != http.StatusTooManyRequests {
+			t.Errorf("address %d after %s = %d, want 429: it didn't sign in to alice", i+1, tries[i].body, code)
+		}
+	}
+}

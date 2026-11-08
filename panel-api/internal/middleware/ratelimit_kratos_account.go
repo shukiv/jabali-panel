@@ -31,9 +31,13 @@ var kratosAccountFields = map[string][]string{
 const signedInFor = 30 * 24 * time.Hour
 
 // kratosAccount is the account a login or recovery POST names: its bucket key,
-// and a short hash of the name for the log.
+// and a short hash of the name for the log. byPassword is a password login,
+// the one method with which Kratos signs in the account the body names; a
+// session from any other (a passkey, a second factor) may be another
+// account's.
 type kratosAccount struct {
 	key, logHash string
+	byPassword   bool
 }
 
 // kratosAccountOf reads the account a login or recovery POST names; the zero
@@ -87,11 +91,19 @@ func kratosAccountOf(c *gin.Context, flow string) (acct kratosAccount, status in
 	if name == nil {
 		return kratosAccount{}, 0, ""
 	}
+	methods, err := topLevelStrings(body, []string{"method"})
+	if err != nil {
+		return kratosAccount{}, http.StatusBadRequest, "invalid_request"
+	}
+	byPassword := len(methods) > 0
+	for _, m := range methods {
+		byPassword = byPassword && m == "password"
+	}
 	// Hashed: the key is held in memory and logged, and the name is
 	// whatever the client sent.
 	sum := sha256.Sum256(name)
 	h := hex.EncodeToString(sum[:16])
-	return kratosAccount{key: flow + ":" + h, logHash: h[:12]}, 0, ""
+	return kratosAccount{key: flow + ":" + h, logHash: h[:12], byPassword: byPassword}, 0, ""
 }
 
 func matchesField(key string, fields []string) bool {
