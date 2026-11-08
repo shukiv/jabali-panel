@@ -7866,7 +7866,8 @@ seed_admin_env() {
   _log "seeding panel admin bootstrap credentials (login username: $(_derive_admin_username "$admin_email"), contact email: $admin_email)"
   cat >>"$ENV_FILE" <<EOF
 
-# Admin bootstrap (consumed once on first boot, safe to leave).
+# Admin bootstrap, read on first boot. The installer removes the password once
+# the admin exists (scrub_bootstrap_passwords).
 JABALI_BOOTSTRAP_ADMIN_EMAIL=$admin_email
 JABALI_BOOTSTRAP_ADMIN_PASSWORD=$admin_pass
 EOF
@@ -7900,12 +7901,15 @@ bootstrap_tenant_env() {
   local tenant_pass="${JABALI_BOOTSTRAP_TENANT_PASSWORD:-}"
   if [[ -z "$tenant_pass" ]]; then
     tenant_pass="$(openssl rand -base64 18)"
-    _log "tenant bootstrap: generated random password for $tenant_email (panel log will print it on first boot)"
+    # Shown once in the final banner, like the admin password.
+    JABALI_TENANT_SEED_GENERATED=1
+    _log "tenant bootstrap: generated random password for $tenant_email (shown at the end of the install)"
   fi
   _log "seeding tenant bootstrap: user=$tenant_email domain=${tenant_domain:-<none>}"
   cat >>"$ENV_FILE" <<EOF
 
-# Tenant bootstrap (GH#120 — consumed once on first boot, safe to leave).
+# Tenant bootstrap (GH#120), read on first boot. The installer removes the
+# password once the tenant exists (scrub_bootstrap_passwords).
 JABALI_BOOTSTRAP_TENANT_EMAIL=$tenant_email
 JABALI_BOOTSTRAP_TENANT_PASSWORD=$tenant_pass
 EOF
@@ -7917,6 +7921,72 @@ EOF
   JABALI_TENANT_SEED_EMAIL="$tenant_email"
   JABALI_TENANT_SEED_PASS="$tenant_pass"
   JABALI_TENANT_SEED_DOMAIN="$tenant_domain"
+}
+
+# _bootstrap_accounts_present [tenant-email] — which bootstrap accounts the
+# panel already has. Prints "admin" when any admin exists, and
+# "tenant <username>" when a user with the tenant email exists. Reads the
+# panel database through the jabali CLI; non-zero when that fails.
+_bootstrap_accounts_present() {
+  local tenant_email="${1:-}" cli users
+  cli="$(command -v jabali || echo /usr/local/bin/jabali)"
+  users="$("$cli" --json user list 2>/dev/null)" || return 1
+  printf '%s' "$users" | python3 -c '
+import json, sys
+users = json.load(sys.stdin).get("users") or []
+tenant = sys.argv[1].strip().lower()
+if any(u.get("is_admin") for u in users):
+    print("admin")
+for u in users:
+    if tenant and (u.get("email") or "").strip().lower() == tenant:
+        print("tenant", u.get("username") or u.get("email"))
+        break
+' "$tenant_email"
+}
+
+# scrub_bootstrap_passwords — remove the one-time bootstrap passwords from
+# panel.env once their accounts exist.
+#
+# The installer generates the admin password before the panel runs and hands
+# it to the panel's first boot through panel.env; that boot creates the admin
+# (panel database and Kratos). No later boot reads it, so it goes: the admin
+# password once any admin exists, the tenant password once a user with the
+# tenant email exists. The email lines stay, so a re-run does not seed again,
+# and with no password the panel's bootstrap does nothing.
+#
+# Runs at the end of a fresh install, after the banner has shown the password,
+# and on every update. Anything unexpected leaves panel.env as it is and the
+# install goes on.
+scrub_bootstrap_passwords() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  grep -qE '^JABALI_BOOTSTRAP_(ADMIN|TENANT)_PASSWORD=' "$ENV_FILE" 2>/dev/null || return 0
+
+  local tenant_email present drop="" tmp
+  tenant_email="$(sed -n 's/^JABALI_BOOTSTRAP_TENANT_EMAIL=//p' "$ENV_FILE" | tail -n 1)"
+  if ! present="$(_bootstrap_accounts_present "$tenant_email" 2>/dev/null)"; then
+    _warn "could not list the panel users; the bootstrap passwords stay in $ENV_FILE for now"
+    return 0
+  fi
+  grep -qx 'admin' <<<"$present" && drop="ADMIN"
+  grep -q '^tenant ' <<<"$present" && drop="${drop:+$drop|}TENANT"
+  if [[ -z "$drop" ]]; then
+    _log "bootstrap accounts not created yet; their passwords stay in $ENV_FILE"
+    return 0
+  fi
+  grep -qE "^JABALI_BOOTSTRAP_(${drop})_PASSWORD=" "$ENV_FILE" || return 0
+
+  # Same directory, so the rename is atomic; mktemp creates it 0600.
+  if tmp="$(mktemp "$(dirname "$ENV_FILE")/.panel.env.XXXXXX")" \
+     && grep -vE "^JABALI_BOOTSTRAP_(${drop})_PASSWORD=" "$ENV_FILE" >"$tmp" \
+     && chmod --reference="$ENV_FILE" "$tmp" \
+     && chown --reference="$ENV_FILE" "$tmp" \
+     && mv -f "$tmp" "$ENV_FILE"; then
+    _ok "removed the one-time bootstrap password(s) from $ENV_FILE"
+  else
+    [[ -n "${tmp:-}" ]] && rm -f "$tmp"
+    _warn "could not rewrite $ENV_FILE; the bootstrap passwords stay for now"
+  fi
+  return 0
 }
 
 start_and_verify_agent() {
@@ -18501,6 +18571,10 @@ EOF
     bound_stalwart_memory || _warn "stalwart memory bounds not applied (non-fatal)"
   fi
 
+  # Boxes installed before the installer removed them still carry the
+  # one-time bootstrap passwords in panel.env; the accounts exist by now.
+  scrub_bootstrap_passwords
+
 }
 
 # apply_dns_forwarder_override switches the host off systemd-resolved
@@ -18927,6 +19001,17 @@ main() {
     printf "  URL:       %s\n" "$panel_url"
     printf "  Username:  %s\n" "$(_derive_admin_username "$JABALI_SEED_EMAIL")"
     printf "  Password:  %s\n" "$JABALI_SEED_PASS"
+    if [[ -n "${JABALI_TENANT_SEED_EMAIL:-}" ]]; then
+      local tenant_login
+      tenant_login="$(_bootstrap_accounts_present "$JABALI_TENANT_SEED_EMAIL" 2>/dev/null | sed -n 's/^tenant //p')" || tenant_login=""
+      echo ""
+      printf "  Tenant:    %s\n" "${tenant_login:-$JABALI_TENANT_SEED_EMAIL}"
+      # A password the operator chose is not echoed back; a generated one is
+      # shown here only, as panel.env loses it below.
+      if [[ -n "${JABALI_TENANT_SEED_GENERATED:-}" ]]; then
+        printf "  Tenant password:  %s\n" "$JABALI_TENANT_SEED_PASS"
+      fi
+    fi
     echo ""
     echo "  > Log in at the URL above using the HOSTNAME, not the server IP."
     echo "    The identity provider is bound to the hostname, so signing in via"
@@ -18938,6 +19023,10 @@ main() {
     echo "============================================================"
     echo ""
   fi
+  # The banner above was the one place the passwords were needed; panel.env
+  # held them only for the panel's first boot, which has created the accounts.
+  scrub_bootstrap_passwords
+  unset JABALI_SEED_PASS JABALI_TENANT_SEED_PASS
 
   # Runtime canary — verify the D-Bus + systemd-transient-unit capabilities
   # cron and backups depend on, so a broken minimal image is caught at
