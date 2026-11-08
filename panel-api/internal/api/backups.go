@@ -265,7 +265,11 @@ func (h *backupHandler) fanOutFullServerAccounts(ctx context.Context, destID, ru
 
 func (h *backupHandler) systemCreate(c *gin.Context) {
 	var req systemBackupRequest
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		// An empty body means the defaults; a malformed one is refused.
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+		return
+	}
 	if !validBackupCompression(req.Compression) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "compression must be off/auto/max"})
 		return
@@ -499,8 +503,8 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 		return
 	}
 	var req createBackupRequest
-	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, errEmptyBody) {
-		// errEmptyBody isn't a real symbol; tolerate empty bodies too.
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		// An empty body means the defaults; a malformed one is refused.
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
 		return
 	}
@@ -1568,8 +1572,6 @@ func stringSet(xs []string) map[string]bool {
 	return m
 }
 
-var errEmptyBody = errors.New("empty body")
-
 func maxInt(a, b int) int {
 	if a > b {
 		return a
@@ -2054,7 +2056,11 @@ func (h *meBackupHandler) create(c *gin.Context) {
 		}
 	}
 	var req createBackupRequest // content/folders/compression + optional destination_id
-	_ = c.ShouldBindJSON(&req)
+	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+		// An empty body means the defaults; a malformed one is refused.
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
+		return
+	}
 	if !validBackupContent(req.Content) || !validBackupCompression(req.Compression) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_option", "detail": "content must be full/files/database/folders; compression must be off/auto/max"})
 		return
