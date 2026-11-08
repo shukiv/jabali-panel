@@ -1016,6 +1016,12 @@ fi
 				"source "+installSh+" && ensure_user_and_dirs"); err != nil {
 				fmt.Printf("  (ensure_user_and_dirs failed: %v — continuing)\n", err)
 			}
+			// The install.sh of an earlier commit hands the checkout's
+			// top directory to the service user, and root's git then
+			// refuses the checkout (GH #2440).
+			if err := run("", "chown", "root:root", repoDir); err != nil {
+				return fmt.Errorf("keep %s root-owned: %w", repoDir, err)
+			}
 			return nil
 		}},
 		{"sync apparmor profiles", func() error {
