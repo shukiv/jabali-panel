@@ -801,7 +801,11 @@ install -m 0644 ` + repoDir + `/install/systemd/jabali-retention-sweep.timer /et
 install -m 0644 ` + repoDir + `/install/systemd/jabali-cache-doctor.service /etc/systemd/system/jabali-cache-doctor.service
 install -m 0644 ` + repoDir + `/install/systemd/jabali-cache-doctor.timer /etc/systemd/system/jabali-cache-doctor.timer
 install -m 0644 ` + repoDir + `/install/systemd/jabali-notify@.service /etc/systemd/system/jabali-notify@.service
-install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
+# Only where Stalwart is installed: a box without the mail module has no binary
+# for the unit to run, and the agent reads /opt/stalwart as "mail is here".
+if [ -d /opt/stalwart ]; then
+  install -m 0644 ` + repoDir + `/install/systemd/jabali-stalwart.service /etc/systemd/system/jabali-stalwart.service
+fi
 # JAB-158 journald cap + JAB-153/157 disk-maintenance timer. install.sh drops
 # these on first install (install_journald_cap + install_disk_maintenance_timer);
 # the update path MUST re-copy them or existing hosts never get the caps.
