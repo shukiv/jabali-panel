@@ -74,11 +74,9 @@ const Details = ({ alias }: { alias: DomainAlias }) => {
             {o.challenge_name}
           </Typography.Text>
         </Typography.Text>
-        <Typography.Text style={{ wordBreak: "break-all" }}>
-          Value:{" "}
-          <Typography.Text code copyable>
-            {o.challenge_value}
-          </Typography.Text>
+        <Typography.Text>Value:</Typography.Text>
+        <Typography.Text code copyable style={{ wordBreak: "break-all" }}>
+          {o.challenge_value}
         </Typography.Text>
         {o.last_result ? (
           <Typography.Text type="secondary">

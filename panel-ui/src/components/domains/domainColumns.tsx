@@ -47,12 +47,13 @@ const renderSecondaryLine = (record: Domain) => {
   const unverified = (a: DomainAliasSummary) => a.ownership_status !== "verified";
   const names = aliases.map((a) => (unverified(a) ? `${a.hostname} (unverified)` : a.hostname));
   const shown = aliases.slice(0, 2);
+  // Wraps rather than ellipsising, so the "+N more" and an unverified mark stay
+  // visible on a narrow column.
   return (
     <Typography.Text
       type="secondary"
-      ellipsis
       title={`Aliases: ${names.join(", ")}${docRoot ? `\nDocument root: ${docRoot}` : ""}`}
-      style={{ display: "block", maxWidth: 280 }}
+      style={{ display: "block", maxWidth: 280, overflowWrap: "anywhere" }}
     >
       {shown.map((a, i) => (
         <span key={a.id}>
