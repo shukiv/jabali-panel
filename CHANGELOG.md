@@ -30,6 +30,26 @@ Add a line by hand when servers do something on their first update with it:
 a data migration, a service restart, a new alert. The entry reaches stable
 servers with the next move.
 
+## 2026-11-08 — hotfix: `a1f345aeb`
+
+`stable` moved from `5e6b69867` to `a1f345aeb`: 4 changes.
+
+No migrations.
+
+- `9ddb12928` Changelog: the November 8 early stable cut ([#2449](https://github.com/shukiv/jabali-panel/pull/2449))
+- `db8178a87` Install: get.jabali-panel.com installs the stable release ([#2450](https://github.com/shukiv/jabali-panel/pull/2450))
+- `52f3b6583` Update: put back a stub nspawn helper so released updates get past sync static assets (GH #2440) ([#2453](https://github.com/shukiv/jabali-panel/pull/2453))
+- `a1f345aeb` Update: keep the checkout's owner, so root's git can read it again (GH #2440) ([#2454](https://github.com/shukiv/jabali-panel/pull/2454))
+
+This hotfix lets `jabali update` finish again. Two changes from November 5 each stopped it:
+
+- An update to any commit from November 5 on, `5e6b69867` included, stopped at "sync static assets". The update step of every release still copied the unused nspawn helper that one of those changes removed.
+- An update run by `5e6b69867`, or any other build from November 5 on, stopped at "build panel-api + panel-agent (parallel)". The update gave the panel's checkout back to the service user, and root's git then refused to read it.
+
+A server stuck at either step kept running its build. Its next `jabali update` goes through.
+
+For a server already on `5e6b69867`, nothing else changes. The other changes are this file and the install commands, which only new servers run. A server coming from `db6d0f4da` gets everything in the `5e6b69867` entry below as well, Stalwart 1.0 included.
+
 ## 2026-11-08 — early cut: `5e6b69867`
 
 `stable` moved from `db6d0f4da` to `5e6b69867`: 94 changes.
