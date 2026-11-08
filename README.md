@@ -100,10 +100,15 @@ Classic / scripted install (no TUI — the proven bash installer directly):
 curl -fsSL https://raw.githubusercontent.com/shukiv/jabali-panel/main/install.sh | sudo bash
 ```
 
+It builds the current stable release from source, with that release's own
+`install.sh`. To build the newest main instead, run it as
+`sudo JABALI_RELEASE_CHANNEL=development bash`.
+
 Both run the same engine. `install.sh` fetches Go 1.27, builds the panel + agent
 binaries, builds the SPA with Vite, writes systemd units, provisions MariaDB +
 Redis + PowerDNS + Stalwart + Bulwark + CrowdSec (per the selected modules), and
-smoke-tests `/health`. Idempotent — re-run to upgrade. Set `JABALI_MODULES=…`
+smoke-tests `/health`. Idempotent — safe to re-run; update an installed server
+with `jabali update`. Set `JABALI_MODULES=…`
 (comma list) or leave the TUI to build it for a minimal / modular install. The
 profiles and module keys are in [Choosing modules](docs/site/installation.md#choosing-modules).
 
