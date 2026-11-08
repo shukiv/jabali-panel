@@ -16,7 +16,10 @@ import (
 func TestAccountRestoreCLI_SetsUpTheAgentClient(t *testing.T) {
 	savedDB, savedCfg, savedAgent := sharedDB, sharedCfg, sharedAgent
 	t.Cleanup(func() { sharedDB, sharedCfg, sharedAgent = savedDB, savedCfg, savedAgent })
-	sharedDB = &gorm.DB{} // set, so initDB doesn't connect; nothing reads it before the check below
+	// Set, so initDB doesn't connect. The command refuses the missing
+	// --destination before it reads the database; a read moved ahead of that
+	// check would hit this empty handle.
+	sharedDB = &gorm.DB{}
 	sharedCfg = &config.Config{}
 	sharedAgent = nil
 
