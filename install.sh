@@ -578,7 +578,32 @@ install_module() {
     ftp)      install_module_ftp ;;
     *)        _die "install.sh --install-module: unknown module '$key' (want: quota|dns|mail|security|ftp)" ;;
   esac
+  _record_module_enabled "$key"
   _ok "module '$key' install complete"
+}
+
+# _record_module_enabled turns the module on in the panel's database after an
+# operator installed it with `install.sh --install-module KEY`, as Server
+# Settings → Modules does: the panel then shows it, and a new domain gets
+# Jabali mail. The panel's own install (the agent sets
+# JABALI_MODULE_INSTALL_BY_PANEL=1) leaves the flag to the panel, which set it
+# and may have cleared it again while the install ran.
+_record_module_enabled() {
+  [[ "${JABALI_MODULE_INSTALL_BY_PANEL:-}" == "1" ]] && return 0
+  local sql
+  case "$1" in
+    dns)      sql='UPDATE server_settings SET dns_enabled = 1 WHERE id = 1' ;;
+    mail)     sql='UPDATE server_settings SET mail_enabled = 1 WHERE id = 1' ;;
+    quota)    sql='UPDATE server_settings SET quota_enabled = 1 WHERE id = 1' ;;
+    security) sql='UPDATE server_settings SET security_enabled = 1 WHERE id = 1' ;;
+    ftp)      sql='UPDATE server_settings SET ftp_enabled = 1 WHERE id = 1' ;;
+    *)        return 0 ;;
+  esac
+  if mariadb jabali_panel -e "$sql" 2>/dev/null; then
+    _ok "module '$1' turned on in the panel"
+  else
+    _warn "module '$1' is installed, but turning it on in the panel failed — turn it on in Server Settings → Modules"
+  fi
 }
 
 # install_module_quota — configure_disk_quota is standalone-safe: it probes the
