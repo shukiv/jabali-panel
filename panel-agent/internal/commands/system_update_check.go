@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/panelrepo"
 )
 
 // systemUpdateCheckResponse is the wire shape for system.update_check.
@@ -38,7 +39,7 @@ type commitSummary struct {
 // git's %x09 (tab) field separator so the format string carries no literal
 // control bytes; %s is a single line so one commit = one output line.
 func recentCommits(ctx context.Context) []commitSummary {
-	out, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "log", "-3",
+	out, err := checkoutGit(ctx, "log", "-3",
 		"--no-merges", "--format=%h%x09%cI%x09%s", "HEAD")
 	if err != nil {
 		return nil
@@ -63,7 +64,7 @@ func recentCommits(ctx context.Context) []commitSummary {
 // returns nil on any git error. Capped at 50 so a very stale host can't
 // produce an unbounded payload.
 func pendingCommits(ctx context.Context, target string) []commitSummary {
-	out, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "log", "-50",
+	out, err := checkoutGit(ctx, "log", "-50",
 		"--no-merges", "--format=%h%x09%cI%x09%s", "HEAD.."+target)
 	if err != nil {
 		return nil
@@ -83,16 +84,21 @@ func pendingCommits(ctx context.Context, target string) []commitSummary {
 }
 
 const (
-	systemRepoDir     = "/opt/jabali-panel"
-	systemServiceUser = "jabali"
+	systemRepoDir     = panelrepo.Dir
+	systemServiceUser = panelrepo.ServiceUser
 )
 
-// runAsServiceUser shells out via `sudo -u jabali` because /opt/jabali-panel
-// is owned by the unprivileged service user; git 2.35+ refuses to operate
-// on a repo owned by a different uid.
-func runAsServiceUser(ctx context.Context, args ...string) ([]byte, error) {
-	full := append([]string{"-u", systemServiceUser, "-H"}, args...)
-	c := execCommandContext(ctx, "sudo", full...)
+// checkoutGit runs git with args against the panel checkout, as the user git
+// accepts there (panelrepo.GitArgv): root on the root-owned checkout of #2399,
+// the service user on an older one. As the service user on a root-owned
+// checkout, every call failed with "detected dubious ownership", and so did
+// the whole check (GH #2467).
+func checkoutGit(ctx context.Context, args ...string) ([]byte, error) {
+	argv, err := panelrepo.GitArgv(systemRepoDir, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", strings.Join(args, " "), err)
+	}
+	c := execCommandContext(ctx, argv[0], argv[1:]...)
 	out, err := c.Output()
 	if err != nil {
 		stderr := ""
@@ -113,7 +119,7 @@ type systemUpdateCheckParams struct {
 func systemUpdateCheckHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 	var p systemUpdateCheckParams
 	_ = json.Unmarshal(raw, &p) // best-effort; empty = development
-	current, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "rev-parse", "HEAD")
+	current, err := checkoutGit(ctx, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
@@ -127,19 +133,19 @@ func systemUpdateCheckHandler(ctx context.Context, raw json.RawMessage) (any, er
 	// 2026-07 cutover), fetches real commits, and surfaces the backlog. No-op
 	// once origin is already GitHub. Best-effort — a get-url/set-url hiccup
 	// must not fail the check.
-	if urlOut, uerr := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "remote", "get-url", "origin"); uerr == nil {
+	if urlOut, uerr := checkoutGit(ctx, "remote", "get-url", "origin"); uerr == nil {
 		u := strings.TrimSpace(string(urlOut))
 		if strings.Contains(u, "codeberg.org") ||
 			strings.Contains(u, "git.linux-hosting.co.il") ||
 			strings.Contains(u, "git.jabali-panel.com") {
-			_, _ = runAsServiceUser(ctx, "git", "-C", systemRepoDir,
+			_, _ = checkoutGit(ctx,
 				"remote", "set-url", "origin", "https://github.com/shukiv/jabali-panel.git")
 		}
 	}
 
 	// Resolve the channel target ref to compare against.
 	// Always fetch main (required). It also keeps RemoteSHA/branch sane.
-	if _, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "fetch", "--quiet", "origin", "main"); err != nil {
+	if _, err := checkoutGit(ctx, "fetch", "--quiet", "origin", "main"); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
 	target := "origin/main"
@@ -148,9 +154,9 @@ func systemUpdateCheckHandler(ctx context.Context, raw json.RawMessage) (any, er
 		// origin until the first `jabali release promote`, and a combined
 		// `fetch main +refs/tags/stable` would hard-fail ("couldn't find
 		// remote ref") and break the whole check (GH #445). Separate + ignore.
-		_, _ = runAsServiceUser(ctx, "git", "-C", systemRepoDir, "fetch", "--quiet", "--force",
+		_, _ = checkoutGit(ctx, "fetch", "--quiet", "--force",
 			"origin", "+refs/tags/stable:refs/tags/stable")
-		if _, terr := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "rev-parse", "--verify", "--quiet", "refs/tags/stable^{commit}"); terr == nil {
+		if _, terr := checkoutGit(ctx, "rev-parse", "--verify", "--quiet", "refs/tags/stable^{commit}"); terr == nil {
 			target = "refs/tags/stable"
 		} else {
 			// No stable build promoted yet: nothing to move to. Compare HEAD
@@ -158,15 +164,15 @@ func systemUpdateCheckHandler(ctx context.Context, raw json.RawMessage) (any, er
 			target = "HEAD"
 		}
 	}
-	remote, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "rev-parse", target)
+	remote, err := checkoutGit(ctx, "rev-parse", target)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
-	behind, err := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "rev-list", "--count", "HEAD.."+target)
+	behind, err := checkoutGit(ctx, "rev-list", "--count", "HEAD.."+target)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	}
-	branchOut, _ := runAsServiceUser(ctx, "git", "-C", systemRepoDir, "rev-parse", "--abbrev-ref", "HEAD")
+	branchOut, _ := checkoutGit(ctx, "rev-parse", "--abbrev-ref", "HEAD")
 
 	return systemUpdateCheckResponse{
 		CurrentSHA:     strings.TrimSpace(string(current)),

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-agent/internal/panelrepo"
 )
 
 // Bundle is the redacted, ready-to-encrypt blob.
@@ -101,8 +103,8 @@ func collect(ctx context.Context) []collectedFile {
 		{"02-uptime.txt", runOrErr(ctx, "uptime")},
 		{"03-free.txt", runOrErr(ctx, "free", "-h")},
 		{"04-df.txt", runOrErr(ctx, "df", "-h")},
-		{"05-git-head.txt", runOrErr(ctx, "sudo", "-u", "jabali", "git", "-C", "/opt/jabali-panel", "rev-parse", "HEAD")},
-		{"06-git-status.txt", runOrErr(ctx, "sudo", "-u", "jabali", "git", "-C", "/opt/jabali-panel", "status", "--porcelain")},
+		{"05-git-head.txt", checkoutGitOrErr(ctx, "rev-parse", "HEAD")},
+		{"06-git-status.txt", checkoutGitOrErr(ctx, "status", "--porcelain")},
 		{"07-ss-tnlp.txt", runOrErr(ctx, "ss", "-tnlp")},
 		{"08-iptables-input.txt", runOrErr(ctx, "iptables", "-L", "INPUT", "-n")},
 		{"09-dpkg-list.txt", runOrErr(ctx, "dpkg-query", "-W", "-f=${Package} ${Version}\n")},
@@ -141,6 +143,17 @@ func runOrErr(ctx context.Context, name string, args ...string) []byte {
 			name, strings.Join(args, " "), err, string(out)))
 	}
 	return out
+}
+
+// checkoutGitOrErr runs git against the panel checkout as the user git
+// accepts there (panelrepo.GitArgv). Run as the service user on the
+// root-owned checkout, it collected "detected dubious ownership" (GH #2467).
+func checkoutGitOrErr(ctx context.Context, args ...string) []byte {
+	argv, err := panelrepo.GitArgv(panelrepo.Dir, args...)
+	if err != nil {
+		return []byte(fmt.Sprintf("ERROR running git %s: %v\n", strings.Join(args, " "), err))
+	}
+	return runOrErr(ctx, argv[0], argv[1:]...)
 }
 
 func catFileOrErr(path string) []byte {

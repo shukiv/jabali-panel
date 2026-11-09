@@ -166,6 +166,7 @@ export const SystemUpdatesPage = () => {
         <StatCards
           state={state.data}
           jabali={jabali.data}
+          jabaliFailed={jabali.isError}
           apt={apt.data}
           checking={jabali.isPending || apt.isPending}
           onCheckNow={onCheckNow}
@@ -209,12 +210,14 @@ type StatCardsProps = {
     jabali_checked_at?: string;
   };
   jabali?: JabaliCheckResult;
+  // The panel version check failed: "up to date" would be a guess (GH #2467).
+  jabaliFailed?: boolean;
   apt?: AptCheckResult;
   checking: boolean;
   onCheckNow: () => void;
 };
 
-function StatCards({ state, jabali, apt, checking, onCheckNow }: StatCardsProps) {
+function StatCards({ state, jabali, jabaliFailed, apt, checking, onCheckNow }: StatCardsProps) {
   const behind = jabali?.behind_count ?? state?.jabali_behind ?? 0;
   const aptTotal = apt?.total ?? state?.apt_total ?? 0;
   const aptSecurity = apt?.security_total ?? state?.apt_security ?? 0;
@@ -250,7 +253,9 @@ function StatCards({ state, jabali, apt, checking, onCheckNow }: StatCardsProps)
               <Text type="secondary">Panel Version</Text>
               <div style={{ margin: "4px 0" }}>
                 <Text strong style={{ fontSize: 20 }}>{sha8(jabali?.current_sha ?? state?.jabali_current_sha)}</Text>{" "}
-                {behind === 0 ? (
+                {jabaliFailed ? (
+                  <Tag color="red">Check failed</Tag>
+                ) : behind === 0 ? (
                   <Tag color="green">Up to date</Tag>
                 ) : (
                   <Tag color="orange">{behind} behind</Tag>
@@ -388,6 +393,8 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
           <span>Jabali Panel</span>
           {check.isPending ? (
             <Tag>checking…</Tag>
+          ) : check.isError ? (
+            <Tag color="red">Check failed</Tag>
           ) : behind === 0 ? (
             <Tag color="green">Up to date</Tag>
           ) : (
@@ -411,11 +418,22 @@ function JabaliPanelCard({ check }: { check: ReturnType<typeof useJabaliCheck> }
           <div>
             <Text strong code style={{ fontSize: 16 }}>{sha8(result?.remote_sha)}</Text>
           </div>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {behind === 0 ? "No updates available" : `${behind} commit${behind === 1 ? "" : "s"} behind`}
-          </Text>
+          {check.isError ? null : (
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              {behind === 0 ? "No updates available" : `${behind} commit${behind === 1 ? "" : "s"} behind`}
+            </Text>
+          )}
         </Col>
       </Row>
+      {check.isError ? (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginTop: 12 }}
+          message="Couldn't check for panel updates"
+          description={`${check.error instanceof Error ? check.error.message : "The check failed"}. The panel log has the details.`}
+        />
+      ) : null}
 
       {running ? (
         <Alert
