@@ -23,33 +23,39 @@ import (
 // Stalwart treats it as an existence check, not an expansion list (verified on
 // Stalwart 0.16.15). So a distribution group is projected as:
 //
-//   - internal_only=false → a native x:MailingList whose recipients are the
-//     member addresses and the list's outside addresses (GH #1833). Stalwart
-//     fans the message out itself.
-//   - internal_only=true  → a Group account whose one active Sieve rejects a
-//     sender outside the domain and otherwise redirects to each member. A
-//     MailingList has no sender restriction, so the Sieve carries both rules.
-//     Stalwart's SieveUserInterpreter allows 20 redirects per message, hence
-//     maxInternalOnlyListMembers.
-//   - no members          → nothing at the address, so senders get a 550 at RCPT
+//   - mailboxes only, internal_only=false → a native x:MailingList whose
+//     recipients are the member addresses. Stalwart fans the message out
+//     itself, with no limit on the recipients.
+//   - outside addresses, or internal_only=true → a Group account whose one
+//     active Sieve redirects to every recipient. A copy redirected from the
+//     list carries the list's address as its envelope sender, so a provider
+//     receiving it checks SPF against this server rather than the original
+//     sender's domain (a MailingList copy keeps the original sender, GH
+//     #1833). For internal_only the Sieve first rejects a sender outside the
+//     domain (a MailingList has no sender restriction); an open list drops a
+//     bounce instead of copying it to every recipient. Stalwart's
+//     SieveUserInterpreter allows 20 redirects per message, hence
+//     maxRedirectListRecipients.
+//   - no recipients → nothing at the address, so senders get a 550 at RCPT
 //     instead of mail that is accepted and silently dropped.
 //
 // A Group account left at the address by the old projection may hold mail the
 // members never received. Before that account is removed (or reused for the
-// internal-only shape), its mail is copied into every member's inbox and only
-// then deleted from the group, so a failed copy never loses mail.
+// redirect shape), its mail is copied into every member's inbox and only then
+// deleted from the group, so a failed copy never loses mail.
 
 const (
 	groupKindDistribution = "distribution"
 	groupKindResource     = "resource"
 
-	// maxInternalOnlyListMembers is the SieveUserInterpreter maxRedirects that
+	// maxRedirectListRecipients is the SieveUserInterpreter maxRedirects that
 	// install.sh and the apply plan set (GH #1795); Stalwart's own default is
 	// 1. It applies to every mailbox's Sieve script, so it is not raised for
-	// lists. An internal-only list delivers with one Sieve redirect per
-	// member, so members past this bound would silently get nothing. The panel
-	// refuses a longer internal-only list; the agent enforces the same bound.
-	maxInternalOnlyListMembers = 20
+	// lists. A redirect list (internal-only, or with outside addresses)
+	// delivers with one Sieve redirect per recipient, so recipients past this
+	// bound would silently get nothing. The panel refuses a longer redirect
+	// list; the agent enforces the same bound.
+	maxRedirectListRecipients = 20
 
 	// groupMailDrainPage is the Email/query page size used while copying a
 	// group account's stored mail to the members.
@@ -76,11 +82,14 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		return nil, err
 	}
 	recipients := unionSorted(members, external)
-	if p.InternalOnly && len(recipients) > maxInternalOnlyListMembers {
+	// GH #1833: a list with outside addresses redirects from the list address,
+	// like an internal-only list.
+	redirect := p.InternalOnly || len(external) > 0
+	if redirect && len(recipients) > maxRedirectListRecipients {
 		return nil, &agentwire.AgentError{
 			Code: agentwire.CodeInvalidArgument,
-			Message: fmt.Sprintf("an internal-only distribution list supports at most %d members, outside addresses included (got %d)",
-				maxInternalOnlyListMembers, len(recipients)),
+			Message: fmt.Sprintf("a distribution list that is internal-only or has outside addresses supports at most %d recipients, mailboxes and outside addresses together (got %d)",
+				maxRedirectListRecipients, len(recipients)),
 		}
 	}
 
@@ -89,21 +98,21 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	unlock := lockMailGroup(email)
 	defer unlock()
 
-	wantList := len(recipients) > 0 && !p.InternalOnly
-	wantGroup := len(recipients) > 0 && p.InternalOnly
+	wantList := len(recipients) > 0 && !redirect
+	wantGroup := len(recipients) > 0 && redirect
 	description := groupDescription(p)
 
 	// 1. A Group account at the address holds mail the members never saw.
-	// Copy it to them first; then remove the account unless the internal-only
+	// Copy it to them first; then remove the account unless the redirect
 	// shape reuses it.
 	gid, err := accountIDByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
 	if gid != "" {
-		// An internal-only list of outside addresses only keeps its account
-		// and has no mailbox to drain into: mail stays in the account (bounces
-		// of its outside deliveries land there) instead of failing every apply.
+		// A redirect list of outside addresses only keeps its account and has
+		// no mailbox to drain into: mail stays in the account instead of
+		// failing every apply.
 		keepUndrained := wantGroup && len(members) == 0
 		if !keepUndrained {
 			if err := drainGroupMailToMembers(ctx, gid, members); err != nil {
@@ -142,13 +151,13 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		return mailGroupApplyResult{Ok: true}, nil
 	}
 
-	// 3. Internal-only: a Group account runs the combined reject + redirect
-	// Sieve. The address is free now (any MailingList was removed above).
+	// 3. Redirect: a Group account runs the redirect Sieve. The address is free
+	// now (any MailingList was removed above).
 	gid, err = ensureGroupInRegistry(ctx, email, description)
 	if err != nil {
 		return nil, err
 	}
-	script := buildInternalOnlyListSieve(email[strings.LastIndex(email, "@")+1:], recipients)
+	script := buildRedirectListSieve(email[strings.LastIndex(email, "@")+1:], recipients, p.InternalOnly)
 	blobID, err := uploadSieveBlob(ctx, gid, script)
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("sieve blob upload: %v", err)}
@@ -156,6 +165,9 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	if blobID == "" {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "sieve blob upload returned no blobId"}
 	}
+	// Every redirect list keeps the script name of the internal-only shape:
+	// the script is found by name, so a list switching between open and
+	// internal-only rewrites its one script in place.
 	if _, err := setActiveNamedScript(ctx, gid, groupInternalOnlyScriptName, blobID); err != nil {
 		return nil, err
 	}
@@ -214,15 +226,24 @@ func groupDescription(p mailGroupApplyParams) string {
 	return strings.TrimSpace(p.Description)
 }
 
-// buildInternalOnlyListSieve renders the one active script of an internal-only
-// distribution list: reject a sender outside the domain (and stop, so no
-// redirect runs), otherwise redirect to every member. redirect cancels the
-// implicit keep, so nothing collects in the group's own inbox.
-func buildInternalOnlyListSieve(domain string, members []string) string {
+// buildRedirectListSieve renders the one active script of a redirect list:
+// redirect to every recipient. redirect cancels the implicit keep, so nothing
+// collects in the group's own inbox. An internal-only list first rejects a
+// sender outside the domain (and stops, so no redirect runs); a bounce has an
+// empty sender, so that rejects it too. An open list drops a bounce instead:
+// copying a delivery failure to every recipient would show them the failed
+// address and the failure.
+func buildRedirectListSieve(domain string, members []string, internalOnly bool) string {
 	var b strings.Builder
-	b.WriteString("require [\"envelope\",\"reject\"];\n")
-	fmt.Fprintf(&b, "if not envelope :domain :is \"from\" \"%s\" {\n", domain)
-	b.WriteString("  reject \"550 5.7.1 This address only accepts mail from within the domain.\";\n")
+	if internalOnly {
+		b.WriteString("require [\"envelope\",\"reject\"];\n")
+		fmt.Fprintf(&b, "if not envelope :domain :is \"from\" \"%s\" {\n", domain)
+		b.WriteString("  reject \"550 5.7.1 This address only accepts mail from within the domain.\";\n")
+	} else {
+		b.WriteString("require [\"envelope\"];\n")
+		b.WriteString("if envelope :is \"from\" \"\" {\n")
+		b.WriteString("  discard;\n")
+	}
 	b.WriteString("  stop;\n")
 	b.WriteString("}\n")
 	for _, m := range members {
