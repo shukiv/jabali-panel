@@ -59,7 +59,7 @@ function serve(detail: { external_members?: string[]; external_member_cap?: numb
           ...g,
           members: [{ mailbox_id: "mb1", email: "info@one.test" }],
           external_members: detail.external_members ?? [],
-          external_member_cap: detail.external_member_cap ?? 25,
+          external_member_cap: detail.external_member_cap ?? 20,
         },
       });
     }
@@ -115,8 +115,25 @@ describe("MembersModal outside addresses (GH #1833)", () => {
     render(<MembersModal group={LIST} onClose={() => {}} />, { wrapper });
 
     expect(await screen.findByText("partner@gmail.com")).toBeTruthy();
-    expect(screen.getByText("1 of 10 outside addresses")).toBeTruthy();
+    expect(screen.getByText("1 of 10 outside addresses · 2 of 20 recipients in all")).toBeTruthy();
     expect(screen.getByText("Mail from outside senders can land in spam")).toBeTruthy();
+  });
+
+  // A list of mailboxes only, open to any sender, has no recipient limit.
+  it("shows no recipient limit for a list of mailboxes only", async () => {
+    serve();
+    render(<MembersModal group={LIST} onClose={() => {}} />, { wrapper });
+
+    expect(await screen.findByText("0 of 20 outside addresses")).toBeTruthy();
+    expect(screen.queryByText(/recipients in all/)).toBeNull();
+  });
+
+  it("shows the recipient limit for an internal-only list", async () => {
+    const internal = { ...LIST, internal_only: true };
+    serve({ group: internal });
+    render(<MembersModal group={internal} onClose={() => {}} />, { wrapper });
+
+    expect(await screen.findByText("0 of 20 outside addresses · 1 of 20 recipients in all")).toBeTruthy();
   });
 
   it("saves a new outside address with the list", async () => {
@@ -145,7 +162,7 @@ describe("MembersModal outside addresses (GH #1833)", () => {
 
     typeOutside("typed@gmail.com");
     fireEvent.keyDown(outsideInput(), { key: "Enter", code: "Enter", keyCode: 13, which: 13 });
-    expect(await screen.findByText("1 of 25 outside addresses")).toBeTruthy();
+    expect(await screen.findByText("1 of 20 outside addresses · 2 of 20 recipients in all")).toBeTruthy();
   });
 
   it("does not save a typo", async () => {

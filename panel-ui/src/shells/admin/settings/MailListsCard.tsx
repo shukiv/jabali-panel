@@ -3,13 +3,16 @@ import { Button, Card, InputNumber, Space, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 
 import { apiClient } from "../../../apiClient";
+import { MAX_REDIRECT_RECIPIENTS } from "../../../hooks/useMailGroups";
 
-// The panel refuses a cap above this (mailgroupops.MaxExternalMemberCap).
-export const MAX_MAIL_LIST_EXTERNAL_MEMBER_CAP = 1000;
+// The panel refuses a cap above this (mailgroupops.MaxExternalMemberCap): each
+// outside address is one redirect from the list.
+export const MAX_MAIL_LIST_EXTERNAL_MEMBER_CAP = MAX_REDIRECT_RECIPIENTS;
 
 // MailListsCard — Server Settings → Email: how many addresses outside this
-// server one distribution list may deliver to (GH #1833). Default 25; 0 lets
-// no list hold any. Lowering it leaves the addresses lists already hold.
+// server one distribution list may deliver to (GH #1833). Default 20, the
+// most; 0 lets no list hold any. Lowering it leaves the addresses lists
+// already hold.
 export const MailListsCard = () => {
   const [cap, setCap] = useState<number | null>(null);
   const [saved, setSaved] = useState<number | null>(null);
@@ -21,7 +24,7 @@ export const MailListsCard = () => {
     (async () => {
       try {
         const resp = await apiClient.get<{ mail_list_external_member_cap?: number }>("/admin/settings");
-        const v = resp.data.mail_list_external_member_cap ?? 25;
+        const v = resp.data.mail_list_external_member_cap ?? MAX_MAIL_LIST_EXTERNAL_MEMBER_CAP;
         if (!cancelled) {
           setCap(v);
           setSaved(v);
@@ -60,10 +63,12 @@ export const MailListsCard = () => {
     <Card title="Distribution lists" style={{ marginBottom: 16 }} loading={loading}>
       <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
         A distribution list can deliver to addresses on other mail servers, a
-        Gmail address for example, next to its member mailboxes. Set the most
-        outside addresses one list may hold. 0 allows none. Lowering the limit
-        keeps the addresses lists already hold; a list over it can remove
-        addresses but not add new ones.
+        Gmail address for example, next to its member mailboxes. Such a list
+        sends each copy from its own address, and the mail server sends at most
+        20 per message, so it can have at most 20 recipients, member mailboxes
+        included. Set the most outside addresses one list may hold, from 0
+        (none) to 20. Lowering the limit keeps the addresses lists already
+        hold; a list over it can remove addresses but not add new ones.
       </Typography.Paragraph>
       <Space wrap>
         <InputNumber

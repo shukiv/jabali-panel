@@ -45,6 +45,7 @@ import {
   useDeleteMailGroup,
   useSetMailGroupMembers,
   useSetMailGroupExternalMembers,
+  MAX_REDIRECT_RECIPIENTS,
   type MailGroup,
 } from "../../../../hooks/useMailGroups";
 
@@ -394,7 +395,7 @@ export function GroupDrawer({
           label="Internal delivery only"
           name="internal_only"
           valuePropName="checked"
-          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348). An internal-only distribution list can have at most 20 members, outside addresses included, and still delivers to its outside addresses."
+          tooltip="When on, the group address accepts mail only from senders in its own domain; external senders are rejected (GH #348). A distribution list that is internal-only or has outside addresses can have at most 20 recipients, member mailboxes and outside addresses together; it still delivers to its outside addresses."
         >
           <Switch />
         </Form.Item>
@@ -433,6 +434,14 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
   const outsideCap = detail?.external_member_cap ?? 0;
   const badOutside = outsideValue.filter((a) => !LOOKS_LIKE_ADDRESS.test(a.trim()));
   const overCap = outsideValue.length > outsideCap && outsideValue.some((a) => !savedOutside.includes(a.trim().toLowerCase()));
+  // A list that is internal-only or has outside addresses delivers by one
+  // redirect per recipient, so mailboxes and outside addresses share a limit.
+  const redirect = isList && ((detail?.internal_only ?? group.internal_only) || outsideValue.length > 0);
+  const recipients = value.length + outsideValue.length;
+  const overRecipients = redirect && recipients > MAX_REDIRECT_RECIPIENTS;
+  const outsideCount =
+    `${outsideValue.length} of ${outsideCap} outside addresses` +
+    (redirect ? ` · ${recipients} of ${MAX_REDIRECT_RECIPIENTS} recipients in all` : "");
 
   const submit = async () => {
     if (badOutside.length > 0) {
@@ -445,8 +454,9 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
     const saveOutside = () =>
       setExternal.mutateAsync({ id: group.id, domainId: group.domain_id, addresses: outsideValue });
     try {
-      // An internal-only list counts both kinds toward one limit: save the set
-      // that shrinks first, so a swap between them is not refused half-way.
+      // A list that is internal-only or has outside addresses counts both
+      // kinds toward one limit: save the set that shrinks first, so a swap
+      // between them is not refused half-way.
       if (outsideChanged && outsideValue.length < savedOutside.length) {
         await saveOutside();
         await saveMailboxes();
@@ -518,8 +528,8 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
                     suffixIcon={null}
                     status={badOutside.length > 0 || overCap ? "error" : undefined}
                   />
-                  <Typography.Text type={overCap ? "danger" : "secondary"} style={{ fontSize: 12 }}>
-                    {`${outsideValue.length} of ${outsideCap} outside addresses`}
+                  <Typography.Text type={overCap || overRecipients ? "danger" : "secondary"} style={{ fontSize: 12 }}>
+                    {outsideCount}
                     {badOutside.length > 0 && ` · not an email address: ${badOutside.join(", ")}`}
                   </Typography.Text>
                   {outsideValue.length > 0 && (
@@ -528,7 +538,7 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
                       showIcon
                       style={{ marginTop: 8 }}
                       message="Mail from outside senders can land in spam"
-                      description="When someone outside your domain writes to the list, the list passes the message on with the sender's address unchanged. Gmail, Outlook and other providers can file it as spam or refuse it, because the sender's domain does not list this server as one of its own. Mail that members of your domain send to the list is not affected."
+                      description="The list sends each copy from its own address, so the receiving provider checks this server rather than the sender's. A message from someone outside your domain still shows that person as the sender, and Gmail, Outlook and other providers can file it as spam when the sender's domain asks them to be strict. A delivery failure comes back to the list and is dropped, not passed on to the members. With outside addresses the list can have at most 20 recipients, member mailboxes included."
                     />
                   )}
                 </>

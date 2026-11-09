@@ -28,13 +28,21 @@ describe("MailListsCard", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("shows the stored cap", async () => {
-    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 25 } });
+    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 12 } });
     render(<MailListsCard />);
-    expect(await screen.findByLabelText("Outside addresses per list")).toHaveValue("25");
+    expect(await screen.findByLabelText("Outside addresses per list")).toHaveValue("12");
+  });
+
+  // Each outside address is one redirect from the list, and the mail server
+  // allows 20 per message.
+  it("stops the cap at the redirect limit", async () => {
+    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 12 } });
+    render(<MailListsCard />);
+    expect(await screen.findByLabelText("Outside addresses per list")).toHaveAttribute("aria-valuemax", "20");
   });
 
   it("saves a new cap, 0 included", async () => {
-    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 25 } });
+    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 12 } });
     mockPatch.mockResolvedValue({ data: {} });
     render(<MailListsCard />);
     await screen.findByLabelText("Outside addresses per list");
@@ -48,20 +56,20 @@ describe("MailListsCard", () => {
   });
 
   it("keeps Save off until the cap changes", async () => {
-    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 25 } });
+    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 12 } });
     render(<MailListsCard />);
     await screen.findByLabelText("Outside addresses per list");
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
   it("shows the server's reason when it refuses", async () => {
-    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 25 } });
-    mockPatch.mockRejectedValue({ response: { data: { message: "must be between 0 and 1000" } } });
+    mockGet.mockResolvedValue({ data: { mail_list_external_member_cap: 12 } });
+    mockPatch.mockRejectedValue({ response: { data: { message: "must be between 0 and 20" } } });
     render(<MailListsCard />);
     await screen.findByLabelText("Outside addresses per list");
 
-    setCap("40");
+    setCap("15");
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Not saved: must be between 0 and 1000"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Not saved: must be between 0 and 20"));
   });
 });
