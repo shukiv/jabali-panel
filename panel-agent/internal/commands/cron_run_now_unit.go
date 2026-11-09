@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -79,16 +80,27 @@ type cronUnitScope struct {
 	logMatch func(jobID string) []string
 }
 
-// userCronScope reaches a tenant's unit through the user's own manager, the
-// same transport cron.apply and cron.status use (systemctlUserExec explains
-// why the bus env is spelled out).
+// cronSetpriv is setpriv(1) from util-linux. It switches to the tenant with
+// no PAM session and no log line: sudo -u logged three journal lines (PAM
+// session opened and closed, and the command) for every status read, and the
+// reconciler reads every tenant job's status each pass. Overridable in tests.
+var cronSetpriv = "/usr/bin/setpriv"
+
+// cronUserPath is the PATH a tenant's systemctl runs with: sudo's
+// secure_path, which it had before.
+const cronUserPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// userCronScope reaches a tenant's unit through the user's own manager, as
+// the tenant (uid, gid) with the bus env spelled out (systemctlUserExec
+// explains why). It switches with setpriv, so the reconciler's status reads
+// log nothing; sudo -u, which cron.apply still uses, where setpriv is missing.
 //
 // The job's journal is read as root, limited to the tenant's entries by the
 // journal's trusted _UID field (GH #2120): `journalctl --user` as the tenant
 // sees only the tenant's own journal file, and journald splits one out per
 // user only when the journal is stored persistently, so with a volatile
 // journal the output was lost.
-func userCronScope(username, uid string) cronUnitScope {
+func userCronScope(username, uid, gid string) cronUnitScope {
 	runtimeDir := "/run/user/" + uid
 	owner := "_UID=" + uid
 	// The job's own lines: those journald tied to the unit, OR those tagged
@@ -110,15 +122,21 @@ func userCronScope(username, uid string) cronUnitScope {
 			owner, "SYSLOG_IDENTIFIER=" + cronSyslogIdentifier(jobID),
 		}
 	}
+	bus := []string{
+		"XDG_RUNTIME_DIR=" + runtimeDir,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
+		"systemctl", "--user",
+	}
 	return cronUnitScope{
 		systemctl: func(args ...string) (string, []string) {
-			return "sudo", append([]string{
-				"-u", username,
-				"env",
-				"XDG_RUNTIME_DIR=" + runtimeDir,
-				"DBUS_SESSION_BUS_ADDRESS=unix:path=" + runtimeDir + "/bus",
-				"systemctl", "--user",
-			}, args...)
+			if _, err := os.Stat(cronSetpriv); err == nil {
+				// env -i: the tenant's systemctl gets only these variables,
+				// as sudo's env_reset gave it only the bus ones.
+				argv := []string{"--reuid=" + uid, "--regid=" + gid, "--init-groups", "--",
+					"env", "-i", "PATH=" + cronUserPath}
+				return cronSetpriv, append(append(argv, bus...), args...)
+			}
+			return "sudo", append(append([]string{"-u", username, "env"}, bus...), args...)
 		},
 		outputMatch: output,
 		// Plus the user manager's lines about the unit, which carry USER_UNIT.
