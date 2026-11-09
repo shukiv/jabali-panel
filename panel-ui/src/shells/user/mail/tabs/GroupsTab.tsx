@@ -538,7 +538,7 @@ export function MembersModal({ group, onClose }: { group: MailGroup; onClose: ()
                       showIcon
                       style={{ marginTop: 8 }}
                       message="Mail from outside senders can land in spam"
-                      description="The list sends each copy from its own address, so the receiving provider checks this server rather than the sender's. A message from someone outside your domain still shows that person as the sender, and Gmail, Outlook and other providers can file it as spam when the sender's domain asks them to be strict. A delivery failure comes back to the list and is dropped, not passed on to the members. With outside addresses the list can have at most 20 recipients, member mailboxes included."
+                      description="The list sends each copy from its own address, so the receiving provider checks this server rather than the sender's. A message from someone outside your domain still shows that person as the sender, and Gmail, Outlook and other providers can file it as spam when the sender's domain asks them to be strict. A failed delivery to an outside address is not reported back to the sender or the members. With outside addresses the list can have at most 20 recipients, member mailboxes included."
                     />
                   )}
                 </>
