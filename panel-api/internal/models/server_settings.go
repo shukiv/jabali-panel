@@ -520,8 +520,9 @@ type ServerSettings struct {
 	PostgresMaxConnectionsPerUser uint16 `gorm:"column:postgres_max_connections_per_user;type:smallint unsigned;not null;default:25" json:"postgres_max_connections_per_user"`
 
 	// MailListExternalMemberCap (GH #1833) is the most addresses outside this
-	// server one distribution list may hold. 0 allows none.
-	MailListExternalMemberCap uint16 `gorm:"column:mail_list_external_member_cap;type:smallint unsigned;not null;default:25" json:"mail_list_external_member_cap"`
+	// server one distribution list may hold. 0 allows none; at most 20, the
+	// mail server's redirects per message (mailgroupops.MaxExternalMemberCap).
+	MailListExternalMemberCap uint16 `gorm:"column:mail_list_external_member_cap;type:smallint unsigned;not null;default:20" json:"mail_list_external_member_cap"`
 
 	// SSHLoginIgnoreAccounts — GH #1310-adjacent ("drfeed spam"). A
 	// newline/comma-separated list of SSH usernames whose successful logins are

@@ -29,28 +29,31 @@ func patchMailListCap(t *testing.T, repo *mockServerSettingsRepo, v any) *httpte
 
 func TestServerSettingsPatch_MailListExternalMemberCap(t *testing.T) {
 	t.Parallel()
-	for _, v := range []int{0, 10, 1000} {
-		repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 25}}
+	for _, v := range []int{0, 10, 20} {
+		repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 5}}
 		rec := patchMailListCap(t, repo, v)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.Equal(t, uint16(v), repo.getResult.MailListExternalMemberCap, "cap %d must be saved", v)
 	}
 }
 
+// Each outside address is one Sieve redirect from the list, and the mail
+// server allows 20 per message (GH #1833): the cap stops there.
 func TestServerSettingsPatch_MailListExternalMemberCapOverMaxRefused(t *testing.T) {
 	t.Parallel()
-	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 25}}
-	rec := patchMailListCap(t, repo, 1001)
+	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 5}}
+	rec := patchMailListCap(t, repo, 21)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "invalid_mail_list_external_member_cap")
-	require.Equal(t, uint16(25), repo.getResult.MailListExternalMemberCap, "a refused cap must not be saved")
+	require.Contains(t, rec.Body.String(), "between 0 and 20")
+	require.Equal(t, uint16(5), repo.getResult.MailListExternalMemberCap, "a refused cap must not be saved")
 }
 
 // A negative number does not fit the unsigned field: the bind refuses it.
 func TestServerSettingsPatch_MailListExternalMemberCapNegativeRefused(t *testing.T) {
 	t.Parallel()
-	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 25}}
+	repo := &mockServerSettingsRepo{getResult: &models.ServerSettings{ID: 1, SSHPort: 22, MailListExternalMemberCap: 5}}
 	rec := patchMailListCap(t, repo, -1)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	require.Equal(t, uint16(25), repo.getResult.MailListExternalMemberCap)
+	require.Equal(t, uint16(5), repo.getResult.MailListExternalMemberCap)
 }

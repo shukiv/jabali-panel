@@ -438,8 +438,9 @@ func (h *mailGroupHandler) update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	// GH #1818: turning internal-only on for a distribution list switches it to
-	// Sieve redirects, which cap the member count. Refuse before any write.
+	// GH #1818: turning internal-only on makes a distribution list deliver by
+	// Sieve redirects (one with outside addresses already does), which cap the
+	// recipient count. Refuse before any write.
 	if req.InternalOnly != nil && *req.InternalOnly && !g.InternalOnly {
 		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
 		if err != nil {
@@ -625,8 +626,9 @@ func (h *mailGroupHandler) setExternalMembers(c *gin.Context) {
 			}
 			c.JSON(http.StatusUnprocessableEntity, body)
 		case mailgroupops.IsMemberCapErr(err):
-			// An internal-only list redirects to every recipient through
-			// Sieve, which caps mailboxes and outside addresses together.
+			// A list with outside addresses (or internal-only) redirects to
+			// every recipient through Sieve, which caps mailboxes and outside
+			// addresses together.
 			respondMemberCap(c, err)
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -663,7 +665,9 @@ func (h *mailGroupHandler) addMember(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "member_wrong_domain"})
 		return
 	}
-	if g.GroupKind == mailgroupops.KindDistribution && g.InternalOnly {
+	// A distribution list delivering by redirect (internal-only, or with
+	// outside addresses) has a recipient limit; checkMemberCap decides.
+	if g.GroupKind == mailgroupops.KindDistribution {
 		memberIDs, err := h.cfg.Groups.ListMemberMailboxIDs(ctx, g.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
@@ -792,8 +796,8 @@ func respondMemberCap(c *gin.Context, err error) {
 }
 
 // checkMemberCap refuses a change that leaves g with mailboxCount member
-// mailboxes over the internal-only limit, outside addresses included. It
-// writes the response and returns false when the change must stop.
+// mailboxes over the redirect limit, outside addresses included. It writes
+// the response and returns false when the change must stop.
 func (h *mailGroupHandler) checkMemberCap(c *gin.Context, g *models.MailGroup, internalOnly bool, mailboxCount int) bool {
 	err := mailgroupops.CheckMailboxMemberCap(c.Request.Context(), h.cfg.Groups, g, internalOnly, mailboxCount)
 	switch {

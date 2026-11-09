@@ -2061,8 +2061,10 @@ paths:
         delivers to, next to its member mailboxes (GH #1833). An address on
         the list's own domain is refused (add the mailbox as a member). The
         administrator caps how many one list may hold
-        (mail_list_external_member_cap in the server settings); an
-        internal-only list counts them toward its 20-member limit.
+        (mail_list_external_member_cap in the server settings, at most 20).
+        A list with outside addresses delivers by Sieve redirect from the
+        list address, so its member mailboxes and outside addresses together
+        are limited to 20 recipients (too_many_members).
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: gid, required: true, schema: { type: string } } ]
       requestBody:
