@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -10,12 +11,15 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"log/slog"
 	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/panelcert"
 )
 
 // seamHSTSSnippet points panelHSTSSnippetPath at a temp file pre-seeded with the
@@ -328,6 +332,61 @@ func TestPanelSelfSign_NoChurnWhenCovered(t *testing.T) {
 }
 
 // TestPanelSelfSign_RegeneratesWhenMissing: no cert on disk → generate one.
+// The agent logs a rewritten cert BEFORE it restarts the panel: when the panel
+// dispatched the verb, the restart ends the process waiting to log the reply,
+// so this is the only record of when, why and which cert.
+func TestPanelSelfSign_LogsTheNewCertBeforeTheRestart(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		existing   bool
+		newKey     bool
+		wantReason string
+	}{
+		{name: "missing cert", wantReason: "cert missing or unreadable"},
+		{name: "new key for a current cert", existing: true, newKey: true, wantReason: "new key requested"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			certPath, _, _ := setupPanelSelfSign(t)
+			seamHSTSSnippet(t)
+			if tc.existing {
+				if _, err := callPanelSelfSign(t, "host.example.com", ""); err != nil {
+					t.Fatalf("seed cert: %v", err)
+				}
+			}
+			var buf bytes.Buffer
+			old := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+			t.Cleanup(func() { slog.SetDefault(old) })
+			var atRestart string
+			panelSelfSignReloadFn = func(context.Context) { atRestart = buf.String() }
+
+			params, _ := json.Marshal(sslPanelSelfSignParams{Hostname: "host.example.com", NewKey: tc.newKey})
+			if _, err := sslPanelSelfSignHandler(context.Background(), params); err != nil {
+				t.Fatalf("handler err: %v", err)
+			}
+			data, err := os.ReadFile(certPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			d, err := panelcert.Describe(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{
+				"panel self-signed cert written",
+				"hostname=host.example.com",
+				`reason="` + tc.wantReason + `"`,
+				d.FingerprintSHA256,
+				"not_after=" + d.NotAfter.UTC().Format(time.RFC3339),
+			} {
+				if !strings.Contains(atRestart, want) {
+					t.Errorf("log at the restart lacks %q:\n%s", want, atRestart)
+				}
+			}
+		})
+	}
+}
+
 func TestPanelSelfSign_RegeneratesWhenMissing(t *testing.T) {
 	certPath, _, reloaded := setupPanelSelfSign(t)
 	resp, err := callPanelSelfSign(t, "fresh.example.com", "")

@@ -191,10 +191,17 @@ func (p *PanelCertificate) QueueIssue(now time.Time) {
 // self_signed otherwise. Pending, retry and failed are Let's Encrypt states
 // that don't apply there, and neither does their error. changed reports
 // whether row differs from it.
+//
+// A current self-signed cert's expiry is on the row too, so a cert rewritten
+// by any path (`jabali panel-cert new-key`, the admin's Regenerate, the
+// reconciler) changes the row at the next pass: the new cert expires at
+// another time. A cert about to be regenerated leaves the expiry alone.
 func SelfSignedState(row *PanelCertificate, v panelcert.Verdict) (status string, expiresAt *time.Time, changed bool) {
 	status = PanelCertStatusSelfSigned
 	if v.Action == panelcert.KeepCA {
 		status = PanelCertStatusIssued
+	}
+	if v.Action == panelcert.KeepCA || (v.Action == panelcert.UpToDate && !v.NotAfter.IsZero()) {
 		exp := v.NotAfter.UTC()
 		expiresAt = &exp
 	}

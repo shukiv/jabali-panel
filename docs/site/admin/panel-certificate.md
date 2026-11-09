@@ -47,6 +47,8 @@ On the hostname row, the button is **Regenerate self-signed** instead of **Issue
 
 A Let's Encrypt certificate that is still valid when you turn Let's Encrypt off is kept until it expires. The panel then replaces it with a self-signed one.
 
+Each new self-signed certificate is recorded, whichever way it was written (this button, a hostname change, an expiry, or `jabali panel-cert new-key`). The agent's log has the hostname, the reason, and the new certificate's SHA-256 fingerprint and expiry: `journalctl -u jabali-agent | grep "panel self-signed cert written"`. `jabali panel-cert status` shows the certificate's expiry, and shows the new one from the panel's next pass after it is written.
+
 The Panel SSL tab then shows no Let's Encrypt state: no routability, no last error and no next retry. If the panel hostname doesn't resolve publicly to this server, the **Use Let's Encrypt for the panel** switch can't be turned on, and a line under it gives the reason. In earlier releases the tab showed "Let's Encrypt is unavailable for the panel" and "Not routable" in this mode, although the self-signed certificate was in use.
 
 Behind a Cloudflare proxy, set Cloudflare's SSL/TLS mode to **Full**: Full (strict) doesn't accept a self-signed certificate.

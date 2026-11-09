@@ -392,6 +392,9 @@ func (h *adminPanelCertHandler) selfSign(c *gin.Context, settings *models.Server
 		})
 	default:
 		agentClient, ip := h.cfg.Agent, settings.PublicIPv4
+		// Logged before the dispatch: the verb restarts jabali-panel, which
+		// ends this process before the reply. The agent logs the cert.
+		slog.Info("panel self-signed cert regen: requested by the admin, the panel restarts to serve it", "hostname", host, "reason", v.Reason)
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()

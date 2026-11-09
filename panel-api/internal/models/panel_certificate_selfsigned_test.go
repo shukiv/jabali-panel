@@ -13,6 +13,7 @@ func TestSelfSignedState(t *testing.T) {
 	other := exp.Add(-24 * time.Hour)
 	retry := time.Now()
 	upToDate := panelcert.Verdict{Action: panelcert.UpToDate}
+	selfSigned := panelcert.Verdict{Action: panelcert.UpToDate, NotAfter: exp}
 	keepCA := panelcert.Verdict{Action: panelcert.KeepCA, NotAfter: exp}
 	regen := panelcert.Verdict{Action: panelcert.Regenerate}
 
@@ -34,6 +35,12 @@ func TestSelfSignedState(t *testing.T) {
 		{name: "a kept CA cert with another expiry", row: PanelCertificate{Status: PanelCertStatusIssued, ExpiresAt: &other}, v: keepCA, wantStatus: PanelCertStatusIssued, wantExpiry: true, wantChanged: true},
 		{name: "a kept CA cert with no expiry", row: PanelCertificate{Status: PanelCertStatusIssued}, v: keepCA, wantStatus: PanelCertStatusIssued, wantExpiry: true, wantChanged: true},
 		{name: "a kept CA cert shown as self-signed", row: PanelCertificate{Status: PanelCertStatusSelfSigned, ExpiresAt: &exp}, v: keepCA, wantStatus: PanelCertStatusIssued, wantExpiry: true, wantChanged: true},
+		// A self-signed cert's expiry is on the row too, so a cert written
+		// by any path (`jabali panel-cert new-key`, the admin's Regenerate,
+		// the reconciler) changes the row on the next pass.
+		{name: "a self-signed cert already shown", row: PanelCertificate{Status: PanelCertStatusSelfSigned, ExpiresAt: &exp}, v: selfSigned, wantStatus: PanelCertStatusSelfSigned, wantExpiry: true},
+		{name: "a regenerated self-signed cert", row: PanelCertificate{Status: PanelCertStatusSelfSigned, ExpiresAt: &other}, v: selfSigned, wantStatus: PanelCertStatusSelfSigned, wantExpiry: true, wantChanged: true},
+		{name: "a self-signed cert with no expiry yet", row: PanelCertificate{Status: PanelCertStatusSelfSigned}, v: selfSigned, wantStatus: PanelCertStatusSelfSigned, wantExpiry: true, wantChanged: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			status, expiresAt, changed := SelfSignedState(&tc.row, tc.v)
