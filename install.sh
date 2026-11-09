@@ -11182,8 +11182,15 @@ install_crowdsec_appsec() {
   # "unchanged" when nothing changed); `_cs_dirty=1` triggers the
   # crowdsec reload at the end of this function (PR #55).
   install -d -m 0755 /etc/crowdsec/appsec-configs
-  local _appsec_out
-  if _appsec_out="$(/usr/local/bin/jabali-panel appsec render-config --reconcile 2>&1)"; then
+  # On a fresh install this first pass runs before build_backend, so there is
+  # no binary to render with yet; main() runs this function again after the
+  # build, and that pass renders the config and brings the listener up. Say
+  # so instead of warning three times about an expected state.
+  local _appsec_out _appsec_deferred=0
+  if [[ ! -x /usr/local/bin/jabali-panel ]]; then
+    _appsec_deferred=1
+    _log "jabali-appsec config: deferred until the panel binary is built"
+  elif _appsec_out="$(/usr/local/bin/jabali-panel appsec render-config --reconcile 2>&1)"; then
     _log "jabali-appsec config: ${_appsec_out}"
     if [[ "$_appsec_out" != "unchanged" ]]; then
       _cs_dirty=1
@@ -11232,7 +11239,11 @@ install_crowdsec_appsec() {
   if [[ -f "$acquis_file" ]] && grep -qE '^appsec_configs:' "$acquis_file"; then
     _log "AppSec acquis is in bot-detection composition mode (agent-managed) — leaving it intact"
   elif [[ ! -f "$_appsec_cfg" ]]; then
-    _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
+    if [[ "$_appsec_deferred" -eq 1 ]]; then
+      _log "AppSec acquis: waits for the config (written after the panel binary is built)"
+    else
+      _warn "appsec config not present yet (binary not built — fresh install); skipping AppSec acquis. 'jabali update' will wire it after the build."
+    fi
     rm -f "$acquis_file"   # drop any stale singular acquis from a prior partial run
   else
   local desired_acquis=$'# Managed by jabali install.sh — M27 AppSec geoblock.\n# TCP loopback listener. crowdsec-nginx-bouncer dials this via\n# APPSEC_URL=http://127.0.0.1:7422. Not exposed outside the host.\nappsec_config: crowdsecurity/jabali-appsec\nlabels:\n  type: appsec\nlisten_addr: 127.0.0.1:7422\nsource: appsec\n'
@@ -11410,6 +11421,8 @@ install_crowdsec_appsec() {
   done
   if ss -lnt 'sport = :7422' 2>/dev/null | grep -q 127.0.0.1; then
     _ok "CrowdSec AppSec live at 127.0.0.1:7422"
+  elif [[ "$_appsec_deferred" -eq 1 ]]; then
+    _log "CrowdSec AppSec listener starts once the config is written (after the panel binary is built)"
   else
     _warn "CrowdSec AppSec listener did not appear on :7422 — check journalctl -u crowdsec"
   fi
