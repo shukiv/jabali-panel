@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"os"
@@ -165,7 +166,8 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 	if err != nil {
 		data = nil
 	}
-	switch v := panelcert.Check(data, p.Hostname, time.Now()); {
+	v := panelcert.Check(data, p.Hostname, time.Now())
+	switch {
 	case v.Action == panelcert.KeepCA:
 		return sslPanelSelfSignResponse{
 			Regenerated: false,
@@ -202,6 +204,10 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 	// transport pin over an untrusted cert (hard block, no exception).
 	writePanelHSTSSnippetOff()
 
+	// Logged here, before the restart: when the panel dispatched this, the
+	// restart ends the panel process that would log the reply.
+	logPanelSelfSignWritten(p.Hostname, v, p.NewKey)
+
 	panelSelfSignReloadFn(ctx)
 
 	return sslPanelSelfSignResponse{
@@ -209,6 +215,23 @@ func sslPanelSelfSignHandler(ctx context.Context, params json.RawMessage) (any, 
 		CertPath:    panelSelfSignCertPath,
 		ExpiresAt:   expiresAt.UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// logPanelSelfSignWritten records a rewritten panel cert in the agent's log:
+// the hostname, why, and the new cert's SHA-256 fingerprint and expiry, as
+// browsers and `openssl x509 -noout -fingerprint -sha256` show them.
+func logPanelSelfSignWritten(hostname string, v panelcert.Verdict, newKey bool) {
+	reason := v.Reason
+	if newKey && v.Action == panelcert.UpToDate {
+		reason = "new key requested"
+	}
+	attrs := []any{"hostname", hostname, "reason", reason, "cert", panelSelfSignCertPath}
+	if data, err := os.ReadFile(panelSelfSignCertPath); err == nil {
+		if d, err := panelcert.Describe(data); err == nil {
+			attrs = append(attrs, "sha256", d.FingerprintSHA256, "not_after", d.NotAfter.UTC().Format(time.RFC3339))
+		}
+	}
+	slog.Info("panel self-signed cert written, restarting the panel to serve it", attrs...)
 }
 
 // panelCertIssuerOrg returns the first issuer Organization of cert, trimmed,

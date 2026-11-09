@@ -213,6 +213,34 @@ func TestPanelSelfSigned_RowFollowsTheCert(t *testing.T) {
 	}
 }
 
+// A self-signed cert rewritten outside the reconciler (`jabali panel-cert
+// new-key`, the admin's Regenerate) shows on the row at the next pass: the
+// row carries the cert's expiry, and the new cert's differs.
+func TestPanelSelfSigned_RowFollowsARegeneratedCert(t *testing.T) {
+	oldExp := time.Now().AddDate(9, 0, 0).Truncate(time.Second)
+	newExp := time.Now().AddDate(10, 0, 0).Truncate(time.Second)
+	repo := &fakePanelCertRepo{rows: map[string]*models.PanelCertificate{
+		models.PanelCertKindHostname: {
+			Kind: models.PanelCertKindHostname, Status: models.PanelCertStatusSelfSigned, ExpiresAt: &oldExp,
+		},
+	}}
+	fa := &fakeAgent{}
+	r := newSelfSignReconciler(fa, makeSelfSignPEM(t, panelSelfSignOrgMarker, "host.example.com",
+		[]string{"host.example.com", "mail.host.example.com"}, newExp), nil)
+	r.panelCerts = repo
+	row, _ := repo.GetByKind(context.Background(), models.PanelCertKindHostname)
+
+	r.reconcilePanelSelfSignedCert(context.Background(), row, "host.example.com", "")
+
+	got := repo.rows[models.PanelCertKindHostname]
+	if got.Status != models.PanelCertStatusSelfSigned || got.ExpiresAt == nil || !got.ExpiresAt.Equal(newExp) {
+		t.Fatalf("row = status %s expires_at %v, want self_signed expiring %v", got.Status, got.ExpiresAt, newExp)
+	}
+	if n, _ := countCalls(fa, "ssl.panel.selfsign"); n != 0 {
+		t.Errorf("dispatched %d times for a cert that needs no regenerate", n)
+	}
+}
+
 func TestPanelSelfSignedDrift_MissingCertDispatches(t *testing.T) {
 	fa := &fakeAgent{}
 	r := newSelfSignReconciler(fa, nil, os.ErrNotExist)

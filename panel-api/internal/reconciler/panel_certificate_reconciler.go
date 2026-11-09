@@ -254,7 +254,14 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 	if v.Action != panelcert.Regenerate || r.agent == nil {
 		return
 	}
-	reason := v.Reason
+	// Logged before the call: the verb restarts jabali-panel to serve the new
+	// cert, which ends this process before the reply. The agent logs the
+	// cert it wrote. Debug while a failing dispatch repeats every pass.
+	if r.panelSelfSignLastErr == "" {
+		r.log.Info("panel self-signed cert regen: dispatching, the panel restarts to serve it", "hostname", hostname, "reason", v.Reason)
+	} else {
+		r.log.Debug("panel self-signed cert regen: dispatching again", "hostname", hostname, "reason", v.Reason)
+	}
 	if _, err := r.agent.Call(ctx, "ssl.panel.selfsign", map[string]any{
 		"hostname": hostname,
 		"ip":       publicIPv4,
@@ -273,7 +280,6 @@ func (r *Reconciler) reconcilePanelSelfSignedCert(ctx context.Context, row *mode
 		return
 	}
 	r.panelSelfSignLastErr = ""
-	r.log.Info("panel self-signed cert regen dispatched", "hostname", hostname, "reason", reason)
 }
 
 // reconcilePanelMailSelfSignedCert does for the panel mail cert what
