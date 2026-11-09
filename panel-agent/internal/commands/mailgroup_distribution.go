@@ -43,8 +43,10 @@ const (
 	groupKindDistribution = "distribution"
 	groupKindResource     = "resource"
 
-	// maxInternalOnlyListMembers is Stalwart's default SieveUserInterpreter
-	// maxRedirects. An internal-only list delivers with one Sieve redirect per
+	// maxInternalOnlyListMembers is the SieveUserInterpreter maxRedirects that
+	// install.sh and the apply plan set (GH #1795); Stalwart's own default is
+	// 1. It applies to every mailbox's Sieve script, so it is not raised for
+	// lists. An internal-only list delivers with one Sieve redirect per
 	// member, so members past this bound would silently get nothing. The panel
 	// refuses a longer internal-only list; the agent enforces the same bound.
 	maxInternalOnlyListMembers = 20
