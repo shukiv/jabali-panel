@@ -7,6 +7,13 @@ After=network.target
 # FPM runs in foreground via -F flag in fpm-exec so systemd supervises
 # the process directly.
 Type=simple
+# No version pin = this pool was removed (php.pool.remove deletes the pin; so
+# does removing the account). Skip the start instead of failing it: a failed
+# ExecStartPre with Restart=on-failure every 5s never reaches the start limit
+# (5 in 10s), so a stray start of a removed pool looped forever, logging four
+# lines every 5 seconds. A skipped start is not a failure and is not retried.
+# "+" runs it as root: the instance's User= may no longer exist.
+ExecCondition=+/usr/bin/test -e /etc/jabali-panel/user-phpver/%i
 # "+" prefix runs this ExecStartPre as root regardless of User= in
 # per-instance drop-ins, so the shim can mkdir /run/php and validate
 # system paths. Main ExecStart drops to User=<user> as set in drop-in.
