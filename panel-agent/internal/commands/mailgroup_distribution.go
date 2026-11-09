@@ -101,6 +101,18 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	wantList := len(recipients) > 0 && !redirect
 	wantGroup := len(recipients) > 0 && redirect
 	description := groupDescription(p)
+	// Stalwart 1.0 trusts a recipient it resolved for 10 minutes
+	// (Cache.directoryRecipientsTtl), so once the address changes shape the
+	// old answer keeps it: a list that had just become a MailingList bounced
+	// "Mailbox not found" (seen on 1.0.2). When this apply removes the other
+	// shape, the caches are dropped once the new one is in place.
+	shapeChanged := false
+	done := func(res mailGroupApplyResult) (any, error) {
+		if shapeChanged {
+			flushMailAuthCache(ctx)
+		}
+		return res, nil
+	}
 
 	// 1. A Group account at the address holds mail the members never saw.
 	// Copy it to them first; then remove the account unless the redirect
@@ -126,6 +138,7 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 			if err := accountDestroy(ctx, gid); err != nil {
 				return nil, err
 			}
+			shapeChanged = true
 		}
 	}
 
@@ -140,15 +153,16 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 		if err != nil {
 			return nil, err
 		}
-		return mailGroupApplyResult{Ok: true, GroupID: id}, nil
+		return done(mailGroupApplyResult{Ok: true, GroupID: id})
 	}
 	if listID != "" {
 		if err := mailingListDestroy(ctx, listID); err != nil {
 			return nil, err
 		}
+		shapeChanged = true
 	}
 	if !wantGroup {
-		return mailGroupApplyResult{Ok: true}, nil
+		return done(mailGroupApplyResult{Ok: true})
 	}
 
 	// 3. Redirect: a Group account runs the redirect Sieve. The address is free
@@ -171,7 +185,7 @@ func applyDistributionGroup(ctx context.Context, email string, p mailGroupApplyP
 	if _, err := setActiveNamedScript(ctx, gid, groupInternalOnlyScriptName, blobID); err != nil {
 		return nil, err
 	}
-	return mailGroupApplyResult{Ok: true, GroupID: gid}, nil
+	return done(mailGroupApplyResult{Ok: true, GroupID: gid})
 }
 
 // normalizeMemberEmails validates, lower-cases, de-duplicates and sorts the

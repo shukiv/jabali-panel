@@ -1131,3 +1131,37 @@ func TestMailDomainPurge_DestroysMailingLists(t *testing.T) {
 		t.Fatalf("purge removed an account in another domain")
 	}
 }
+
+// Stalwart 1.0 trusts a recipient it resolved for 10 minutes, so after a list
+// changes shape the old answer kept the address: a list that had just become a
+// MailingList bounced "Mailbox not found" (seen on 1.0.2). A shape change drops
+// Stalwart's caches once; a re-apply that changes no shape does not.
+func TestMailGroupApplyDistribution_ShapeChangeFlushesStalwartCaches(t *testing.T) {
+	f := newMGFake()
+	f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+	flusher := useFakeAuthCache(t)
+
+	steps := []struct {
+		name     string
+		internal bool
+		external []string
+		want     int
+	}{
+		{"new mailbox-only list", false, nil, 0},
+		{"same list again", false, nil, 0},
+		{"first outside address: MailingList to Group", false, []string{"partner@gmail.com"}, 1},
+		{"same redirect list again", false, []string{"partner@gmail.com"}, 1},
+		{"internal-only on: Group stays", true, []string{"partner@gmail.com"}, 1},
+		{"last outside address and internal-only off: Group to MailingList", false, nil, 2},
+	}
+	for _, s := range steps {
+		if err := applyDistributionWith(t, "sales@example.com", s.internal, []string{"alice@example.com"}, s.external); err != nil {
+			t.Fatalf("%s: apply: %v", s.name, err)
+		}
+		// A flush inside the flusher's minimum gap is scheduled, not run.
+		if got := flusher.flushes + len(flusher.scheduled); got != s.want {
+			t.Fatalf("%s: %d cache flushes, want %d", s.name, got, s.want)
+		}
+	}
+}
