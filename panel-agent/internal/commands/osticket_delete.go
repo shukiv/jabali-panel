@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -65,12 +64,7 @@ func osticketDeleteHandler(ctx context.Context, params json.RawMessage) (any, er
 		_ = cmd.Run()
 	}
 
-	// Restore a branded placeholder so the bare docroot doesn't 403/404.
 	if req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, statErr := os.Stat(indexPath); os.IsNotExist(statErr) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
-		}
 		_ = removeOsTicketNginx(ctx, req.Domain)
 	}
 

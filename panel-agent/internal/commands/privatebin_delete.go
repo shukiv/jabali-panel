@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -91,13 +90,6 @@ func privatebinDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	dataDir := privatebinDataDir(req.Docroot, req.Subdirectory)
 	rmData := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", dataDir)
 	_ = rmData.Run()
-
-	if req.Subdirectory == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
-		}
-	}
 
 	return privatebinDeleteResp{Status: "deleted"}, nil
 }

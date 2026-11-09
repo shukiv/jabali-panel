@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -64,13 +63,6 @@ func itflowDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		for _, name := range itflowTopLevel {
 			cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", filepath.Join(installPath, name))
 			_ = cmd.Run()
-		}
-	}
-
-	if sub == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

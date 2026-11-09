@@ -269,7 +269,19 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
     # rather than removing this line.
     disable_symlinks if_not_owner from=$document_root;
     {{.IndexDirective}}
-
+{{ if .DefaultPage }}
+    # GH #2422: a site with no index file gets Jabali's default page, served
+    # from outside the docroot, so there is no placeholder for the tenant to
+    # delete. The index directive ends with this URI, so nginx comes here
+    # only when none of the site's own index files exist. Only the site root
+    # gets the page: an index-less subfolder keeps its 403.
+    location = /jabali-default-page.html {
+        internal;
+        if ($request_uri !~ "^/(\?.*)?$") { return 403; }
+        expires -1;
+        alias {{.DefaultPage}};
+    }
+{{ end }}
     {{.IPACLDirectives}}
     {{.DirectoryPrivacyDirectives}}
 
@@ -858,6 +870,10 @@ type vhostData struct {
 	// PHPFallback is the panel-supplied front controller fallback (GH #1999),
 	// unvalidated. The template renders it through TryFilesFallback only.
 	PHPFallback string
+
+	// DefaultPage (GH #2422) is the domain's file in defaultPagesDir that the
+	// index directive's last entry serves; empty renders no location for it.
+	DefaultPage string
 }
 
 // TryFilesFallback is the last try_files argument of the default `location /`
@@ -887,22 +903,21 @@ func sanitizePHPFallback(fallback string) (string, error) {
 // indexDirectiveFor maps the panel's index_priority enum to the concrete
 // nginx `index ...;` directive. Unknown values fall back to the prior
 // hardcoded behaviour so a mis-plumbed reconciler can't silently break
-// a tenant's site.
+// a tenant's site. Every variant ends with defaultPageURI (GH #2422): nginx
+// reaches it only when none of the site's own index files exist.
 func indexDirectiveFor(priority string) string {
+	files := "index.html index.php"
 	switch priority {
 	case "php_first":
-		return "index index.php index.html;"
+		files = "index.php index.html"
 	case "html_only":
-		return "index index.html;"
+		files = "index.html"
 	case "php_only":
-		return "index index.php;"
+		files = "index.php"
 	case "full":
-		return "index index.php index.html index.htm;"
-	case "html_first", "":
-		fallthrough
-	default:
-		return "index index.html index.php;"
+		files = "index.php index.html index.htm"
 	}
+	return "index " + files + " " + defaultPageURI + ";"
 }
 
 // pathsUnderHome returns each directory from docRoot up to but NOT
@@ -1341,6 +1356,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		Username:                   username,
 		FPMSocket:                  fpmSocket,
 		IndexDirective:             indexDirectiveFor(indexPriority),
+		DefaultPage:                defaultPagePath(domain),
 		RedirectDirectives:         redirectDirectives,
 		RuleDirectives:             ruleDirectives,
 		CustomDirectives:           customDirectives,
@@ -1702,34 +1718,22 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 		_ = df.Close()
 	}
 
-	// Write a default index.html so a fresh domain serves a welcome
-	// page instead of nginx's 403 on empty directory. Idempotent: if
-	// the file already exists (e.g. the user uploaded real content, or
-	// the reconciler re-ran domain.create), leave it alone.
-	//
-	// Also skip when index.php exists — that's the unambiguous "real
-	// content present" signal (WordPress install, hand-uploaded app).
-	// Without this check, the reconciler periodically re-creates the
-	// placeholder ~30s after a WP install, and nginx (with `index
-	// index.html index.php`) serves the placeholder instead of WP.
-	// GH #465: lay the operator's account skeleton into the fresh docroot
-	// BEFORE the default index, so a skeleton-provided index.html wins (the
-	// default-index block below skips when index.html already exists). Never
-	// clobbers an existing path; a bad file warns but doesn't fail create.
+	// GH #465: lay the operator's account skeleton into the fresh docroot.
+	// Never clobbers an existing path; a bad file warns but doesn't fail
+	// create.
 	for _, w := range layAccountSkeleton(docScope, docrootCreated, p.DocRoot, p.Username, docUID, wwwGID, p.Skeleton) {
 		log.Printf("domain.create: skeleton %s: %s", p.Domain, w)
 	}
 
-	indexPath := filepath.Join(p.DocRoot, "index.html")
-	indexPHPPath := filepath.Join(p.DocRoot, "index.php")
-	_, htmlErr := os.Stat(indexPath)
-	_, phpErr := os.Stat(indexPHPPath)
-	if os.IsNotExist(htmlErr) && os.IsNotExist(phpErr) {
-		if werr := writeDefaultIndex(ctx, indexPath, p.Username, p.Domain, p.DocRoot, p.DefaultIndexTemplate); werr != nil {
-			// non-fatal — the vhost still works, it'll just 403 until
-			// the user uploads content.
-			log.Printf("domain.create: failed to write default index.html for %s: %v", p.Domain, werr)
-		}
+	// GH #2422: the default page for a site with no index file is served
+	// by nginx from outside the docroot (the index directive's last entry),
+	// so nothing is written into the tenant's folder for them to delete.
+	// Rendered on every converge so an edited page template reaches every
+	// domain; written only when it changed.
+	if werr := writeDefaultPage(p.Username, p.Domain, p.DocRoot, p.DefaultIndexTemplate); werr != nil {
+		// non-fatal — the vhost still works; a site with no index file
+		// answers 404 until the page is written.
+		log.Printf("domain.create: failed to write the default page for %s: %v", p.Domain, werr)
 	}
 
 	// Default IsEnabled to true if not provided (backwards compatibility)
@@ -1855,7 +1859,30 @@ func writeSkeleton(scope *filesafe.Scope, docRoot, username string, docUID, wwwG
 	return warns
 }
 
-func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, customTmpl string) error {
+// defaultPagesDir holds the page nginx serves for a site with no index file
+// (GH #2422): one file per domain, outside every docroot. root:www-data, so
+// nginx's workers read it and no tenant can write it. Tests point it, and
+// defaultPageGroup, at their own.
+var (
+	defaultPagesDir  = "/var/www/jabali-default-pages"
+	defaultPageGroup = "www-data"
+)
+
+// defaultPageURI is the index directive's last entry: nginx makes an internal
+// redirect to it when none of the site's own index files exist, and the
+// vhost's exact location for it serves the domain's file from defaultPagesDir.
+const defaultPageURI = "/jabali-default-page.html"
+
+func defaultPagePath(domain string) string {
+	return filepath.Join(defaultPagesDir, domain+".html")
+}
+
+// writeDefaultPage renders the default page of domain into defaultPagesDir,
+// rewriting it only when it changed. customTmpl is the admin's page template;
+// empty or malformed means the built-in. The page is public, so the built-in
+// names only the domain; a custom template can still use {{.Username}} and
+// {{.DocRoot}}. domain is expected pre-validated (domainRegex) by the caller.
+func writeDefaultPage(username, domain, docRoot, customTmpl string) error {
 	const builtin = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1873,11 +1900,7 @@ func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, cus
 </head>
 <body>
   <h1>{{.Domain}}</h1>
-  <p class="muted">This domain is hosted by Jabali Panel. The site is provisioned and waiting for your content.</p>
-  <hr>
-  <p>Upload your files to the document root:</p>
-  <p><code>{{.DocRoot}}</code></p>
-  <p><small>Logged in as <code>{{.Username}}</code>.</small></p>
+  <p class="muted">This domain is hosted by Jabali Panel. The site is provisioned and waiting for its content.</p>
 </body>
 </html>
 `
@@ -1889,46 +1912,58 @@ func writeDefaultIndex(ctx context.Context, path, username, domain, docRoot, cus
 	t, err := template.New("index").Parse(tmplBody)
 	if err != nil {
 		// Malformed operator template — don't crash domain.create;
-		// fall back to the built-in so the docroot still serves
-		// something. Logged at the caller.
+		// fall back to the built-in so the site still shows something.
 		t, err = template.New("index").Parse(builtin)
 		if err != nil {
 			return fmt.Errorf("parse template: %w", err)
 		}
 	}
+	data := struct {
+		Domain, Username, DocRoot string
+	}{Domain: domain, Username: username, DocRoot: docRoot}
+	var page bytes.Buffer
+	if err := t.Execute(&page, data); err != nil {
+		return fmt.Errorf("execute template: %w", err)
+	}
 
-	// Write to a temp file first, then rename — avoids a half-written
-	// index.html if we crash mid-write.
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".index.*.html.tmp")
+	gid, err := lookupGroup(defaultPageGroup)
+	if err != nil {
+		return fmt.Errorf("lookup %s: %w", defaultPageGroup, err)
+	}
+	if err := os.MkdirAll(defaultPagesDir, 0o750); err != nil {
+		return fmt.Errorf("create %s: %w", defaultPagesDir, err)
+	}
+	if err := os.Chown(defaultPagesDir, -1, gid); err != nil {
+		return fmt.Errorf("chown %s: %w", defaultPagesDir, err)
+	}
+	if err := os.Chmod(defaultPagesDir, 0o750); err != nil {
+		return fmt.Errorf("chmod %s: %w", defaultPagesDir, err)
+	}
+
+	path := defaultPagePath(domain)
+	if cur, err := os.ReadFile(path); err == nil && bytes.Equal(cur, page.Bytes()) {
+		return nil
+	}
+	// Temp file + rename, so nginx never serves a half-written page.
+	tmp, err := os.CreateTemp(defaultPagesDir, ".page.*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName) // cleanup if rename fails
-
-	data := struct {
-		Domain, Username, DocRoot string
-	}{Domain: domain, Username: username, DocRoot: docRoot}
-	if err := t.Execute(tmp, data); err != nil {
+	if _, err := tmp.Write(page.Bytes()); err != nil {
 		tmp.Close()
-		return fmt.Errorf("execute template: %w", err)
+		return fmt.Errorf("write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp: %w", err)
 	}
-
-	// Set permissions + ownership before rename so the final file
-	// is correct from the first ls. 0644 for world-readable by nginx.
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return fmt.Errorf("chmod: %w", err)
-	}
-
-	// Chown to <user>:www-data so it matches the docroot's ownership.
-	// Using exec.Command since os.Chown needs numeric IDs we don't have.
-	if err := execCommandContext(ctx, "chown", username+":www-data", tmpName).Run(); err != nil {
+	if err := os.Chown(tmpName, -1, gid); err != nil {
 		return fmt.Errorf("chown: %w", err)
 	}
-
+	if err := os.Chmod(tmpName, 0o640); err != nil {
+		return fmt.Errorf("chmod: %w", err)
+	}
 	if err := os.Rename(tmpName, path); err != nil {
 		return fmt.Errorf("rename: %w", err)
 	}

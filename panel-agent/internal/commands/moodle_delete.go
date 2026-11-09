@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -75,13 +74,6 @@ func moodleDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// Remove the moodledata tree (outside the docroot) so deleting an app
 	// doesn't orphan its uploaded content + cache.
 	_ = buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", dataRoot).Run()
-
-	if req.Subdirectory == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
-		}
-	}
 
 	return moodleDeleteResp{Status: "deleted"}, nil
 }

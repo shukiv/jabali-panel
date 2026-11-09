@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,7 +11,7 @@ import (
 )
 
 type joomlaDeleteReq struct {
-	AppType      string `json:"app_type"`     // present, ignored
+	AppType      string `json:"app_type"` // present, ignored
 	OSUser       string `json:"os_user"`
 	Docroot      string `json:"docroot"`
 	Subdirectory string `json:"subdirectory,omitempty"`
@@ -86,13 +85,6 @@ func joomlaDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		for _, name := range joomlaTopLevel {
 			cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", filepath.Join(installPath, name))
 			_ = cmd.Run()
-		}
-	}
-
-	if req.Subdirectory == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

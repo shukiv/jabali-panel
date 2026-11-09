@@ -71,6 +71,8 @@ func TestMain(m *testing.M) {
 	// points the vars at dirs of its own.
 	userLogsHomeRoot = filepath.Join(dir, "home")
 	phpErrorLogrotateDir = filepath.Join(dir, "logrotate.d")
+	// domain.create writes the default page (GH #2422); keep it out of /var/www.
+	defaultPagesDir = filepath.Join(dir, "default-pages")
 
 	code := m.Run()
 	_ = os.RemoveAll(dir)

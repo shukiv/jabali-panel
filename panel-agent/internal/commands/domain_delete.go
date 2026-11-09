@@ -121,6 +121,10 @@ func removeDomainNginxConfig(ctx context.Context, domain string) error {
 	availablePath := filepath.Join("/etc/nginx/sites-available", domain+".conf")
 	os.Remove(availablePath)
 
+	// And the default page the vhost served for a site with no index file
+	// (GH #2422); nothing else names it once the vhost is gone.
+	os.Remove(defaultPagePath(domain))
+
 	// Also reap the per-domain mail vhost (mail.<domain>, file
 	// `<domain>-mail.conf`). domain.delete is only ever invoked on a FULL
 	// domain teardown, so the mail vhost must go with it. reconcileWebmailVhosts
