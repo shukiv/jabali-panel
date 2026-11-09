@@ -46,20 +46,31 @@ case "$1 $2" in
   "update Directory")
     [[ -n "${FAKE_UPDATE_FAILS:-}" ]] && exit 1
     printf '%s' "$3" >"$FAKE_DIR/updated_id"
-    printf '%s' "$5" >"$FAKE_DIR/patch.json" ;;
+    printf '%s' "$5" >"$FAKE_DIR/patch.json"
+    echo update >>"$FAKE_DIR/seq" ;;
   "create Action") printf '%s\n' "$4" >>"$FAKE_DIR/actions" ;;
 esac
 EOF
 chmod +x "$tmp/stalwart-cli"
 export JABALI_STALWART_CLI="$tmp/stalwart-cli" FAKE_DIR="$tmp"
 
-# Fake mariadb: answers the information_schema probe with $FAKE_COLUMN.
-mariadb() { echo "${FAKE_COLUMN:-0}"; }
+# Fake mariadb: answers the domains.ownership_status probe with $FAKE_COLUMN
+# and the mail_group_external_members probe with $FAKE_EXTERNAL (default
+# $FAKE_COLUMN). A GRANT is logged to seq, or fails with FAKE_GRANT_FAILS.
+mariadb() {
+  case "$*" in
+    *GRANT*)
+      [[ -n "${FAKE_GRANT_FAILS:-}" ]] && return 1
+      echo grant >>"$FAKE_DIR/seq" ;;
+    *mail_group_external_members*) echo "${FAKE_EXTERNAL:-${FAKE_COLUMN:-0}}" ;;
+    *) echo "${FAKE_COLUMN:-0}" ;;
+  esac
+}
 
 field() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$tmp/patch.json" "$1"; }
 
 run_case() {
-  rm -f "$tmp/patch.json" "$tmp/actions"
+  rm -f "$tmp/patch.json" "$tmp/actions" "$tmp/seq"
   FAKE_COLUMN="$1" converge_stalwart_directory_queries 8446 token
 }
 
@@ -104,6 +115,36 @@ for col in 1 0; do
       fail=1
     fi
   done
+done
+
+# 5. GH #1833: once migration 000347 made mail_group_external_members, the
+# Stalwart user is granted it, and only then does queryRecipient admit a list
+# with outside addresses.
+run_case 1
+if [[ "$(field queryRecipient)" != *"mail_group_external_members"* ]]; then
+  echo "FAIL: migrated box: queryRecipient does not admit a list with outside addresses"
+  fail=1
+fi
+if [[ "$(tr '\n' ' ' <"$tmp/seq")" != "grant update " ]]; then
+  echo "FAIL: migrated box: the Stalwart user must be granted mail_group_external_members before a query names it (got: $(tr '\n' ' ' <"$tmp/seq"))"
+  fail=1
+fi
+
+# 6. before migration 000347, or when the grant fails, no query names the
+# table: a query on a table the Stalwart user cannot read fails every lookup.
+# Mailboxes and groups resolve as before.
+for env_case in FAKE_EXTERNAL=0 FAKE_GRANT_FAILS=1; do
+  export "${env_case?}"
+  run_case 1
+  unset "${env_case%%=*}"
+  if [[ "$(field queryRecipient)" == *"mail_group_external_members"* ]]; then
+    echo "FAIL: $env_case: queryRecipient names mail_group_external_members — every lookup would fail"
+    fail=1
+  fi
+  if [[ "$(field queryRecipient)" != *"mail_group_members"* || "$(field queryRecipient)" != *"ownership_status = 'verified'"* ]]; then
+    echo "FAIL: $env_case: queryRecipient lost the group expansion or the ownership filter"
+    fail=1
+  fi
 done
 
 # 3. a failed Directory update is reported, so `jabali update` can say so.
