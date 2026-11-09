@@ -16,6 +16,7 @@ import {
   Input,
   Popconfirm,
   Tooltip,
+  Upload,
 } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import {
@@ -25,6 +26,7 @@ import {
   CopyOutlined,
   DownloadOutlined,
   CodeOutlined,
+  UploadOutlined,
 } from "@icons";
 import { RowActionButton } from "../../../components/RowActionButton";
 import { getKeys as getEd25519SSHKeys } from "micro-key-producer/ssh.js";
@@ -39,8 +41,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Timestamp } from "../../../components/Timestamp";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
-
-const SSH_KEY_PREFIXES = ["ssh-rsa ", "ssh-ed25519 ", "ecdsa-sha2-"];
+import { MAX_KEY_FILE_BYTES, SSH_KEY_PREFIXES, parsePublicKeyFile } from "./sshKeyFile";
 
 // generateEd25519Keypair runs entirely in the browser: 32 bytes from
 // Web Crypto feed micro-key-producer's OpenSSH encoder (the successor
@@ -114,6 +115,27 @@ export const UserSSHKeysPage = () => {
       return "Public key must start with ssh-rsa, ssh-ed25519, or ecdsa-sha2-";
     }
     return undefined;
+  };
+
+  // GH #2425: fill the key from a .pub file instead of pasting it. Read in
+  // the browser; a private key or a file that isn't one public key is
+  // refused on the field and nothing is filled in.
+  const loadKeyFile = async (file: File) => {
+    const refuse = (error: string) => form.setFields([{ name: "public_key", errors: [error] }]);
+    if (file.size > MAX_KEY_FILE_BYTES) {
+      refuse("That file is too big to be an SSH public key.");
+      return;
+    }
+    const result = parsePublicKeyFile(await file.text(), file.name);
+    if (!result.ok) {
+      refuse(result.error);
+      return;
+    }
+    form.setFieldValue("public_key", result.publicKey);
+    if (!form.getFieldValue("name")) {
+      form.setFieldValue("name", result.suggestedName);
+    }
+    void form.validateFields(["public_key"]);
   };
 
   const handleAddKey = async (values: { name: string; public_key: string }) => {
@@ -419,7 +441,7 @@ export const UserSSHKeysPage = () => {
             label={t("usersshkeyspage.public_key")}
             name="public_key"
             rules={[
-              { required: true, message: "Please paste your public key" },
+              { required: true, message: "Please paste your public key or upload its .pub file" },
               {
                 validator: (_, value) => {
                   const error = validatePublicKey(value);
@@ -427,6 +449,20 @@ export const UserSSHKeysPage = () => {
                 },
               },
             ]}
+            extra={
+              <Upload
+                accept=".pub,text/plain"
+                showUploadList={false}
+                beforeUpload={(file) => {
+                  void loadKeyFile(file);
+                  return Upload.LIST_IGNORE;
+                }}
+              >
+                <Button size="small" icon={<UploadOutlined />} style={{ marginTop: 8 }}>
+                  Upload key file
+                </Button>
+              </Upload>
+            }
           >
             <Input.TextArea
               placeholder="ssh-ed25519 AAAA... user@host"
