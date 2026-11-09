@@ -15338,6 +15338,15 @@ PY
 # was disabled or lowered. Debug and trace both carry the debug events, so
 # either is left alone. ansi must stay off: colour codes break the parser.
 #
+# It also excludes the debug events no scenario reads (NOISE), which Stalwart
+# logs for every admin JMAP request the panel makes: on a busy box they were
+# most of the system journal, which then kept only hours of logs. The names
+# follow the Stalwart version: 1.0 renamed store.cache-hit to cache.hit (1.0.2
+# refuses the old name; checked on the test box, 2026-11-09). Excluding them
+# is best effort: a refused list is a warning, and the feed for CrowdSec
+# still counts as converged. Events an admin excluded stay excluded.
+# http.request-url stays: the HTTP scan scenario reads it.
+#
 # A new or changed tracer takes effect at the Stalwart restart that
 # _install_stalwart_apply_plan does right after the convergers.
 # Returns 1 when it could not converge.
@@ -15354,14 +15363,19 @@ converge_stalwart_stdout_tracer() {
   fi
 
   _log "converging the Stalwart log feed for CrowdSec (Stdout tracer at debug)"
+  local version
+  version="$("${JABALI_STALWART_BIN:-/usr/local/bin/stalwart}" --version 2>&1 | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
   local out rc=0
   out="$(STALWART_URL="http://127.0.0.1:${jmap_port}" \
     STALWART_USER="admin" \
     STALWART_PASSWORD="$admin_token" \
-    python3 - "$cli" 2>&1 <<'PY'
+    python3 - "$cli" "$version" 2>&1 <<'PY'
 import json, subprocess, sys
 
-cli = sys.argv[1]
+cli, version = sys.argv[1], sys.argv[2]
+# Debug events no CrowdSec scenario reads, one or more per admin JMAP request.
+NOISE = ("store.cache-hit" if version.startswith("0.") else "cache.hit",
+         "jmap.method-call", "http.connection-start", "http.connection-end")
 # The same tracer the apply plan creates (#jabali-mail-bf-stdout).
 WANT = {"@type": "Stdout", "enable": True, "level": "debug",
         "lossy": False, "ansi": False, "buffered": False}
@@ -15381,31 +15395,58 @@ def good(t):
     return t.get("enable") is True and t.get("level") in OK_LEVELS and t.get("ansi") is not True
 
 
+def quiet(t):
+    return t.get("eventsPolicy") == "exclude" and all((t.get("events") or {}).get(e) for e in NOISE)
+
+
+def stdout_tracers():
+    rows = [json.loads(l) for l in cli_run("query", "Tracer", "--json", "--fields", "@type,enable,level,ansi,eventsPolicy,events").splitlines() if l.strip()]
+    return [r for r in rows if r.get("@type") == "Stdout"]
+
+
+changed = []
 try:
-    rows = [json.loads(l) for l in cli_run("query", "Tracer", "--json", "--fields", "@type,enable,level,ansi").splitlines() if l.strip()]
-    stdout = [r for r in rows if r.get("@type") == "Stdout"]
-    if any(good(t) for t in stdout):
-        print("UNCHANGED")
-    elif stdout:
-        cli_run("update", "Tracer", stdout[0]["id"], "--stdin", payload=FIX)
-        print("CHANGED updated")
-    else:
+    stdout = stdout_tracers()
+    if not stdout:
         cli_run("create", "Tracer", "--stdin", payload=WANT)
-        print("CHANGED created")
+        changed.append("created")
+        stdout = stdout_tracers()
+    t = next((x for x in stdout if good(x)), stdout[0])
+    if not good(t):
+        cli_run("update", "Tracer", t["id"], "--stdin", payload=FIX)
+        changed.append("updated")
 except Exception as e:  # noqa: BLE001 - report any failure to the shell
     print("ERROR %s" % e)
     sys.exit(1)
+
+# Best effort, apart from the feed itself.
+refused = ""
+if not quiet(t):
+    events = dict(t.get("events") or {}) if t.get("eventsPolicy") == "exclude" else {}
+    events.update({e: True for e in NOISE})
+    try:
+        cli_run("update", "Tracer", t["id"], "--stdin", payload={"eventsPolicy": "exclude", "events": events})
+        changed.append("per-request debug events left out")
+    except Exception as e:  # noqa: BLE001
+        refused = str(e)
+print("CHANGED %s" % ", ".join(changed) if changed else "UNCHANGED")
+if refused:
+    print("NOISE %s" % refused)
 PY
   )" || rc=$?
-  case "$rc:$out" in
+  local first="${out%%$'\n'*}"
+  case "$rc:$first" in
     0:UNCHANGED*)
       _ok "Stalwart log feed for CrowdSec already in place" ;;
     0:CHANGED*)
-      _ok "Stalwart log feed for CrowdSec ${out#CHANGED } (Stdout tracer at debug); takes effect at the Stalwart restart" ;;
+      _ok "Stalwart log feed for CrowdSec: ${first#CHANGED } (Stdout tracer at debug); takes effect at the Stalwart restart" ;;
     *)
       _warn "Stalwart log feed for CrowdSec not converged: ${out} — CrowdSec cannot ban mail login brute force"
       return 1 ;;
   esac
+  if [[ "$out" == *$'\n'"NOISE "* ]]; then
+    _warn "Stalwart kept logging its per-request debug events to the journal: ${out#*$'\n'NOISE } (the log feed for CrowdSec is unaffected)"
+  fi
 }
 
 # converge_stalwart_delivery_tracer_level — keeps the delivery Log tracer
