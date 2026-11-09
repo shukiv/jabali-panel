@@ -40,10 +40,10 @@ type cronStatusResult struct {
 // ExecMainStatus (the last exit code) — verified on the box. So we read
 // ExecMainStartTimestamp for the run time.
 //
-// Connection: env-through-sudo (XDG_RUNTIME_DIR + DBUS_SESSION_BUS_
-// ADDRESS), the #268 path — NOT `--machine=<user>@.host`, which proxies
-// a LIMITED property set that returns EMPTY runtime timestamps (verified
-// on the box). bare `systemctl --user` also fails (sudo env_reset).
+// Connection: userCronScope — setpriv to the tenant, then `env -i` with
+// XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS (the #268 bus env), sudo where
+// setpriv is missing. NOT `--machine=<user>@.host`, which proxies a LIMITED
+// property set that returns EMPTY runtime timestamps (verified on the box).
 func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p cronStatusParams
 	if err := json.Unmarshal(params, &p); err != nil {
