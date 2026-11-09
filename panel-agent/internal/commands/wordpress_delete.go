@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -136,14 +135,6 @@ func wordpressDeleteHandler(ctx context.Context, params json.RawMessage) (any, e
 	// doesn't 403 after delete. Only if no index.html exists — don't
 	// clobber a user-uploaded one. Domain is optional in the request;
 	// without it the template can't be rendered, so we skip.
-	if req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			// Best-effort: a failed restore leaves the docroot empty
-			// (visible 403) — annoying but not data-destroying.
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
-		}
-	}
 
 	return wordpressDeleteResp{
 		Status: "deleted",

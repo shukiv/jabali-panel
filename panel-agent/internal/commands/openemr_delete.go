@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -67,13 +66,6 @@ func openemrDeleteHandler(ctx context.Context, params json.RawMessage) (any, err
 	} else {
 		for _, name := range openemrTopLevel {
 			_ = buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", filepath.Join(installPath, name)).Run()
-		}
-	}
-
-	if sub == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, statErr := os.Stat(indexPath); os.IsNotExist(statErr) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

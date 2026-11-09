@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -12,7 +11,7 @@ import (
 )
 
 type drupalDeleteReq struct {
-	AppType      string `json:"app_type"`     // present, ignored
+	AppType      string `json:"app_type"` // present, ignored
 	OSUser       string `json:"os_user"`
 	Docroot      string `json:"docroot"`
 	Subdirectory string `json:"subdirectory,omitempty"`
@@ -32,7 +31,7 @@ type drupalDeleteResp struct {
 // Generated from Drupal 10.3.6; bump if a future release adds a top-
 // level entry. Entries that don't exist on disk are skipped silently.
 var drupalTopLevel = []string{
-	".composer",       // composer home created by installDrushViaComposer
+	".composer", // composer home created by installDrushViaComposer
 	".csslintrc",
 	".editorconfig",
 	".eslintignore",
@@ -88,13 +87,6 @@ func drupalDeleteHandler(ctx context.Context, params json.RawMessage) (any, erro
 		for _, name := range drupalTopLevel {
 			cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", filepath.Join(installPath, name))
 			_ = cmd.Run()
-		}
-	}
-
-	if req.Subdirectory == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

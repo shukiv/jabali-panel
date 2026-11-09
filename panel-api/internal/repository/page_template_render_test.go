@@ -11,7 +11,9 @@ import (
 
 // TestDefaultIndexTemplateRenders guards the branded domain-default-index
 // template: it must parse under html/template (contextual escaping is
-// strict inside <style>/<svg>) and expand {{.Domain}}/{{.Username}}/{{.DocRoot}}.
+// strict inside <style>/<svg>) and expand {{.Domain}}. nginx serves it on
+// every site without an index file (GH #2422), so it must not show the
+// account's login or document root.
 func TestDefaultIndexTemplateRenders(t *testing.T) {
 	body := DefaultPageTemplateBody(models.PageTemplateDomainDefaultIndex)
 	tm, err := template.New("idx").Parse(body)
@@ -28,9 +30,14 @@ func TestDefaultIndexTemplateRenders(t *testing.T) {
 		t.Fatalf("execute failed: %v", err)
 	}
 	out := b.String()
-	for _, want := range []string{"example.com", "alice", "/home/alice/domains/example.com/public_html", "<svg", "</html>"} {
+	for _, want := range []string{"example.com", "<svg", "</html>"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered index missing %q", want)
+		}
+	}
+	for _, leak := range []string{"alice", "/home/alice"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("rendered index shows %q", leak)
 		}
 	}
 	if strings.Contains(out, "{{") {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -82,13 +81,6 @@ func dokuwikiDeleteHandler(ctx context.Context, params json.RawMessage) (any, er
 		for _, name := range dokuwikiTopLevel {
 			cmd := buildSystemdRunCmd(ctx, req.OSUser, "rm", "-rf", filepath.Join(installPath, name))
 			_ = cmd.Run()
-		}
-	}
-
-	if req.Subdirectory == "" && req.Domain != "" {
-		indexPath := filepath.Join(req.Docroot, "index.html")
-		if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-			_ = writeDefaultIndex(ctx, indexPath, req.OSUser, req.Domain, req.Docroot, "")
 		}
 	}
 

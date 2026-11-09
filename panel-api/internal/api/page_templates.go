@@ -15,11 +15,11 @@ import (
 )
 
 // validatePageTemplateContent rejects a body that the agent could not use.
-// GH #860: domain_default_index is expanded as a Go text/template at
-// docroot-write time; if it fails to parse, the agent silently falls back to
-// the built-in default, so an operator's edit "did nothing". Validating at
-// SAVE time makes that failure visible (the editor shows the parse error)
-// instead of a silent no-op on every future domain. Error pages are static
+// GH #860: domain_default_index is expanded as a Go text/template when the
+// agent writes a domain's default page; if it fails to parse, the agent
+// silently falls back to the built-in default, so an operator's edit "did
+// nothing". Validating at SAVE time makes that failure visible (the editor
+// shows the parse error) instead of a silent no-op. Error pages are static
 // HTML, so they are not parsed. Returns "" when the content is acceptable.
 func validatePageTemplateContent(key, content string) string {
 	if key != models.PageTemplateDomainDefaultIndex {
@@ -73,7 +73,7 @@ type pageTemplateDTO struct {
 func templateMeta(key string) (label, desc string) {
 	switch key {
 	case models.PageTemplateDomainDefaultIndex:
-		return "Domain default index", "Written as index.html on new domain docroots when no real content is present. Supports {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders."
+		return "Domain default index", "Shown at a domain whose site has no index file (index.html or index.php). It is public. Supports {{.Domain}}, {{.Username}}, {{.DocRoot}} placeholders."
 	case models.PageTemplateDomainDisabled:
 		return "Disabled site", "Served for every domain that has been administratively disabled. One shared page — no per-domain placeholders."
 	case models.PageTemplateDomainUnconfigured:

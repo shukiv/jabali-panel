@@ -149,8 +149,8 @@ export const PageTemplatesCard = () => {
     <>
       <Card title={t("pagetemplatescard.page_templates")} style={{ marginBottom: 16 }}>
         <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
-          Edit the HTML written to disk on new domains and rendered for common
-          error pages. The domain default index supports{" "}
+          Edit the page shown at a domain whose site has no index file, and the
+          common error pages. The domain default index supports{" "}
           <code>{"{{.Domain}}"}</code>, <code>{"{{.Username}}"}</code>, and{" "}
           <code>{"{{.DocRoot}}"}</code> placeholders.
         </Typography.Paragraph>
