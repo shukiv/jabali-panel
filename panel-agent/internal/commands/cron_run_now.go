@@ -121,7 +121,7 @@ func cronRunNowHandler(ctx context.Context, params json.RawMessage) (any, error)
 		sc := systemCronScope()
 		scope = &sc
 	case p.Username != "root":
-		sc := userCronScope(p.Username, u.Uid)
+		sc := userCronScope(p.Username, u.Uid, u.Gid)
 		scope = &sc
 	}
 	if scope != nil {

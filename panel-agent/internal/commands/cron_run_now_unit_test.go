@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -45,11 +47,13 @@ func (f *cronExecFake) install(t *testing.T) {
 		f.mu.Lock()
 		f.calls = append(f.calls, append([]string{name}, args...))
 		script, arg := "true", ""
-		// A tenant job's commands go through sudo to the user's manager; a
-		// root job's call systemctl/journalctl directly.
+		// A tenant job's commands go through setpriv (or sudo where it is
+		// missing) to the user's manager; a root job's call
+		// systemctl/journalctl directly.
+		manager := name == "sudo" || name == "systemctl" || name == cronSetpriv
 		switch {
 		case argsHave(args, "--sync"):
-		case (name == "sudo" || name == "systemctl") && argsHave(args, "show"):
+		case manager && argsHave(args, "show"):
 			f.shows++
 			script, arg = `printf '%s\n' "$1"`, f.showBefore
 			if f.shows > 1 {
@@ -58,7 +62,7 @@ func (f *cronExecFake) install(t *testing.T) {
 			if f.showFails {
 				script = "echo 'Failed to connect to bus' >&2; exit 1"
 			}
-		case (name == "sudo" || name == "systemctl") && argsHave(args, "start"):
+		case manager && argsHave(args, "start"):
 			script = f.startScript
 		case name == "journalctl" || (name == "sudo" && argsHave(args, "journalctl")):
 			script, arg = `printf '%s\n' "$1"`, f.journal
@@ -89,6 +93,95 @@ func argsHave(args []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func (f *cronExecFake) ranExactly(cmdline string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		if strings.Join(c, " ") == cmdline {
+			return true
+		}
+	}
+	return false
+}
+
+// cronUserManagerArgv is how a tenant job's systemctl reaches u's manager:
+// setpriv, which switches to the tenant without a PAM session or a log line.
+func cronUserManagerArgv(u *user.User) []string {
+	return []string{cronSetpriv, "--reuid=" + u.Uid, "--regid=" + u.Gid, "--init-groups", "--",
+		"env", "-i", "PATH=" + cronUserPath,
+		"XDG_RUNTIME_DIR=/run/user/" + u.Uid,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + u.Uid + "/bus",
+		"systemctl", "--user"}
+}
+
+// fakeSetpriv points cronSetpriv at a file that exists (present) or doesn't,
+// so a test doesn't depend on the host's /usr/bin/setpriv.
+func fakeSetpriv(t *testing.T, present bool) {
+	t.Helper()
+	old := cronSetpriv
+	cronSetpriv = filepath.Join(t.TempDir(), "setpriv")
+	if present {
+		if err := os.WriteFile(cronSetpriv, nil, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { cronSetpriv = old })
+}
+
+func cronStatusAs(t *testing.T, me *user.User) {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{"user_id": "u1", "username": me.Username, "job_id": runNowTestJobID})
+	if _, err := cronStatusHandler(context.Background(), raw); err != nil {
+		t.Fatalf("cron.status: %v", err)
+	}
+}
+
+// The reconciler reads every tenant job's status each pass. sudo -u logged
+// three journal lines per read (PAM session opened and closed, and the
+// command); setpriv switches to the tenant without either.
+func TestCronStatus_ReadsTheUnitThroughSetpriv(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("current user: %v", err)
+	}
+	f := &cronExecFake{showBefore: "ExecMainStartTimestamp=Mon 2026-10-12 23:26:56 UTC\nExecMainStatus=0\nActiveState=inactive"}
+	f.install(t)
+	fakeSetpriv(t, true)
+
+	cronStatusAs(t, me)
+
+	want := strings.Join(append(cronUserManagerArgv(me), "show", "jabali-cron-"+runNowTestJobID+".service",
+		"--no-pager", "-p", "ExecMainStartTimestamp", "-p", "ExecMainStatus", "-p", "ActiveState"), " ")
+	if !f.ranExactly(want) {
+		t.Fatalf("expected %q among calls %q", want, f.calls)
+	}
+	if f.ran("sudo", "") {
+		t.Fatalf("a status read went through sudo: %q", f.calls)
+	}
+}
+
+// Without setpriv the tenant's manager is still reached, through sudo.
+func TestCronStatus_FallsBackToSudoWithoutSetpriv(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skipf("current user: %v", err)
+	}
+	f := &cronExecFake{showBefore: "ExecMainStartTimestamp=Mon 2026-10-12 23:26:56 UTC\nExecMainStatus=0\nActiveState=inactive"}
+	f.install(t)
+	fakeSetpriv(t, false)
+
+	cronStatusAs(t, me)
+
+	want := strings.Join([]string{"sudo", "-u", me.Username, "env",
+		"XDG_RUNTIME_DIR=/run/user/" + me.Uid,
+		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + me.Uid + "/bus",
+		"systemctl", "--user", "show", "jabali-cron-" + runNowTestJobID + ".service",
+		"--no-pager", "-p", "ExecMainStartTimestamp", "-p", "ExecMainStatus", "-p", "ActiveState"}, " ")
+	if !f.ranExactly(want) {
+		t.Fatalf("expected %q among calls %q", want, f.calls)
+	}
 }
 
 // runNowAs calls cron.run_now for a job of the current user whose command
@@ -129,6 +222,7 @@ func TestCronRunNow_LongRunKeepsGoingInItsUnit(t *testing.T) {
 		startScript: "exec sleep 30",
 	}
 	f.install(t)
+	fakeSetpriv(t, true)
 
 	began := time.Now()
 	out, err := runNowAs(t, context.Background(), map[string]any{"wait_seconds": 1})
@@ -145,17 +239,9 @@ func TestCronRunNow_LongRunKeepsGoingInItsUnit(t *testing.T) {
 		t.Fatal("a job with an installed unit must run through the unit, not as a child of the call")
 	}
 	me, _ := user.Current()
-	wantStart := strings.Join([]string{"sudo", "-u", me.Username, "env",
-		"XDG_RUNTIME_DIR=/run/user/" + me.Uid,
-		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + me.Uid + "/bus",
-		"systemctl", "--user", "start", "jabali-cron-" + runNowTestJobID + ".service"}, " ")
-	found := false
-	for _, c := range f.calls {
-		if strings.Join(c, " ") == wantStart {
-			found = true
-		}
-	}
-	if !found {
+	wantStart := strings.Join(append(cronUserManagerArgv(me),
+		"start", "jabali-cron-"+runNowTestJobID+".service"), " ")
+	if !f.ranExactly(wantStart) {
 		t.Fatalf("expected %q among calls %q", wantStart, f.calls)
 	}
 }

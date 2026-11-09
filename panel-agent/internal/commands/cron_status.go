@@ -63,7 +63,7 @@ func cronStatusHandler(ctx context.Context, params json.RawMessage) (any, error)
 		if err != nil {
 			return cronStatusResult{HasRun: false}, nil
 		}
-		scope = userCronScope(p.Username, u.Uid)
+		scope = userCronScope(p.Username, u.Uid, u.Gid)
 	}
 	unit := fmt.Sprintf("jabali-cron-%s.service", p.JobID)
 

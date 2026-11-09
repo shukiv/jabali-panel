@@ -80,7 +80,7 @@ func cronTailLogHandler(ctx context.Context, params json.RawMessage) (any, error
 	// _UID field (userCronScope says why). logMatch takes the job's own
 	// lines, including a last line written without a newline, and the user
 	// manager's "Starting…" / "Finished…" lines about the unit.
-	return cronReadLog(ctx, userCronScope(p.Username, u.Uid), p.JobID, lines), nil
+	return cronReadLog(ctx, userCronScope(p.Username, u.Uid, u.Gid), p.JobID, lines), nil
 }
 
 // cronTailRootLog reads a root job's log from the system journal: the same
