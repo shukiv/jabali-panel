@@ -83,11 +83,11 @@ func RegisterDomainEmailRoutes(g *gin.RouterGroup, cfg DomainEmailHandlerConfig)
 
 type domainEmailHandler struct{ cfg DomainEmailHandlerConfig }
 
-// rotateDKIM rotates the domain's DKIM keypair (Gitea #542): the agent
-// generates a fresh ed25519 key (snapshotting the old), we persist the new
-// public key, then wipe + republish the M6 email DNS so the new DKIM TXT lands
-// at jabali._domainkey.<domain>. The reconciler also re-converges, so this is
-// belt-and-suspenders for an immediate UI refresh. Admin or the domain owner.
+// rotateDKIM rotates the domain's DKIM keys (Gitea #542): the agent gives
+// Stalwart's signatures new Ed25519 and RSA keys (GH #2475), we persist the
+// new public keys, then wipe + republish the M6 email DNS so the new TXT
+// records land at jabali._domainkey and jabalirsa._domainkey. Admin or the
+// domain owner.
 func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 	ctx := c.Request.Context()
 	claims := ginctx.Claims(c)
@@ -125,7 +125,14 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 		case errors.Is(err, domainmailops.ErrAgentBadResponse):
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_bad_response", "detail": "agent returned no new DKIM key"})
 		case errors.Is(err, domainmailops.ErrPersistFailed):
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "persist_failed", "detail": firstLineString(err.Error())})
+			// The mail server already signs with the new keys; return them so
+			// they can be published by hand.
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":                   "persist_failed",
+				"detail":                  "the mail server signs with the new DKIM keys, but they could not be saved; publish new_dkim_public_key and new_dkim_rsa_public_key by hand: " + firstLineString(err.Error()),
+				"new_dkim_public_key":     res.NewDKIMPublicKey,
+				"new_dkim_rsa_public_key": res.NewDKIMRSAPublicKey,
+			})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		}
@@ -138,7 +145,11 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 		"old_dkim_public_key": res.OldDKIMPublicKey,
 		"new_dkim_public_key": res.NewDKIMPublicKey,
 		"old_key_backup_path": res.OldKeyBackupPath,
-		"warnings":            domainmailops.WarningMessages(warnings),
+		// GH #2475: "" when the RSA key was not rotated (see warnings).
+		"dkim_rsa_selector":       dnscompile.EmailRecordsRSASelector,
+		"old_dkim_rsa_public_key": res.OldDKIMRSAPublicKey,
+		"new_dkim_rsa_public_key": res.NewDKIMRSAPublicKey,
+		"warnings":                domainmailops.WarningMessages(warnings),
 	})
 }
 

@@ -109,3 +109,13 @@ Stalwart v0.16.0 can generate its own keys and publish DNS records via its DNS-m
 - Plan: `plans/m6-email-stalwart.md` §1 decision 4, Step 1 `internal/dkim/`, Step 3 `domain.email_enable` command, Step 5 DNS record template, Step 9 runbook escape hatch.
 - RFC 8463 — Ed25519 DKIM (2018).
 - RFC 6376 — Generic DKIM (2011).
+
+## Amendment 2026-11-10 — what rotation does on Stalwart 1.0
+
+Parts of this ADR no longer describe the system:
+
+- **Stalwart does not read the key files.** §4's `file:/etc/jabali-panel/dkim/<domain>.key` key source is from the 0.16 config. Stalwart 1.0 signs with the private keys stored in its registry (`x:DkimSignature`, PKCS#8 PEM); the files are the panel's copy, from which the published TXT is derived. A rotation that wrote only the file therefore published a key nothing signed with, until GH #2475's follow-up changed it.
+- **Rotation keeps the selectors.** The `jabali-YYYY-MM` selectors and the 72-hour coexistence of §2 were never built: the selectors are fixed (`jabali`, and `jabalirsa` for the RSA key). A rotation sets the new key on the domain's Stalwart signatures (DKIM1, and DKIM2 for the Ed25519 key), then replaces the file and republishes the same TXT names. Receivers that cached the old record fail the new signatures until it expires (the server's default DNS TTL, 300 s unless changed), and a message signed before the rotation and still queued for retry fails at its receiver. `<domain>.key.old` and `<domain>.rsa.key.old` keep the previous private keys as a record; they are not a rollback.
+- **RSA is signed alongside Ed25519 by default** (GH #2479/#2475, migration 349 `domains.dkim_rsa_public_key`), not as the escape hatch of §3, and the RSA key is rotated with the Ed25519 one. If Stalwart refuses the RSA key, the Ed25519 rotation still completes and the RSA key, its file and its published record stay as they were.
+
+Selector-per-rotation with a coexistence window remains the better scheme for a scheduled rotation; it is not built.

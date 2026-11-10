@@ -65,6 +65,17 @@ value as it is and split it themselves, and **Copy all** writes it already
 split for a zone-file import. Until the record is published, receivers find no
 key for the RSA signature.
 
+**Rotate DKIM** on the domain's mail page (or `jabali domain email-dkim-rotate
+<domain>`) replaces both keys. The mail server signs with the new keys from the
+next message, and both TXT records are republished with them; a domain whose
+DNS is hosted elsewhere needs both records updated there. The selectors stay
+the same, so receivers that cached the old records fail the new signatures
+until those expire, and a message signed before the rotation and still waiting
+for a retry fails at its receiver. The previous private keys stay in
+`/etc/jabali-panel/dkim` as `<domain>.key.old` and `<domain>.rsa.key.old`: a
+record, not a rollback. If the RSA key can't be rotated, the Ed25519 one still
+is, and the rotation says so.
+
 ### Mail-only delete
 
 A domain can have **just its mail torn down while the web domain stays** —
@@ -129,7 +140,7 @@ Distribution lists are re-applied to Stalwart by the reconciler whenever the lis
 - MTA-STS policy + MX host alignment (per-domain MTA-STS)
 
 Buttons:
-- **Rotate DKIM** — generate a new DKIM key, publish DNS record, retire the old key on the configured grace period.
+- **Rotate DKIM** — replace the domain's Ed25519 and RSA DKIM keys and republish both records (see [DKIM signing](#dkim-signing)).
 
 ## Website mail: local mail server or a smarthost
 

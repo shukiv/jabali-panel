@@ -2251,7 +2251,7 @@ jabali domain email-disable <domain-name-or-id>
 
 #### `jabali domain email-dkim-rotate`
 
-Rotate the domain's DKIM keypair (operator-driven, not automatic)
+Rotate the domain's DKIM keys (operator-driven, not automatic)
 
 ```
 jabali domain email-dkim-rotate <domain-name-or-id>

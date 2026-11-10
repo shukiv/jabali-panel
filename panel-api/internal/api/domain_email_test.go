@@ -771,7 +771,8 @@ func doRotate(t *testing.T, r *gin.Engine) *httptest.ResponseRecorder {
 func TestDomainEmail_RotateDKIM_Success(t *testing.T) {
 	ma := &mockAgent{callFn: func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
 		require.Equal(t, "domain.email_dkim_rotate", cmd)
-		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":"p=NEW","old_key_backup_path":"/etc/x.old"}`), nil
+		return json.RawMessage(`{"old_dkim_public_key":"p=OLD","new_dkim_public_key":"p=NEW","old_key_backup_path":"/etc/x.old",` +
+			`"old_dkim_rsa_public_key":"p=OLDRSA","new_dkim_rsa_public_key":"p=NEWRSA"}`), nil
 	}}
 	r, _ := dkimRotateRouter(t, ma, true, true)
 	w := doRotate(t, r)
@@ -782,6 +783,9 @@ func TestDomainEmail_RotateDKIM_Success(t *testing.T) {
 	require.Equal(t, "p=NEW", body["new_dkim_public_key"])
 	require.Equal(t, "p=OLD", body["old_dkim_public_key"])
 	require.Equal(t, "/etc/x.old", body["old_key_backup_path"])
+	require.Equal(t, "jabalirsa", body["dkim_rsa_selector"])
+	require.Equal(t, "p=NEWRSA", body["new_dkim_rsa_public_key"])
+	require.Equal(t, "p=OLDRSA", body["old_dkim_rsa_public_key"])
 	require.Equal(t, 1, ma.callCount)
 }
 
@@ -863,11 +867,17 @@ func TestDomainEmail_RotateDKIM_BadResponse_500(t *testing.T) {
 
 func TestDomainEmail_RotateDKIM_PersistFailed_500(t *testing.T) {
 	ma := &mockAgent{callFn: func(context.Context, string, any) (json.RawMessage, error) {
-		return json.RawMessage(`{"new_dkim_public_key":"p=NEW"}`), nil
+		return json.RawMessage(`{"new_dkim_public_key":"p=NEW","new_dkim_rsa_public_key":"p=NEWRSA"}`), nil
 	}}
 	r, domains := dkimRotateRouter(t, ma, true, true)
 	domains.emailStateErr = errors.New("db down")
 	w := doRotate(t, r)
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 	require.Contains(t, w.Body.String(), "persist_failed")
+	// The mail server already signs with the new keys: the operator gets
+	// them to publish by hand.
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "p=NEW", body["new_dkim_public_key"])
+	require.Equal(t, "p=NEWRSA", body["new_dkim_rsa_public_key"])
 }
