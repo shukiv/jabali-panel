@@ -46,6 +46,14 @@ type migrationRsyncRemoteHomeResult struct {
 	Files       int64    `json:"files"`
 	DestPath    string   `json:"dest_path"`
 	Skipped     []string `json:"skipped,omitempty"`
+
+	// Partial is set when rsync ended with exit 23 (some files could not be
+	// read or transferred) or 24 (source files vanished mid-copy, e.g. a
+	// live Maildir). Everything else was copied and chowned; Errors holds
+	// rsync's own lines naming what was left behind.
+	Partial  bool     `json:"partial,omitempty"`
+	ExitCode int      `json:"exit_code,omitempty"`
+	Errors   []string `json:"errors,omitempty"`
 }
 
 func init() {
@@ -118,6 +126,17 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: msg}
 	}
 	p.SrcPath = cleanSrc
+	// A root session must not read the source as root. Root follows a symlink
+	// the account planted in its own tree (a symlinked mail/ or domains/), so
+	// the copy would pull files only root can read on the source into the new
+	// account. The source-side rsync runs as the owner of the account's top
+	// directory instead, which the account cannot replace; it then reads
+	// only what the account itself can read. A non-root login already is
+	// that boundary.
+	rsyncPathOpt, rpErr := sourceRsyncPathOpt(p.SSHUser, srcRoot, p.SrcRoot != "", p.SrcPath)
+	if rpErr != "" {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInvalidArgument, Message: rpErr}
+	}
 	// Bind the destination to the destination user's own home and resolve it
 	// symlink-safe (Gitea #465). A bare strings.HasPrefix(dest, "/home/") let a
 	// call pair dest_user=alice with dest_path=/home/bob/... — root would then
@@ -254,11 +273,7 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 		}
 		rsyncArgs = append(rsyncArgs, "--exclude="+e)
 	}
-	rsyncArgs = append(rsyncArgs,
-		"-e", "ssh "+sshOpt,
-		sshUser+"@"+p.Host+":"+strings.TrimRight(p.SrcPath, "/")+"/",
-		strings.TrimRight(p.DestPath, "/")+"/",
-	)
+	rsyncArgs = remoteRsyncTail(rsyncArgs, rsyncPathOpt, sshOpt, sshUser+"@"+p.Host, p.SrcPath, p.DestPath)
 	var cmd *exec.Cmd
 	if sshPass != "" {
 		// sshpass-prefixed invocation. -e reads SSHPASS from env so the
@@ -269,9 +284,15 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 		cmd = execCommandContext(subctx, "rsync", rsyncArgs...)
 	}
 	out, runErr := cmd.CombinedOutput()
+	partialCode := 0
 	if runErr != nil {
-		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
-			Message: fmt.Sprintf("rsync failed: %v: %s", runErr, truncate(string(out), 4096))}
+		// 23/24 leave everything else copied: still chown it (otherwise the
+		// tree keeps the source's numeric owners) and report it as partial.
+		partialCode = rsyncPartialExit(runErr)
+		if partialCode == 0 {
+			return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
+				Message: fmt.Sprintf("rsync failed: %v: %s", runErr, truncate(string(out), 4096))}
+		}
 	}
 	bytesCopied, files := parseRsyncStats(string(out))
 
@@ -296,11 +317,17 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 	_ = execCommandContext(subctx, "find", p.DestPath, "-type", "d", "-exec", "chmod", "g+rx", "{}", "+").Run()
 	_ = execCommandContext(subctx, "find", p.DestPath, "-type", "f", "-exec", "chmod", "g+r", "{}", "+").Run()
 
-	return migrationRsyncRemoteHomeResult{
+	res := migrationRsyncRemoteHomeResult{
 		BytesCopied: bytesCopied,
 		Files:       files,
 		DestPath:    p.DestPath,
-	}, nil
+	}
+	if partialCode != 0 {
+		res.Partial = true
+		res.ExitCode = partialCode
+		res.Errors = rsyncErrorLines(string(out))
+	}
+	return res, nil
 }
 
 // lookupGroup returns the GID of a unix group, sentinel on miss.
