@@ -181,3 +181,37 @@ func TestDkimEnsure_RejectsBadDomainName(t *testing.T) {
 		requireAgentErrorCode(t, err, agentwire.CodeInvalidArgument)
 	}
 }
+
+// The panel's side of the domain.email_enable and domain_email.dkim_ensure
+// contracts (GH #2475): the fixtures the panel decodes decode into this
+// handler's shapes with every field kept.
+func TestDkimEnsure_PanelContract(t *testing.T) {
+	dir := "../../../panel-api/internal/agent/testdata/"
+	for _, c := range []struct {
+		file string
+		into any
+	}{
+		{"domain_email_enable_response.json", &domainEmailEnableResponse{}},
+		{"domain_email_dkim_ensure_request.json", &dkimEnsureParams{}},
+		{"domain_email_dkim_ensure_response.json", &dkimEnsureResponse{}},
+	} {
+		raw, err := os.ReadFile(dir + c.file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dec := json.NewDecoder(strings.NewReader(string(raw)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(c.into); err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		again, _ := json.Marshal(c.into)
+		var got, want any
+		_ = json.Unmarshal(again, &got)
+		_ = json.Unmarshal(raw, &want)
+		gb, _ := json.Marshal(got)
+		wb, _ := json.Marshal(want)
+		if string(gb) != string(wb) {
+			t.Errorf("%s: the agent drops or renames fields:\nwant %s\ngot  %s", c.file, wb, gb)
+		}
+	}
+}
