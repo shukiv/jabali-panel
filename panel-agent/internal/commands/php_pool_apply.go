@@ -217,6 +217,14 @@ func validatePoolIniOverrides(values, flags []KV) *agentwire.AgentError {
 				Message: fmt.Sprintf("admin_value %s: value contains a control character", av.Name),
 			}
 		}
+		// OPcache sizing goes into an ini file the master reads at startup
+		// (GH #2466): only a plain size, count or JIT mode word.
+		if !validOpcacheStartupValue(av.Name, av.Value) {
+			return &agentwire.AgentError{
+				Code:    agentwire.CodeInvalidArgument,
+				Message: fmt.Sprintf("admin_value %s: invalid value %q", av.Name, av.Value),
+			}
+		}
 	}
 
 	// Validate admin_flags directives and values.
@@ -747,6 +755,10 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		slowlogPath = filepath.Join(logsDir, name)
 	}
 
+	// OPcache sizing is read by the master at startup, not from the pool
+	// (GH #2466): it goes into the slug's own ini below, not the pool conf.
+	poolValues, opcacheStartup := splitOpcacheStartupValues(p.AdminValues)
+
 	spec := phpPoolSpecTemplate{
 		PoolName:                       poolName,
 		User:                           p.Username,
@@ -762,7 +774,7 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		RequestTerminateTimeoutSeconds: p.RequestTerminateTimeoutSeconds,
 		SlowlogTimeoutSeconds:          slowlogTimeout,
 		SlowlogPath:                    slowlogPath,
-		AdminValues:                    p.AdminValues,
+		AdminValues:                    poolValues,
 		AdminFlags:                     p.AdminFlags,
 		DisableFunctions:               disableFunctions,
 	}
@@ -864,6 +876,12 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: pderr.Error()}
 	}
 
+	// GH #2466: the pool's OPcache sizing, in the slug's scan dir.
+	opcacheChanged, operr := applyPoolOpcacheIni(p.PHPVersion, slug, opcacheStartup)
+	if operr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: operr.Error()}
+	}
+
 	// Restart or reload the slug's FPM service.
 	if err := restartOrReloadUserFPM(ctx, slug, oldVersion, p.PHPVersion); err != nil {
 		return nil, &agentwire.AgentError{
@@ -874,8 +892,9 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 
 	// A changed Xdebug state needs a FULL restart — a USR2 reload (which
 	// restartOrReloadUserFPM may have done for an unchanged version) never
-	// re-reads a zend_extension.
-	if xdebugChanged && os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
+	// re-reads a zend_extension. Changed OPcache sizing likewise: the
+	// master sizes its shared memory only when it starts.
+	if (xdebugChanged || opcacheChanged) && os.Getenv("JABALI_PHP_POOL_SKIP_RELOAD") == "" {
 		_ = execCommandContext(ctx, "systemctl", "restart", fmt.Sprintf("jabali-fpm@%s.service", slug)).Run()
 	}
 

@@ -120,6 +120,8 @@ func phpPoolRemoveHandler(ctx context.Context, params json.RawMessage) (any, err
 	// The pool's own PHP Defense rules, if its package lifted the exec bans
 	// (GH #1701).
 	removePoolPHPDefense(slug)
+	// Its OPcache sizing ini (GH #2466).
+	removePoolOpcacheIni(slug)
 
 	// A versioned slug owns its own systemd drop-in dir; remove it so a reaped
 	// version leaves nothing behind (the default pool's drop-in is owned by

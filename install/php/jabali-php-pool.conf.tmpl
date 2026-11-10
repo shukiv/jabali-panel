@@ -64,17 +64,11 @@ php_admin_value[open_basedir] = /home/{{.User}}:/run/mysqld/mysqld.sock:/tmp:/va
 {{- if .DisableFunctions }}
 php_admin_value[disable_functions] = {{ .DisableFunctions }}
 {{- end }}
-; Opcache sizing (JAB-200). The old 32MB cap filled instantly on any real
-; WP site (WooCommerce + Elementor = 10k+ PHP files) and opcache does not
-; evict -- once full it stops caching new scripts and every request pays
-; recompilation, wp-admin hardest. 128MB fits such sites; SHM is mmap'd
-; and faulted lazily, so 20 idle pools do NOT hold 20x128MB of real RAM --
-; resident use tracks what each site actually compiles.
-; max_accelerated_files must exceed the site's file count or the key
-; table saturates the same way (default 10000 < one Woo+Elementor site);
-; PHP rounds 20000 up to the next prime.
-php_admin_value[opcache.memory_consumption] = 128
-php_admin_value[opcache.max_accelerated_files] = 20000
+; No OPcache sizing here (GH #2466). The master allocates OPcache's shared
+; memory and file table at startup, before it reads this pool, so a
+; php_admin_value for them changes nothing. The size comes from the
+; server-wide 15-jabali-opcache.ini (install.sh, sized to the host's RAM);
+; a pool's own override goes into its jabali-ext ini, written by the agent.
 ; PHP mail() path (JAB-230). install.sh purges every traditional MTA
 ; (Stalwart owns :25), so /usr/sbin/sendmail does not exist — without this
 ; line mail()/wp_mail() fails on every site. The shim runs as the tenant
