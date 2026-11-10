@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -253,7 +254,10 @@ func (r *Reconciler) refreshAppSecConfig(ctx context.Context, hosts []string) {
 // and disables it (off). Enable pairs with start so the daemon survives a
 // reboot, symmetric with the disable on the off path (#760). JAB-369: gated
 // by the webmail.daemon phase; the state is stamped only when both calls
-// succeed, so a half-applied transition is retried on the next tick.
+// succeed, so a half-applied transition is retried on the next tick. On the
+// off path a unit that isn't installed counts as stopped and disabled (GH
+// #2474): a server set up without webmail has none, and retrying every tick
+// only logged two warnings a minute.
 func (r *Reconciler) convergeWebmailDaemon(ctx context.Context, on bool) {
 	verbs := []string{"service.stop", "service.disable"}
 	if on {
@@ -265,6 +269,10 @@ func (r *Reconciler) convergeWebmailDaemon(ctx context.Context, on bool) {
 		var errs []error
 		for _, verb := range verbs {
 			if _, err := r.agent.Call(callCtx, verb, map[string]any{"name": "jabali-webmail"}); err != nil {
+				var ae *agent.AgentError
+				if !on && errors.As(err, &ae) && ae.Code == agent.CodeNotFound {
+					continue
+				}
 				r.log.Warn("webmail reconcile: "+verb+" jabali-webmail failed", "err", err)
 				errs = append(errs, err)
 			}
