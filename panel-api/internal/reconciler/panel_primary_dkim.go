@@ -174,12 +174,16 @@ func (r *Reconciler) ensureTenantDKIMRecords(ctx context.Context, domain *models
 	if domain.DkimPublicKey == nil || *domain.DkimPublicKey == "" {
 		return
 	}
-	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, *domain.DkimSelector, *domain.DkimPublicKey)
+	rsa := ""
+	if domain.DkimRSAPublicKey != nil {
+		rsa = *domain.DkimRSAPublicKey
+	}
+	r.syncPanelPrimaryEmailDNS(ctx, domain.ID, *domain.DkimSelector, *domain.DkimPublicKey, rsa)
 }
 
 // syncPanelPrimaryEmailDNS mirrors syncEmailDNSOnEnableInline in the API
 // package without the cross-package import.
-func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, selector, pubKey string) {
+func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, selector, pubKey, rsaPubKey string) {
 	if r.dnsZones == nil || r.dnsRecords == nil {
 		return
 	}
@@ -199,7 +203,7 @@ func (r *Reconciler) syncPanelPrimaryEmailDNS(ctx context.Context, domainID, sel
 	if r.serverSettings != nil {
 		srv, _ = r.settingsGet(ctx)
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, rsaPubKey, srv, ids.NewULID, time.Now().UTC())
 	for i := range intended {
 		rec := intended[i]
 		if hasExistingM6DNSRecord(existing, rec.Name, rec.Type) {

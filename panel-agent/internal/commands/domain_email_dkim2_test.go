@@ -21,10 +21,21 @@ type fakeDkim2Registry struct {
 
 func newDkim2TestServer(t *testing.T, reg *fakeDkim2Registry) {
 	t.Helper()
-	server := newJMAPServer(t, map[string]jmapHandler{
-		"x:Domain/query": func(json.RawMessage) (any, *jmapFakeError) {
-			return map[string]any{"ids": []string{"dom1"}, "total": 1}, nil
-		},
+	routes := reg.routes()
+	routes["x:Domain/query"] = func(json.RawMessage) (any, *jmapFakeError) {
+		return map[string]any{"ids": []string{"dom1"}, "total": 1}, nil
+	}
+	server := newJMAPServer(t, routes)
+	wireJMAP(t, server)
+}
+
+// routes serves x:DkimSignature/get and /set from the registry. Shared with
+// the DKIM1 ensure and email_enable tests.
+func (reg *fakeDkim2Registry) routes() map[string]jmapHandler {
+	if reg.sigs == nil {
+		reg.sigs = map[string]map[string]any{}
+	}
+	return map[string]jmapHandler{
 		"x:DkimSignature/get": func(json.RawMessage) (any, *jmapFakeError) {
 			list := make([]map[string]any, 0, len(reg.sigs))
 			for _, s := range reg.sigs {
@@ -58,8 +69,7 @@ func newDkim2TestServer(t *testing.T, reg *fakeDkim2Registry) {
 			}
 			return map[string]any{"created": created, "destroyed": destroyed}, nil
 		},
-	})
-	wireJMAP(t, server)
+	}
 }
 
 func writeTestDKIMKey(t *testing.T, domain string) {

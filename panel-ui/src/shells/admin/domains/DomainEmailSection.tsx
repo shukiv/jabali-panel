@@ -353,7 +353,9 @@ export const DomainEmailSection = ({ domainId }: Props) => {
                 dataIndex: "value",
                 render: (value: string) =>
                   value ? (
-                    <Space size="small">
+                    // maxWidth: the ~400-char RSA DKIM key wraps instead of
+                    // stretching the table (GH #2475).
+                    <Space size="small" style={{ maxWidth: 500 }}>
                       <Typography.Text
                         code
                         copyable={false}

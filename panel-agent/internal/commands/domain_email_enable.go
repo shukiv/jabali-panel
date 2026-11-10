@@ -21,8 +21,10 @@ import (
 //  2. Enables + starts jabali-stalwart + jabali-webmail (idempotent
 //     on re-runs — they may already be active from a prior domain).
 //  3. Reloads Stalwart so the SQL directory picks up email_enabled = 1.
-//  4. Returns the DKIM public key so the reconciler can inject it into
-//     the zone's jabali._domainkey.<domain> TXT record.
+//  4. Gives the Stalwart domain its Ed25519 and RSA DKIM signatures
+//     (ensureDomainDKIM).
+//  5. Returns both DKIM public keys so the panel can publish the
+//     jabali._domainkey and jabalirsa._domainkey TXT records.
 type domainEmailEnableParams struct {
 	DomainID   string `json:"domain_id"`
 	DomainName string `json:"domain_name"`
@@ -36,6 +38,12 @@ type domainEmailEnableResponse struct {
 	Ok            bool   `json:"ok"`
 	DKIMSelector  string `json:"dkim_selector"`
 	DKIMPublicKey string `json:"dkim_public_key"`
+
+	// The RSA key signing alongside the Ed25519 one (GH #2475). The public
+	// key is "" when the domain's RSA signature exists but its key file
+	// can't be read; the panel then keeps the key it already published.
+	DKIMRSASelector  string `json:"dkim_rsa_selector"`
+	DKIMRSAPublicKey string `json:"dkim_rsa_public_key"`
 }
 
 // dkimSelector is a single hardcoded selector for v1 per ADR-0043.
@@ -107,54 +115,36 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 		}
 	}
 
-	// Seed Stalwart's registry with a Domain + DkimSignature so
+	// Seed Stalwart's registry with a Domain and its DKIM signatures so
 	// inbound SMTP is routed for this domain and outbound is signed.
 	//
-	// Idempotency: on a re-enable-after-disable (which destroyed the
-	// Domain via domain.email_disable's JMAP call), the registry has
-	// no record and we create both. If a Domain for this name already
-	// exists (operator re-ran email_enable without an intervening
-	// disable), skip both creates — the existing Domain + DkimSignature
-	// keep working. The panel-side DB is the source of truth for
-	// whether email SHOULD be enabled; the registry is Stalwart's
-	// synchronized copy.
-	existingDomainID, err := domainIDByName(ctx, p.DomainName)
+	// On a re-enable after disable (domain.email_disable destroyed the
+	// Domain) the registry has no record and both are created. A Domain that
+	// already exists is kept, but it still gets any signature it lacks: a
+	// Domain created by another path (account registry sync) has none, and
+	// one from before GH #2475 has the Ed25519 signature only. The panel DB
+	// is the source of truth for whether email SHOULD be enabled; the
+	// registry is Stalwart's synchronized copy.
+	domainID, err := domainIDByName(ctx, p.DomainName)
 	if err != nil {
 		return nil, err
 	}
-	if existingDomainID == "" {
-		newDomainID, err := createDomain(ctx, p.DomainName)
-		if err != nil {
-			return nil, err
-		}
-
-		// Wrap the on-disk Ed25519 seed as PKCS#8 PEM before pushing
-		// to Stalwart. v0.16's DKIM signer expects the PEM form
-		// (crates/common/src/config/smtp/auth.rs ::
-		//  Ed25519Key::from_pkcs8_maybe_unchecked_der).
-		seed, err := dkim.LoadEd25519(keyPath)
-		if err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("load DKIM key for JMAP push: %v", err),
-			}
-		}
-		pemKey, err := dkim.SeedToPKCS8PEM(seed)
-		if err != nil {
-			return nil, &agentwire.AgentError{
-				Code:    agentwire.CodeInternal,
-				Message: fmt.Sprintf("wrap DKIM seed as PKCS#8 PEM: %v", err),
-			}
-		}
-		if err := createDkimSignature(ctx, newDomainID, dkimSelector, string(pemKey)); err != nil {
+	if domainID == "" {
+		if domainID, err = createDomain(ctx, p.DomainName); err != nil {
 			return nil, err
 		}
 	}
+	sigs, err := ensureDomainDKIM(ctx, p.DomainName, domainID)
+	if err != nil {
+		return nil, err
+	}
 
 	return domainEmailEnableResponse{
-		Ok:            true,
-		DKIMSelector:  dkimSelector,
-		DKIMPublicKey: publicTXT,
+		Ok:               true,
+		DKIMSelector:     dkimSelector,
+		DKIMPublicKey:    publicTXT,
+		DKIMRSASelector:  dkimRSASelector,
+		DKIMRSAPublicKey: sigs.RSAPublicKey,
 	}, nil
 }
 

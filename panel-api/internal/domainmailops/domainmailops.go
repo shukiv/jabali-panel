@@ -237,6 +237,10 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 		Ok            bool   `json:"ok"`
 		DKIMSelector  string `json:"dkim_selector"`
 		DKIMPublicKey string `json:"dkim_public_key"`
+		// GH #2475. Optional: "" (an agent from before #2475, or an RSA
+		// signature whose key file is missing) leaves the stored key, and
+		// the reconciler's DKIM pass fills it in.
+		DKIMRSAPublicKey string `json:"dkim_rsa_public_key"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return "", "", nil, fmt.Errorf("%w: unmarshal: %v", ErrAgentBadResponse, err)
@@ -247,12 +251,17 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 	}
 
 	selector, pubKey = resp.DKIMSelector, resp.DKIMPublicKey
+	var rsaKey *string
+	if resp.DKIMRSAPublicKey != "" {
+		rsaKey = &resp.DKIMRSAPublicKey
+	}
 	now := time.Now().UTC()
 	if err := d.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
-		Enabled:        true,
-		DkimSelector:   &selector,
-		DkimPublicKey:  &pubKey,
-		EmailEnabledAt: &now,
+		Enabled:          true,
+		DkimSelector:     &selector,
+		DkimPublicKey:    &pubKey,
+		DkimRSAPublicKey: rsaKey,
+		EmailEnabledAt:   &now,
 	}); err != nil {
 		return "", "", nil, fmt.Errorf("update email_enabled row: %w", err)
 	}
@@ -260,7 +269,10 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 	// DNS sync is best-effort. Warnings flow back to the caller; a DNS-side
 	// failure does NOT roll back the email_enabled flip (the mailbox system
 	// still works without the convenience records).
-	warnings = SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey)
+	if rsaKey != nil {
+		dom.DkimRSAPublicKey = rsaKey
+	}
+	warnings = SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey, derefString(dom.DkimRSAPublicKey))
 
 	// Mutate caller's Domain struct so the response reflects new state.
 	dom.EmailEnabled = true
@@ -396,7 +408,7 @@ func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, 
 	// Wipe the old M6-managed records + republish so the new DKIM TXT replaces
 	// the old one immediately (reconciler re-converges on its next tick too).
 	DeleteManagedDNSOnDisable(ctx, d, dom.ID)
-	warnings := SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey)
+	warnings := SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey, derefString(dom.DkimRSAPublicKey))
 
 	return RotateResult{
 		Selector:         selector,
@@ -412,7 +424,10 @@ func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, 
 // publish failure — JAB-286 AC3) for the caller to surface; never returns an
 // error. Exported so the REST DKIM-rotate path can republish through the same
 // code.
-func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pubKey string) []Warning {
+//
+// rsaPubKey is the TXT value of the domain's RSA key (GH #2475); "" omits
+// its record.
+func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pubKey, rsaPubKey string) []Warning {
 	if d.DNSZones == nil || d.DNSRecords == nil {
 		// DNS repos not wired — panel running without PowerDNS integration.
 		return nil
@@ -435,7 +450,7 @@ func SyncManagedDNSOnEnable(ctx context.Context, d Deps, domainID, selector, pub
 	if d.ServerSettings != nil {
 		srv, _ = d.ServerSettings.Get(ctx)
 	}
-	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, srv, ids.NewULID, time.Now().UTC())
+	intended := dnscompile.BuildEmailRecords(zone.ID, zone.Name, selector, pubKey, rsaPubKey, srv, ids.NewULID, time.Now().UTC())
 
 	var warnings []Warning
 	for _, rec := range intended {
@@ -545,4 +560,11 @@ func findConflict(records []models.DNSRecord, name, typ string) *models.DNSRecor
 		return r
 	}
 	return nil
+}
+
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

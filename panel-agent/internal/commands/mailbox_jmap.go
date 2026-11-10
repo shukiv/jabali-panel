@@ -494,10 +494,17 @@ func createDomain(ctx context.Context, name string) (string, error) {
 // crates/common/src/config/smtp/auth.rs —
 // `Ed25519Key::from_pkcs8_maybe_unchecked_der`).
 func createDkimSignature(ctx context.Context, domainID, selector, pemPrivateKey string) error {
+	return createDkim1Signature(ctx, dkim1Ed25519Type, domainID, selector, pemPrivateKey)
+}
+
+// createDkim1Signature creates a DKIM1 x:DkimSignature of variant typ
+// (dkim1Ed25519Type or dkim1RSAType, GH #2475). Both variants take the same
+// fields; the RSA one takes a PKCS#1 or PKCS#8 PEM.
+func createDkim1Signature(ctx context.Context, typ, domainID, selector, pemPrivateKey string) error {
 	args := map[string]any{
 		"create": map[string]any{
 			"#sig1": map[string]any{
-				"@type":    "Dkim1Ed25519Sha256",
+				"@type":    typ,
 				"domainId": domainID,
 				"selector": selector,
 				"privateKey": map[string]any{

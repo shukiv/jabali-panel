@@ -12,6 +12,7 @@
 import { Alert, Button, Modal, Space, Table, Typography, type TableColumnsType } from "antd";
 import { CopyOutlined } from "@icons";
 import { feedback } from "../../lib/feedback";
+import { zoneFileLine } from "../../lib/zoneFile";
 import { useDomainEmail, type DomainEmailDNSHint } from "../../hooks/useMailboxes";
 
 interface Props {
@@ -28,17 +29,6 @@ async function copyText(text: string) {
   } catch {
     feedback.message.error("Copy failed — select the value and copy manually");
   }
-}
-
-// zoneFileLine renders one hint as a bulk-import-friendly zone-file line. The
-// value already carries record-data form (MX/SRV priorities inlined), so it
-// drops in after "<name> IN <type> ". TXT rdata MUST be quoted for zone-file
-// syntax — an unquoted "v=DMARC1; p=…" is truncated at the first ";" (a comment
-// marker), silently corrupting DMARC/DKIM/TLS-RPT/SPF. Per-value copy stays bare
-// (provider UIs want the raw string); only the zone-file form quotes.
-function zoneFileLine(h: DomainEmailDNSHint): string {
-  const rdata = h.type === "TXT" && !h.value.startsWith('"') ? `"${h.value}"` : h.value;
-  return `${h.name}\tIN\t${h.type}\t${rdata}`;
 }
 
 export function MailDNSRecordsModal({ domainId, domainName, open, onClose }: Props) {
@@ -58,7 +48,10 @@ export function MailDNSRecordsModal({ domainId, domainName, open, onClose }: Pro
       title: "Value",
       dataIndex: "value",
       render: (value: string) => (
-        <Space size="small">
+        // maxWidth: a 2048-bit RSA DKIM key (~400 chars) wraps instead of
+        // widening the column past the modal (GH #2475); every shorter value
+        // fits on one line as before.
+        <Space size="small" style={{ maxWidth: 500 }}>
           <Typography.Text code style={{ wordBreak: "break-all", fontSize: 12 }}>
             {value}
           </Typography.Text>

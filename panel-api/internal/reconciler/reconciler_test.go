@@ -249,6 +249,21 @@ func (f *fakeDomainRepo) SetSharedCertificate(context.Context, string, *string, 
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateDKIMPublicKeys(_ context.Context, id string, ed25519, rsa *string) error {
+	for i, d := range f.domains {
+		if d.ID == id {
+			if ed25519 != nil {
+				f.domains[i].DkimPublicKey = ed25519
+			}
+			if rsa != nil {
+				f.domains[i].DkimRSAPublicKey = rsa
+			}
+			return nil
+		}
+	}
+	return repository.ErrNotFound
+}
+
 func (f *fakeDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
 	for i, d := range f.domains {
 		if d.ID == id {
@@ -259,6 +274,9 @@ func (f *fakeDomainRepo) UpdateEmailState(ctx context.Context, id string, state 
 			}
 			if state.DkimPublicKey != nil {
 				f.domains[i].DkimPublicKey = state.DkimPublicKey
+			}
+			if state.DkimRSAPublicKey != nil {
+				f.domains[i].DkimRSAPublicKey = state.DkimRSAPublicKey
 			}
 			return nil
 		}

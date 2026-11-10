@@ -351,6 +351,11 @@ type Reconciler struct {
 	// converged to the agent (GH #648) — see dkim2_reconcile.go.
 	dkim2Mu      sync.Mutex
 	dkim2Applied map[string]bool
+	// dkimSigApplied marks the mail domains whose Ed25519 + RSA DKIM
+	// signatures were converged since boot (GH #2475) — see
+	// dkim_signatures_reconcile.go.
+	dkimSigMu      sync.Mutex
+	dkimSigApplied map[string]bool
 	// mailElsewhereSum / mailElsewhereAt: the list of domains whose mail is
 	// off or hosted elsewhere last synced to the mail server, and when — see
 	// mail_elsewhere_reconcile.go.
@@ -1093,6 +1098,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// GH #648: converge DKIM2 signing across mail domains to the
 	// server_settings toggle. Applied-state-gated — noop steady state.
 	r.reconcileDKIM2(ctx)
+
+	// GH #2475: every hosted mail domain signs with an RSA key beside the
+	// Ed25519 one. Applied-state-gated — noop steady state.
+	r.reconcileDKIMSignatures(ctx)
 
 	// JAB-230: every domain gets a noreply@ SendOnly relay identity + a
 	// cred file for the jabali-sendmail shim. Fingerprint-gated noop in

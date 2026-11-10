@@ -58,6 +58,12 @@ var domainEmailEnableRequestFixture []byte
 //go:embed testdata/domain_email_enable_response.json
 var domainEmailEnableResponseFixture []byte
 
+//go:embed testdata/domain_email_dkim_ensure_request.json
+var domainEmailDkimEnsureRequestFixture []byte
+
+//go:embed testdata/domain_email_dkim_ensure_response.json
+var domainEmailDkimEnsureResponseFixture []byte
+
 //go:embed testdata/domain_email_disable_request.json
 var domainEmailDisableRequestFixture []byte
 
@@ -112,9 +118,26 @@ type DomainEmailRequest struct {
 }
 
 type DomainEmailEnableResponse struct {
-	Ok            bool   `json:"ok"`
-	DKIMSelector  string `json:"dkim_selector"`
-	DKIMPublicKey string `json:"dkim_public_key"`
+	Ok               bool   `json:"ok"`
+	DKIMSelector     string `json:"dkim_selector"`
+	DKIMPublicKey    string `json:"dkim_public_key"`
+	DKIMRSASelector  string `json:"dkim_rsa_selector"`
+	DKIMRSAPublicKey string `json:"dkim_rsa_public_key"`
+}
+
+// domain_email.dkim_ensure (GH #2475), as the reconciler's DKIM pass sends
+// and reads it.
+type DomainEmailDkimEnsureRequest struct {
+	DomainName string `json:"domain_name"`
+}
+
+type DomainEmailDkimEnsureResponse struct {
+	Ok               bool     `json:"ok"`
+	Ed25519Selector  string   `json:"ed25519_selector"`
+	Ed25519PublicKey string   `json:"ed25519_public_key"`
+	RSASelector      string   `json:"rsa_selector"`
+	RSAPublicKey     string   `json:"rsa_public_key"`
+	Created          []string `json:"created"`
 }
 
 // --- round-trip helper ----------------------------------------------
@@ -223,6 +246,16 @@ func TestDomainEmailEnableRequest_RoundTrips(t *testing.T) {
 func TestDomainEmailEnableResponse_RoundTrips(t *testing.T) {
 	t.Parallel()
 	roundTripJSON[DomainEmailEnableResponse](t, domainEmailEnableResponseFixture)
+}
+
+func TestDomainEmailDkimEnsureRequest_RoundTrips(t *testing.T) {
+	t.Parallel()
+	roundTripJSON[DomainEmailDkimEnsureRequest](t, domainEmailDkimEnsureRequestFixture)
+}
+
+func TestDomainEmailDkimEnsureResponse_RoundTrips(t *testing.T) {
+	t.Parallel()
+	roundTripJSON[DomainEmailDkimEnsureResponse](t, domainEmailDkimEnsureResponseFixture)
 }
 
 func TestDomainEmailDisableRequest_RoundTrips(t *testing.T) {

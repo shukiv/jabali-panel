@@ -92,7 +92,7 @@ func emailRecordsForTest(t *testing.T) []models.DNSRecord {
 		return "id" + string(rune('A'+n))
 	}
 	return BuildEmailRecords(
-		"zone1", "example.com", "jabali", "v=DKIM1; k=ed25519; p=AAAA",
+		"zone1", "example.com", "jabali", "v=DKIM1; k=ed25519; p=AAAA", "",
 		nil, idNew, time.Unix(0, 0).UTC(),
 	)
 }

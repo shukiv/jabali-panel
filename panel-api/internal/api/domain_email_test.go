@@ -434,6 +434,72 @@ func TestDomainEmail_Enable_InsertsM6DNSRecords(t *testing.T) {
 	require.Equal(t, "1 443 mail.example.com", got["SRV:_carddavs._tcp"])
 }
 
+// GH #2475: enable stores the RSA key the agent returns, answers with it,
+// and publishes it at jabalirsa._domainkey split into 255-character strings.
+func TestDomainEmail_Enable_StoresAndPublishesRSAKey(t *testing.T) {
+	rsaKey := "v=DKIM1; k=rsa; p=" + strings.Repeat("R", 392)
+	ma := &mockAgent{
+		callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+			b, _ := json.Marshal(map[string]any{
+				"ok": true, "dkim_selector": "jabali", "dkim_public_key": "v=DKIM1;k=ed25519;p=AAAA",
+				"dkim_rsa_selector": "jabalirsa", "dkim_rsa_public_key": rsaKey,
+			})
+			return b, nil
+		},
+	}
+	r, domains, _, records := domainEmailRouterWithDNS(t, ma)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var resp domainEmailResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, "jabalirsa", resp.DkimRSASelector)
+	require.Equal(t, rsaKey, resp.DkimRSAPublicKey)
+	require.NotNil(t, domains.domains["dom1"].DkimRSAPublicKey)
+	require.Equal(t, rsaKey, *domains.domains["dom1"].DkimRSAPublicKey)
+
+	var published []string
+	for _, rr := range records.records {
+		if rr.Name == "jabalirsa._domainkey" && rr.Type == "TXT" {
+			published = append(published, rr.Content)
+		}
+	}
+	require.Equal(t, []string{`"` + rsaKey[:255] + `" "` + rsaKey[255:] + `"`}, published)
+
+	var hint *domainEmailDNSHint
+	for i := range resp.Records {
+		if resp.Records[i].Name == "jabalirsa._domainkey.example.com." {
+			hint = &resp.Records[i]
+		}
+	}
+	require.NotNil(t, hint, "the RSA DKIM record is listed for external DNS")
+	require.Equal(t, rsaKey, hint.Value, "hint value is the raw, unsplit TXT content")
+}
+
+// An agent from before #2475 returns no RSA key: enable still succeeds and
+// lists no RSA record (the reconciler adds it once the agent has one).
+func TestDomainEmail_Enable_WithoutRSAKey(t *testing.T) {
+	ma := &mockAgent{
+		callFn: func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+			return json.RawMessage(`{"ok":true,"dkim_selector":"jabali","dkim_public_key":"v=DKIM1;k=ed25519;p=AAAA"}`), nil
+		},
+	}
+	r, domains, _, records := domainEmailRouterWithDNS(t, ma)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/domains/dom1/email", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Nil(t, domains.domains["dom1"].DkimRSAPublicKey)
+	for _, rr := range records.records {
+		require.NotEqual(t, "jabalirsa._domainkey", rr.Name)
+	}
+	require.NotContains(t, rec.Body.String(), "jabalirsa")
+}
+
 // Disable must remove every ManagedBy="m6" row — and nothing else. We
 // seed the zone with one M4 bootstrap row (ManagedBy=nil) + one
 // user-edited row (ManagedBy=nil, Managed=false) to prove the scoped

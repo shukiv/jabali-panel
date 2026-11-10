@@ -508,6 +508,10 @@ type Domain struct {
 	WebTemplateID  *string    `gorm:"column:web_template_id;type:char(26)" json:"web_template_id,omitempty"`
 	DkimSelector    *string    `gorm:"type:varchar(64)" json:"dkim_selector,omitempty"`
 	DkimPublicKey   *string    `gorm:"type:text" json:"dkim_public_key,omitempty"`
+	// DkimRSAPublicKey (GH #2475) is the TXT value of the RSA key that signs
+	// beside the Ed25519 one, published at dnscompile.EmailRecordsRSASelector.
+	// Written only by UpdateEmailState and UpdateDKIMPublicKeys.
+	DkimRSAPublicKey *string `gorm:"column:dkim_rsa_public_key;type:text" json:"dkim_rsa_public_key,omitempty"`
 	EmailEnabledAt  *time.Time `gorm:"type:datetime(6)" json:"email_enabled_at,omitempty"`
 
 	// GH #648 (DMARCbis): operator-settable DMARC tags the reconciler folds

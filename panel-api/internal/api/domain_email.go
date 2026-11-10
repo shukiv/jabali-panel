@@ -146,14 +146,18 @@ func (h *domainEmailHandler) rotateDKIM(c *gin.Context) {
 // surface operator-actionable messages — typically a conflict with a
 // user-edited DNS record that M6 refused to overwrite.
 type domainEmailResponse struct {
-	DomainID       string               `json:"domain_id"`
-	DomainName     string               `json:"domain_name"`
-	EmailEnabled   bool                 `json:"email_enabled"`
-	DkimSelector   string               `json:"dkim_selector,omitempty"`
-	DkimPublicKey  string               `json:"dkim_public_key,omitempty"`
-	EmailEnabledAt *time.Time           `json:"email_enabled_at,omitempty"`
-	Records        []domainEmailDNSHint `json:"records"`
-	Warnings       []string             `json:"warnings,omitempty"`
+	DomainID      string `json:"domain_id"`
+	DomainName    string `json:"domain_name"`
+	EmailEnabled  bool   `json:"email_enabled"`
+	DkimSelector  string `json:"dkim_selector,omitempty"`
+	DkimPublicKey string `json:"dkim_public_key,omitempty"`
+	// The RSA key signing beside the Ed25519 one (GH #2475); empty until
+	// the domain has one.
+	DkimRSASelector  string               `json:"dkim_rsa_selector,omitempty"`
+	DkimRSAPublicKey string               `json:"dkim_rsa_public_key,omitempty"`
+	EmailEnabledAt   *time.Time           `json:"email_enabled_at,omitempty"`
+	Records          []domainEmailDNSHint `json:"records"`
+	Warnings         []string             `json:"warnings,omitempty"`
 }
 
 // domainEmailDNSHint is one recommended DNS record. `Status` is one of:
@@ -205,15 +209,18 @@ func (h *domainEmailHandler) get(c *gin.Context) {
 		pubKey = *dom.DkimPublicKey
 	}
 	hints, warnings := h.buildHintsWithStatus(ctx, dom, selector, pubKey)
+	rsaSelector, rsaKey := rsaDKIM(dom)
 	c.JSON(http.StatusOK, domainEmailResponse{
-		DomainID:       dom.ID,
-		DomainName:     dom.Name,
-		EmailEnabled:   dom.EmailEnabled,
-		DkimSelector:   selector,
-		DkimPublicKey:  pubKey,
-		EmailEnabledAt: dom.EmailEnabledAt,
-		Records:        hints,
-		Warnings:       warnings,
+		DomainID:         dom.ID,
+		DomainName:       dom.Name,
+		EmailEnabled:     dom.EmailEnabled,
+		DkimSelector:     selector,
+		DkimPublicKey:    pubKey,
+		DkimRSASelector:  rsaSelector,
+		DkimRSAPublicKey: rsaKey,
+		EmailEnabledAt:   dom.EmailEnabledAt,
+		Records:          hints,
+		Warnings:         warnings,
 	})
 }
 
@@ -268,15 +275,18 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 	}
 
 	hints, statusWarnings := h.buildHintsWithStatus(ctx, dom, selector, pubKey)
+	rsaSelector, rsaKey := rsaDKIM(dom)
 	c.JSON(http.StatusOK, domainEmailResponse{
-		DomainID:       dom.ID,
-		DomainName:     dom.Name,
-		EmailEnabled:   true,
-		DkimSelector:   selector,
-		DkimPublicKey:  pubKey,
-		EmailEnabledAt: dom.EmailEnabledAt,
-		Records:        hints,
-		Warnings:       append(domainmailops.WarningMessages(warnings), statusWarnings...),
+		DomainID:         dom.ID,
+		DomainName:       dom.Name,
+		EmailEnabled:     true,
+		DkimSelector:     selector,
+		DkimPublicKey:    pubKey,
+		DkimRSASelector:  rsaSelector,
+		DkimRSAPublicKey: rsaKey,
+		EmailEnabledAt:   dom.EmailEnabledAt,
+		Records:          hints,
+		Warnings:         append(domainmailops.WarningMessages(warnings), statusWarnings...),
 	})
 }
 
@@ -341,7 +351,8 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, dom *mode
 			ip4, ip6 = s.PublicIPv4, s.PublicIPv6
 		}
 	}
-	hints := staticEmailHints(domainName, selector, pubKey, ip4, ip6, dom.CalDAVHost, dom.CardDAVHost)
+	_, rsaKey := rsaDKIM(dom)
+	hints := staticEmailHints(domainName, selector, pubKey, rsaKey, ip4, ip6, dom.CalDAVHost, dom.CardDAVHost)
 
 	if h.cfg.DNSZones == nil || h.cfg.DNSRecords == nil {
 		return hints, nil
@@ -404,8 +415,11 @@ func (h *domainEmailHandler) buildHintsWithStatus(ctx context.Context, dom *mode
 // alone, so those rows are listed (GH #1917) with the same target the zone
 // publishes. The plaintext :80 rows are left out on purpose: no client needs
 // them, and an external-DNS operator should not advertise plaintext DAV.
-func staticEmailHints(domainName, selector, pubKey, ip4, ip6, calDAVHost, cardDAVHost string) []domainEmailDNSHint {
-	hints := make([]domainEmailDNSHint, 0, 16)
+//
+// rsaPubKey is the domain's RSA DKIM key (GH #2475); its record is listed
+// beside the Ed25519 one once the domain has it.
+func staticEmailHints(domainName, selector, pubKey, rsaPubKey, ip4, ip6, calDAVHost, cardDAVHost string) []domainEmailDNSHint {
+	hints := make([]domainEmailDNSHint, 0, 17)
 	if ip4 != "" {
 		hints = append(hints, domainEmailDNSHint{
 			Purpose: "A — the mail host itself; MX, SRV and autodiscover all point here",
@@ -437,11 +451,19 @@ func staticEmailHints(domainName, selector, pubKey, ip4, ip6, calDAVHost, cardDA
 	}...)
 	if selector != "" && pubKey != "" {
 		hints = append(hints, domainEmailDNSHint{
-			Purpose: "DKIM — signs outbound mail so receivers can verify it",
+			Purpose: "DKIM (Ed25519) — signs outbound mail so receivers can verify it",
 			Name:    selector + "._domainkey." + domainName + ".",
 			Type:    "TXT",
 			Value:   pubKey,
 		})
+		if rsaPubKey != "" {
+			hints = append(hints, domainEmailDNSHint{
+				Purpose: "DKIM (RSA) — the second signature, for receivers that don't check Ed25519 (Gmail, Outlook)",
+				Name:    dnscompile.EmailRecordsRSASelector + "._domainkey." + domainName + ".",
+				Type:    "TXT",
+				Value:   rsaPubKey,
+			})
+		}
 	} else {
 		hints = append(hints, domainEmailDNSHint{
 			Purpose: "DKIM — generated automatically when email is enabled",
@@ -499,4 +521,13 @@ func hintMatches(stored, expected string) bool {
 		return s
 	}
 	return trim(stored) == trim(expected)
+}
+
+// rsaDKIM returns the selector and public key of the domain's RSA DKIM key
+// (GH #2475), or "", "" before it has one.
+func rsaDKIM(dom *models.Domain) (selector, pubKey string) {
+	if dom.DkimRSAPublicKey == nil || *dom.DkimRSAPublicKey == "" {
+		return "", ""
+	}
+	return dnscompile.EmailRecordsRSASelector, *dom.DkimRSAPublicKey
 }
