@@ -243,9 +243,9 @@ type DomainListenIPs struct {
 // UpdateEmailState. Nil DkimSelector / DkimPublicKey leave those
 // columns alone (used by disable, which keeps the key material).
 type DomainEmailState struct {
-	Enabled        bool
-	DkimSelector   *string
-	DkimPublicKey  *string
+	Enabled       bool
+	DkimSelector  *string
+	DkimPublicKey *string
 	// DkimRSAPublicKey is the RSA key's TXT value (GH #2475); nil leaves it.
 	DkimRSAPublicKey *string
 	EmailEnabledAt   *time.Time

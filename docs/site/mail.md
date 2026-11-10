@@ -46,6 +46,25 @@ Per-domain tabs:
 - **Logs** and **Statistics** — scoped to the selected domain (sortable Mail Logs
   columns); the old flat Mail page is retired.
 
+### DKIM signing
+
+Every mail domain signs its outgoing mail twice: with an Ed25519 key, published
+at `jabali._domainkey.<domain>`, and with a 2048-bit RSA key, published at
+`jabalirsa._domainkey.<domain>`. Gmail, Outlook and most checking tools don't
+verify Ed25519 signatures, so for them the RSA signature is the one that passes
+and aligns with the From domain for DMARC.
+
+On a zone this server hosts, both records are published automatically. A
+domain set up before the RSA key existed gets its key and record on the first
+reconcile after the update.
+
+If the domain's DNS is hosted elsewhere, add the `jabalirsa._domainkey` TXT
+record there as well (Mail DNS records lists it). The key is about 400
+characters, longer than one TXT string holds: most providers' forms take the
+value as it is and split it themselves, and **Copy all** writes it already
+split for a zone-file import. Until the record is published, receivers find no
+key for the RSA signature.
+
 ### Mail-only delete
 
 A domain can have **just its mail torn down while the web domain stays** —

@@ -209,6 +209,9 @@ func (m *mockDomainRepo) UpdateEmailState(ctx context.Context, id string, state 
 	if state.DkimPublicKey != nil {
 		d.DkimPublicKey = state.DkimPublicKey
 	}
+	if state.DkimRSAPublicKey != nil {
+		d.DkimRSAPublicKey = state.DkimRSAPublicKey
+	}
 	return nil
 }
 

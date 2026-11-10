@@ -21,7 +21,7 @@ Each hosted domain gets an authoritative zone in PowerDNS. Default records:
 - `@` MX 10 `mail.<panel-hostname>.` (if domain has mail enabled)
 - `mail` A → server primary IP (if mail enabled)
 - `_dmarc` TXT (if mail enabled)
-- DKIM TXT (if mail enabled)
+- DKIM TXT at `jabali._domainkey` (Ed25519) and `jabalirsa._domainkey` (RSA) (if mail enabled)
 - SPF TXT (if mail enabled)
 - MTA-STS TXT (if mail enabled)
 

@@ -49,6 +49,9 @@ export interface DomainEmailState {
   email_enabled: boolean;
   dkim_selector?: string;
   dkim_public_key?: string;
+  /** The RSA key signing beside the Ed25519 one (GH #2475); absent until set. */
+  dkim_rsa_selector?: string;
+  dkim_rsa_public_key?: string;
   email_enabled_at?: string;
   records: DomainEmailDNSHint[];
   /**
