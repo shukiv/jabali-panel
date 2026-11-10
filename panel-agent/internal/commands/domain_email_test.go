@@ -49,9 +49,9 @@ func wireDKIMDir(t *testing.T) string {
 // --- domain.email_enable --------------------------------------------
 
 // enableJMAPRoutes is the full JMAP fake-server route map for a
-// successful domain.email_enable. Separate helper because three enable
-// tests reuse the same shape.
-func enableJMAPRoutes(existingDomainID string, createdDomainID string) map[string]jmapHandler {
+// successful domain.email_enable; reg holds the DKIM signatures (pass
+// nil for an empty registry).
+func enableJMAPRoutes(existingDomainID string, createdDomainID string, reg *fakeDkim2Registry) map[string]jmapHandler {
 	queryResult := jmapQueryResult{Total: 0}
 	if existingDomainID != "" {
 		queryResult.IDs = []string{existingDomainID}
@@ -62,23 +62,21 @@ func enableJMAPRoutes(existingDomainID string, createdDomainID string) map[strin
 			"#d1": json.RawMessage(fmt.Sprintf(`{"id":%q}`, createdDomainID)),
 		},
 	}
-	sigCreateResult := jmapSetResult{
-		Created: map[string]json.RawMessage{
-			"#sig1": json.RawMessage(`{"id":"sig-42"}`),
-		},
+	if reg == nil {
+		reg = &fakeDkim2Registry{}
 	}
-	return map[string]jmapHandler{
-		"x:Domain/query":        jmapHandlerReturning(queryResult),
-		"x:Domain/set":          jmapHandlerReturning(createResult),
-		"x:DkimSignature/set":   jmapHandlerReturning(sigCreateResult),
-	}
+	routes := reg.routes()
+	routes["x:Domain/query"] = jmapHandlerReturning(queryResult)
+	routes["x:Domain/set"] = jmapHandlerReturning(createResult)
+	return routes
 }
 
 func TestDomainEmailEnable_FreshDomain_CreatesDomainAndDkimSignature(t *testing.T) {
 	dir := wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
-	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-new-42"))
+	reg := &fakeDkim2Registry{}
+	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-new-42", reg))
 	defer srv.Close()
 	wireJMAP(t, srv)
 
@@ -99,6 +97,13 @@ func TestDomainEmailEnable_FreshDomain_CreatesDomainAndDkimSignature(t *testing.
 	}
 	if !strings.HasPrefix(resp.DKIMPublicKey, "v=DKIM1; k=ed25519; p=") {
 		t.Errorf("public key wrong shape: %q", resp.DKIMPublicKey)
+	}
+	if resp.DKIMRSASelector != "jabalirsa" || !strings.HasPrefix(resp.DKIMRSAPublicKey, "v=DKIM1; k=rsa; p=") {
+		t.Errorf("RSA selector/key wrong: %q %q", resp.DKIMRSASelector, resp.DKIMRSAPublicKey)
+	}
+	// Both signatures land on the new domain (GH #2475).
+	if got := sigSummary(reg, "dom-new-42"); got != "Dkim1Ed25519Sha256/jabali Dkim1RsaSha256/jabalirsa" {
+		t.Errorf("signatures on dom-new-42 = %q", got)
 	}
 
 	// Keyfile should exist, mode 0600.
@@ -128,20 +133,20 @@ func TestDomainEmailEnable_FreshDomain_CreatesDomainAndDkimSignature(t *testing.
 }
 
 func TestDomainEmailEnable_AlreadyRegistered_SkipsDomainAndSignatureCreates(t *testing.T) {
-	// Domain already exists in Stalwart's registry (operator called
-	// email_enable twice without a disable in between, or panel
-	// reconciler is re-converging). Handler must detect the existing
-	// domain and NOT re-create Domain or DkimSignature. The fake's
-	// route map deliberately omits x:Domain/set + x:DkimSignature/set
-	// — a stray create call would 400 (no such route) and fail the test.
+	// Domain already exists in Stalwart's registry with both signatures
+	// (email_enable re-run, or the reconciler re-converging). The handler
+	// must create neither the Domain nor a signature: the fake's route map
+	// omits x:Domain/set, so a stray Domain create would 400 and fail.
 	wireDKIMDir(t)
 	var sysctl systemctlCapture
 	wireSystemctl(t, &sysctl)
-	srv := newJMAPServer(t, map[string]jmapHandler{
-		"x:Domain/query": jmapHandlerReturning(jmapQueryResult{
-			IDs: []string{"dom-existing"}, Total: 1,
-		}),
-	})
+	reg := &fakeDkim2Registry{sigs: map[string]map[string]any{
+		"s1": {"id": "s1", "@type": "Dkim1Ed25519Sha256", "domainId": "dom-existing", "selector": "jabali"},
+		"s2": {"id": "s2", "@type": "Dkim1RsaSha256", "domainId": "dom-existing", "selector": "jabalirsa"},
+	}}
+	routes := reg.routes()
+	routes["x:Domain/query"] = jmapHandlerReturning(jmapQueryResult{IDs: []string{"dom-existing"}, Total: 1})
+	srv := newJMAPServer(t, routes)
 	defer srv.Close()
 	wireJMAP(t, srv)
 
@@ -153,6 +158,36 @@ func TestDomainEmailEnable_AlreadyRegistered_SkipsDomainAndSignatureCreates(t *t
 	resp := got.(domainEmailEnableResponse)
 	if !resp.Ok {
 		t.Error("ok: false, want true")
+	}
+	if reg.nextID != 0 || len(reg.sigs) != 2 {
+		t.Errorf("signatures created on a domain that had both: %v", reg.sigs)
+	}
+}
+
+// GH #2475: a Domain created without signatures (the account registry
+// sync creates one) used to be skipped entirely, leaving its mail unsigned.
+// email_enable now gives it both.
+func TestDomainEmailEnable_RegisteredWithoutSignatures_GetsBoth(t *testing.T) {
+	wireDKIMDir(t)
+	var sysctl systemctlCapture
+	wireSystemctl(t, &sysctl)
+	reg := &fakeDkim2Registry{}
+	routes := reg.routes()
+	routes["x:Domain/query"] = jmapHandlerReturning(jmapQueryResult{IDs: []string{"dom-bare"}, Total: 1})
+	srv := newJMAPServer(t, routes)
+	defer srv.Close()
+	wireJMAP(t, srv)
+
+	got, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
+		`{"domain_id":"01J","domain_name":"example.com"}`))
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := sigSummary(reg, "dom-bare"); got != "Dkim1Ed25519Sha256/jabali Dkim1RsaSha256/jabalirsa" {
+		t.Fatalf("signatures on dom-bare = %q, want both", got)
+	}
+	if resp := got.(domainEmailEnableResponse); !strings.HasPrefix(resp.DKIMRSAPublicKey, "v=DKIM1; k=rsa; p=") {
+		t.Errorf("RSA public key = %q", resp.DKIMRSAPublicKey)
 	}
 }
 
@@ -250,7 +285,7 @@ func TestDomainEmailEnable_ReloadNotSupportedIsNotFatal(t *testing.T) {
 		},
 	}
 	wireSystemctl(t, sysctl)
-	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-reload-42"))
+	srv := newJMAPServer(t, enableJMAPRoutes("", "dom-reload-42", nil))
 	defer srv.Close()
 	wireJMAP(t, srv)
 
