@@ -36,7 +36,7 @@ func TestImportMailboxesAcceptsExplicitMailRootWithoutHomeDir(t *testing.T) {
 	parsed := &ParsedTarball{MailRoot: root} // HomeDir deliberately empty
 
 	// agentCli nil = observation-only; enough to prove we get PAST the gate.
-	res, err := ImportMailboxes(context.Background(), parsed, nil, "job1", nil, nil, false, "target")
+	res, err := ImportMailboxes(context.Background(), parsed, nil, "job1", nil, nil, false, "target", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestImportMailboxesAcceptsExplicitMailRootWithoutHomeDir(t *testing.T) {
 func TestImportMailboxesStillSkipsWithNeitherRoot(t *testing.T) {
 	t.Parallel()
 
-	res, err := ImportMailboxes(context.Background(), &ParsedTarball{}, nil, "job1", nil, nil, false, "target")
+	res, err := ImportMailboxes(context.Background(), &ParsedTarball{}, nil, "job1", nil, nil, false, "target", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

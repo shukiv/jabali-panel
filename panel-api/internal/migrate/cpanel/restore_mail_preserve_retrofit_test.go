@@ -58,7 +58,7 @@ func TestImportMailboxes_RetrofitsExistingRowOnPreserve(t *testing.T) {
 	}}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestImportMailboxes_ExistingRowAlreadySourceNoChurn(t *testing.T) {
 	}}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestImportMailboxes_ExistingRowUntouchedWithoutPreserve(t *testing.T) {
 	}}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

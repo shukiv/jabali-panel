@@ -18,10 +18,20 @@ import (
 type fakeDomainRepoMB struct {
 	repository.DomainRepository
 	id string
+	// owners maps a domain name to its owning user ID. A name absent from the
+	// map belongs to fakeTargetUserID (the migrated user).
+	owners map[string]string
 }
 
+// fakeTargetUserID is the migrated user the mailbox tests import into.
+const fakeTargetUserID = "01TARGETUSER00000000000000"
+
 func (f *fakeDomainRepoMB) FindByName(_ context.Context, name string) (*models.Domain, error) {
-	return &models.Domain{ID: f.id, Name: name}, nil
+	owner, ok := f.owners[name]
+	if !ok {
+		owner = fakeTargetUserID
+	}
+	return &models.Domain{ID: f.id, Name: name, UserID: owner}, nil
 }
 
 type fakeMailboxRepoMB struct {
@@ -80,7 +90,7 @@ func TestImportMailboxes_PreservesSourcePassword(t *testing.T) {
 	mb := &fakeMailboxRepoMB{}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, true /*preserveCreds*/, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
@@ -105,7 +115,7 @@ func TestImportMailboxes_DefaultSetsFreshPasswordAndWarns(t *testing.T) {
 	mb := &fakeMailboxRepoMB{}
 	dom := &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, dom, false /*preserveCreds*/, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

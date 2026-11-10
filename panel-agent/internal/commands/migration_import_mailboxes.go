@@ -70,6 +70,15 @@ type migrationImportMailboxesParams struct {
 	// user's home (out-of-tarball /home/vmail source), not the staging tree.
 	// Reads stay symlink-safe (scoped RESOLVE_BENEATH this root).
 	DestUser string `json:"dest_user,omitempty"`
+	// AllowedDomains, when non-empty, is the set of domains the panel verified
+	// belong to the migrated user. The mail tree comes from the SOURCE account
+	// (its directory names are source-controlled), and importOneMailbox creates
+	// whatever Stalwart domain/account a <domain>/<local> dir names — so without
+	// this list a source tree could put messages into another tenant's mailbox.
+	// Every <domain> dir outside the list, and an owner_email outside it, is
+	// refused. Empty keeps the old unrestricted walk for callers whose tree is
+	// internally derived (account-restore, the IMAP importer).
+	AllowedDomains []string `json:"allowed_domains,omitempty"`
 }
 
 type migrationImportMailboxesResult struct {
@@ -137,7 +146,28 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 		}
 	}
 
-	return importMaildirTree(ctx, srcAbs, p.OwnerEmail, allowedRoots)
+	var allowedDomains map[string]bool
+	if len(p.AllowedDomains) > 0 {
+		allowedDomains = make(map[string]bool, len(p.AllowedDomains))
+		for _, d := range p.AllowedDomains {
+			if d = strings.ToLower(strings.TrimSpace(d)); d != "" {
+				allowedDomains[d] = true
+			}
+		}
+	}
+
+	return importMaildirTree(ctx, srcAbs, p.OwnerEmail, allowedRoots, allowedDomains)
+}
+
+// importOneMailboxFn is importOneMailbox; tests swap it to observe which
+// mailboxes a tree walk would push without a live Stalwart.
+var importOneMailboxFn = importOneMailbox
+
+// mailDomainRefused reports whether a mail-tree domain must be skipped because
+// the caller restricted the walk to verified domains and this one is not among
+// them. A nil set means no restriction.
+func mailDomainRefused(domain string, allowedDomains map[string]bool) bool {
+	return allowedDomains != nil && !allowedDomains[strings.ToLower(domain)]
 }
 
 // importMaildirTree imports every <domain>/<local>/{cur,new,.Sub} Maildir
@@ -147,7 +177,10 @@ func migrationImportMailboxesHandler(ctx context.Context, raw json.RawMessage) (
 // Shared by migration.import_mailboxes (operator-supplied path, prefix-
 // guarded by the caller) and account-restore (internally-derived path,
 // ADR-0123). Applies its own 4h ceiling.
-func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRoots []string) (*migrationImportMailboxesResult, error) {
+//
+// allowedDomains, when non-nil, restricts the walk to those domains (see
+// migrationImportMailboxesParams.AllowedDomains); nil walks every domain dir.
+func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRoots []string, allowedDomains map[string]bool) (*migrationImportMailboxesResult, error) {
 	subctx, cancel := context.WithTimeout(ctx, migrationMailboxTimeout)
 	defer cancel()
 
@@ -158,8 +191,12 @@ func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRo
 	// than under a per-domain subdir. Import it under ownerEmail
 	// when supplied so messages aren't silently dropped.
 	if ownerEmail != "" {
-		if _, ok := looksLikeMailMaildir(srcAbs); ok {
-			n, b, skipped, err := importOneMailbox(subctx, ownerEmail, srcAbs, allowedRoots)
+		ownerDomain := ownerEmail[strings.LastIndex(ownerEmail, "@")+1:]
+		if _, ok := looksLikeMailMaildir(srcAbs); ok && mailDomainRefused(ownerDomain, allowedDomains) {
+			res.Skipped = append(res.Skipped, fmt.Sprintf(
+				"owner_mailbox %s: %s is not a domain of the migrated account — refused", ownerEmail, ownerDomain))
+		} else if ok {
+			n, b, skipped, err := importOneMailboxFn(subctx, ownerEmail, srcAbs, allowedRoots)
 			if err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("owner_mailbox %s: %v", ownerEmail, err))
 			} else {
@@ -184,6 +221,16 @@ func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRo
 		if !dom.IsDir() {
 			continue
 		}
+		if mailDomainRefused(dom.Name(), allowedDomains) {
+			// The owner Maildir's own slots and subfolders (cur/new/tmp,
+			// .Drafts, .spam, …) sit beside the domain dirs and hold no
+			// <local>/ Maildirs; skip them quietly rather than log a refusal.
+			if n := dom.Name(); !strings.HasPrefix(n, ".") && n != "cur" && n != "new" && n != "tmp" {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"mail/%s: not a domain of the migrated account — refused", n))
+			}
+			continue
+		}
 		domPath := filepath.Join(srcAbs, dom.Name())
 		users, err := os.ReadDir(domPath)
 		if err != nil {
@@ -200,7 +247,7 @@ func importMaildirTree(ctx context.Context, srcAbs, ownerEmail string, allowedRo
 				continue
 			}
 			email := fmt.Sprintf("%s@%s", u.Name(), dom.Name())
-			n, b, skipped, err := importOneMailbox(subctx, email, maildirPath, allowedRoots)
+			n, b, skipped, err := importOneMailboxFn(subctx, email, maildirPath, allowedRoots)
 			if err != nil {
 				// Don't fail the whole job on one mailbox — record
 				// + skip. Operator inspects manifest_json + can

@@ -42,7 +42,7 @@ func TestImportMailboxes_ReleasesTheAddressOnTheMailServer(t *testing.T) {
 	parsed := buildHestiaMailTree(t, "itflow.app", "info", "info:{BLF-CRYPT}"+testSrcBcrypt)
 	mb := &fakeMailboxRepoMB{}
 
-	if _, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}, false, ""); err != nil {
+	if _, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}, false, "", fakeTargetUserID); err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
 	if len(rel.released) != 1 || rel.released[0] != "info@itflow.app" {
@@ -58,7 +58,7 @@ func TestImportMailboxes_SkipsAMailboxWhoseAddressCannotBeReleased(t *testing.T)
 	parsed := buildHestiaMailTree(t, "itflow.app", "info", "info:{BLF-CRYPT}"+testSrcBcrypt)
 	mb := &fakeMailboxRepoMB{}
 
-	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}, false, "")
+	res, err := ImportMailboxes(context.Background(), parsed, stubMailAgent{}, "job1", mb, &fakeDomainRepoMB{id: "01DOMAINID0000000000000000"}, false, "", fakeTargetUserID)
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}

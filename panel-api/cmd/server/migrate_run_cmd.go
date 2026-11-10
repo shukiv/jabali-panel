@@ -1281,6 +1281,15 @@ func cpanelRestoreCallback(
 				if job.SourceHost == "" {
 					break
 				}
+				// The JAB-45 guard below scopes docroots to /home/<parsed
+				// SourceUser>, read from the pulled tarball. Pin it to the
+				// account the operator picked before any rsync dials the source.
+				if p.parsed.SourceUser != job.SourceUser {
+					p.criticals = append(p.criticals, fmt.Sprintf(
+						"security: tarball account %q does not match the job's source account %q — home rsync refused",
+						p.parsed.SourceUser, job.SourceUser))
+					break
+				}
 				for _, root := range []string{
 					filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "userdata"),
 					filepath.Join(p.parsed.ExtractDir, "userdata"),
@@ -1725,8 +1734,24 @@ func cpanelRestoreCallback(
 			}
 		}
 
+		// cPanel/WHM SSH pull: pkgacct ran with --skiphomedir, which on cPanel
+		// excludes homedir/* — the Maildirs under ~/mail included. The docroots
+		// came over by direct rsync above, but nothing copied ~/mail, so the
+		// import below walked an empty tree and moved ZERO mailboxes while the
+		// job reported done. Same gap JAB-152 closed for Plesk and CyberPanel.
 		if plan.Mailboxes {
-			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername)
+			root, lines, crit := cpanelPullMail(ctx, restoreAgent.Call, job, p.parsed.SourceUser, p.targetUsername)
+			warnings = append(warnings, lines...)
+			if crit != "" {
+				p.criticals = append(p.criticals, crit)
+			}
+			if root != "" {
+				p.parsed.MailRoot = root
+			}
+		}
+
+		if plan.Mailboxes {
+			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername, p.targetUserID)
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 			}
@@ -2013,17 +2038,85 @@ func migrationSSHUser(job *models.MigrationJob) string {
 	// pull forced root via --ssh-user, but the import's analyze inherited the
 	// subscription and died at `stage analyze: connect: plesk.Connect … [none
 	// publickey]` on a source where the account is not an SSH principal.
+	//
+	// WHM (whm_pkgacct) is the same case again. The wizard discovers accounts
+	// with `whmapi1 listaccts` and the pull runs pkgacct, both over the
+	// operator's WHM ROOT session (pull-source is kicked with ssh_user=root);
+	// SourceUser is the picked cPanel account, not the login. Dialing the
+	// account with root's credentials fails, and an account whose shell is
+	// cPanel's noshell can never be an rsync login at all — so the analyze stage
+	// and every docroot/mail rsync of a WHM job failed after a good pull.
 	switch job.SourceKind {
 	case models.MigrationSourceHestia,
 		models.MigrationSourceCloudPanel,
 		models.MigrationSourceCyberPanel,
-		models.MigrationSourcePlesk:
+		models.MigrationSourcePlesk,
+		models.MigrationSourceWHMpkgacct:
 		return "root"
 	}
 	if job.SourceUser != "" {
 		return job.SourceUser
 	}
 	return "root"
+}
+
+// agentCallFunc is the one agent call the cPanel pull mail leg makes;
+// (*agent.Client).Call satisfies it, and tests pass a recorder.
+type agentCallFunc func(ctx context.Context, command string, params any) (json.RawMessage, error)
+
+// cpanelPullMail copies the source account's ~/mail tree for a cPanel or WHM
+// SSH pull into /home/<target>/mail and returns that path as the MailRoot for
+// ImportMailboxes. The pull runs pkgacct --skiphomedir, which leaves the
+// Maildirs out of the tarball, so without this leg the pull migrated no mail.
+//
+// It does nothing for other source kinds, and nothing for an offline restore
+// (SourceHost == ""), whose full cpmove already carries homedir/mail. The
+// agent's JAB-45 guard scopes the source path to /home/<srcUser>.
+//
+// A failed copy is returned as a critical, not a warning: it means every
+// mailbox of the account is lost, which must not end as a clean "done".
+//
+// Returns the new MailRoot ("" when nothing was copied), lines for the run
+// summary, and a critical message ("" when none).
+func cpanelPullMail(ctx context.Context, call agentCallFunc, job *models.MigrationJob, srcUser, targetUser string) (string, []string, string) {
+	if job == nil || job.SourceHost == "" {
+		return "", nil, ""
+	}
+	if job.SourceKind != models.MigrationSourceCpanel && job.SourceKind != models.MigrationSourceWHMpkgacct {
+		return "", nil, ""
+	}
+	if srcUser == "" || srcUser == "." || srcUser == ".." || strings.ContainsAny(srcUser, "/\x00") {
+		return "", nil, fmt.Sprintf("mail_rsync: source account %q is not a valid cPanel user — ~/mail not copied, no mailboxes migrated", srcUser)
+	}
+	// srcUser is read from the pulled tarball; job.SourceUser is the account the
+	// operator picked. They must agree before a root rsync reads /home/<srcUser>.
+	if srcUser != job.SourceUser {
+		return "", nil, fmt.Sprintf("security: tarball account %q does not match the job's source account %q — ~/mail not copied, no mailboxes migrated", srcUser, job.SourceUser)
+	}
+	src := "/home/" + srcUser + "/mail"
+	dest := filepath.Join("/home", targetUser, "mail")
+	raw, err := call(ctx, "migration.rsync_remote_home", map[string]any{
+		"port":        srcSSHPort(job),
+		"job_id":      job.ID,
+		"src_account": srcUser,
+		"host":        job.SourceHost,
+		"ssh_user":    migrationSSHUser(job),
+		"secret_path": fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID),
+		"src_path":    src,
+		"dest_path":   dest,
+		"dest_user":   targetUser,
+	})
+	if err != nil {
+		return "", nil, fmt.Sprintf("mail_rsync: copying %s from the source failed — no mailboxes migrated: %v", src, err)
+	}
+	var rs struct {
+		BytesCopied int64 `json:"bytes_copied"`
+		Files       int64 `json:"files"`
+	}
+	_ = json.Unmarshal(raw, &rs)
+	return dest, []string{fmt.Sprintf(
+		"mail: rsynced %s -> %s (bytes=%d files=%d; cPanel pull ships no homedir)",
+		src, dest, rs.BytesCopied, rs.Files)}, ""
 }
 
 func cpanelAnalyzeCallback(jobsRepo repository.MigrationJobRepository) migrate.StageCallback {
