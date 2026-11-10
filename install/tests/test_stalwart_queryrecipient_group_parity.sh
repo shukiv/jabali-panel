@@ -86,6 +86,23 @@ for label in "install.sh:$install_q" "apply-plan:$plan_q"; do
   fi
 done
 
+# GH #1833: on a fresh install the plan writes queryRecipient, which reads
+# mail_group_external_members, before the converger runs. A query on a table
+# the Stalwart user cannot read fails every lookup, and if the converger then
+# cannot reach the Directory it stays that way. So install_stalwart_apply
+# grants the table (when it exists: on an update this runs before `migrate
+# up`) before it applies the plan.
+apply_fn=$(awk '/^install_stalwart_apply\(\) \{$/,/^\}$/' install.sh)
+grant_at=$(grep -n "GRANT SELECT ON jabali_panel.mail_group_external_members" <<<"$apply_fn" | head -1 | cut -d: -f1 || true)
+plan_at=$(grep -n '^  _install_stalwart_apply_plan ' <<<"$apply_fn" | head -1 | cut -d: -f1 || true)
+if [[ -z "$grant_at" || -z "$plan_at" || "$grant_at" -gt "$plan_at" ]]; then
+  echo "FAIL: install_stalwart_apply must grant mail_group_external_members before it applies the plan (GH #1833)"
+  fail=1
+elif ! grep -q "TABLE_NAME = 'mail_group_external_members'" <<<"$apply_fn"; then
+  echo "FAIL: install_stalwart_apply grants mail_group_external_members without checking it exists — on an update before migrate up the GRANT fails (GH #1833)"
+  fail=1
+fi
+
 install_a=$(grep -oP '(?<=local query_aliases=")[^"]*' install.sh | head -1)
 plan_a=$(grep -oP '(?<="queryEmailAliases": ")[^"]*' install/stalwart/apply-plan.json.tmpl | head -1)
 if [[ -z "$install_a" || -z "$plan_a" ]]; then

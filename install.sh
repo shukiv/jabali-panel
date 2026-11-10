@@ -14871,6 +14871,16 @@ install_stalwart_apply() {
     FLUSH PRIVILEGES;
   "
   _ok "Stalwart MariaDB user provisioned: ${stalwart_db_user} (SELECT on mailboxes, domains, email_forwarders, mail_groups, mail_group_members, users(id, suspended))"
+  # GH #1833: queryRecipient reads mail_group_external_members (migration
+  # 000347), and a query on a table this user cannot read fails every lookup.
+  # The plan below writes that query on a fresh install, so grant the table
+  # first. On an update this runs before `migrate up` and the table may not
+  # exist yet: the Directory converger grants it once it does, and leaves it
+  # out of the query until then.
+  if [[ "$(mariadb -N -B -e "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'jabali_panel' AND TABLE_NAME = 'mail_group_external_members'" 2>/dev/null || true)" == "1" ]]; then
+    mariadb -e "GRANT SELECT ON jabali_panel.mail_group_external_members TO '${stalwart_db_user}'@'localhost'" \
+      || _warn "could not grant ${stalwart_db_user} SELECT on mail_group_external_members — the Directory converger retries"
+  fi
 
   local admin_token_file="/etc/jabali-panel/stalwart-admin.token"
   if [[ ! -f "$admin_token_file" ]]; then
