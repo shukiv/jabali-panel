@@ -48,7 +48,10 @@ export function MailDNSRecordsModal({ domainId, domainName, open, onClose }: Pro
       title: "Value",
       dataIndex: "value",
       render: (value: string) => (
-        <Space size="small">
+        // maxWidth: a 2048-bit RSA DKIM key (~400 chars) wraps instead of
+        // widening the column past the modal (GH #2475); every shorter value
+        // fits on one line as before.
+        <Space size="small" style={{ maxWidth: 500 }}>
           <Typography.Text code style={{ wordBreak: "break-all", fontSize: 12 }}>
             {value}
           </Typography.Text>
