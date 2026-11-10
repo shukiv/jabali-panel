@@ -43,6 +43,14 @@ export interface MailGroup {
   updated_at: string;
 }
 
+/**
+ * GH #1833: a distribution list that is internal-only or has outside addresses
+ * delivers by one Sieve redirect per recipient, and the mail server allows 20
+ * per message (mailgroupops.MaxRedirectRecipients). A list of mailboxes only,
+ * open to any sender, has no limit.
+ */
+export const MAX_REDIRECT_RECIPIENTS = 20;
+
 export interface MailGroupMember {
   mailbox_id: string;
   email: string;

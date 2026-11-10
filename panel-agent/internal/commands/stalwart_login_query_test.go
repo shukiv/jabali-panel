@@ -102,6 +102,7 @@ func directoryTestDB(t *testing.T) *sql.DB {
 			local_part TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE mail_groups (id TEXT PRIMARY KEY, email_cached TEXT, has_mailbox INTEGER, group_kind TEXT, internal_only INTEGER, domain_id TEXT)`,
 		`CREATE TABLE mail_group_members (group_id TEXT, mailbox_id TEXT)`,
+		`CREATE TABLE mail_group_external_members (group_id TEXT, address TEXT)`,
 		`CREATE TABLE email_forwarders (id TEXT, domain_id TEXT, mailbox_id TEXT, enabled INTEGER, type TEXT, local_part TEXT)`,
 		`INSERT INTO users VALUES ('u-active', 0), ('u-suspended', 1)`,
 		`INSERT INTO domains (id, user_id, name) VALUES ('d-active', 'u-active', 'active.test'), ('d-suspended', 'u-suspended', 'suspended.test')`,
@@ -518,4 +519,51 @@ func TestStalwartDirectory_PendingDomainIsNotLocal(t *testing.T) {
 		"team@active.test":     {"alice@active.test", "bob@pend.test"},
 		"postmaster@pend.test": {"postmaster@panel.test"},
 	}, 1, "sales@pend.test", "postmaster@active.test,postmaster@pend.test,postmaster@suspended.test")
+}
+
+// GH #1833: a distribution list with outside addresses is a Group account whose
+// Sieve redirects from the list address, and Stalwart takes mail for a Group
+// account's address only when the directory returns a user row for it
+// (ADR-0132). The list may have no member mailbox, so while it has an outside
+// address its address resolves to the panel-primary postmaster row; delivery
+// still goes to the list's own account. A list of mailboxes only, open to any
+// sender, is a Stalwart mailing list and must not resolve here, or the
+// directory match would shadow the list (GH #1818).
+func TestStalwartQueryRecipient_ListWithOutsideAddresses(t *testing.T) {
+	_, _, planRecipient := directoryQueries(t)
+	db := directoryTestDB(t)
+	for _, stmt := range []string{
+		`INSERT INTO domains (id, user_id, name, email_enabled, is_panel_primary, ownership_status) VALUES
+			('d-panel', 'u-active', 'panel.test', 1, 1, 'verified'),
+			('d-pend', 'u-active', 'pend.test', 1, 0, 'pending')`,
+		`INSERT INTO mailboxes (id, domain_id, email_cached, password_hash, local_part) VALUES
+			('pm-admin', 'd-panel', 'postmaster@panel.test', 'h', 'postmaster')`,
+		`INSERT INTO mail_groups VALUES
+			('g-open', 'open@active.test', 1, 'distribution', 0, 'd-active'),
+			('g-outside', 'outside@active.test', 1, 'distribution', 0, 'd-active'),
+			('g-only', 'only@active.test', 1, 'distribution', 1, 'd-active'),
+			('g-pend', 'list@pend.test', 1, 'distribution', 0, 'd-pend')`,
+		`INSERT INTO mail_group_members VALUES ('g-open', 'm1'), ('g-outside', 'm1')`,
+		`INSERT INTO mail_group_external_members VALUES
+			('g-outside', 'partner@gmail.com'),
+			('g-only', 'partner@gmail.com'),
+			('g-pend', 'partner@gmail.com')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v\n%s", err, stmt)
+		}
+	}
+	for lookup, want := range map[string]string{
+		"open@active.test":    "",                      // mailing list: no directory match
+		"outside@active.test": "postmaster@panel.test", // redirect list, member mailbox or not
+		"only@active.test":    "postmaster@panel.test", // internal-only, outside addresses only
+		"list@pend.test":      "",                      // unproven domain: never local (GH #1816)
+	} {
+		got := directoryEmails(t, db, planRecipient, lookup)
+		sort.Strings(got)
+		got = slices.Compact(got)
+		if strings.Join(got, ",") != want {
+			t.Errorf("queryRecipient(%s) = %v, want %q", lookup, got, want)
+		}
+	}
 }

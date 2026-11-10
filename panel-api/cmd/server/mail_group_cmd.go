@@ -6,8 +6,8 @@
 //   - set-members / add / remove: resolve mailboxes, enforce same-domain, and
 //     project via `mailgroup.members_set` for resource groups. A distribution
 //     group is re-applied with its member list instead (GH #1818 — it is a
-//     Stalwart mailing list, not memberGroupIds), after the same internal-only
-//     member cap the handler enforces.
+//     Stalwart mailing list, not memberGroupIds), after the same redirect
+//     recipient limit the handler enforces.
 //   - delete: agent-FIRST (`mailgroup.delete` strips the Stalwart principal)
 //     then the DB delete, matching the handler's ordering so rows never drift
 //     ahead of Stalwart.
@@ -413,7 +413,7 @@ func newMailGroupSetMembersCmd() *cobra.Command {
 
 // newMailGroupSetExternalCmd replaces a distribution list's outside addresses
 // (GH #1833), with the same checks as the panel: the admin's cap, the
-// internal-only limit, and no address on the list's own domain.
+// redirect recipient limit, and no address on the list's own domain.
 func newMailGroupSetExternalCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "set-external <group-email|group-id> [address ...]",

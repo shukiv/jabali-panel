@@ -5,9 +5,9 @@
 // GH #1818 / #1834: a distribution group used to be projected as a Stalwart
 // Group account, which parks mail in the group's own inbox where no member sees
 // it. The agent's mailgroup.apply now projects a distribution group as a
-// mailing list (or, when internal_only is set, a Group account whose Sieve
-// redirects to the members), so it needs the group kind and the full set of
-// members that can receive mail on every apply. A resource group keeps its
+// mailing list (or, when it is internal-only or has outside addresses, a Group
+// account whose Sieve redirects to the recipients), so it needs the group kind
+// and the full set of members that can receive mail on every apply. A resource group keeps its
 // Group-account projection; its membership still goes through
 // mailgroup.members_set.
 package mailgroupops
@@ -28,54 +28,83 @@ import (
 // KindDistribution is the group_kind of a mailing-list style group.
 const KindDistribution = "distribution"
 
-// MaxInternalOnlyMembers is the largest internal-only distribution list the
-// mail server can deliver to. Such a list fans out with one Sieve redirect per
-// member, and Stalwart allows 20 redirects per message; members past that
-// would silently receive nothing. Mirrors maxInternalOnlyListMembers in the
-// agent.
-const MaxInternalOnlyMembers = 20
+// MaxRedirectRecipients is the largest distribution list the mail server can
+// deliver to by redirect. Such a list fans out with one Sieve redirect per
+// recipient, and Stalwart allows 20 redirects per message; recipients past
+// that would silently receive nothing. Mirrors maxRedirectListRecipients in
+// the agent.
+const MaxRedirectRecipients = 20
 
-// ErrInternalOnlyTooManyMembers rejects a change that would leave an
-// internal-only distribution list with more than MaxInternalOnlyMembers.
-var ErrInternalOnlyTooManyMembers = fmt.Errorf(
-	"an internal-only distribution list can have at most %d members, outside addresses included; remove members or turn off internal-only delivery",
-	MaxInternalOnlyMembers)
+// ErrTooManyRedirectRecipients rejects a change that would leave a
+// distribution list delivering by redirect with more than
+// MaxRedirectRecipients recipients.
+var ErrTooManyRedirectRecipients = fmt.Errorf(
+	"a distribution list with outside addresses or internal-only delivery can have at most %d recipients, member mailboxes and outside addresses together; remove some (a list of mailboxes only, open to any sender, has no limit)",
+	MaxRedirectRecipients)
 
-// CheckMemberCap returns ErrInternalOnlyTooManyMembers when a group of the
-// given kind and internal-only setting would have memberCount members over the
-// limit. The count is every member, including disabled and send-only ones, so
-// re-enabling a member can never push a saved list past the limit.
-func CheckMemberCap(kind string, internalOnly bool, memberCount int) error {
-	if kind == KindDistribution && internalOnly && memberCount > MaxInternalOnlyMembers {
-		return ErrInternalOnlyTooManyMembers
+// DeliversByRedirect reports whether a distribution list fans out by Sieve
+// redirects from the list address instead of as a mailing list: an
+// internal-only list (its Sieve also turns away outside senders), and since
+// GH #1833 a list with outside addresses, so the copies sent to them carry
+// the list's address as the envelope sender.
+func DeliversByRedirect(internalOnly bool, externalCount int) bool {
+	return internalOnly || externalCount > 0
+}
+
+// CheckMemberCap returns ErrTooManyRedirectRecipients when a group of the
+// given kind, delivering by redirect or not, would have memberCount
+// recipients over the limit. The count is every member, including disabled
+// and send-only ones, so re-enabling a member can never push a saved list past
+// the limit.
+func CheckMemberCap(kind string, redirect bool, memberCount int) error {
+	if kind == KindDistribution && redirect && memberCount > MaxRedirectRecipients {
+		return ErrTooManyRedirectRecipients
 	}
 	return nil
 }
 
-// IsMemberCapErr reports whether err is the internal-only member cap.
-func IsMemberCapErr(err error) bool {
-	return errors.Is(err, ErrInternalOnlyTooManyMembers)
+// checkRedirectTotal is CheckMemberCap for a redirect list now holding
+// currentTotal recipients: a list left over the limit (saved before the limit
+// covered it) may step down toward it, but not grow or stay put.
+func checkRedirectTotal(total, currentTotal int) error {
+	if total > MaxRedirectRecipients && total >= currentTotal {
+		return ErrTooManyRedirectRecipients
+	}
+	return nil
 }
 
-// CheckMailboxMemberCap is CheckMemberCap for a change that leaves g with
-// mailboxCount member mailboxes: an internal-only list redirects to its
-// outside addresses too, so they count toward the limit (GH #1833). An error
-// that is not IsMemberCapErr is a failed read.
+// IsMemberCapErr reports whether err is the redirect recipient limit.
+func IsMemberCapErr(err error) bool {
+	return errors.Is(err, ErrTooManyRedirectRecipients)
+}
+
+// CheckMailboxMemberCap checks a change that leaves the distribution list g
+// with mailboxCount member mailboxes and internal-only delivery on or off. A
+// list delivering by redirect counts its outside addresses too (GH #1833). An
+// error that is not IsMemberCapErr is a failed read.
 func CheckMailboxMemberCap(ctx context.Context, groups repository.MailGroupRepository, g *models.MailGroup, internalOnly bool, mailboxCount int) error {
-	if g.GroupKind != KindDistribution || !internalOnly {
+	if g.GroupKind != KindDistribution {
 		return nil
 	}
 	external, err := groups.ListExternalMembers(ctx, g.ID)
 	if err != nil {
 		return fmt.Errorf("load outside addresses: %w", err)
 	}
-	return CheckMemberCap(g.GroupKind, internalOnly, mailboxCount+len(external))
+	total := mailboxCount + len(external)
+	if !DeliversByRedirect(internalOnly, len(external)) || total <= MaxRedirectRecipients {
+		return nil
+	}
+	held, err := groups.ListMemberMailboxIDs(ctx, g.ID)
+	if err != nil {
+		return fmt.Errorf("load group members: %w", err)
+	}
+	return checkRedirectTotal(total, len(held)+len(external))
 }
 
 // MaxExternalMemberCap bounds the admin's per-list cap on outside addresses
-// (server_settings.mail_list_external_member_cap): a list stays a list, not a
-// bulk mailer.
-const MaxExternalMemberCap = 1000
+// (server_settings.mail_list_external_member_cap). Each outside address is
+// one redirect, so the cap never goes past the redirect limit.
+const MaxExternalMemberCap = MaxRedirectRecipients
 
 // ExternalMemberError is a refused outside address list. Code is the API
 // error code; Address names the offending entry when there is one.
@@ -147,7 +176,7 @@ func allIn(addrs, set []string) bool {
 
 // DefaultExternalMemberCap is mail_list_external_member_cap's migration
 // default, used before the settings row exists.
-const DefaultExternalMemberCap = 25
+const DefaultExternalMemberCap = MaxExternalMemberCap
 
 // ExternalMemberCap reads the admin's cap on a list's outside addresses. A nil
 // repository, or no settings row yet, gives the default.
@@ -166,9 +195,9 @@ func ExternalMemberCap(ctx context.Context, settings repository.ServerSettingsRe
 }
 
 // SetExternalMembers replaces the outside addresses of the distribution list g
-// with raw after checking them against the admin's cap and, for an
-// internal-only list, the redirect limit shared with its member mailboxes. It
-// saves but does not project the list. A refused set is an
+// with raw after checking them against the admin's cap and the redirect limit
+// they share with the list's member mailboxes. It saves but does not project
+// the list. A refused set is an
 // *ExternalMemberError or IsMemberCapErr; anything else is a failed read or
 // write.
 func SetExternalMembers(ctx context.Context, groups repository.MailGroupRepository, settings repository.ServerSettingsRepository, g *models.MailGroup, raw []string) ([]string, error) {
@@ -184,12 +213,12 @@ func SetExternalMembers(ctx context.Context, groups repository.MailGroupReposito
 	if err != nil {
 		return nil, err
 	}
-	if g.InternalOnly {
+	if DeliversByRedirect(g.InternalOnly, len(addrs)) {
 		ids, err := groups.ListMemberMailboxIDs(ctx, g.ID)
 		if err != nil {
 			return nil, fmt.Errorf("load group members: %w", err)
 		}
-		if err := CheckMemberCap(g.GroupKind, true, len(ids)+len(addrs)); err != nil {
+		if err := checkRedirectTotal(len(ids)+len(addrs), len(ids)+len(current)); err != nil {
 			return nil, err
 		}
 	}

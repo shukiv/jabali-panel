@@ -12,11 +12,19 @@ import (
 )
 
 func TestCheckMemberCap(t *testing.T) {
-	require.NoError(t, CheckMemberCap("distribution", true, MaxInternalOnlyMembers))
-	require.True(t, IsMemberCapErr(CheckMemberCap("distribution", true, MaxInternalOnlyMembers+1)))
-	// Only internal-only distribution lists fan out through Sieve redirects.
+	require.NoError(t, CheckMemberCap("distribution", true, MaxRedirectRecipients))
+	require.True(t, IsMemberCapErr(CheckMemberCap("distribution", true, MaxRedirectRecipients+1)))
+	// Only a distribution list that delivers by redirect has the limit.
 	require.NoError(t, CheckMemberCap("distribution", false, 500))
 	require.NoError(t, CheckMemberCap("resource", true, 500))
+}
+
+// GH #1833: an internal-only list and a list with outside addresses deliver by
+// redirect; a list of mailboxes only, open to any sender, does not.
+func TestDeliversByRedirect(t *testing.T) {
+	require.True(t, DeliversByRedirect(true, 0))
+	require.True(t, DeliversByRedirect(false, 1))
+	require.False(t, DeliversByRedirect(false, 0))
 }
 
 func TestBuildApplyParams(t *testing.T) {
@@ -66,11 +74,43 @@ func TestCheckMailboxMemberCap_CountsOutsideAddresses(t *testing.T) {
 	fake := &externalFake{external: []string{"x@gmail.com", "y@gmail.com"}}
 	ctx := context.Background()
 
-	require.NoError(t, CheckMailboxMemberCap(ctx, fake, g, true, MaxInternalOnlyMembers-2))
-	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, fake, g, true, MaxInternalOnlyMembers-1)))
-	require.NoError(t, CheckMailboxMemberCap(ctx, fake, g, false, 500), "a list that is not internal-only has no redirect limit")
+	require.NoError(t, CheckMailboxMemberCap(ctx, fake, g, true, MaxRedirectRecipients-2))
+	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, fake, g, true, MaxRedirectRecipients-1)))
 	res := &models.MailGroup{ID: "g2", GroupKind: "resource"}
 	require.NoError(t, CheckMailboxMemberCap(ctx, fake, res, true, 500))
+}
+
+// GH #1833: a list with outside addresses delivers by redirect even when it is
+// open to any sender, so it has the same limit; a list of mailboxes only does
+// not.
+func TestCheckMailboxMemberCap_OpenListWithOutsideAddresses(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", GroupKind: "distribution"}
+	ctx := context.Background()
+
+	withOutside := &externalFake{external: []string{"x@gmail.com"}}
+	require.NoError(t, CheckMailboxMemberCap(ctx, withOutside, g, false, MaxRedirectRecipients-1))
+	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, withOutside, g, false, MaxRedirectRecipients)))
+
+	mailboxOnly := &externalFake{}
+	require.NoError(t, CheckMailboxMemberCap(ctx, mailboxOnly, g, false, 500), "a list of mailboxes only has no limit")
+}
+
+// A list left over the limit (saved before it applied) may shrink toward it,
+// but not grow or stay put.
+func TestCheckMailboxMemberCap_OverLimitListMayShrink(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", GroupKind: "distribution"}
+	ctx := context.Background()
+	held := make([]string, MaxRedirectRecipients)
+	fake := &externalFake{members: held, external: []string{"x@gmail.com", "y@gmail.com"}} // 22 recipients
+
+	require.NoError(t, CheckMailboxMemberCap(ctx, fake, g, false, MaxRedirectRecipients-1), "21 of 22 is a step down")
+	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, fake, g, false, MaxRedirectRecipients)), "22 is no step down")
+	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, fake, g, false, MaxRedirectRecipients+1)))
+
+	// A mailbox-only list of 25 cannot become internal-only: same count, now
+	// over the limit.
+	big := &externalFake{members: make([]string, 25)}
+	require.True(t, IsMemberCapErr(CheckMailboxMemberCap(ctx, big, g, true, 25)))
 }
 
 func TestNormalizeExternalMembers(t *testing.T) {
@@ -151,7 +191,7 @@ func TestExternalMemberCap(t *testing.T) {
 	require.Equal(t, DefaultExternalMemberCap, n)
 	n, err = ExternalMemberCap(ctx, &settingsFake{})
 	require.NoError(t, err)
-	require.Equal(t, 25, n, "no settings row yet means the migration default")
+	require.Equal(t, MaxRedirectRecipients, n, "no settings row yet means the migration default")
 	n, err = ExternalMemberCap(ctx, &settingsFake{row: &models.ServerSettings{MailListExternalMemberCap: 0}})
 	require.NoError(t, err)
 	require.Equal(t, 0, n, "0 is a real setting, not unset")
@@ -170,7 +210,7 @@ func TestSetExternalMembers_SavesCanonical(t *testing.T) {
 // against one redirect limit.
 func TestSetExternalMembers_InternalOnlyLimit(t *testing.T) {
 	g := &models.MailGroup{ID: "g1", EmailCached: "sales@example.org", GroupKind: "distribution", InternalOnly: true}
-	members := make([]string, MaxInternalOnlyMembers)
+	members := make([]string, MaxRedirectRecipients)
 	for i := range members {
 		members[i] = "mb"
 	}
@@ -178,4 +218,40 @@ func TestSetExternalMembers_InternalOnlyLimit(t *testing.T) {
 	_, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"a@gmail.com"})
 	require.True(t, IsMemberCapErr(err), "got %v", err)
 	require.Nil(t, fake.external, "a refused set must not be saved")
+}
+
+// GH #1833: the first outside address turns an open list into a redirect list,
+// so its mailboxes and outside addresses share the limit too.
+func TestSetExternalMembers_OpenListLimit(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", EmailCached: "sales@example.org", GroupKind: "distribution"}
+	members := make([]string, MaxRedirectRecipients)
+	fake := &externalFake{members: members}
+	_, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"a@gmail.com"})
+	require.True(t, IsMemberCapErr(err), "got %v", err)
+	require.Nil(t, fake.external, "a refused set must not be saved")
+
+	fake = &externalFake{members: members[:MaxRedirectRecipients-1]}
+	got, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"a@gmail.com"})
+	require.NoError(t, err)
+	require.Equal(t, []string{"a@gmail.com"}, got)
+}
+
+// A list left over the limit may drop outside addresses, and dropping the last
+// one makes it a list of mailboxes only, which has no limit.
+func TestSetExternalMembers_OverLimitListMayShrink(t *testing.T) {
+	g := &models.MailGroup{ID: "g1", EmailCached: "sales@example.org", GroupKind: "distribution"}
+	fake := &externalFake{members: make([]string, MaxRedirectRecipients), external: []string{"a@gmail.com", "b@gmail.com"}}
+	got, err := SetExternalMembers(context.Background(), fake, nil, g, []string{"a@gmail.com"})
+	require.NoError(t, err, "21 of 22 is a step down")
+	require.Equal(t, []string{"a@gmail.com"}, got)
+	got, err = SetExternalMembers(context.Background(), fake, nil, g, nil)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+// Every outside address costs one redirect, so the admin's cap on them never
+// goes past the redirect limit.
+func TestExternalMemberCapWithinRedirectLimit(t *testing.T) {
+	require.Equal(t, MaxRedirectRecipients, MaxExternalMemberCap)
+	require.LessOrEqual(t, DefaultExternalMemberCap, MaxExternalMemberCap)
 }

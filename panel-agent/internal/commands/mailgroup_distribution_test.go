@@ -805,8 +805,8 @@ func TestMailGroupApplyDistribution_InternalOnlyMemberCap(t *testing.T) {
 	f := newMGFake()
 	wireJMAP(t, f.server(t))
 
-	members := make([]string, 0, maxInternalOnlyListMembers+1)
-	for i := 0; i <= maxInternalOnlyListMembers; i++ {
+	members := make([]string, 0, maxRedirectListRecipients+1)
+	for i := 0; i <= maxRedirectListRecipients; i++ {
 		members = append(members, fmt.Sprintf("m%d@example.com", i))
 	}
 	err := applyDistribution(t, "sales@example.com", true, members...)
@@ -841,26 +841,69 @@ func applyDistributionWith(t *testing.T, email string, internalOnly bool, member
 	return err
 }
 
-// GH #1833: a list's outside addresses are list recipients next to its
-// members.
-func TestMailGroupApplyDistribution_OutsideAddressesAreRecipients(t *testing.T) {
+// redirectScriptOf returns the active Sieve of the Group account at email.
+func redirectScriptOf(t *testing.T, f *mgFake, email string) string {
+	t.Helper()
+	gid := f.accountByEmail(email)
+	if gid == "" {
+		t.Fatalf("%s needs a Group account to run its redirect Sieve", email)
+	}
+	act := f.activeScript(gid)
+	if act == nil {
+		t.Fatalf("no active Sieve on the %s account", email)
+	}
+	if len(f.scripts[gid]) != 1 {
+		t.Fatalf("want one script on the %s account, got %d", email, len(f.scripts[gid]))
+	}
+	return f.blobs[act.blobID]
+}
+
+// GH #1833: a list with outside addresses delivers by Sieve redirect from the
+// list address, so the copies it sends out carry the list's own envelope
+// sender. It stays open to any sender: no reject.
+func TestMailGroupApplyDistribution_OutsideAddressesRedirectFromList(t *testing.T) {
 	f := newMGFake()
+	f.addList("sales@example.com", "alice@example.com") // was a mailbox-only list
 	f.addAccount("alice@example.com", "User")
 	wireJMAP(t, f.server(t))
 
 	if err := applyDistributionWith(t, "sales@example.com", false, []string{"alice@example.com"}, []string{"Partner@Gmail.com"}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
-	lists := f.listsByEmail("sales@example.com")
-	if len(lists) != 1 {
-		t.Fatalf("want one MailingList, got %d", len(lists))
+	if n := len(f.listsByEmail("sales@example.com")); n != 0 {
+		t.Fatalf("a list with outside addresses must not be a MailingList, %d remain", n)
 	}
-	if got := recipientsOf(lists[0]); fmt.Sprint(got) != "[alice@example.com partner@gmail.com]" {
-		t.Fatalf("recipients = %v", got)
+	script := redirectScriptOf(t, f, "sales@example.com")
+	for _, want := range []string{`redirect "alice@example.com";`, `redirect "partner@gmail.com";`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "reject") {
+		t.Fatalf("a list open to any sender must not reject outside senders:\n%s", script)
 	}
 }
 
-// A list of outside addresses only still fans out: it is not "no members".
+// A bounce (empty envelope sender) to the list address is dropped, as the
+// internal-only reject drops it, instead of being copied to every recipient.
+func TestMailGroupApplyDistribution_OutsideAddressesDropBounces(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	script := redirectScriptOf(t, f, "sales@example.com")
+	drop := strings.Index(script, `if envelope :is "from" "" {`)
+	if drop < 0 || !strings.Contains(script[drop:], "discard;") {
+		t.Fatalf("script does not drop an empty-sender message:\n%s", script)
+	}
+	if drop > strings.Index(script, "redirect") {
+		t.Fatalf("a bounce must be dropped before any redirect:\n%s", script)
+	}
+}
+
+// A list of outside addresses only still delivers: it is not "no members".
 func TestMailGroupApplyDistribution_OutsideAddressesOnly(t *testing.T) {
 	f := newMGFake()
 	wireJMAP(t, f.server(t))
@@ -868,9 +911,69 @@ func TestMailGroupApplyDistribution_OutsideAddressesOnly(t *testing.T) {
 	if err := applyDistributionWith(t, "sales@example.com", false, []string{}, []string{"partner@gmail.com"}); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
+	if !strings.Contains(redirectScriptOf(t, f, "sales@example.com"), `redirect "partner@gmail.com";`) {
+		t.Fatalf("an outside-only list must still deliver")
+	}
+}
+
+// Removing the last outside address turns the list back into a MailingList.
+func TestMailGroupApplyDistribution_LastOutsideAddressRemovedConvertsToList(t *testing.T) {
+	f := newMGFake()
+	f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{"alice@example.com"}, []string{"partner@gmail.com"}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	gid := f.accountByEmail("sales@example.com")
+	if err := applyDistributionWith(t, "sales@example.com", false, []string{"alice@example.com"}, []string{}); err != nil {
+		t.Fatalf("re-apply: %v", err)
+	}
+	if _, ok := f.accounts[gid]; ok {
+		t.Fatalf("the Group account must go once the list has no outside address")
+	}
 	lists := f.listsByEmail("sales@example.com")
-	if len(lists) != 1 || fmt.Sprint(recipientsOf(lists[0])) != "[partner@gmail.com]" {
-		t.Fatalf("an outside-only list must still deliver; lists=%d", len(lists))
+	if len(lists) != 1 || fmt.Sprint(recipientsOf(lists[0])) != "[alice@example.com]" {
+		t.Fatalf("want a MailingList for alice@ again; lists=%d", len(lists))
+	}
+}
+
+// The 20-redirect limit covers a list with outside addresses too: mailboxes
+// and outside addresses together.
+func TestMailGroupApplyDistribution_OutsideAddressesCapCountsMailboxes(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	members := make([]string, 0, maxRedirectListRecipients)
+	for i := 0; i < maxRedirectListRecipients; i++ {
+		members = append(members, fmt.Sprintf("m%d@example.com", i))
+	}
+	err := applyDistributionWith(t, "sales@example.com", false, members, []string{"partner@gmail.com"})
+	requireAgentErrorCode(t, err, agentwire.CodeInvalidArgument)
+	if len(f.calls) != 0 {
+		t.Fatalf("an over-cap apply must not reach the mail server: %v", f.calls)
+	}
+}
+
+// A list of mailboxes only, open to any sender, stays a MailingList with no
+// recipient limit.
+func TestMailGroupApplyDistribution_MailboxOnlyListHasNoCap(t *testing.T) {
+	f := newMGFake()
+	wireJMAP(t, f.server(t))
+
+	members := make([]string, 0, maxRedirectListRecipients+5)
+	for i := 0; i < maxRedirectListRecipients+5; i++ {
+		members = append(members, fmt.Sprintf("m%d@example.com", i))
+	}
+	if err := applyDistributionWith(t, "sales@example.com", false, members, []string{}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	lists := f.listsByEmail("sales@example.com")
+	if len(lists) != 1 || len(lists[0].recipients) != maxRedirectListRecipients+5 {
+		t.Fatalf("want one MailingList with every mailbox; lists=%d", len(lists))
+	}
+	if f.accountByEmail("sales@example.com") != "" {
+		t.Fatalf("a mailbox-only list must not get a Group account")
 	}
 }
 
@@ -913,8 +1016,14 @@ func TestMailGroupApplyDistribution_LegacyDrainSkipsOutsideAddresses(t *testing.
 	if len(f.copied) != 1 {
 		t.Fatalf("stored mail must be copied to member mailboxes only: %v", f.copied)
 	}
-	if got := recipientsOf(f.listsByEmail("sales@example.com")[0]); fmt.Sprint(got) != "[alice@example.com partner@gmail.com]" {
-		t.Fatalf("recipients = %v", got)
+	if _, ok := f.accounts[gid]; !ok {
+		t.Fatalf("the legacy Group account is reused for the redirect Sieve")
+	}
+	script := redirectScriptOf(t, f, "sales@example.com")
+	for _, want := range []string{`redirect "alice@example.com";`, `redirect "partner@gmail.com";`} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("script missing %q:\n%s", want, script)
+		}
 	}
 }
 
@@ -947,8 +1056,8 @@ func TestMailGroupApplyDistribution_InternalOnlyCapCountsOutsideAddresses(t *tes
 	f := newMGFake()
 	wireJMAP(t, f.server(t))
 
-	members := make([]string, 0, maxInternalOnlyListMembers)
-	for i := 0; i < maxInternalOnlyListMembers; i++ {
+	members := make([]string, 0, maxRedirectListRecipients)
+	for i := 0; i < maxRedirectListRecipients; i++ {
 		members = append(members, fmt.Sprintf("m%d@example.com", i))
 	}
 	err := applyDistributionWith(t, "sales@example.com", true, members, []string{"partner@gmail.com"})
@@ -1020,5 +1129,39 @@ func TestMailDomainPurge_DestroysMailingLists(t *testing.T) {
 	}
 	if _, ok := f.accounts[keepAcct]; !ok {
 		t.Fatalf("purge removed an account in another domain")
+	}
+}
+
+// Stalwart 1.0 trusts a recipient it resolved for 10 minutes, so after a list
+// changes shape the old answer kept the address: a list that had just become a
+// MailingList bounced "Mailbox not found" (seen on 1.0.2). A shape change drops
+// Stalwart's caches once; a re-apply that changes no shape does not.
+func TestMailGroupApplyDistribution_ShapeChangeFlushesStalwartCaches(t *testing.T) {
+	f := newMGFake()
+	f.addAccount("alice@example.com", "User")
+	wireJMAP(t, f.server(t))
+	flusher := useFakeAuthCache(t)
+
+	steps := []struct {
+		name     string
+		internal bool
+		external []string
+		want     int
+	}{
+		{"new mailbox-only list", false, nil, 0},
+		{"same list again", false, nil, 0},
+		{"first outside address: MailingList to Group", false, []string{"partner@gmail.com"}, 1},
+		{"same redirect list again", false, []string{"partner@gmail.com"}, 1},
+		{"internal-only on: Group stays", true, []string{"partner@gmail.com"}, 1},
+		{"last outside address and internal-only off: Group to MailingList", false, nil, 2},
+	}
+	for _, s := range steps {
+		if err := applyDistributionWith(t, "sales@example.com", s.internal, []string{"alice@example.com"}, s.external); err != nil {
+			t.Fatalf("%s: apply: %v", s.name, err)
+		}
+		// A flush inside the flusher's minimum gap is scheduled, not run.
+		if got := flusher.flushes + len(flusher.scheduled); got != s.want {
+			t.Fatalf("%s: %d cache flushes, want %d", s.name, got, s.want)
+		}
 	}
 }

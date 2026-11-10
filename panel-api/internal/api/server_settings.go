@@ -245,7 +245,8 @@ type updateServerSettingsRequest struct {
 	// Transient (not persisted): force a fresh gateway credential.
 	PostgresMaxConnectionsPerUser *uint16 `json:"postgres_max_connections_per_user,omitempty"`
 	// GH #1833: most outside addresses one distribution list may hold
-	// (0..mailgroupops.MaxExternalMemberCap; 0 allows none).
+	// (0..mailgroupops.MaxExternalMemberCap, the redirect limit; 0 allows
+	// none).
 	MailListExternalMemberCap *uint16 `json:"mail_list_external_member_cap,omitempty"`
 
 	// M35 SSRF override. When true, migrate.ValidateHost accepts

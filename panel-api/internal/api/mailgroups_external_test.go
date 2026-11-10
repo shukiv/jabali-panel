@@ -93,17 +93,18 @@ func TestSetExternalMembers_CapZeroAllowsNone(t *testing.T) {
 	requireExternalRefused(t, fx, map[string]any{"addresses": []string{"a@gmail.com"}}, "too_many_external_members")
 }
 
-// Before the settings row exists the cap is the migration default, 25.
+// Before the settings row exists the cap is the migration default, 20 (the
+// redirect limit).
 func TestSetExternalMembers_NoSettingsRowUsesDefaultCap(t *testing.T) {
-	addrs := make([]string, 0, 26)
-	for i := 0; i < 26; i++ {
+	addrs := make([]string, 0, 21)
+	for i := 0; i < 21; i++ {
 		addrs = append(addrs, "user"+string(rune('a'+i))+"@gmail.com")
 	}
 	fx := newMGFixture(t, "distribution", false, 0)
 	requireExternalRefused(t, fx, map[string]any{"addresses": addrs}, "too_many_external_members")
 
 	fx = newMGFixture(t, "distribution", false, 0)
-	w := do(t, fx.router, "PUT", externalPath, map[string]any{"addresses": addrs[:25]})
+	w := do(t, fx.router, "PUT", externalPath, map[string]any{"addresses": addrs[:20]})
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 }
 
@@ -153,6 +154,42 @@ func TestAddMember_InternalOnlyCountsOutsideAddresses(t *testing.T) {
 	require.False(t, fx.groups.addMemberCalled)
 }
 
+// GH #1833: a list with outside addresses delivers by redirect even when it is
+// open to any sender, so its mailboxes and outside addresses share the limit.
+func TestSetExternalMembers_OpenListCountsMailboxesToo(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 20)
+	fx.groups.memberIDs = mailboxIDs(20)
+	requireExternalRefused(t, fx, map[string]any{"addresses": []string{"a@gmail.com"}}, "too_many_members")
+}
+
+func TestSetMembers_OpenListCountsOutsideAddresses(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 20)
+	fx.groups.external = []string{"a@gmail.com"}
+	w := do(t, fx.router, "PUT", "/api/v1/mailgroups/grp1/members", map[string]any{"mailbox_ids": mailboxIDs(20)})
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "too_many_members")
+	require.False(t, fx.groups.setMembersCalled)
+}
+
+func TestAddMember_OpenListCountsOutsideAddresses(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 20)
+	fx.groups.memberIDs = mailboxIDs(19)
+	fx.groups.external = []string{"a@gmail.com"}
+	w := do(t, fx.router, "POST", "/api/v1/mailgroups/grp1/members/mb20", nil)
+	require.Equal(t, http.StatusUnprocessableEntity, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "too_many_members")
+	require.False(t, fx.groups.addMemberCalled)
+}
+
+// A list of mailboxes only, open to any sender, is a mailing list with no
+// recipient limit.
+func TestSetMembers_MailboxOnlyListHasNoLimit(t *testing.T) {
+	fx := newMGFixture(t, "distribution", false, 25)
+	w := do(t, fx.router, "PUT", "/api/v1/mailgroups/grp1/members", map[string]any{"mailbox_ids": mailboxIDs(25)})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.True(t, fx.groups.setMembersCalled)
+}
+
 func TestUpdate_EnableInternalOnlyCountsOutsideAddresses(t *testing.T) {
 	fx := newMGFixture(t, "distribution", false, 19)
 	fx.groups.memberIDs = mailboxIDs(19)
@@ -183,7 +220,7 @@ func TestGet_NoOutsideAddressesIsEmptyArray(t *testing.T) {
 	w := do(t, fx.router, "GET", "/api/v1/mailgroups/grp1", nil)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	require.Contains(t, w.Body.String(), `"external_members":[]`)
-	require.Contains(t, w.Body.String(), `"external_member_cap":25`)
+	require.Contains(t, w.Body.String(), `"external_member_cap":20`)
 }
 
 // Only the domain's owner (or an admin) may change a list.

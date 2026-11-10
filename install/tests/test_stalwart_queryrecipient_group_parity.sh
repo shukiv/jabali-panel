@@ -20,6 +20,11 @@
 # Stalwart 0.16.15). Only groups projected as a Group account (resource groups,
 # internal-only distribution lists) need the member rows to receive at all.
 #
+# GH #1833: a distribution list with outside addresses is a Group account too
+# (its Sieve redirects from the list address), and it may have no member
+# mailbox at all, so its address resolves to the panel-primary postmaster row
+# while it has an outside address.
+#
 # GH #1816 / ADR-0170: both queries must also join domains and require
 # ownership_status = 'verified' in every branch (the postmaster fallback
 # included), so an address on an unproven name is never a local recipient. queryEmailAliases gets the same parity
@@ -68,12 +73,35 @@ for label in "install.sh:$install_q" "apply-plan:$plan_q"; do
     echo "FAIL: $name queryRecipient expands plain distribution lists — they must resolve as Stalwart mailing lists (GH #1818)"
     fail=1
   fi
+  # A list with outside addresses delivers by redirect from its Group account
+  # and must resolve even with no member mailbox, or it 550s (GH #1833).
+  if [[ "$q" != *"g.group_kind = 'distribution' AND pm.local_part = 'postmaster'"*"EXISTS (SELECT 1 FROM mail_group_external_members xe WHERE xe.group_id = g.id)"* ]]; then
+    echo "FAIL: $name queryRecipient does not admit a distribution list with outside addresses — it 550s (GH #1833)"
+    fail=1
+  fi
   # send-only mailboxes must not be delivery recipients (GH #371), incl. as group members.
   if [[ "$q" != *"send_only = 0"* ]]; then
     echo "FAIL: $name queryRecipient dropped the send_only = 0 exclusion (GH #371)"
     fail=1
   fi
 done
+
+# GH #1833: on a fresh install the plan writes queryRecipient, which reads
+# mail_group_external_members, before the converger runs. A query on a table
+# the Stalwart user cannot read fails every lookup, and if the converger then
+# cannot reach the Directory it stays that way. So install_stalwart_apply
+# grants the table (when it exists: on an update this runs before `migrate
+# up`) before it applies the plan.
+apply_fn=$(awk '/^install_stalwart_apply\(\) \{$/,/^\}$/' install.sh)
+grant_at=$(grep -n "GRANT SELECT ON jabali_panel.mail_group_external_members" <<<"$apply_fn" | head -1 | cut -d: -f1 || true)
+plan_at=$(grep -n '^  _install_stalwart_apply_plan ' <<<"$apply_fn" | head -1 | cut -d: -f1 || true)
+if [[ -z "$grant_at" || -z "$plan_at" || "$grant_at" -gt "$plan_at" ]]; then
+  echo "FAIL: install_stalwart_apply must grant mail_group_external_members before it applies the plan (GH #1833)"
+  fail=1
+elif ! grep -q "TABLE_NAME = 'mail_group_external_members'" <<<"$apply_fn"; then
+  echo "FAIL: install_stalwart_apply grants mail_group_external_members without checking it exists — on an update before migrate up the GRANT fails (GH #1833)"
+  fail=1
+fi
 
 install_a=$(grep -oP '(?<=local query_aliases=")[^"]*' install.sh | head -1)
 plan_a=$(grep -oP '(?<="queryEmailAliases": ")[^"]*' install/stalwart/apply-plan.json.tmpl | head -1)
@@ -89,16 +117,17 @@ if [[ "$install_a" != "$plan_a" ]]; then
 fi
 
 # GH #1816: an unproven name is never a local recipient. The direct mailbox
-# branch, the group address, the group member, the alias lookup and the
-# postmaster fallback (ADR-0110) each require a verified domain (5 in
-# queryRecipient), and so do both branches of the alias list.
+# branch, the group address, the group member, the list with outside
+# addresses (GH #1833), the alias lookup and the postmaster fallback
+# (ADR-0110) each require a verified domain (6 in queryRecipient), and so do
+# both branches of the alias list.
 verified="ownership_status = 'verified'"
 for label in "install.sh:$install_q" "apply-plan:$plan_q"; do
   name=${label%%:*}
   q=${label#*:}
   n=$(grep -o "$verified" <<<"$q" | wc -l)
-  if [[ "$n" -ne 5 ]]; then
-    echo "FAIL: $name queryRecipient has $n verified-domain filters, want 5 (GH #1816)"
+  if [[ "$n" -ne 6 ]]; then
+    echo "FAIL: $name queryRecipient has $n verified-domain filters, want 6 (GH #1816)"
     fail=1
   fi
   if [[ "$q" != *"pd.$verified"* ]]; then
