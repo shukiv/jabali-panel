@@ -14,8 +14,11 @@ import (
 // OPcache / JIT controls (GH #1332). Per-pool = per (user, PHP version): a
 // pool's OPcache SHM is shared by every domain the user runs on that version,
 // so these settings are version-scoped, exactly like the Performance tuning.
-// Stored as php_pool_ini_overrides (rendered php_admin_value/flag), which the
-// agent already applies via php.pool.apply — no new pool columns.
+// Stored as php_pool_ini_overrides, which the agent applies via php.pool.apply
+// — no new pool columns. The agent renders enable / validate_timestamps /
+// revalidate_freq as pool php_admin_value/flag, but memory, max files and JIT
+// into the slug's own ini, read at master start (GH #2466): a pool line for
+// them is applied per worker, after the master has sized OPcache.
 //
 // A change to OPcache SHM sizing / JIT only takes effect at FPM MASTER start; a
 // graceful USR2 reload (what php.pool.apply does on a same-version change) keeps

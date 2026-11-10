@@ -92,6 +92,8 @@ func reapFPMPoolArtifacts(ctx context.Context, slug string) {
 	// The pool's own PHP Defense rules, if its package lifted the exec bans
 	// (GH #1701).
 	removePoolPHPDefense(slug)
+	// Its OPcache sizing ini (GH #2466).
+	removePoolOpcacheIni(slug)
 
 	// The account's PHP error log rotation goes with its default pool: once
 	// the user is gone, logrotate would reject the stanza's su line.

@@ -16,9 +16,11 @@ import (
 //     jabali-cache purge spool invisible from the FPM jail — every WP
 //     content-edit purge of the nginx micro-cache was a silent no-op
 //     fleet-wide.
-//   - JAB-200: 32MB opcache with default max_accelerated_files saturated
-//     on any real WP site (10k+ files) and opcache does not evict —
-//     once full, every request recompiles.
+//   - GH #2466: OPcache sizing in the pool (php_admin_value) never took
+//     effect — the master allocates it at startup, before it reads the
+//     pool — so the template must not carry it. The size comes from the
+//     server-wide 15-jabali-opcache.ini; a pool override goes into the
+//     slug's jabali-ext ini (applyPoolOpcacheIni).
 func TestRepoPoolTemplatePinsJailAndOpcache(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "install", "php", "jabali-php-pool.conf.tmpl")
 	b, err := os.ReadFile(path)
@@ -44,11 +46,10 @@ func TestRepoPoolTemplatePinsJailAndOpcache(t *testing.T) {
 		t.Errorf("open_basedir must stay anchored to the tenant home: %s", base)
 	}
 
-	if !strings.Contains(s, "php_admin_value[opcache.memory_consumption] = 128") {
-		t.Error("opcache.memory_consumption must be 128 (JAB-200 — 32 saturates on real WP sites)")
-	}
-	if !strings.Contains(s, "php_admin_value[opcache.max_accelerated_files] = 20000") {
-		t.Error("opcache.max_accelerated_files must be raised above one site's file count (JAB-200)")
+	for d := range opcacheStartupDirectives {
+		if strings.Contains(s, "php_admin_value["+d+"]") {
+			t.Errorf("the pool template sets %s, which the master only reads at startup (GH #2466)", d)
+		}
 	}
 
 	// JAB-230: without a sendmail_path every PHP mail()/wp_mail() call on the
