@@ -28,6 +28,8 @@ func TestMigrationSSHUser(t *testing.T) {
 			&models.MigrationJob{SourceKind: models.MigrationSourceCyberPanel, SourceUser: "smoke.jabalitest.com"}, "root"},
 		{"plesk subscription is a domain, not an ssh login -> root (GH #746)",
 			&models.MigrationJob{SourceKind: models.MigrationSourcePlesk, SourceUser: "demolab.test"}, "root"},
+		{"whm account is picked over the root session, NOT the login -> root (noshell accounts can't rsync)",
+			&models.MigrationJob{SourceKind: models.MigrationSourceWHMpkgacct, SourceUser: "webup"}, "root"},
 		{"cpanel account IS the ssh login",
 			&models.MigrationJob{SourceKind: models.MigrationSourceCpanel, SourceUser: "acct1"}, "acct1"},
 		{"directadmin uses the (pivoted) source user",
