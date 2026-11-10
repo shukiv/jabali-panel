@@ -2,6 +2,7 @@ package dnscompile
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 		"example.com",
 		"jabali",
 		"v=DKIM1; k=ed25519; p=AAAA",
+		"",
 		nil,
 		idCounter(),
 		now,
@@ -109,7 +111,7 @@ func TestBuildEmailRecords_ShapeAndContent(t *testing.T) {
 // rotation lands, the handler will pass the rotated selector through.
 func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 	recs := BuildEmailRecords(
-		"z", "example.com", "rotated-20260101", "dummy-pub", nil, idCounter(), time.Now(),
+		"z", "example.com", "rotated-20260101", "dummy-pub", "", nil, idCounter(), time.Now(),
 	)
 	require.Equal(t, "rotated-20260101._domainkey", recs[0].Name)
 }
@@ -118,7 +120,7 @@ func TestBuildEmailRecords_HonorsSelector(t *testing.T) {
 // refactor that accidentally reuses ids across records (which would
 // violate the PK and blow up Create).
 func TestBuildEmailRecords_IDGeneratorCalledOncePerRecord(t *testing.T) {
-	recs := BuildEmailRecords("z", "example.com", "s", "p", nil, idCounter(), time.Now())
+	recs := BuildEmailRecords("z", "example.com", "s", "p", "", nil, idCounter(), time.Now())
 	seen := map[string]bool{}
 	for _, r := range recs {
 		require.False(t, seen[r.ID], "duplicate id %q", r.ID)
@@ -149,4 +151,29 @@ func TestDAVSecureSRV(t *testing.T) {
 			t.Errorf("DAVSecureSRV(%q) = %q, want %q", tc.override, got, tc.want)
 		}
 	}
+}
+
+// GH #2475: with an RSA key the set gains jabalirsa._domainkey, split into
+// strings of at most 255 characters that join back to the key.
+func TestBuildEmailRecords_RSAKeyRecord(t *testing.T) {
+	rsa := "v=DKIM1; k=rsa; p=" + strings.Repeat("A", 392)
+	recs := BuildEmailRecords("z", "example.com", "jabali", "v=DKIM1; k=ed25519; p=AAAA", rsa, nil, idCounter(), time.Now())
+	require.Len(t, recs, 16)
+	last := recs[15]
+	require.Equal(t, "jabalirsa._domainkey", last.Name)
+	require.Equal(t, "TXT", last.Type)
+	require.Equal(t, `"`+rsa[:255]+`" "`+rsa[255:]+`"`, last.Content)
+	require.Equal(t, "m6", *last.ManagedBy)
+	// The Ed25519 record stays first and unsplit.
+	require.Equal(t, `"v=DKIM1; k=ed25519; p=AAAA"`, recs[0].Content)
+}
+
+func TestQuoteTXT(t *testing.T) {
+	require.Equal(t, `""`, QuoteTXT(""))
+	require.Equal(t, `"v=spf1 mx ~all"`, QuoteTXT("v=spf1 mx ~all"))
+	require.Equal(t, `"`+strings.Repeat("a", 255)+`"`, QuoteTXT(strings.Repeat("a", 255)))
+	require.Equal(t, `"`+strings.Repeat("a", 255)+`" "b"`, QuoteTXT(strings.Repeat("a", 255)+"b"))
+	require.Equal(t, `"`+strings.Repeat("a", 255)+`" "`+strings.Repeat("b", 255)+`" "c"`,
+		QuoteTXT(strings.Repeat("a", 255)+strings.Repeat("b", 255)+"c"))
+	require.Equal(t, `"say \"hi\" \\ bye"`, QuoteTXT(`say "hi" \ bye`))
 }

@@ -42,6 +42,8 @@ func steadyStateFixture(t *testing.T, webmailOn bool) (*Reconciler, *fakeAgent) 
 		ag.resultByMethod = map[string]json.RawMessage{}
 	}
 	ag.resultByMethod["mail.relay.apply"] = json.RawMessage(`{"ok":true,"mode":"local"}`)
+	// A converged mail domain already has both DKIM signatures (GH #2475).
+	ag.resultByMethod["domain_email.dkim_ensure"] = json.RawMessage(`{"ok":true,"created":[]}`)
 	settings := r.serverSettings.(*fakeServerSettingsRepo).settings
 	settings.Hostname = "panel.example.com"
 	settings.WebmailEnabled = webmailOn

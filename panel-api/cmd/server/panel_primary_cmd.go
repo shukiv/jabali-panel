@@ -93,6 +93,7 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 					// back ON re-provisions fresh DKIM.
 					updates["dkim_selector"] = nil
 					updates["dkim_public_key"] = nil
+					updates["dkim_rsa_public_key"] = nil
 					updates["email_enabled_at"] = nil
 				}
 				if err := sharedDB.WithContext(ctx).
@@ -132,6 +133,7 @@ func ensurePanelPrimary(ctx context.Context, hostname string) error {
 			// a future re-enable when hostname flips back to routable.
 			updates["dkim_selector"] = nil
 			updates["dkim_public_key"] = nil
+			updates["dkim_rsa_public_key"] = nil
 			updates["email_enabled_at"] = nil
 		}
 		if err := sharedDB.WithContext(ctx).

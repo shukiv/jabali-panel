@@ -20,6 +20,29 @@ const EmailRecordsManagedBy = "m6"
 // until we ship rotation, every domain uses the same "jabali" label.
 const EmailRecordsSelector = "jabali"
 
+// EmailRecordsRSASelector is the selector of the RSA key every mail domain
+// signs with beside the Ed25519 one (GH #2475; internal/dkim.RSASelector).
+const EmailRecordsRSASelector = "jabalirsa"
+
+// txtStringMax is the longest character-string a TXT record holds (RFC 1035
+// §3.3); a longer value is published as several strings, which DKIM
+// verifiers join back together (RFC 6376 §3.6.2.2).
+const txtStringMax = 255
+
+// QuoteTXT renders value as TXT record content: one double-quoted string, or
+// several separated by spaces when it is longer than 255 characters (a
+// 2048-bit RSA DKIM key is about 400). Quotes and backslashes are escaped.
+func QuoteTXT(value string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	var parts []string
+	for len(value) > txtStringMax {
+		parts = append(parts, `"`+esc.Replace(value[:txtStringMax])+`"`)
+		value = value[txtStringMax:]
+	}
+	parts = append(parts, `"`+esc.Replace(value)+`"`)
+	return strings.Join(parts, " ")
+}
+
 // BuildEmailRecords returns the per-domain DNS records inserted on
 // domain.email_enable beyond what M4's BootstrapRecords already put
 // in place at domain-create time.
@@ -37,6 +60,8 @@ const EmailRecordsSelector = "jabali"
 // What M6 adds (flagged Managed=true, ManagedBy="m6"):
 //
 //	jabali._domainkey  TXT    "v=DKIM1; k=ed25519; p=<pubkey>"
+//	jabalirsa._domainkey TXT  "v=DKIM1; k=rsa; p=<pubkey ...>" "<... rest>"
+//	                          (when rsaPublicKey is set; split by QuoteTXT)
 //	autoconfig         CNAME  mail
 //	autodiscover       CNAME  mail
 //	_autodiscover._tcp SRV    0 0 443 mail   (priority in the column, see below)
@@ -65,7 +90,7 @@ const EmailRecordsSelector = "jabali"
 //   - TXT content is double-quoted to match BootstrapRecords' format so
 //     a textual diff between the two won't flap on reconciliation.
 func BuildEmailRecords(
-	zoneID, zoneName, selector, dkimPublicKey string,
+	zoneID, zoneName, selector, dkimPublicKey, rsaPublicKey string,
 	srv *models.ServerSettings,
 	idNew func() string,
 	now time.Time,
@@ -108,8 +133,8 @@ func BuildEmailRecords(
 	//
 	// No migration needed: the agent's pdns client DELETEs and reinserts the
 	// whole zone on each push, so hosts converge on the next reconcile.
-	return []models.DNSRecord{
-		mk(selector+"._domainkey", "TXT", `"`+dkimPublicKey+`"`, 0),
+	recs := []models.DNSRecord{
+		mk(selector+"._domainkey", "TXT", QuoteTXT(dkimPublicKey), 0),
 		mk("autoconfig", "CNAME", mailTarget, 0),
 		mk("_autodiscover._tcp", "SRV", "0 443 "+mailTarget, 0),
 		mk("_caldavs._tcp", "SRV", "1 443 "+mailTarget, 0),
@@ -137,6 +162,12 @@ func BuildEmailRecords(
 		mk("@", "CAA", `0 issue "letsencrypt.org"`, 0),
 		mk("@", "CAA", `0 iodef "mailto:postmaster@`+zoneName+`"`, 0),
 	}
+	// GH #2475: the RSA key signing beside the Ed25519 one. Omitted until
+	// the domain has one (the reconciler adds it on its next pass).
+	if rsaPublicKey != "" {
+		recs = append(recs, mk(EmailRecordsRSASelector+"._domainkey", "TXT", QuoteTXT(rsaPublicKey), 0))
+	}
+	return recs
 }
 
 // DAVSecureSRV is the content of a domain's secure CalDAV or CardDAV SRV row

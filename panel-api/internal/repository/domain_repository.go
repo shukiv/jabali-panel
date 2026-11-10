@@ -115,6 +115,12 @@ type DomainRepository interface {
 	// dkim_public_key so DNS re-publication after a later re-enable doesn't
 	// re-roll the key per ADR-0043.
 	UpdateEmailState(ctx context.Context, id string, state DomainEmailState) error
+	// UpdateDKIMPublicKeys writes the published DKIM public keys of a domain
+	// whose mail is already set up (GH #2475): the reconciler records the
+	// RSA key it gave the domain, and an Ed25519 key it had to recreate.
+	// A nil key leaves its column alone; email_enabled and the selector are
+	// never touched, so a concurrent disable can't be undone by it.
+	UpdateDKIMPublicKeys(ctx context.Context, id string, ed25519, rsa *string) error
 	// UpdateMailProvider writes the GH#181 mail-provider columns
 	// (mail_provider + the optional DKIM tokens) together with the
 	// derived email_enabled + skip_auto_san. Dedicated method (not the
@@ -240,7 +246,9 @@ type DomainEmailState struct {
 	Enabled        bool
 	DkimSelector   *string
 	DkimPublicKey  *string
-	EmailEnabledAt *time.Time
+	// DkimRSAPublicKey is the RSA key's TXT value (GH #2475); nil leaves it.
+	DkimRSAPublicKey *string
+	EmailEnabledAt   *time.Time
 }
 
 // DomainPHPSettings holds per-domain PHP INI overrides.
@@ -368,6 +376,7 @@ func (r *domainRepo) FindStrictSubdomains(ctx context.Context, name string) ([]m
 var domainHeavyListColumns = []string{
 	"google_dkim",
 	"dkim_public_key",
+	"dkim_rsa_public_key",
 	"disclaimer_text",
 	"nginx_safe_options",
 }
@@ -805,6 +814,32 @@ func (r *domainRepo) UpdateEmailState(ctx context.Context, id string, state Doma
 	}
 	if state.DkimPublicKey != nil {
 		updates["dkim_public_key"] = state.DkimPublicKey
+	}
+	if state.DkimRSAPublicKey != nil {
+		updates["dkim_rsa_public_key"] = state.DkimRSAPublicKey
+	}
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Updates(updates)
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (r *domainRepo) UpdateDKIMPublicKeys(ctx context.Context, id string, ed25519, rsa *string) error {
+	updates := map[string]interface{}{}
+	if ed25519 != nil {
+		updates["dkim_public_key"] = ed25519
+	}
+	if rsa != nil {
+		updates["dkim_rsa_public_key"] = rsa
+	}
+	if len(updates) == 0 {
+		return nil
 	}
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).

@@ -608,7 +608,7 @@ func TestSyncDNS_ZoneReadError_TypedZoneReadFailed(t *testing.T) {
 	zones.zone = nil
 	zones.err = errors.New("db connection lost")
 
-	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA", "")
 	require.Len(t, warnings, 1)
 	require.Equal(t, WarnZoneReadFailed, warnings[0].Kind)
 	require.True(t, warnings[0].Retryable(), "a transient zone-read fault is retryable")
@@ -620,7 +620,7 @@ func TestSyncDNS_RecordsReadError_TypedRecordsReadFailed(t *testing.T) {
 	_, _, records, d := baseDeps()
 	records.listErr = errors.New("db connection lost")
 
-	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA", "")
 	require.Len(t, warnings, 1)
 	require.Equal(t, WarnRecordsReadFailed, warnings[0].Kind)
 }
@@ -632,7 +632,7 @@ func TestSyncDNS_PublishError_TypedPublishFailed(t *testing.T) {
 	_, _, records, d := baseDeps()
 	records.createErr = errors.New("insert failed")
 
-	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA")
+	warnings := SyncManagedDNSOnEnable(context.Background(), d, "dom1", "jabali", "p=AAA", "")
 	require.NotEmpty(t, warnings)
 	for _, w := range warnings {
 		require.Equal(t, WarnPublishFailed, w.Kind)

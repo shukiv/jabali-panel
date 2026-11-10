@@ -179,6 +179,20 @@ func (m *mockDomainRepo) SetSharedCertificate(context.Context, string, *string, 
 	return nil
 }
 
+func (m *mockDomainRepo) UpdateDKIMPublicKeys(_ context.Context, id string, ed25519, rsa *string) error {
+	d, ok := m.domains[id]
+	if !ok {
+		return repository.ErrNotFound
+	}
+	if ed25519 != nil {
+		d.DkimPublicKey = ed25519
+	}
+	if rsa != nil {
+		d.DkimRSAPublicKey = rsa
+	}
+	return nil
+}
+
 func (m *mockDomainRepo) UpdateEmailState(ctx context.Context, id string, state repository.DomainEmailState) error {
 	if m.emailStateErr != nil {
 		return m.emailStateErr
