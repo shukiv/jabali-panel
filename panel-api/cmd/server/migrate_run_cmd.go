@@ -1450,6 +1450,9 @@ func cpanelRestoreCallback(
 						Files       int64 `json:"files"`
 					}
 					_ = json.Unmarshal(rawResp, &rs)
+					if note := rsyncPartialNote("home_rsync_remote: "+r.Dom, rawResp); note != "" {
+						warnings = append(warnings, note)
+					}
 					totalBytes += rs.BytesCopied
 					domCount++
 				}
@@ -1498,6 +1501,9 @@ func cpanelRestoreCallback(
 						warnings = append(warnings, fmt.Sprintf(
 							"plesk_extra_files: bytes=%d dest=~/plesk-files (non-docroot subscription files; excluded %d docroots + %d system dirs)",
 							rs.BytesCopied, len(excludes)-len(pleskSystemExcludes), len(pleskSystemExcludes)))
+						if note := rsyncPartialNote("plesk_extra_files", rawResp); note != "" {
+							warnings = append(warnings, note)
+						}
 					}
 				}
 				daHomeHandled = true
@@ -1656,7 +1662,7 @@ func cpanelRestoreCallback(
 						continue
 					}
 					local, mdom := addr[:at], addr[at+1:]
-					if _, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+					mrRaw, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
 						"port":        srcSSHPort(job),
 						"job_id":      job.ID,
 						"src_account": p.parsed.SourceUser,
@@ -1667,9 +1673,13 @@ func cpanelRestoreCallback(
 						"src_path":    srcMaildir,
 						"dest_path":   filepath.Join(destMailRoot, mdom, local),
 						"dest_user":   p.targetUsername,
-					}); mrErr != nil {
+					})
+					if mrErr != nil {
 						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
 						continue
+					}
+					if note := rsyncPartialNote("mail_rsync: "+addr, mrRaw); note != "" {
+						warnings = append(warnings, note)
 					}
 					mboxCount++
 				}
@@ -1711,7 +1721,7 @@ func cpanelRestoreCallback(
 					}
 					local, mdom := addr[:at], addr[at+1:]
 					destPath := filepath.Join(destMailRoot, mdom, local)
-					if _, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
+					mrRaw, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
 						"port":        srcSSHPort(job),
 						"job_id":      job.ID,
 						"src_account": "vmail",
@@ -1721,9 +1731,13 @@ func cpanelRestoreCallback(
 						"src_path":    srcMaildir,
 						"dest_path":   destPath,
 						"dest_user":   p.targetUsername,
-					}); mrErr != nil {
+					})
+					if mrErr != nil {
 						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
 						continue
+					}
+					if note := rsyncPartialNote("mail_rsync: "+addr, mrRaw); note != "" {
+						warnings = append(warnings, note)
 					}
 					mboxCount++
 				}
