@@ -1020,7 +1020,7 @@ func applyAccountRestore(
 			// (the "messages not replayed" symptom). stagingRoot is agent-owned,
 			// not tenant-writable; RESOLVE_BENEATH under it still blocks symlink
 			// escape inside the restored tree.
-			impRes, impErr := importMaildirTree(ctx, mailTree, "", []string{stagingRoot})
+			impRes, impErr := importMaildirTree(ctx, mailTree, "", []string{stagingRoot}, nil)
 			if impErr != nil {
 				warnings = append(warnings, fmt.Sprintf("mail: import: %v", impErr))
 				continue

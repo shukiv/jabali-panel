@@ -1281,6 +1281,15 @@ func cpanelRestoreCallback(
 				if job.SourceHost == "" {
 					break
 				}
+				// The JAB-45 guard below scopes docroots to /home/<parsed
+				// SourceUser>, read from the pulled tarball. Pin it to the
+				// account the operator picked before any rsync dials the source.
+				if p.parsed.SourceUser != job.SourceUser {
+					p.criticals = append(p.criticals, fmt.Sprintf(
+						"security: tarball account %q does not match the job's source account %q — home rsync refused",
+						p.parsed.SourceUser, job.SourceUser))
+					break
+				}
 				for _, root := range []string{
 					filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "userdata"),
 					filepath.Join(p.parsed.ExtractDir, "userdata"),
@@ -1742,7 +1751,7 @@ func cpanelRestoreCallback(
 		}
 
 		if plan.Mailboxes {
-			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername)
+			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername, p.targetUserID)
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 			}
@@ -2078,6 +2087,11 @@ func cpanelPullMail(ctx context.Context, call agentCallFunc, job *models.Migrati
 	}
 	if srcUser == "" || srcUser == "." || srcUser == ".." || strings.ContainsAny(srcUser, "/\x00") {
 		return "", nil, fmt.Sprintf("mail_rsync: source account %q is not a valid cPanel user — ~/mail not copied, no mailboxes migrated", srcUser)
+	}
+	// srcUser is read from the pulled tarball; job.SourceUser is the account the
+	// operator picked. They must agree before a root rsync reads /home/<srcUser>.
+	if srcUser != job.SourceUser {
+		return "", nil, fmt.Sprintf("security: tarball account %q does not match the job's source account %q — ~/mail not copied, no mailboxes migrated", srcUser, job.SourceUser)
 	}
 	src := "/home/" + srcUser + "/mail"
 	dest := filepath.Join("/home", targetUser, "mail")

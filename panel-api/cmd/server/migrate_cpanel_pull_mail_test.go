@@ -119,6 +119,19 @@ func TestCpanelPullMail_FailedCopyIsCritical(t *testing.T) {
 	}
 }
 
+// The account read from the pulled tarball must be the one the operator picked
+// before a root rsync reads /home/<account>.
+func TestCpanelPullMail_RefusesTarballAccountMismatch(t *testing.T) {
+	rec := &mailLegRecorder{}
+	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "webup"}
+
+	root, _, crit := cpanelPullMail(context.Background(), rec.call, job, "otheracct", "gil")
+
+	if root != "" || len(rec.calls) != 0 || !strings.Contains(crit, "does not match the job's source account") {
+		t.Fatalf("want refused with no agent call, got root=%q calls=%d crit=%q", root, len(rec.calls), crit)
+	}
+}
+
 func TestCpanelPullMail_RejectsBadSourceUser(t *testing.T) {
 	for _, u := range []string{"", ".", "..", "../root", "a/b"} {
 		t.Run(u, func(t *testing.T) {

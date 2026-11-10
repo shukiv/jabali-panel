@@ -16,6 +16,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/stalwartadmin"
 )
@@ -72,7 +73,13 @@ type agentImportMailboxesResult struct {
 // agentCli nil → observation-only behaviour (legacy stub —
 // per-mailbox 'pending_manual' warnings recorded; no JMAP push).
 // Useful for tests + dry-run paths where Stalwart isn't reachable.
-func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.AgentInterface, jobID string, mbRepo repository.MailboxRepository, domainsRepo repository.DomainRepository, preserveCreds bool, destUser string) (*MailImportResult, error) {
+//
+// targetUserID is the migrated user. The mail tree comes from the SOURCE
+// account, so its <domain> directory names are source-controlled: only
+// domains the panel holds for targetUserID get mailbox rows, and the agent
+// push is restricted to exactly those domains (allowed_domains). Anything
+// else — another tenant's domain, a domain not on this panel — is refused.
+func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.AgentInterface, jobID string, mbRepo repository.MailboxRepository, domainsRepo repository.DomainRepository, preserveCreds bool, destUser, targetUserID string) (*MailImportResult, error) {
 	if parsed == nil {
 		return nil, fmt.Errorf("ImportMailboxes: parsed nil")
 	}
@@ -189,8 +196,21 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 	// (messages_found>0 but messages_pushed=0). Rows first, then import into
 	// them. (Re-running the migration used to "fix" it precisely because the
 	// prior run had by then created the rows.)
-	if mbRepo != nil && domainsRepo != nil {
-		res.Skipped = append(res.Skipped, insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, mbRepo, domainsRepo, res)...)
+	//
+	// The same walk verifies each <domain> dir belongs to targetUserID; the
+	// verified set is all the agent may push into. Without the repos nothing
+	// can be verified, so nothing is pushed (fail closed).
+	if mbRepo == nil || domainsRepo == nil {
+		res.Skipped = append(res.Skipped, "mailbox_skip:cannot verify mail domain ownership (no repositories) — nothing pushed")
+		return res, nil
+	}
+	rowMsgs, allowedDomains := insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, targetUserID, mbRepo, domainsRepo, res)
+	res.Skipped = append(res.Skipped, rowMsgs...)
+	if len(allowedDomains) == 0 {
+		if res.MaildirsFound > 0 {
+			res.Skipped = append(res.Skipped, "mailbox_skip:no mail domain in the tree belongs to the migrated account — nothing pushed")
+		}
+		return res, nil
 	}
 
 	// Agent path: hand the mail subtree to migration.import_mailboxes
@@ -203,6 +223,9 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		// (CyberPanel rsyncs its /home/vmail Maildirs into the target's home, not
 		// the staging tree). Empty for tarball-bundled sources (staging root only).
 		"dest_user": destUser,
+		// Only the domains verified above; the agent refuses every other
+		// <domain> dir and an owner_email outside the set.
+		"allowed_domains": allowedDomains,
 	})
 	if err != nil {
 		// Don't fail the whole restore stage on a mail import
@@ -229,18 +252,29 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 
 // insertMailboxPanelRows walks mailRoot/<domain>/<localpart> and creates
 // a mailboxes panel row for each Maildir found. Returns extra skip/warn
-// messages for the caller. Best-effort: a single failure does not abort
-// other mailboxes.
+// messages for the caller, and the domains it verified belong to
+// targetUserID — the only domains the agent may push mail into. A <domain>
+// dir that is not one of targetUserID's panel domains is refused whole.
+// Best-effort: a single failure does not abort other mailboxes.
 func insertMailboxPanelRows(
 	ctx context.Context,
 	mailRoot string,
 	ownerEmail string,
 	preserveCreds bool,
+	targetUserID string,
 	mbRepo repository.MailboxRepository,
 	domainsRepo repository.DomainRepository,
 	res *MailImportResult,
-) []string {
+) ([]string, []string) {
 	var msgs []string
+	allowed := []string{}
+	seenDomain := map[string]bool{}
+	allow := func(name string) {
+		if !seenDomain[name] {
+			seenDomain[name] = true
+			allowed = append(allowed, name)
+		}
+	}
 
 	// Owner/default account: top-level mail/{cur,new} → one panel
 	// mailbox row keyed off OwnerEmail (<sourceUser>@<primaryDomain>).
@@ -250,15 +284,20 @@ func insertMailboxPanelRows(
 		if _, ok := looksLikeMaildir(mailRoot); ok {
 			if at := strings.LastIndex(ownerEmail, "@"); at > 0 {
 				lp, dn := ownerEmail[:at], ownerEmail[at+1:]
-				srcHash := loadSourceMailPasswords(filepath.Join(mailRoot, dn))[lp]
-				msgs = append(msgs, insertOneMailboxRow(ctx, lp, dn, srcHash, preserveCreds, mbRepo, domainsRepo, res)...)
+				if _, refusal := ownedMailDomain(ctx, domainsRepo, dn, targetUserID); refusal != "" {
+					msgs = append(msgs, refusal)
+				} else {
+					allow(dn)
+					srcHash := loadSourceMailPasswords(filepath.Join(mailRoot, dn))[lp]
+					msgs = append(msgs, insertOneMailboxRow(ctx, lp, dn, srcHash, preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+				}
 			}
 		}
 	}
 
 	domains, err := os.ReadDir(mailRoot)
 	if err != nil {
-		return append(msgs, fmt.Sprintf("mailbox_rows: readdir mail root: %v", err))
+		return append(msgs, fmt.Sprintf("mailbox_rows: readdir mail root: %v", err)), allowed
 	}
 	for _, dom := range domains {
 		if !dom.IsDir() {
@@ -277,6 +316,11 @@ func insertMailboxPanelRows(
 		if strings.HasPrefix(name, ".") || name == "cur" || name == "new" || name == "tmp" {
 			continue
 		}
+		if _, refusal := ownedMailDomain(ctx, domainsRepo, name, targetUserID); refusal != "" {
+			msgs = append(msgs, refusal)
+			continue
+		}
+		allow(name)
 		usersDir := filepath.Join(mailRoot, dom.Name())
 		// HestiaCP ships the source mailbox password hashes in
 		// mail/<domain>/conf/passwd (dovecot passwd-file). Load them once per
@@ -298,7 +342,7 @@ func insertMailboxPanelRows(
 				continue
 			}
 			seen[localPart] = true
-			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, mbRepo, domainsRepo, res)...)
+			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
 		}
 		// GH #327: HestiaCP creates a mail account with `mkdir mail/<dom>/<acct>`
 		// but dovecot only materializes cur/new/tmp on first delivery/login — so a
@@ -312,10 +356,26 @@ func insertMailboxPanelRows(
 				continue
 			}
 			seen[localPart] = true
-			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, mbRepo, domainsRepo, res)...)
+			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
 		}
 	}
-	return msgs
+	return msgs, allowed
+}
+
+// ownedMailDomain looks up a mail-tree domain and returns it only when it
+// belongs to targetUserID. Otherwise it returns a refusal line: the name comes
+// from the source account's mail tree, and a mailbox on any other domain would
+// be a mailbox on another tenant's domain (or on none at all). An empty
+// targetUserID verifies nothing, so it refuses everything.
+func ownedMailDomain(ctx context.Context, domainsRepo repository.DomainRepository, name, targetUserID string) (*models.Domain, string) {
+	domain, err := domainsRepo.FindByName(ctx, name)
+	if err != nil || domain == nil {
+		return nil, fmt.Sprintf("mailbox_rows: mail/%s is not a domain on this panel — refused: %v", name, err)
+	}
+	if targetUserID == "" || domain.UserID != targetUserID {
+		return nil, fmt.Sprintf("mailbox_rows: mail/%s is not a domain of the migrated account — refused", name)
+	}
+	return domain, ""
 }
 
 // insertOneMailboxRow creates a single panel mailboxes row for
@@ -328,13 +388,17 @@ func insertOneMailboxRow(
 	localPart, domainName string,
 	srcHash string,
 	preserveCreds bool,
+	targetUserID string,
 	mbRepo repository.MailboxRepository,
 	domainsRepo repository.DomainRepository,
 	res *MailImportResult,
 ) []string {
-	domain, dErr := domainsRepo.FindByName(ctx, domainName)
-	if dErr != nil {
-		return []string{fmt.Sprintf("mailbox_rows: domain %s not found in panel: %v", domainName, dErr)}
+	// Re-checked here, not only by the caller's per-domain gate: this is the
+	// function that creates a row or retrofits a password onto an existing one,
+	// and it must never do either on a domain the migrated user does not own.
+	domain, refusal := ownedMailDomain(ctx, domainsRepo, domainName, targetUserID)
+	if refusal != "" {
+		return []string{refusal}
 	}
 	exists, exErr := mbRepo.ExistsByDomainAndLocalPart(ctx, domain.ID, localPart)
 	if exErr != nil {
