@@ -119,6 +119,25 @@ func TestCpanelPullMail_FailedCopyIsCritical(t *testing.T) {
 	}
 }
 
+// A live inbox changes during the copy: the agent reports rsync exit 24 as a
+// partial success. The mail must still be imported (MailRoot set, no
+// critical), and the summary must say the copy was partial.
+func TestCpanelPullMail_PartialCopyIsImportedAndReported(t *testing.T) {
+	rec := &mailLegRecorder{reply: json.RawMessage(`{"bytes_copied":967438095,"files":4815,"partial":true,"exit_code":24,
+		"errors":["file has vanished: \"/home/webup/mail/new/1700000000.M1.mx\""]}`)}
+	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "webup"}
+
+	root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "webup", "gil")
+
+	if crit != "" || root != "/home/gil/mail" {
+		t.Fatalf("root=%q crit=%q, want the mail imported with no critical", root, crit)
+	}
+	if len(lines) != 2 || !strings.Contains(lines[1], "partial copy") || !strings.Contains(lines[1], "exit 24") ||
+		!strings.Contains(lines[1], "1700000000.M1.mx") {
+		t.Fatalf("summary lines = %q, want the copy line plus a partial-copy line naming the vanished file", lines)
+	}
+}
+
 // The account read from the pulled tarball must be the one the operator picked
 // before a root rsync reads /home/<account>.
 func TestCpanelPullMail_RefusesTarballAccountMismatch(t *testing.T) {

@@ -2128,9 +2128,15 @@ func cpanelPullMail(ctx context.Context, call agentCallFunc, job *models.Migrati
 		Files       int64 `json:"files"`
 	}
 	_ = json.Unmarshal(raw, &rs)
-	return dest, []string{fmt.Sprintf(
+	lines := []string{fmt.Sprintf(
 		"mail: rsynced %s -> %s (bytes=%d files=%d; cPanel pull ships no homedir)",
-		src, dest, rs.BytesCopied, rs.Files)}, ""
+		src, dest, rs.BytesCopied, rs.Files)}
+	// A live inbox changes during the copy (rsync exit 24): the rest is copied
+	// and imported, and the summary says what was left for a re-run.
+	if note := rsyncPartialNote("mail_rsync: "+src, raw); note != "" {
+		lines = append(lines, note)
+	}
+	return dest, lines, ""
 }
 
 func cpanelAnalyzeCallback(jobsRepo repository.MigrationJobRepository) migrate.StageCallback {
