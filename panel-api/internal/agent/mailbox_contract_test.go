@@ -134,7 +134,9 @@ type DomainEmailEnableResponse struct {
 // domain_email.dkim_ensure (GH #2475), as the reconciler's DKIM pass sends
 // and reads it.
 type DomainEmailDkimEnsureRequest struct {
-	DomainName string `json:"domain_name"`
+	DomainName                string `json:"domain_name"`
+	PublishedEd25519PublicKey string `json:"published_ed25519_public_key"`
+	PublishedRSAPublicKey     string `json:"published_rsa_public_key"`
 }
 
 type DomainEmailDkimEnsureResponse struct {
@@ -144,6 +146,7 @@ type DomainEmailDkimEnsureResponse struct {
 	RSASelector      string   `json:"rsa_selector"`
 	RSAPublicKey     string   `json:"rsa_public_key"`
 	Created          []string `json:"created"`
+	Healed           []string `json:"healed"`
 }
 
 // domain.email_dkim_rotate, as domainmailops.RotateDKIM sends and reads it.

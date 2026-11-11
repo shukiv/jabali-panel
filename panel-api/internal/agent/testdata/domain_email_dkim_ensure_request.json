@@ -1,3 +1,5 @@
 {
-  "domain_name": "example.com"
+  "domain_name": "example.com",
+  "published_ed25519_public_key": "v=DKIM1; k=ed25519; p=MCowBQYDK2VwAyEABX9F7G8HjKlMnOpQrStUvWxYz0123456789ABcDe=",
+  "published_rsa_public_key": "v=DKIM1; k=rsa; p=PUBLISHEDRSAKEYFORCONTRACTTESTSONLYAAAAAAAAAAAAAAAAAAAAAAAAAAIDAQAB"
 }
