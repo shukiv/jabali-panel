@@ -49,6 +49,8 @@ type migrationPullMailShadowParams struct {
 	SrcAccount string `json:"src_account"`
 	SrcHome    string `json:"src_home"` // optional; /home[N]/<src_account>, default /home/<src_account>
 	Port       int    `json:"port"`
+	// ExpectedHostKey: see migrationRsyncRemoteHomeParams.ExpectedHostKey.
+	ExpectedHostKey string `json:"expected_host_key,omitempty"`
 }
 
 type migrationPullMailShadowResult struct {
@@ -107,7 +109,7 @@ func migrationPullMailShadowHandler(ctx context.Context, raw json.RawMessage) (a
 		}
 	}()
 
-	transport, aerr := loadMigrationSSHTransport(secretPath, p.Port)
+	transport, aerr := loadMigrationSSHTransport(ctx, secretPath, p.Host, p.Port, p.ExpectedHostKey)
 	if aerr != nil {
 		return nil, aerr
 	}
