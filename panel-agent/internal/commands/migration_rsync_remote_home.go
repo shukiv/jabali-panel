@@ -37,6 +37,10 @@ type migrationRsyncRemoteHomeParams struct {
 	// every already-rsynced docroot + Plesk system dirs). Validated:
 	// relative, no traversal. Excludes can only SHRINK what copies.
 	Excludes []string `json:"excludes,omitempty"`
+	// ExpectedHostKey is the job's pinned SHA256 host-key fingerprint. Set,
+	// the copy talks only to that key (loadMigrationSSHTransport); empty,
+	// the per-job known_hosts is used with accept-new as before.
+	ExpectedHostKey string `json:"expected_host_key,omitempty"`
 }
 
 type migrationRsyncRemoteHomeResult struct {
@@ -177,7 +181,7 @@ func migrationRsyncRemoteHomeHandler(ctx context.Context, raw json.RawMessage) (
 
 	// SSH auth from the secret env-file + host-key-pinned ssh options
 	// (loadMigrationSSHTransport).
-	transport, trErr := loadMigrationSSHTransport(p.SecretPath, p.Port)
+	transport, trErr := loadMigrationSSHTransport(ctx, p.SecretPath, p.Host, p.Port, p.ExpectedHostKey)
 	if trErr != nil {
 		return nil, trErr
 	}

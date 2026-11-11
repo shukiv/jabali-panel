@@ -25,7 +25,7 @@ func TestCpanelPullMailShadow_DispatchParams(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			rec := &mailLegRecorder{reply: json.RawMessage(`{"domains":2,"files":2,"bytes":512}`)}
-			job := &models.MigrationJob{ID: "job1", SourceKind: tc.kind, SourceHost: "203.0.113.5", SourceUser: "acct", SourcePort: 2222}
+			job := &models.MigrationJob{ID: "job1", SourceKind: tc.kind, SourceHost: "203.0.113.5", SourceUser: "acct", SourcePort: 2222, ExpectedHostKey: "SHA256:pinned"}
 
 			dir, unreadable, lines, notCopied := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
 
@@ -42,13 +42,14 @@ func TestCpanelPullMailShadow_DispatchParams(t *testing.T) {
 				t.Fatalf("agent calls = %+v, want one migration.pull_mail_shadow", rec.calls)
 			}
 			want := map[string]any{
-				"port":        2222,
-				"job_id":      "job1",
-				"host":        "203.0.113.5",
-				"ssh_user":    tc.wantSSHUser,
-				"secret_path": "/etc/jabali-panel/migration-secrets/job1.env",
-				"src_account": "acct",
-				"src_home":    "/home/acct",
+				"port":              2222,
+				"job_id":            "job1",
+				"host":              "203.0.113.5",
+				"ssh_user":          tc.wantSSHUser,
+				"secret_path":       "/etc/jabali-panel/migration-secrets/job1.env",
+				"src_account":       "acct",
+				"src_home":          "/home/acct",
+				"expected_host_key": "SHA256:pinned",
 			}
 			got := rec.calls[0].params
 			var gotKeys, wantKeys []string
@@ -200,5 +201,28 @@ func TestCpanelMailShadow_WiredAroundImportMailboxes(t *testing.T) {
 	errCheck := strings.Index(after, "if err != nil {")
 	if drop < 0 || errCheck < 0 || drop > errCheck {
 		t.Fatal("dropMailShadow must run right after ImportMailboxes, before its error return")
+	}
+}
+
+// Every agent copy from a migration source carries the job's pinned host key,
+// so the agent's ssh talks only to that key. A call that leaves it out falls
+// back to trusting the first key it sees, without a word in the logs.
+func TestMigrationCopyCallsCarryTheHostKeyPin(t *testing.T) {
+	calls, pins := 0, 0
+	for _, f := range []string{"migrate_run_cmd.go", "migrate_cpanel_pull_mail_shadow.go"} {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := string(src)
+		calls += strings.Count(body, `"migration.rsync_remote_home", map[string]any{`) +
+			strings.Count(body, `"migration.pull_mail_shadow", map[string]any{`)
+		pins += strings.Count(body, `"expected_host_key": job.ExpectedHostKey,`)
+	}
+	if calls == 0 {
+		t.Fatal("found no agent copy calls — the call pattern changed and this test checks nothing")
+	}
+	if pins != calls {
+		t.Fatalf("%d agent copy call(s), %d carry expected_host_key", calls, pins)
 	}
 }

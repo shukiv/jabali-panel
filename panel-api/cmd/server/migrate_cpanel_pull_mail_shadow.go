@@ -47,13 +47,14 @@ func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.M
 		return "", nil, []string{"mail_passwords: source mail password files not copied (source account not verified) — every mailbox gets a new password"}, true
 	}
 	raw, err := call(ctx, "migration.pull_mail_shadow", map[string]any{
-		"port":        srcSSHPort(job),
-		"job_id":      job.ID,
-		"host":        job.SourceHost,
-		"ssh_user":    migrationSSHUser(job),
-		"secret_path": fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID),
-		"src_account": srcUser,
-		"src_home":    "/home/" + srcUser,
+		"port":              srcSSHPort(job),
+		"job_id":            job.ID,
+		"host":              job.SourceHost,
+		"ssh_user":          migrationSSHUser(job),
+		"secret_path":       fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID),
+		"expected_host_key": job.ExpectedHostKey,
+		"src_account":       srcUser,
+		"src_home":          "/home/" + srcUser,
 	})
 	if err != nil {
 		return "", nil, []string{fmt.Sprintf(
