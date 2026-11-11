@@ -281,13 +281,7 @@ func insertMailboxPanelRows(
 	// for domains already verified as the migrated user's. A HestiaCP
 	// conf/passwd hash, when present, wins: the two never coexist on a source.
 	shadows := map[string]cpanelMailShadow{}
-	credFor := func(dom, local, hestiaHash string) sourceMailCred {
-		if hestiaHash != "" {
-			return sourceMailCred{hash: hestiaHash}
-		}
-		if shadow.notCopied {
-			return sourceMailCred{cause: lockoutCopyFailed}
-		}
+	shadowFor := func(dom string) cpanelMailShadow {
 		m, ok := shadows[dom]
 		if !ok {
 			m = shadow.read(dom)
@@ -296,7 +290,16 @@ func insertMailboxPanelRows(
 				msgs = append(msgs, line)
 			}
 		}
-		return m.cred(local, shadow.unreadable[domainops.NormalizeDomainName(dom)])
+		return m
+	}
+	credFor := func(dom, local, hestiaHash string) sourceMailCred {
+		if hestiaHash != "" {
+			return sourceMailCred{hash: hestiaHash}
+		}
+		if shadow.notCopied {
+			return sourceMailCred{cause: lockoutCopyFailed}
+		}
+		return shadowFor(dom).cred(local, shadow.unreadable[domainops.NormalizeDomainName(dom)])
 	}
 
 	// Owner/default account: top-level mail/{cur,new} → one panel
@@ -380,6 +383,19 @@ func insertMailboxPanelRows(
 			}
 			seen[localPart] = true
 			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, credFor(name, localPart, srcPwds[localPart]), preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+		}
+		// cPanel likewise lists every account of the domain in
+		// etc/<domain>/shadow but makes its Maildir only on first delivery or
+		// login, so an account that only ever sent (a site's SMTP login) has
+		// none. Create a row for each one the walks above missed.
+		if !shadow.notCopied {
+			for _, localPart := range shadowFor(name).accounts() {
+				if seen[localPart] {
+					continue
+				}
+				seen[localPart] = true
+				msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, credFor(name, localPart, srcPwds[localPart]), preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+			}
 		}
 	}
 	return msgs, allowed
@@ -477,12 +493,16 @@ func insertOneMailboxRow(
 	// Lifecycle's explicit restore entry point. It takes the already-computed
 	// bcrypt hash verbatim, leaves password_enc NULL (no plaintext to seal), and
 	// applies no EmailEnabled gate or agent notify — the migration's semantics.
+	// A domain whose mail is hosted elsewhere gets no mailbox that receives
+	// (mailboxops.Create's rule): the account keeps only its SMTP login.
+	sendOnly := models.MailHostedElsewhere(domain.EmailEnabled, domain.MailProvider)
 	if _, cErr := mailboxops.CreateForRestore(ctx, mailboxops.Deps{Mailboxes: mbRepo, Addresses: mailAddressReleaser}, mailboxops.RestoreCreateInput{
 		DomainID:     domain.ID,
 		DomainName:   domainName,
 		LocalPart:    localPart,
 		PasswordHash: passwordHash,
 		QuotaBytes:   1073741824,
+		SendOnly:     sendOnly,
 	}); cErr != nil {
 		return []string{fmt.Sprintf("mailbox_rows: create %s@%s: %v", localPart, domainName, cErr)}
 	}
@@ -490,10 +510,16 @@ func insertOneMailboxRow(
 	// MaildirsFound; counting again here double-reported real mailboxes
 	// (johnnyq saw "7" for 3). Count DISTINCT rows created separately.
 	res.MailboxesCreated++
+	var lines []string
+	if sendOnly {
+		lines = append(lines, fmt.Sprintf(
+			"mailbox_rows: %s@%s is send-only: the domain's mail is hosted elsewhere, so the account keeps its SMTP login and receives no mail here",
+			localPart, domainName))
+	}
 	if preserved {
-		return []string{fmt.Sprintf(
+		return append(lines, fmt.Sprintf(
 			"mailbox_rows: created %s@%s — SOURCE password preserved (--preserve-source-state); the tenant's original mail password works",
-			localPart, domainName)}
+			localPart, domainName))
 	}
 	// Loud, explicit notice — a plain "temp password set" read as harmless and
 	// the operator handed a locked-out mailbox to the tenant.
@@ -513,7 +539,7 @@ func insertOneMailboxRow(
 	if !preserveCreds {
 		cause = lockoutPreserveOff
 	}
-	return []string{mailboxLockoutNotice(localPart, domainName, cause)}
+	return append(lines, mailboxLockoutNotice(localPart, domainName, cause))
 }
 
 // loadSourceMailPasswords reads a HestiaCP dovecot passwd-file at

@@ -304,6 +304,9 @@ type RestoreCreateInput struct {
 	LocalPart    string // already canonical
 	PasswordHash string // pre-computed; NEVER sealed
 	QuotaBytes   uint64 // 0 → DefaultQuotaBytes
+	// SendOnly: the caller decides it from the domain (a migrated account on
+	// a domain whose mail is hosted elsewhere can only send).
+	SendOnly bool
 }
 
 // CreateForRestore persists a migrated mailbox row. It exists so the migration
@@ -337,6 +340,7 @@ func CreateForRestore(ctx context.Context, d Deps, in RestoreCreateInput) (*mode
 		LocalPart:    in.LocalPart,
 		PasswordHash: in.PasswordHash,
 		QuotaBytes:   quota,
+		SendOnly:     in.SendOnly,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}

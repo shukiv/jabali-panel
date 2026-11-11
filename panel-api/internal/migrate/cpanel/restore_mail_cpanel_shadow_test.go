@@ -45,8 +45,10 @@ func importOneCpanelMailbox(t *testing.T, parsed *ParsedTarball, preserve bool) 
 	if err != nil {
 		t.Fatalf("ImportMailboxes: %v", err)
 	}
-	if len(mb.created) != 1 || mb.created[0].LocalPart != "box" {
-		t.Fatalf("want one mailbox box@, got %+v", mb.created)
+	// box@ (the Maildir) comes first; any other shadow entry gets a row of
+	// its own after it.
+	if len(mb.created) == 0 || mb.created[0].LocalPart != "box" {
+		t.Fatalf("want mailbox box@ first, got %+v", mb.created)
 	}
 	return mb, res.Skipped
 }
