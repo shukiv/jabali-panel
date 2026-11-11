@@ -1,6 +1,6 @@
 // A domain whose mail is hosted elsewhere has only send-only accounts (#2491).
-// Its drill-down says so and keeps the tabs that still apply: Accounts, Logs
-// and Statistics. A link to another tab lands on Accounts.
+// Its drill-down says so and keeps the tabs that still apply: Accounts,
+// Settings, Logs and Statistics. A link to another tab lands on Accounts.
 import { App } from "antd";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
@@ -57,12 +57,12 @@ const tabLabels = () => screen.getAllByRole("tab").map((t) => t.textContent);
 describe("MailDomainPage — mail hosted elsewhere", () => {
   beforeEach(() => mocked.get.mockReset());
 
-  it("says the accounts can only send and shows Accounts, Logs and Statistics", async () => {
+  it("says the accounts can only send and shows Accounts, Settings, Logs and Statistics", async () => {
     mocked.get.mockResolvedValue({ data: domain({ email_enabled: false, mail_provider: "none" }) });
     renderAt("/jabali-panel/mail-domains/d1");
 
     expect(await screen.findByText("Mail for this domain is hosted elsewhere")).toBeInTheDocument();
-    expect(tabLabels()).toEqual(["Accounts", "Logs", "Statistics"]);
+    expect(tabLabels()).toEqual(["Accounts", "Settings", "Logs", "Statistics"]);
     expect(screen.getByText("accounts-tab")).toBeInTheDocument();
   });
 
@@ -71,7 +71,7 @@ describe("MailDomainPage — mail hosted elsewhere", () => {
     renderAt("/jabali-panel/mail-domains/d1");
 
     expect(await screen.findByText("Mail for this domain is hosted elsewhere")).toBeInTheDocument();
-    expect(tabLabels()).toEqual(["Accounts", "Logs", "Statistics"]);
+    expect(tabLabels()).toEqual(["Accounts", "Settings", "Logs", "Statistics"]);
   });
 
   it("sends a link to another tab to Accounts", async () => {

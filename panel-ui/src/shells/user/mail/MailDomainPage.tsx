@@ -47,9 +47,9 @@ const MOVED_TABS = new Map<string, TabKey>([
 ]);
 
 // A domain whose mail is hosted elsewhere has only send-only accounts (#2491):
-// nothing arrives here, so the tabs about receiving mail and the domain's mail
-// settings don't apply.
-const SEND_ONLY_TAB_KEYS: readonly TabKey[] = ["mailboxes", "logs", "statistics"];
+// nothing arrives here, so the tabs about receiving mail don't apply. Settings
+// stays: on a mail-off domain it says to enable email first (GH #1628).
+const SEND_ONLY_TAB_KEYS: readonly TabKey[] = ["mailboxes", "settings", "logs", "statistics"];
 
 const TAB_LABELS: Record<TabKey, string> = {
   mailboxes: "Accounts",
