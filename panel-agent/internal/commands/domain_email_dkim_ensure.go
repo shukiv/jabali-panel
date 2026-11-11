@@ -73,8 +73,12 @@ func removeDKIMKeyFiles(domainName string) (int, []string) {
 // exactly the renamed domain's keys. The Ed25519 key moves first, so without
 // it the new name's files are already the renamed domain's (a retried rename,
 // or a move cut short): what is left under the old name moves, and nothing is
-// removed. The caller has validated both names. It returns an error per file
-// it could not move or remove.
+// removed. A domain that never had mail has no Ed25519 key either, so an
+// earlier domain's files under its new name stay: telling them from keys a
+// first run already moved would take state the files don't hold, and
+// removing a key the mail server signs with is the worse mistake. The caller
+// has validated both names. It returns an error per file it could not move
+// or remove.
 func moveDKIMKeyFiles(oldName, newName string) []string {
 	var errs []string
 	dir := dkimKeyDirFunc()
