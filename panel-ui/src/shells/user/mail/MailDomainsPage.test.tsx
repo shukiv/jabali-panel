@@ -416,3 +416,53 @@ describe("GH #1387 — MailDomainsPage (mail-active only)", () => {
     );
   });
 });
+
+// A domain whose mail is hosted elsewhere is listed for its send-only accounts
+// (#2491): tagged, and without the mail actions (nothing to disable or
+// delete, and Jabali's mail DNS records would be wrong for it).
+describe("MailDomainsPage — send-only domains", () => {
+  const ROWS_SEND_ONLY = [
+    ROWS[0],
+    {
+      id: "d-send",
+      name: "sender.test",
+      mailbox_count: 2,
+      mail_bytes: 0,
+      sent_30d: 9,
+      received_30d: 0,
+      email_enabled: false,
+      ssl_state: "active_le",
+      is_quota_suspended: false,
+      mail_hosted_elsewhere: true,
+    },
+  ];
+
+  beforeEach(() => {
+    mocked.get
+      .mockReset()
+      .mockResolvedValue({ data: { data: ROWS_SEND_ONLY, total: 2, page: 1, page_size: 2 } });
+  });
+
+  it("tags the domain Send-only and offers it no mail actions", async () => {
+    renderPage();
+    const sendRow = (await screen.findByText("sender.test")).closest("tr") as HTMLElement;
+    const onRow = (await screen.findByText("on.test")).closest("tr") as HTMLElement;
+
+    expect(within(sendRow).getByText("Send-only")).toBeInTheDocument();
+    expect(within(onRow).queryByText("Send-only")).not.toBeInTheDocument();
+
+    expect(within(sendRow).queryByRole("button", { name: /Actions for/i })).not.toBeInTheDocument();
+    expect(within(onRow).getByRole("button", { name: /Actions for/i })).toBeInTheDocument();
+  });
+
+  it("keeps Disable and Delete for a domain with mail on but hosted by another provider", async () => {
+    const google = { ...ROWS[0], id: "d-g", name: "google.test", mail_hosted_elsewhere: true };
+    mocked.get.mockReset().mockResolvedValue({ data: { data: [google], total: 1, page: 1, page_size: 1 } });
+    renderPage();
+    const row = (await screen.findByText("google.test")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Send-only")).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: /Actions for/i }));
+    expect(await screen.findByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+});

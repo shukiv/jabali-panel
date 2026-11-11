@@ -11,6 +11,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -53,8 +54,9 @@ type mailDomainRow struct {
 	MailBytes    int64  `json:"mail_bytes"`
 	Sent30d      int64  `json:"sent_30d"`
 	Received30d  int64  `json:"received_30d"`
-	// EmailEnabled is always true for listed rows (GH #1387, johnnyq 2026-09-01:
-	// the list shows only mail-active domains). Kept on the wire so the UI can
+	// EmailEnabled is true for listed rows (GH #1387, johnnyq 2026-09-01: the
+	// list shows mail-active domains), except a mail-off domain listed for its
+	// send-only accounts (MailHostedElsewhere). Kept on the wire so the UI can
 	// still reason about mail state without a second fetch.
 	EmailEnabled bool `json:"email_enabled"`
 	// SSLState is the domain's computed cert state (off/pending/active_le/
@@ -73,6 +75,11 @@ type mailDomainRow struct {
 	// it "External DNS" and offers the "DNS records" action (GH #1612) so the
 	// operator can publish MX/SPF/DKIM/… at their own provider.
 	DNSDisabled bool `json:"dns_disabled"`
+	// MailHostedElsewhere marks a domain whose mail is off or with another
+	// provider (models.MailHostedElsewhere). It is listed only because it has
+	// send-only accounts (#2491); the UI tags it "Send-only" and creates only
+	// send-only accounts there.
+	MailHostedElsewhere bool `json:"mail_hosted_elsewhere,omitempty"`
 }
 
 func (h *meMailDomainsHandler) list(c *gin.Context) {
@@ -130,25 +137,29 @@ func (h *meMailDomainsHandler) list(c *gin.Context) {
 	// GH #1387 (johnnyq, 2026-09-01): list ONLY domains where mail is active. A
 	// mail-off domain is a Domains-page concern (enable mail there); this page is
 	// the tenant's mailbox home and shows only domains that actually have mail.
+	// A domain whose mail is hosted elsewhere is listed once it has an account
+	// (send-only, #2491), so the tenant can manage it there.
 	out := []mailDomainRow{}
 	for i := range domains {
 		d := &domains[i]
-		if !d.EmailEnabled {
+		a := byDomainID[d.ID]
+		elsewhere := models.MailHostedElsewhere(d.EmailEnabled, d.MailProvider)
+		if !d.EmailEnabled && !(elsewhere && a.count > 0) {
 			continue
 		}
-		a := byDomainID[d.ID]
 		t := byName[d.Name]
 		out = append(out, mailDomainRow{
-			ID:               d.ID,
-			Name:             d.Name,
-			MailboxCount:     a.count,
-			MailBytes:        a.bytes,
-			Sent30d:          t.sent,
-			Received30d:      t.received,
-			EmailEnabled:     d.EmailEnabled,
-			SSLState:         d.SSLState,
-			IsQuotaSuspended: d.IsQuotaSuspended,
-			DNSDisabled:      d.DNSDisabled,
+			ID:                  d.ID,
+			Name:                d.Name,
+			MailboxCount:        a.count,
+			MailBytes:           a.bytes,
+			Sent30d:             t.sent,
+			Received30d:         t.received,
+			EmailEnabled:        d.EmailEnabled,
+			SSLState:            d.SSLState,
+			IsQuotaSuspended:    d.IsQuotaSuspended,
+			DNSDisabled:         d.DNSDisabled,
+			MailHostedElsewhere: elsewhere,
 		})
 	}
 

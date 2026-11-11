@@ -143,3 +143,31 @@ describe("EditMailboxModal reopen prefill (GH #1615)", () => {
     await waitFor(() => expect(displayNameInput().value).toBe("New Name"));
   });
 });
+
+// On a domain whose mail is hosted elsewhere a send-only account can't become
+// an inbox (#2491; the server answers 409), so the switch is fixed on.
+describe("EditMailboxModal send-only lock", () => {
+  function renderLocked(mb: Mailbox, sendOnlyLocked: boolean) {
+    const qc = new QueryClient();
+    return render(
+      <QueryClientProvider client={qc}>
+        <App>
+          <EditMailboxModal open mailbox={mb} onClose={() => {}} sendOnlyLocked={sendOnlyLocked} />
+        </App>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("fixes the switch on for a send-only account on such a domain", async () => {
+    renderLocked(mailbox({ send_only: true }), true);
+    const sw = await screen.findByRole("switch", { name: /send-only/i });
+    expect(sw).toBeDisabled();
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/hosted elsewhere, so its accounts can only send/i)).toBeInTheDocument();
+  });
+
+  it("leaves the switch free otherwise", async () => {
+    renderLocked(mailbox({ send_only: true }), false);
+    expect(await screen.findByRole("switch", { name: /send-only/i })).not.toBeDisabled();
+  });
+});

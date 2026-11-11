@@ -9,6 +9,10 @@
 // existing owner-scoped DELETE /domains/:id/email endpoint. Delete is the
 // destructive mail-only teardown (POST /domains/:id/email/purge) — it removes
 // mailboxes + mail certs + mail DNS but keeps the website + DNS zone.
+//
+// A domain whose mail is hosted elsewhere is tagged "Send-only" (#2491). One
+// with mail off is listed too once it has send-only accounts, without the mail
+// actions.
 import {
   Alert,
   Button,
@@ -21,6 +25,7 @@ import {
   Spin,
   Table,
   Tag,
+  Tooltip,
   Typography,
   type TableColumnsType,
 } from "antd";
@@ -63,6 +68,11 @@ interface MailDomainRow {
   // GH #1612: true when the panel does NOT host this domain's DNS (external DNS).
   // Drives the "External DNS" tag + the "DNS records" action.
   dns_disabled?: boolean;
+  // The domain's mail is off or with another provider, so its accounts are
+  // send-only (#2491). Tagged "Send-only". A mail-off domain is listed only
+  // for those accounts and gets no row actions: there is no mail here to
+  // disable or delete, and Jabali's mail DNS records would be wrong for it.
+  mail_hosted_elsewhere?: boolean;
 }
 
 const num = (n: number | null | undefined): string => (n ?? 0).toLocaleString();
@@ -176,6 +186,11 @@ export function MailDomainsPage() {
               External DNS
             </Tag>
           )}
+          {row.mail_hosted_elsewhere && (
+            <Tooltip title="Mail for this domain is hosted elsewhere. Its accounts can only send.">
+              <Tag color="orange">Send-only</Tag>
+            </Tooltip>
+          )}
         </Space>
       ),
     },
@@ -236,51 +251,52 @@ export function MailDomainsPage() {
       // GH #1387 (johnnyq): collapse Disable + Delete into one "⋯" menu so the
       // row stays compact. Disable confirms via a modal (a Popconfirm can't
       // anchor cleanly inside a dropdown); Delete opens the type-to-confirm modal.
-      render: (_v, row) => (
-        <Dropdown
-          trigger={["click"]}
-          menu={{
-            items: [
-              // GH #1612: only when DNS is hosted externally — a panel-hosted
-              // zone publishes these records itself, so there's nothing to copy.
-              ...(isExternalDNS(row)
-                ? [
-                    {
-                      key: "dns-records",
-                      icon: <FileTextOutlined />,
-                      label: "DNS records",
-                      onClick: () => setDnsRecordsRow(row),
-                    },
-                  ]
-                : []),
-              {
-                key: "disable",
-                icon: <PoweroffOutlined />,
-                danger: true,
-                label: "Disable",
-                onClick: () => confirmDisable(row),
-              },
-              {
-                key: "delete",
-                icon: <DeleteOutlined />,
-                danger: true,
-                label: "Delete",
-                onClick: () => {
-                  setConfirmText("");
-                  setDeleteRow(row);
+      render: (_v, row) =>
+        !row.email_enabled ? null : (
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [
+                // GH #1612: only when DNS is hosted externally — a panel-hosted
+                // zone publishes these records itself, so there's nothing to copy.
+                ...(isExternalDNS(row)
+                  ? [
+                      {
+                        key: "dns-records",
+                        icon: <FileTextOutlined />,
+                        label: "DNS records",
+                        onClick: () => setDnsRecordsRow(row),
+                      },
+                    ]
+                  : []),
+                {
+                  key: "disable",
+                  icon: <PoweroffOutlined />,
+                  danger: true,
+                  label: "Disable",
+                  onClick: () => confirmDisable(row),
                 },
-              },
-            ],
-          }}
-        >
-          <Button
-            size="small"
-            icon={<MoreOutlined />}
-            loading={busyId === row.id}
-            aria-label={`Actions for ${row.name}`}
-          />
-        </Dropdown>
-      ),
+                {
+                  key: "delete",
+                  icon: <DeleteOutlined />,
+                  danger: true,
+                  label: "Delete",
+                  onClick: () => {
+                    setConfirmText("");
+                    setDeleteRow(row);
+                  },
+                },
+              ],
+            }}
+          >
+            <Button
+              size="small"
+              icon={<MoreOutlined />}
+              loading={busyId === row.id}
+              aria-label={`Actions for ${row.name}`}
+            />
+          </Dropdown>
+        ),
     },
   ];
 
@@ -314,7 +330,8 @@ export function MailDomainsPage() {
       <Card>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
           Domains with mail active, at a glance. Select a domain to manage its
-          accounts and add mailboxes.
+          accounts and add mailboxes. A domain whose mail is hosted elsewhere
+          shows here once it has send-only accounts.
         </Typography.Paragraph>
         {query.isLoading ? (
           <Spin />
