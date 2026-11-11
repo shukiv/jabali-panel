@@ -91,7 +91,7 @@ func mailDomainRenameHandler(ctx context.Context, params json.RawMessage) (any, 
 	// needs manual recovery; documented as a limitation.
 	if oldID == "" {
 		if newID == "" {
-			return mailDomainRenameResult{Status: "not_in_registry"}, nil
+			return withMovedKeyFiles(mailDomainRenameResult{Status: "not_in_registry"}, p), nil
 		}
 		n, cerr := countAccountsInDomain(ctx, newID)
 		if cerr != nil {
@@ -100,7 +100,7 @@ func mailDomainRenameHandler(ctx context.Context, params json.RawMessage) (any, 
 		if n > 0 {
 			return mailDomainRenameResult{Status: "conflict"}, nil
 		}
-		return mailDomainRenameResult{Status: "already"}, nil
+		return withMovedKeyFiles(mailDomainRenameResult{Status: "already"}, p), nil
 	}
 
 	// old is present. If new is ALSO present it is either an empty orphan left by
@@ -151,7 +151,22 @@ func mailDomainRenameHandler(ctx context.Context, params json.RawMessage) (any, 
 	if w != "" {
 		res.Warnings = append(res.Warnings, w)
 	}
-	return res, nil
+	return withMovedKeyFiles(res, p), nil
+}
+
+// withMovedKeyFiles moves the domain's DKIM key files to the new name on a
+// real run. The renamed domain keeps its signatures, and their keys, so the
+// files must follow the name: under the old name, Rotate DKIM found no key,
+// and a mail re-enable made a new one that nothing signs with. A file that
+// cannot be moved is a warning; the rename itself is done.
+func withMovedKeyFiles(res mailDomainRenameResult, p mailDomainRenameParams) mailDomainRenameResult {
+	if p.DryRun {
+		return res
+	}
+	for _, e := range moveDKIMKeyFiles(p.Old, p.New) {
+		res.Warnings = append(res.Warnings, "DKIM key file: "+e)
+	}
+	return res
 }
 
 // countAccountsInDomain counts registry Accounts whose domainId matches, using

@@ -82,6 +82,11 @@ after a rotation. The first reconcile after the update finds such a domain (the
 mail server's key differs from the key file, and the key file's key is the one
 published) and gives the mail server the published key.
 
+A renamed domain keeps its keys: the files follow it to the new name. Deleting a
+domain deletes its key files once its signatures are gone, so a domain added
+later under the same name gets new keys. Turning mail off, or a mail-only
+delete, keeps them, and turning mail back on signs with them again.
+
 ### Mail-only delete
 
 A domain can have **just its mail torn down while the web domain stays** —
