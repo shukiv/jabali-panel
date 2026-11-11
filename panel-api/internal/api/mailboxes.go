@@ -295,7 +295,7 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		case errors.Is(err, mailboxops.ErrOwnershipPending):
 			c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before creating mailboxes"})
 		case errors.Is(err, mailboxops.ErrEmailNotEnabled):
-			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "enable email on the domain before creating mailboxes"})
+			c.JSON(http.StatusConflict, gin.H{"error": "email_not_enabled", "detail": "this domain's mail is hosted elsewhere: enable email on the domain, or create a send-only account"})
 		case errors.Is(err, mailboxops.ErrInvalidLocalPart):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_local_part", "detail": err.Error()})
 		case errors.Is(err, mailboxops.ErrMailboxExists):
@@ -362,6 +362,14 @@ func (h *mailboxHandler) update(c *gin.Context) {
 	mb, dom, err := h.loadMailboxWithAuth(ctx, c.Param("mbid"), claims)
 	if err != nil {
 		h.writeLoadErr(c, err)
+		return
+	}
+
+	// A send-only account on a domain whose mail is hosted elsewhere stays
+	// send-only: one that receives would make this server hold mail for a
+	// domain whose MX points elsewhere. Checked before any field is written.
+	if req.SendOnly != nil && !*req.SendOnly && mb.SendOnly && models.MailHostedElsewhere(dom.EmailEnabled, dom.MailProvider) {
+		c.JSON(http.StatusConflict, gin.H{"error": "mail_hosted_elsewhere", "detail": "this domain's mail is hosted elsewhere, so its accounts can only send"})
 		return
 	}
 

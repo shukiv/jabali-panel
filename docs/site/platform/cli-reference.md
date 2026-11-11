@@ -3374,7 +3374,7 @@ jabali mailbox create [flags]
 - `--local` — Local part, e.g. "alice" (required)
 - `--password` — Explicit password (omit to auto-generate)
 - `--quota-mb` — Disk quota in MiB (default 1024) (default `0`)
-- `--send-only` — SMTP-submission only — authenticates to send but never receives
+- `--send-only` — SMTP-submission only — authenticates to send but never receives (the only kind a domain whose mail is hosted elsewhere can have)
 
 #### `jabali mailbox delete`
 
