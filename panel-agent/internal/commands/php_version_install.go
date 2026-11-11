@@ -180,9 +180,15 @@ func probePackage(pkg string) bool {
 	return cmd.Run() == nil
 }
 
+// phpAptLockWait makes apt-get wait up to five minutes for the dpkg lock
+// instead of failing at once. unattended-upgrades, jabali-apt-oneshot or
+// another install can hold it; a PHP version install (an import's PHP step
+// among them) used to fail on the spot and be skipped.
+var phpAptLockWait = []string{"-o", "DPkg::Lock::Timeout=300"}
+
 // runAptUpdate runs apt-get update to refresh the package index.
 func runAptUpdate() error {
-	cmd := execCommand("apt-get", "update", "-qq")
+	cmd := execCommand("apt-get", append(append([]string{}, phpAptLockWait...), "update", "-qq")...)
 	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -199,10 +205,8 @@ func installPackages(pkgs []string) error {
 		return nil
 	}
 
-	cmd := execCommand("apt-get", append(
-		[]string{"install", "-y", "--no-install-recommends"},
-		pkgs...,
-	)...)
+	args := append(append([]string{}, phpAptLockWait...), "install", "-y", "--no-install-recommends")
+	cmd := execCommand("apt-get", append(args, pkgs...)...)
 	cmd.Env = append(os.Environ(), "DEBIAN_FRONTEND=noninteractive")
 
 	var stderr bytes.Buffer
