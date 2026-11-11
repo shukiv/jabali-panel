@@ -98,6 +98,10 @@ func (r *ssoFakeMailboxRepo) FindByIDs(_ context.Context, ids []string) ([]model
 	return out, nil
 }
 func (r *ssoFakeMailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error { return nil }
+func (r *ssoFakeMailboxRepo) CreateWithinCap(ctx context.Context, mb *models.Mailbox, _ string, _ uint32) error {
+	return r.Create(ctx, mb)
+}
+func (r *ssoFakeMailboxRepo) CountByOwner(context.Context, string) (int64, error) { return 0, nil }
 func (r *ssoFakeMailboxRepo) FindByEmail(ctx context.Context, email string) (*models.Mailbox, error) {
 	return nil, repository.ErrNotFound
 }

@@ -48,6 +48,11 @@ var ErrLogStreamCapExceeded = errors.New("repository: log stream cap exceeded")
 // and the insert, so concurrent creates cannot both pass the last free slot.
 var ErrDomainCapExceeded = errors.New("repository: domain cap exceeded")
 
+// ErrMailboxCapExceeded is returned by MailboxRepository.CreateWithinCap when
+// the owner already has as many mailboxes as the package's email-account
+// limit allows.
+var ErrMailboxCapExceeded = errors.New("repository: mailbox cap exceeded")
+
 // ErrPanelPrimaryNotFound is returned by DomainRepository.FindPanelPrimary
 // when no row has is_panel_primary=1. Distinct from ErrNotFound so the
 // Settings → Email endpoint can differentiate "row missing, return 202
