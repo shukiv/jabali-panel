@@ -146,3 +146,12 @@ export const serviceBadge = (
   }
   return null;
 };
+
+// mailHostedElsewhere mirrors models.MailHostedElsewhere: mail is off, or it
+// is with another provider. Such a domain can only have send-only accounts
+// (#2491). Pass a tenant domain row: the admin list doesn't send
+// email_enabled, and a missing flag reads as mail off.
+export const mailHostedElsewhere = (
+  d: Pick<Domain, "email_enabled" | "mail_provider">,
+): boolean =>
+  !d.email_enabled || (!!d.mail_provider && d.mail_provider !== "jabali");

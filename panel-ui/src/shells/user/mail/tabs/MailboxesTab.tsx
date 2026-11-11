@@ -39,7 +39,7 @@ import {
 } from "../../../../components/mail/mailboxInventory";
 import { useListQuery } from "../../../../hooks/useQueries";
 import { useTableURL } from "../../../../hooks/useTableURL";
-import type { Domain } from "../../../../components/domains/types";
+import { mailHostedElsewhere, type Domain } from "../../../../components/domains/types";
 import { EditMailboxModal } from "../../../../components/mail/EditMailboxModal";
 import { shortDate } from "../../../../utils/datetime";
 import { Timestamp } from "../../../../components/Timestamp";
@@ -155,6 +155,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
 
 
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
+  const editTargetDomain = domains.find((d) => d.id === editTarget?.domain_id);
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
 
   const deleteMutation = useDeleteMailbox();
@@ -400,6 +401,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
         open={editTarget !== null}
         mailbox={editTarget}
         onClose={() => setEditTarget(null)}
+        sendOnlyLocked={editTargetDomain ? mailHostedElsewhere(editTargetDomain) : false}
       />
 
       <AutoReplyModal

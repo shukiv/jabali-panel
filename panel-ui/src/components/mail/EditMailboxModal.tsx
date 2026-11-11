@@ -22,6 +22,9 @@ interface EditMailboxModalProps {
   open: boolean;
   mailbox: Mailbox | null;
   onClose: () => void;
+  // The mailbox's domain hosts its mail elsewhere, so a send-only account
+  // there can't be turned into an inbox (the server answers 409).
+  sendOnlyLocked?: boolean;
 }
 
 type FormValues = {
@@ -31,7 +34,7 @@ type FormValues = {
   send_only: boolean;
 };
 
-export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalProps) {
+export function EditMailboxModal({ open, mailbox, onClose, sendOnlyLocked }: EditMailboxModalProps) {
   const { message } = App.useApp();
   const [form] = Form.useForm<FormValues>();
   const update = useUpdateMailbox();
@@ -130,8 +133,13 @@ export function EditMailboxModal({ open, mailbox, onClose }: EditMailboxModalPro
         name="send_only"
         valuePropName="checked"
         tooltip="A send-only mailbox can authenticate for SMTP submission (sending) but never receives or stores mail — inbound is rejected. Ideal for per-service or per-appliance notification credentials. Toggling this on discards inbound delivery; existing stored mail is not deleted."
+        extra={
+          sendOnlyLocked && mailbox?.send_only
+            ? "This domain's mail is hosted elsewhere, so its accounts can only send."
+            : undefined
+        }
       >
-        <Switch />
+        <Switch disabled={sendOnlyLocked && mailbox?.send_only} />
       </Form.Item>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         A display-name change applies to webmail on the mailbox&apos;s next login;

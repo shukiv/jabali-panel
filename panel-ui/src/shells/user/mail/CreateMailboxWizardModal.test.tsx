@@ -302,3 +302,49 @@ describe("CreateMailboxWizardModal — groups, aliases and forwards that fail", 
     expect(await screen.findByText("Alias info@second.test: the request failed")).toBeInTheDocument();
   });
 });
+
+// A domain whose mail is hosted elsewhere takes only send-only accounts
+// (#2491): the wizard creates one whatever the form holds, and offers no
+// aliases, forwarding or groups.
+describe("CreateMailboxWizardModal — send-only domain", () => {
+  const SEND_ONLY_DOMAIN = { id: "dom3", name: "sender.test", sendOnly: true };
+
+  it("shows send-only fixed on and posts send_only", async () => {
+    mocked.post.mockResolvedValueOnce({
+      data: { id: "mb3", email: "app@sender.test", quota_bytes: 1 << 30 },
+    });
+    renderModal({ domains: [SEND_ONLY_DOMAIN], lockDomain: true });
+
+    const box = (await screen.findByRole("checkbox", { name: /send-only/i })) as HTMLInputElement;
+    expect(box.checked).toBe(true);
+    expect(box.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: "app" } });
+    fireEvent.click(screen.getByRole("button", { name: /create mailbox/i }));
+
+    await waitFor(() =>
+      expect(mocked.post).toHaveBeenCalledWith(
+        "/domains/dom3/mailboxes",
+        expect.objectContaining({ local_part: "app", send_only: true }),
+      ),
+    );
+  });
+
+  it("offers no aliases, forwarding or groups", async () => {
+    renderModal({ domains: [SEND_ONLY_DOMAIN], lockDomain: true });
+    await screen.findByLabelText(/email address/i);
+
+    expect(screen.queryByLabelText(/aliases/i)).toBeNull();
+    expect(screen.queryByLabelText(/forward to/i)).toBeNull();
+    expect(screen.queryByLabelText(/add to groups/i)).toBeNull();
+    // Forwarding and Groups each say why.
+    expect(screen.getAllByText(/aliases, forwarding and groups don't apply/i)).toHaveLength(2);
+  });
+
+  it("keeps the send-only checkbox free on a domain whose mail is here", async () => {
+    renderModal({ domains: [DOMAINS[0]], lockDomain: true });
+    const box = (await screen.findByRole("checkbox", { name: /send-only/i })) as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(box.disabled).toBe(false);
+  });
+});

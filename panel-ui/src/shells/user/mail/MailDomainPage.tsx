@@ -11,7 +11,7 @@ import { useNavigate, useParams } from "react-router";
 
 import { useSetBreadcrumbs } from "../../../components/admin/BreadcrumbContext";
 import { useOneQuery } from "../../../hooks/useQueries";
-import type { Domain } from "../../../components/domains/types";
+import { mailHostedElsewhere, type Domain } from "../../../components/domains/types";
 import { MailboxesTab } from "./tabs/MailboxesTab";
 import { GroupsTab } from "./tabs/GroupsTab";
 import { ForwardersTab } from "./tabs/ForwardersTab";
@@ -46,6 +46,11 @@ const MOVED_TABS = new Map<string, TabKey>([
   ["catchall", "settings"],
 ]);
 
+// A domain whose mail is hosted elsewhere has only send-only accounts (#2491):
+// nothing arrives here, so the tabs about receiving mail and the domain's mail
+// settings don't apply.
+const SEND_ONLY_TAB_KEYS: readonly TabKey[] = ["mailboxes", "logs", "statistics"];
+
 const TAB_LABELS: Record<TabKey, string> = {
   mailboxes: "Accounts",
   forwarders: "Forwarders",
@@ -64,16 +69,24 @@ export const MailDomainPage = () => {
   const [showCreateMailbox, setShowCreateMailbox] = useState(false);
 
   const domainQ = useOneQuery<Domain>({ resource: "domains", id: domainId });
-  const activeKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "")
+  const sendOnly = domainQ.data ? mailHostedElsewhere(domainQ.data) : false;
+  const tabKeys: readonly TabKey[] = sendOnly ? SEND_ONLY_TAB_KEYS : TAB_KEYS;
+  const requestedKey: TabKey = (TAB_KEYS as readonly string[]).includes(tab ?? "")
     ? (tab as TabKey)
     : (MOVED_TABS.get(tab ?? "") ?? DEFAULT_TAB);
+  const activeKey: TabKey = tabKeys.includes(requestedKey) ? requestedKey : DEFAULT_TAB;
 
   // Rewrite a moved tab's URL to its new home so the address bar and history
-  // match the tab shown.
+  // match the tab shown. A tab the domain doesn't have (a send-only domain
+  // opened on Forwarders) lands on Accounts the same way.
   useEffect(() => {
     const moved = MOVED_TABS.get(tab ?? "");
-    if (moved) navigate(`/jabali-panel/mail-domains/${domainId}/${moved}`, { replace: true });
-  }, [tab, domainId, navigate]);
+    if (moved) {
+      navigate(`/jabali-panel/mail-domains/${domainId}/${moved}`, { replace: true });
+    } else if (tab && activeKey !== tab && (TAB_KEYS as readonly string[]).includes(tab)) {
+      navigate(`/jabali-panel/mail-domains/${domainId}/${activeKey}`, { replace: true });
+    }
+  }, [tab, activeKey, domainId, navigate]);
 
   // GH #1387 (johnnyq): the shell already renders ONE breadcrumb (RouteBreadcrumb,
   // GH #455). Override it with the 3-level entity trail instead of rendering a
@@ -158,8 +171,18 @@ export const MailDomainPage = () => {
         )}
       </Space>
 
+      {sendOnly && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message="Mail for this domain is hosted elsewhere"
+          description="Accounts here can only send: they log in to SMTP to send mail, and receive no mail here."
+        />
+      )}
+
       <Card
-        tabList={TAB_KEYS.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
+        tabList={tabKeys.map((k) => ({ key: k, tab: TAB_LABELS[k] }))}
         activeTabKey={activeKey}
         onTabChange={(k) => navigate(`/jabali-panel/mail-domains/${domainId}/${k}`)}
       >
@@ -169,7 +192,7 @@ export const MailDomainPage = () => {
       {showCreateMailbox && (
         <CreateMailboxWizardModal
           open={showCreateMailbox}
-          domains={[{ id: domain.id, name: domain.name }]}
+          domains={[{ id: domain.id, name: domain.name, sendOnly }]}
           lockDomain
           onCancel={() => setShowCreateMailbox(false)}
           onCreated={() => setShowCreateMailbox(false)}

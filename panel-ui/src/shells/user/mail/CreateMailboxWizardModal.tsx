@@ -53,7 +53,10 @@ function parseQuotaInput(v: number | string | null | undefined): number | undefi
   return Math.floor(n * 1024 * 1024); // UI unit is MiB, wire unit is bytes
 }
 
-type DomainOption = { id: string; name: string };
+// sendOnly marks a domain whose mail is hosted elsewhere: it takes only
+// send-only accounts (#2491), so the wizard creates one and offers no aliases,
+// forwarding or groups.
+type DomainOption = { id: string; name: string; sendOnly?: boolean };
 
 type Props = {
   open: boolean;
@@ -123,7 +126,7 @@ export const CreateMailboxWizardModal = ({
           display_name: values.display_name?.trim() || undefined,
           password: values.password || undefined,
           quota_bytes: parseQuotaInput(values.quota_mib),
-          send_only: values.send_only || undefined,
+          send_only: chosenDomain?.sendOnly || values.send_only || undefined,
         },
       });
       // The mailbox exists from here on, so a failed group, alias or forward
@@ -335,13 +338,27 @@ export const CreateMailboxWizardModal = ({
             />
           </Form.Item>
 
-          <Form.Item
-            name="send_only"
-            valuePropName="checked"
-            tooltip={t("createmailboxwizardmodal.a_send_only_mailbox_can_authenticate_for_smt")}
-          >
-            <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
-          </Form.Item>
+          {chosenDomain.sendOnly ? (
+            // Shown checked and fixed; onOk sends send_only for this domain.
+            <Form.Item
+              extra={t(
+                "createmailboxwizardmodal.send_only_domain_extra",
+                "This domain's mail is hosted elsewhere, so its accounts can only send.",
+              )}
+            >
+              <Checkbox checked disabled>
+                Send-only (SMTP submission, no inbox)
+              </Checkbox>
+            </Form.Item>
+          ) : (
+            <Form.Item
+              name="send_only"
+              valuePropName="checked"
+              tooltip={t("createmailboxwizardmodal.a_send_only_mailbox_can_authenticate_for_smt")}
+            >
+              <Checkbox>Send-only (SMTP submission, no inbox)</Checkbox>
+            </Form.Item>
+          )}
         </>
       )}
 
@@ -356,7 +373,20 @@ export const CreateMailboxWizardModal = ({
     </>
   );
 
-  const forwardingTab = chosenDomain ? (
+  // A send-only account receives nothing, so aliases, forwarding and groups
+  // would never see a message.
+  const sendOnlyNote = (
+    <Typography.Text type="secondary">
+      {t(
+        "createmailboxwizardmodal.send_only_domain_note",
+        "This domain's mail is hosted elsewhere, so this account can only send. Aliases, forwarding and groups don't apply to it.",
+      )}
+    </Typography.Text>
+  );
+
+  const forwardingTab = chosenDomain?.sendOnly ? (
+    sendOnlyNote
+  ) : chosenDomain ? (
     <>
       <Form.Item
         label={t("createmailboxwizardmodal.aliases_optional")}
@@ -385,7 +415,9 @@ export const CreateMailboxWizardModal = ({
     pickDomainFirst
   );
 
-  const groupsTab = chosenDomain ? (
+  const groupsTab = chosenDomain?.sendOnly ? (
+    sendOnlyNote
+  ) : chosenDomain ? (
     <Form.Item
       label={t("createmailboxwizardmodal.add_to_groups")}
       name="group_ids"
