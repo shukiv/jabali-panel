@@ -116,7 +116,7 @@ func listMailboxesDirect(ctx context.Context, repo repository.MailboxRepository,
 // caller supplied one — the CLI layer owns the reveal-once printing
 // contract.
 func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository, notify agentNotifier, ssoKey *ssokey.Key, dom *models.Domain, localPart, password string, quotaBytes uint64, displayName string, sendOnly bool) (*models.Mailbox, string, error) {
-	return mailboxops.Create(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey, Addresses: cliMailAddresses}, mailboxops.CreateInput{
+	mb, generated, err := mailboxops.Create(ctx, mailboxops.Deps{Mailboxes: repo, SSOKey: ssoKey, Addresses: cliMailAddresses}, mailboxops.CreateInput{
 		Domain:      dom,
 		LocalPart:   localPart,
 		Password:    password,
@@ -124,6 +124,10 @@ func createMailboxDirect(ctx context.Context, repo repository.MailboxRepository,
 		DisplayName: displayName,
 		SendOnly:    sendOnly,
 	}, mailboxops.NotifyFunc(notify))
+	if errors.Is(err, mailboxops.ErrEmailNotEnabled) {
+		err = fmt.Errorf("%w (the domain's mail is hosted elsewhere; --send-only creates an account that only sends)", err)
+	}
+	return mb, generated, err
 }
 
 // deleteMailboxDirect mirrors DELETE /mailboxes/:mbid: agent call first

@@ -126,8 +126,8 @@ type CreateInput struct {
 	SendOnly    bool
 }
 
-// Create canonicalizes the address, enforces the EmailEnabled gate + the
-// duplicate rule + the quota default/floor, generates/hashes/seals the password,
+// Create canonicalizes the address, enforces the EmailEnabled gate (send-only
+// accounts pass it where mail is hosted elsewhere) + the duplicate rule + the quota default/floor, generates/hashes/seals the password,
 // persists the row (with display_name + send_only), and fires the best-effort
 // agent notify. Returns the row and the generated password ("" when the caller
 // supplied one — the reveal-once contract).
@@ -138,7 +138,10 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if !in.Domain.Verified() {
 		return nil, "", ErrOwnershipPending
 	}
-	if !in.Domain.EmailEnabled {
+	// A domain whose mail is hosted elsewhere gets no mailbox that receives,
+	// but a send-only one only submits mail, like the noreply@ every domain
+	// already has, so a site's SMTP login keeps working there.
+	if models.MailHostedElsewhere(in.Domain.EmailEnabled, in.Domain.MailProvider) && !in.SendOnly {
 		return nil, "", ErrEmailNotEnabled
 	}
 	canonLocal, _, err := mailaddr.Canonicalise(in.LocalPart + "@" + in.Domain.Name)

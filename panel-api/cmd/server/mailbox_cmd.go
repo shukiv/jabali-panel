@@ -150,7 +150,7 @@ and cannot be recovered.`,
 	cmd.Flags().StringVar(&password, "password", "", "Explicit password (omit to auto-generate)")
 	cmd.Flags().Uint64Var(&quotaMB, "quota-mb", 0, "Disk quota in MiB (default 1024)")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "Human-readable display name")
-	cmd.Flags().BoolVar(&sendOnly, "send-only", false, "SMTP-submission only — authenticates to send but never receives")
+	cmd.Flags().BoolVar(&sendOnly, "send-only", false, "SMTP-submission only — authenticates to send but never receives (the only kind a domain whose mail is hosted elsewhere can have)")
 	_ = cmd.MarkFlagRequired("domain")
 	_ = cmd.MarkFlagRequired("local")
 	return cmd

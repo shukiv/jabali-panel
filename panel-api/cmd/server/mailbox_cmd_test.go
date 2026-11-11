@@ -335,8 +335,30 @@ func TestCreateMailbox_RefusesOnDisabledEmail(t *testing.T) {
 	if !strings.Contains(err.Error(), "email is not enabled") {
 		t.Errorf("error should mention email disabled, got: %v", err)
 	}
+	if !strings.Contains(err.Error(), "--send-only") {
+		t.Errorf("error should point at --send-only, got: %v", err)
+	}
 	if len(repo.rows) != 0 {
 		t.Errorf("no mailbox row should be inserted on a disabled domain, got %d rows", len(repo.rows))
+	}
+}
+
+// A send-only account only submits mail, so a domain whose email is off can
+// have one.
+func TestCreateMailbox_SendOnlyOnDisabledEmail(t *testing.T) {
+	t.Parallel()
+	repo := newFakeMailboxRepo()
+	dom := testDomain("dom1", "example.com", false) // email disabled
+
+	mb, _, err := createMailboxDirect(
+		context.Background(), repo, nil, nil,
+		dom, "smtp", "", 0, "", true,
+	)
+	if err != nil {
+		t.Fatalf("send-only create: %v", err)
+	}
+	if !mb.SendOnly || len(repo.rows) != 1 {
+		t.Fatalf("want one send-only row, got send_only=%v rows=%d", mb.SendOnly, len(repo.rows))
 	}
 }
 
