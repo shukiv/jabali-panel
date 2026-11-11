@@ -195,6 +195,8 @@ func convertHeader(res *Result, args []string, ln line) {
 }
 
 // convertPHP handles php_value/php_flag -> php_setting (fastcgi PHP_VALUE).
+// A refused directive is dropped with a warning, never rewritten to some other
+// value. A name set more than once keeps only its last value, as Apache does.
 func convertPHP(res *Result, directive string, args []string, ln line) {
 	if len(args) < 2 {
 		res.warn(ln.num, ln.text, "malformed "+directive)
@@ -208,12 +210,60 @@ func convertPHP(res *Result, directive string, args []string, ln line) {
 		res.warn(ln.num, ln.text, "`"+name+"` is enforced by the per-user FPM pool (php_admin_value) and cannot be changed from a site config — not converted")
 		return
 	}
+	// The panel keeps these admin-only (models.PHPSensitiveDirectives); a site
+	// rule must not set them, whatever the value.
+	if isSensitivePHP(name) {
+		res.warnSec(ln.num, ln.text, "`"+name+"` cannot be set from a site config on this server — not converted")
+		return
+	}
+	// A path into the source control panel's own tree (cPanel's MultiPHP
+	// editor writes /var/cpanel/php/sessions/… and /opt/cpanel/ea-php…
+	// paths) does not exist here.
+	if dir := sourcePanelPath(value); dir != "" {
+		res.warn(ln.num, ln.text, "value points into "+dir+", a source control panel path that does not exist here — not converted")
+		return
+	}
+	// cPanel repeats its MultiPHP block once per PHP handler module, so the
+	// same name arrives more than once. Apache applies the last one; keep
+	// only that.
+	for i := len(res.Rules) - 1; i >= 0; i-- {
+		if r := res.Rules[i]; r.Type == "php_setting" && strings.EqualFold(r.Name, name) {
+			res.Rules = append(res.Rules[:i], res.Rules[i+1:]...)
+			res.addNote("`" + name + "` is set more than once; the last value (line " + strconv.Itoa(ln.num) + ") is kept")
+		}
+	}
 	// php_flag uses on/off; PHP_VALUE accepts those literally.
 	res.addRule(models.NginxRule{
 		Type:  "php_setting",
 		Name:  name,
 		Value: value,
 	})
+}
+
+// isSensitivePHP reports whether name is one of models.PHPSensitiveDirectives,
+// ignoring case.
+func isSensitivePHP(name string) bool {
+	for _, d := range models.PHPSensitiveDirectives {
+		if strings.EqualFold(d, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// sourcePanelPaths are directory trees that belong to the source control
+// panel and never exist on this server.
+var sourcePanelPaths = []string{"/var/cpanel/", "/opt/cpanel/", "/usr/local/cpanel/"}
+
+// sourcePanelPath returns the source-panel tree value points into ("" when
+// none). A PHP path list (`.:/opt/cpanel/…`) counts if any entry does.
+func sourcePanelPath(value string) string {
+	for _, p := range sourcePanelPaths {
+		if strings.Contains(value, p) {
+			return p
+		}
+	}
+	return ""
 }
 
 // poolPinnedPHP are settings the FPM pool fixes as php_admin_value, which a
