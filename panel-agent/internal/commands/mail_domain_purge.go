@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -50,6 +51,8 @@ type mailDomainPurgeResult struct {
 	DestroyedDkim  int    `json:"destroyed_dkim,omitempty"`
 	DomainRemoved  bool   `json:"domain_removed,omitempty"`
 	DomainError    string `json:"domain_error,omitempty"`
+	// DKIMKeysRemoved counts the domain's key files removed with it.
+	DKIMKeysRemoved int `json:"dkim_keys_removed,omitempty"`
 }
 
 // mailDomainPurgeHandler destroys EVERY Stalwart registry Account under a
@@ -99,7 +102,11 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 	if targetID == "" {
 		// Domain never entered the registry → no accounts to purge.
-		return mailDomainPurgeResult{Destroyed: 0}, nil
+		res := mailDomainPurgeResult{Destroyed: 0}
+		if p.RemoveDomain {
+			res.DKIMKeysRemoved = removeDomainKeyFiles(p.Domain)
+		}
+		return res, nil
 	}
 
 	// Enumerate ALL accounts (no filter) and match domainId CLIENT-SIDE.
@@ -113,29 +120,29 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 	if err := jmapCall(ctx, "x:Account/query", map[string]any{"limit": 100000}, &q); err != nil {
 		return nil, err
 	}
-	if len(q.IDs) == 0 {
-		return mailDomainPurgeResult{Destroyed: 0}, nil
-	}
-
-	var got jmapGetResult
-	if err := jmapCall(ctx, "x:Account/get", map[string]any{
-		"ids":        q.IDs,
-		"properties": []string{"domainId"},
-	}, &got); err != nil {
-		return nil, err
-	}
-
+	// No account on the server leaves nothing to destroy here, but the lists
+	// and, for a removed domain, its signatures, the domain and its keys still
+	// go.
 	var pending []string
-	for _, raw := range got.List {
-		var acct struct {
-			ID       string `json:"id"`
-			DomainID string `json:"domainId"`
+	if len(q.IDs) > 0 {
+		var got jmapGetResult
+		if err := jmapCall(ctx, "x:Account/get", map[string]any{
+			"ids":        q.IDs,
+			"properties": []string{"domainId"},
+		}, &got); err != nil {
+			return nil, err
 		}
-		if jErr := json.Unmarshal(raw, &acct); jErr != nil {
-			continue
-		}
-		if acct.DomainID == targetID {
-			pending = append(pending, acct.ID)
+		for _, raw := range got.List {
+			var acct struct {
+				ID       string `json:"id"`
+				DomainID string `json:"domainId"`
+			}
+			if jErr := json.Unmarshal(raw, &acct); jErr != nil {
+				continue
+			}
+			if acct.DomainID == targetID {
+				pending = append(pending, acct.ID)
+			}
 		}
 	}
 	res := mailDomainPurgeResult{Destroyed: destroyAccountsInPasses(ctx, pending)}
@@ -147,9 +154,32 @@ func mailDomainPurgeHandler(ctx context.Context, params json.RawMessage) (any, e
 	res.DestroyedLists = lists
 
 	if p.RemoveDomain {
-		res.DestroyedDkim, res.DomainRemoved, res.DomainError = removeRegistryDomain(ctx, targetID)
+		var sigsGone bool
+		res.DestroyedDkim, sigsGone, res.DomainRemoved, res.DomainError = removeRegistryDomain(ctx, targetID)
+		// The key files go once no signature signs with them. Left behind,
+		// the next domain of the same name would be enabled with the old
+		// owner's key (enable reuses a key file it finds).
+		if sigsGone {
+			res.DKIMKeysRemoved = removeDomainKeyFiles(p.Domain)
+		}
 	}
 	return res, nil
+}
+
+// removeDomainKeyFiles removes a deleted domain's key files and returns how
+// many it removed. A name that is not a plain domain name is skipped: it
+// becomes part of a path. A file that cannot be removed is logged; the
+// delete goes on.
+func removeDomainKeyFiles(domain string) int {
+	if !domainRegex.MatchString(domain) {
+		slog.Warn("mail purge: not removing DKIM key files for an invalid domain name", "domain", domain)
+		return 0
+	}
+	n, errs := removeDKIMKeyFiles(domain)
+	for _, e := range errs {
+		slog.Warn("mail purge: could not remove a DKIM key file", "domain", domain, "err", e)
+	}
+	return n
 }
 
 // destroyAccountsInPasses destroys each account, retrying the ones Stalwart
@@ -178,22 +208,24 @@ func destroyAccountsInPasses(ctx context.Context, ids []string) int {
 
 // removeRegistryDomain destroys the domain's DKIM signatures, then the domain
 // itself. It never returns an error: the outcome goes into the purge result.
-func removeRegistryDomain(ctx context.Context, domainID string) (dkimDestroyed int, removed bool, reason string) {
+// sigsGone reports that the domain has no DKIM signature left.
+func removeRegistryDomain(ctx context.Context, domainID string) (dkimDestroyed int, sigsGone, removed bool, reason string) {
 	sigs, err := dkimSignatureIDs(ctx, domainID, "")
 	if err != nil {
-		return 0, false, "list DKIM signatures: " + err.Error()
+		return 0, false, false, "list DKIM signatures: " + err.Error()
 	}
 	if len(sigs) > 0 {
 		var result jmapSetResult
 		if err := jmapCall(ctx, "x:DkimSignature/set", map[string]any{"destroy": sigs}, &result); err != nil {
-			return 0, false, "destroy DKIM signatures: " + err.Error()
+			return 0, false, false, "destroy DKIM signatures: " + err.Error()
 		}
 		dkimDestroyed = len(result.Destroyed)
 	}
+	sigsGone = dkimDestroyed == len(sigs)
 	if err := domainDestroy(ctx, domainID); err != nil {
-		return dkimDestroyed, false, err.Error()
+		return dkimDestroyed, sigsGone, false, err.Error()
 	}
-	return dkimDestroyed, true, ""
+	return dkimDestroyed, sigsGone, true, ""
 }
 
 // purgeDomainMailingLists destroys every x:MailingList under the domain — the

@@ -42,6 +42,54 @@ func dkimRSAKeyPath(domainName string) string {
 	return filepath.Join(dkimKeyDirFunc(), domainName+".rsa.key")
 }
 
+// dkimKeyFileSuffixes are the names a mail domain's key files take under
+// dkimKeyDir, after the domain name: the Ed25519 and RSA keys, the copies a
+// rotation keeps, and a rotation's staged keys.
+var dkimKeyFileSuffixes = []string{".key", ".rsa.key", ".key.old", ".rsa.key.old", ".key.new", ".rsa.key.new"}
+
+// removeDKIMKeyFiles removes domainName's key files. It returns how many it
+// removed and an error per file it could not remove; a missing file is fine.
+// The caller has validated domainName (it becomes part of a path).
+func removeDKIMKeyFiles(domainName string) (int, []string) {
+	removed := 0
+	var errs []string
+	for _, s := range dkimKeyFileSuffixes {
+		err := os.Remove(filepath.Join(dkimKeyDirFunc(), domainName+s))
+		switch {
+		case err == nil:
+			removed++
+		case !errors.Is(err, os.ErrNotExist):
+			errs = append(errs, err.Error())
+		}
+	}
+	return removed, errs
+}
+
+// moveDKIMKeyFiles gives oldName's key files to newName: each file moves to
+// the new name, and a file under the new name with no counterpart under the
+// old one (left by an earlier domain of that name) is removed, so the new
+// name ends up with exactly the renamed domain's keys. The caller has
+// validated both names. It returns an error per file it could not move or
+// remove.
+func moveDKIMKeyFiles(oldName, newName string) []string {
+	var errs []string
+	dir := dkimKeyDirFunc()
+	for _, s := range dkimKeyFileSuffixes {
+		src, dst := filepath.Join(dir, oldName+s), filepath.Join(dir, newName+s)
+		err := os.Rename(src, dst)
+		if errors.Is(err, os.ErrNotExist) {
+			err = os.Remove(dst)
+			if errors.Is(err, os.ErrNotExist) {
+				err = nil
+			}
+		}
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	return errs
+}
+
 // dkimEnsureResult is what ensureDomainDKIM did for one domain.
 type dkimEnsureResult struct {
 	// Ed25519PublicKey and RSAPublicKey are the TXT values of the keys the

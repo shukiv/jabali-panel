@@ -53,6 +53,7 @@ type mgFake struct {
 	scripts  map[string][]*sieveScriptRec
 	blobs    map[string]string
 	dkim     map[string]string         // signature id → domain id
+	keepDkim map[string]bool           // signature ids whose destroy is refused
 	shares   map[string]map[string]any // "acct/mailbox" → shareWith
 	calls    []string
 	failCopy bool
@@ -412,6 +413,10 @@ func (f *mgFake) dispatch(method string, raw json.RawMessage) (any, *jmapFakeErr
 		for _, id := range a.Destroy {
 			if _, ok := f.dkim[id]; !ok {
 				res.NotDestroyed[id] = json.RawMessage(`{"type":"notFound"}`)
+				continue
+			}
+			if f.keepDkim[id] {
+				res.NotDestroyed[id] = json.RawMessage(`{"type":"forbidden"}`)
 				continue
 			}
 			delete(f.dkim, id)
