@@ -179,6 +179,10 @@ func parseUserdataDocroots(parsed *ParsedTarball) []domainSrc {
 	out := []domainSrc{}
 	seen := map[string]bool{}
 	srcHome := parsed.HomeDir
+	// An addon site's userdata file carries its backing subdomain's
+	// servername; key the site by the addon so its files land in the addon's
+	// own docroot (see addon_domains.go).
+	addons, _ := AddonDomainsBySubdomain(parsed)
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
 		if err != nil {
@@ -201,6 +205,7 @@ func parseUserdataDocroots(parsed *ParsedTarball) []domainSrc {
 			if servername == "" {
 				servername = name // fallback to filename
 			}
+			servername = SiteDomain(addons, servername)
 			if docroot == "" {
 				continue
 			}
