@@ -1388,14 +1388,15 @@ func cpanelRestoreCallback(
 						// E2E). The source home is /home/<SourceUser> for these
 						// sources (CyberPanel's SourceUser is its dotted domain,
 						// which the agent now accepts).
-						"src_account": p.parsed.SourceUser,
-						"host":        job.SourceHost,
-						"ssh_user":    remoteSSHUser,
-						"secret_path": secretPath,
-						"src_path":    r.SrcPath,
-						"src_root":    srcRootOverride,
-						"dest_path":   destPath,
-						"dest_user":   p.targetUsername,
+						"src_account":       p.parsed.SourceUser,
+						"host":              job.SourceHost,
+						"ssh_user":          remoteSSHUser,
+						"secret_path":       secretPath,
+						"expected_host_key": job.ExpectedHostKey,
+						"src_path":          r.SrcPath,
+						"src_root":          srcRootOverride,
+						"dest_path":         destPath,
+						"dest_user":         p.targetUsername,
 					})
 					if rerr != nil {
 						warnings = append(warnings, fmt.Sprintf("home_rsync_remote: %s: %v", r.Dom, rerr))
@@ -1434,17 +1435,18 @@ func cpanelRestoreCallback(
 					excludes := pleskExtraExcludes(vhostRoot, docroots)
 					extraDest := filepath.Join("/home", p.targetUsername, "plesk-files")
 					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
-						"port":        srcSSHPort(job),
-						"job_id":      job.ID,
-						"src_account": p.parsed.SourceUser,
-						"host":        job.SourceHost,
-						"ssh_user":    remoteSSHUser,
-						"secret_path": secretPath,
-						"src_path":    vhostRoot,
-						"src_root":    srcRootOverride,
-						"dest_path":   extraDest,
-						"dest_user":   p.targetUsername,
-						"excludes":    excludes,
+						"port":              srcSSHPort(job),
+						"job_id":            job.ID,
+						"src_account":       p.parsed.SourceUser,
+						"host":              job.SourceHost,
+						"ssh_user":          remoteSSHUser,
+						"secret_path":       secretPath,
+						"expected_host_key": job.ExpectedHostKey,
+						"src_path":          vhostRoot,
+						"src_root":          srcRootOverride,
+						"dest_path":         extraDest,
+						"dest_user":         p.targetUsername,
+						"excludes":          excludes,
 					})
 					if rerr != nil {
 						warnings = append(warnings, fmt.Sprintf("plesk_extra_files: %v", rerr))
@@ -1619,16 +1621,17 @@ func cpanelRestoreCallback(
 					}
 					local, mdom := addr[:at], addr[at+1:]
 					mrRaw, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
-						"port":        srcSSHPort(job),
-						"job_id":      job.ID,
-						"src_account": p.parsed.SourceUser,
-						"src_root":    "/var/qmail/mailnames",
-						"host":        job.SourceHost,
-						"ssh_user":    remoteSSHUser,
-						"secret_path": secretPath,
-						"src_path":    srcMaildir,
-						"dest_path":   filepath.Join(destMailRoot, mdom, local),
-						"dest_user":   p.targetUsername,
+						"port":              srcSSHPort(job),
+						"job_id":            job.ID,
+						"src_account":       p.parsed.SourceUser,
+						"src_root":          "/var/qmail/mailnames",
+						"host":              job.SourceHost,
+						"ssh_user":          remoteSSHUser,
+						"secret_path":       secretPath,
+						"expected_host_key": job.ExpectedHostKey,
+						"src_path":          srcMaildir,
+						"dest_path":         filepath.Join(destMailRoot, mdom, local),
+						"dest_user":         p.targetUsername,
 					})
 					if mrErr != nil {
 						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
@@ -1678,15 +1681,16 @@ func cpanelRestoreCallback(
 					local, mdom := addr[:at], addr[at+1:]
 					destPath := filepath.Join(destMailRoot, mdom, local)
 					mrRaw, mrErr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
-						"port":        srcSSHPort(job),
-						"job_id":      job.ID,
-						"src_account": "vmail",
-						"host":        job.SourceHost,
-						"ssh_user":    remoteSSHUser,
-						"secret_path": secretPath,
-						"src_path":    srcMaildir,
-						"dest_path":   destPath,
-						"dest_user":   p.targetUsername,
+						"port":              srcSSHPort(job),
+						"job_id":            job.ID,
+						"src_account":       "vmail",
+						"host":              job.SourceHost,
+						"ssh_user":          remoteSSHUser,
+						"secret_path":       secretPath,
+						"expected_host_key": job.ExpectedHostKey,
+						"src_path":          srcMaildir,
+						"dest_path":         destPath,
+						"dest_user":         p.targetUsername,
 					})
 					if mrErr != nil {
 						warnings = append(warnings, fmt.Sprintf("mail_rsync: %s: %v", addr, mrErr))
@@ -2084,15 +2088,16 @@ func cpanelPullMail(ctx context.Context, call agentCallFunc, job *models.Migrati
 	src := "/home/" + srcUser + "/mail"
 	dest := filepath.Join("/home", targetUser, "mail")
 	raw, err := call(ctx, "migration.rsync_remote_home", map[string]any{
-		"port":        srcSSHPort(job),
-		"job_id":      job.ID,
-		"src_account": srcUser,
-		"host":        job.SourceHost,
-		"ssh_user":    migrationSSHUser(job),
-		"secret_path": fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID),
-		"src_path":    src,
-		"dest_path":   dest,
-		"dest_user":   targetUser,
+		"port":              srcSSHPort(job),
+		"job_id":            job.ID,
+		"src_account":       srcUser,
+		"host":              job.SourceHost,
+		"ssh_user":          migrationSSHUser(job),
+		"secret_path":       fmt.Sprintf("/etc/jabali-panel/migration-secrets/%s.env", job.ID),
+		"expected_host_key": job.ExpectedHostKey,
+		"src_path":          src,
+		"dest_path":         dest,
+		"dest_user":         targetUser,
 	})
 	if err != nil {
 		return "", nil, fmt.Sprintf("mail_rsync: copying %s from the source failed — no mailboxes migrated: %v", src, err)
