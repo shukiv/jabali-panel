@@ -44,7 +44,8 @@ func dkimRSAKeyPath(domainName string) string {
 
 // dkimKeyFileSuffixes are the names a mail domain's key files take under
 // dkimKeyDir, after the domain name: the Ed25519 and RSA keys, the copies a
-// rotation keeps, and a rotation's staged keys.
+// rotation keeps, and a rotation's staged keys. The Ed25519 key comes first:
+// moveDKIMKeyFiles relies on it.
 var dkimKeyFileSuffixes = []string{".key", ".rsa.key", ".key.old", ".rsa.key.old", ".key.new", ".rsa.key.new"}
 
 // removeDKIMKeyFiles removes domainName's key files. It returns how many it
@@ -65,22 +66,29 @@ func removeDKIMKeyFiles(domainName string) (int, []string) {
 	return removed, errs
 }
 
-// moveDKIMKeyFiles gives oldName's key files to newName: each file moves to
-// the new name, and a file under the new name with no counterpart under the
-// old one (left by an earlier domain of that name) is removed, so the new
-// name ends up with exactly the renamed domain's keys. The caller has
-// validated both names. It returns an error per file it could not move or
-// remove.
+// moveDKIMKeyFiles gives oldName's key files to newName. While the old name
+// still holds its Ed25519 key, nothing has moved yet: each file moves, and a
+// file under the new name with no counterpart under the old one (left by an
+// earlier domain of that name) is removed, so the new name ends up with
+// exactly the renamed domain's keys. The Ed25519 key moves first, so without
+// it the new name's files are already the renamed domain's (a retried rename,
+// or a move cut short): what is left under the old name moves, and nothing is
+// removed. The caller has validated both names. It returns an error per file
+// it could not move or remove.
 func moveDKIMKeyFiles(oldName, newName string) []string {
 	var errs []string
 	dir := dkimKeyDirFunc()
+	_, err := os.Stat(filepath.Join(dir, oldName+dkimKeyFileSuffixes[0]))
+	notStarted := err == nil
 	for _, s := range dkimKeyFileSuffixes {
 		src, dst := filepath.Join(dir, oldName+s), filepath.Join(dir, newName+s)
 		err := os.Rename(src, dst)
 		if errors.Is(err, os.ErrNotExist) {
-			err = os.Remove(dst)
-			if errors.Is(err, os.ErrNotExist) {
-				err = nil
+			err = nil
+			if notStarted {
+				if err = os.Remove(dst); errors.Is(err, os.ErrNotExist) {
+					err = nil
+				}
 			}
 		}
 		if err != nil {

@@ -161,6 +161,40 @@ func TestMailDomainRename_MovesKeyFiles(t *testing.T) {
 	}
 }
 
+// A retried rename (the panel's own retry after its DB update failed) finds
+// the domain already renamed on the mail server and its keys already under
+// the new name: they stay. A move cut short moved the Ed25519 key first; the
+// retry moves the rest and removes nothing.
+func TestMailDomainRename_RetryKeepsMovedKeyFiles(t *testing.T) {
+	for name, tc := range map[string]struct{ before, want string }{
+		"finished": {
+			"new.com.key new.com.key.old new.com.rsa.key",
+			"new.com.key new.com.key.old new.com.rsa.key",
+		},
+		"cut short": {
+			"new.com.key old.com.key.old old.com.rsa.key",
+			"new.com.key new.com.key.old new.com.rsa.key",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := wireDKIMDir(t)
+			writeKeyFiles(t, dir, strings.Fields(tc.before)...)
+			f := &fakeStalwart{domains: map[string]string{"new.com": "o1"}, catchall: map[string]string{"o1": ""}}
+
+			res := callRename(t, f, "old.com", "new.com", false)
+			if res.Status != "already" {
+				t.Fatalf("status = %q", res.Status)
+			}
+			if got := listDir(t, dir); got != tc.want {
+				t.Fatalf("key dir = %q, want %q", got, tc.want)
+			}
+			if got := readFile(t, filepath.Join(dir, "new.com.key")); got != "new.com.key" {
+				t.Errorf("new.com.key holds %q, want the key it had", got)
+			}
+		})
+	}
+}
+
 // A dry run and a refused rename move nothing.
 func TestMailDomainRename_DryRunAndConflictKeepKeyFiles(t *testing.T) {
 	t.Run("dry run", func(t *testing.T) {
