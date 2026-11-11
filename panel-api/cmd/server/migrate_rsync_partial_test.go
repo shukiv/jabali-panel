@@ -10,9 +10,9 @@ import (
 // must turn that into a summary line, or a partial copy reads as complete.
 func TestRsyncPartialNote(t *testing.T) {
 	vanished := json.RawMessage(`{"bytes_copied":934,"files":12,"partial":true,"exit_code":24,
-		"errors":["file has vanished: \"/home/webup/mail/new/1.M1\""]}`)
-	got := rsyncPartialNote("mail_rsync: /home/webup/mail", vanished)
-	for _, want := range []string{"mail_rsync: /home/webup/mail: partial copy", "exit 24", "vanished", "a re-run picks them up", "/home/webup/mail/new/1.M1"} {
+		"errors":["file has vanished: \"/home/siteacct/mail/new/1.M1\""]}`)
+	got := rsyncPartialNote("mail_rsync: /home/siteacct/mail", vanished)
+	for _, want := range []string{"mail_rsync: /home/siteacct/mail: partial copy", "exit 24", "vanished", "a re-run picks them up", "/home/siteacct/mail/new/1.M1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("note = %q, want it to contain %q", got, want)
 		}

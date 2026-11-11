@@ -39,20 +39,20 @@ func TestCpanelPullMail_CopiesHomeMail(t *testing.T) {
 		kind, wantSSHUser string
 	}{
 		{models.MigrationSourceWHMpkgacct, "root"}, // WHM pulls over the root session
-		{models.MigrationSourceCpanel, "webup"},    // cPanel: the account is the login
+		{models.MigrationSourceCpanel, "siteacct"}, // cPanel: the account is the login
 	}
 	for _, tc := range cases {
 		t.Run(tc.kind, func(t *testing.T) {
 			rec := &mailLegRecorder{reply: json.RawMessage(`{"bytes_copied":934,"files":12}`)}
-			job := &models.MigrationJob{ID: "job1", SourceKind: tc.kind, SourceHost: "203.0.113.5", SourceUser: "webup"}
+			job := &models.MigrationJob{ID: "job1", SourceKind: tc.kind, SourceHost: "203.0.113.5", SourceUser: "siteacct"}
 
-			root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "webup", "gil")
+			root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "siteacct", "destacct")
 
 			if crit != "" {
 				t.Fatalf("unexpected critical: %s", crit)
 			}
-			if root != "/home/gil/mail" {
-				t.Fatalf("MailRoot = %q, want /home/gil/mail", root)
+			if root != "/home/destacct/mail" {
+				t.Fatalf("MailRoot = %q, want /home/destacct/mail", root)
 			}
 			if len(rec.calls) != 1 || rec.calls[0].cmd != "migration.rsync_remote_home" {
 				t.Fatalf("agent calls = %+v, want one migration.rsync_remote_home", rec.calls)
@@ -62,10 +62,10 @@ func TestCpanelPullMail_CopiesHomeMail(t *testing.T) {
 				"host":        "203.0.113.5",
 				"ssh_user":    tc.wantSSHUser,
 				"secret_path": "/etc/jabali-panel/migration-secrets/job1.env",
-				"src_account": "webup",
-				"src_path":    "/home/webup/mail",
-				"dest_path":   "/home/gil/mail",
-				"dest_user":   "gil",
+				"src_account": "siteacct",
+				"src_path":    "/home/siteacct/mail",
+				"dest_path":   "/home/destacct/mail",
+				"dest_user":   "destacct",
 			}
 			got := rec.calls[0].params
 			for k, v := range want {
@@ -84,7 +84,7 @@ func TestCpanelPullMail_NoOpOutsideACpanelPull(t *testing.T) {
 	cases := map[string]*models.MigrationJob{
 		"nil job": nil,
 		"offline restore: the full cpmove already carries homedir/mail": {
-			ID: "j", SourceKind: models.MigrationSourceCpanel, SourceUser: "webup"},
+			ID: "j", SourceKind: models.MigrationSourceCpanel, SourceUser: "siteacct"},
 		"plesk has its own mail leg": {
 			ID: "j", SourceKind: models.MigrationSourcePlesk, SourceHost: "203.0.113.5", SourceUser: "a.test"},
 		"cyberpanel has its own mail leg": {
@@ -95,7 +95,7 @@ func TestCpanelPullMail_NoOpOutsideACpanelPull(t *testing.T) {
 	for name, job := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec := &mailLegRecorder{}
-			root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "webup", "gil")
+			root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "siteacct", "destacct")
 			if root != "" || len(lines) != 0 || crit != "" || len(rec.calls) != 0 {
 				t.Fatalf("want no-op, got root=%q lines=%v crit=%q calls=%d", root, lines, crit, len(rec.calls))
 			}
@@ -107,9 +107,9 @@ func TestCpanelPullMail_NoOpOutsideACpanelPull(t *testing.T) {
 // critical (the job ends degraded), with MailRoot left unset.
 func TestCpanelPullMail_FailedCopyIsCritical(t *testing.T) {
 	rec := &mailLegRecorder{err: errors.New("rsync failed: exit status 23")}
-	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "webup"}
+	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "siteacct"}
 
-	root, _, crit := cpanelPullMail(context.Background(), rec.call, job, "webup", "gil")
+	root, _, crit := cpanelPullMail(context.Background(), rec.call, job, "siteacct", "destacct")
 
 	if root != "" {
 		t.Fatalf("MailRoot must stay unset after a failed copy, got %q", root)
@@ -124,12 +124,12 @@ func TestCpanelPullMail_FailedCopyIsCritical(t *testing.T) {
 // critical), and the summary must say the copy was partial.
 func TestCpanelPullMail_PartialCopyIsImportedAndReported(t *testing.T) {
 	rec := &mailLegRecorder{reply: json.RawMessage(`{"bytes_copied":967438095,"files":4815,"partial":true,"exit_code":24,
-		"errors":["file has vanished: \"/home/webup/mail/new/1700000000.M1.mx\""]}`)}
-	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "webup"}
+		"errors":["file has vanished: \"/home/siteacct/mail/new/1700000000.M1.mx\""]}`)}
+	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "siteacct"}
 
-	root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "webup", "gil")
+	root, lines, crit := cpanelPullMail(context.Background(), rec.call, job, "siteacct", "destacct")
 
-	if crit != "" || root != "/home/gil/mail" {
+	if crit != "" || root != "/home/destacct/mail" {
 		t.Fatalf("root=%q crit=%q, want the mail imported with no critical", root, crit)
 	}
 	if len(lines) != 2 || !strings.Contains(lines[1], "partial copy") || !strings.Contains(lines[1], "exit 24") ||
@@ -142,9 +142,9 @@ func TestCpanelPullMail_PartialCopyIsImportedAndReported(t *testing.T) {
 // before a root rsync reads /home/<account>.
 func TestCpanelPullMail_RefusesTarballAccountMismatch(t *testing.T) {
 	rec := &mailLegRecorder{}
-	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "webup"}
+	job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceWHMpkgacct, SourceHost: "203.0.113.5", SourceUser: "siteacct"}
 
-	root, _, crit := cpanelPullMail(context.Background(), rec.call, job, "otheracct", "gil")
+	root, _, crit := cpanelPullMail(context.Background(), rec.call, job, "otheracct", "destacct")
 
 	if root != "" || len(rec.calls) != 0 || !strings.Contains(crit, "does not match the job's source account") {
 		t.Fatalf("want refused with no agent call, got root=%q calls=%d crit=%q", root, len(rec.calls), crit)
@@ -156,7 +156,7 @@ func TestCpanelPullMail_RejectsBadSourceUser(t *testing.T) {
 		t.Run(u, func(t *testing.T) {
 			rec := &mailLegRecorder{}
 			job := &models.MigrationJob{ID: "j", SourceKind: models.MigrationSourceCpanel, SourceHost: "203.0.113.5", SourceUser: u}
-			root, _, crit := cpanelPullMail(context.Background(), rec.call, job, u, "gil")
+			root, _, crit := cpanelPullMail(context.Background(), rec.call, job, u, "destacct")
 			if root != "" || crit == "" || len(rec.calls) != 0 {
 				t.Fatalf("source user %q: want refused with a critical and no agent call, got root=%q crit=%q calls=%d",
 					u, root, crit, len(rec.calls))

@@ -23,7 +23,7 @@ func TestSourceRsyncPathOpt_RootSessionRunsAsAccountOwner(t *testing.T) {
 		srcPath       string
 		wantRoot      string
 	}{
-		{"cpanel mail", "/home/webup", false, "/home/webup/mail", "/home/webup"},
+		{"cpanel mail", "/home/siteacct", false, "/home/siteacct/mail", "/home/siteacct"},
 		{"cyberpanel dotted home", "/home/smoke.example.com", false, "/home/smoke.example.com/public_html", "/home/smoke.example.com"},
 		{"plesk docroot", "/var/www/vhosts", true, "/var/www/vhosts/example.com/httpdocs", "/var/www/vhosts/example.com"},
 		{"plesk vhost root", "/var/www/vhosts", true, "/var/www/vhosts/example.com", "/var/www/vhosts/example.com"},
@@ -48,7 +48,7 @@ func TestSourceRsyncPathOpt_RootSessionRunsAsAccountOwner(t *testing.T) {
 
 // A non-root login is already the boundary; no --rsync-path, no extra checks.
 func TestSourceRsyncPathOpt_NonRootLoginUnchanged(t *testing.T) {
-	opt, msg := sourceRsyncPathOpt("webup", "/home/we$up", false, "/home/we$up/mail")
+	opt, msg := sourceRsyncPathOpt("siteacct", "/home/site$acct", false, "/home/site$acct/mail")
 	if opt != "" || msg != "" {
 		t.Fatalf("got opt=%q msg=%q, want neither for a non-root login", opt, msg)
 	}
@@ -180,15 +180,15 @@ func TestSourceRsyncAsOwner_RefusesRootUnknownOrNoOwner(t *testing.T) {
 		"no owner": "exit 1",
 	} {
 		t.Run(name, func(t *testing.T) {
-			out, err := runSourceCommandStat(t, "/home/webup", script)
+			out, err := runSourceCommandStat(t, "/home/siteacct", script)
 			if err == nil || strings.Contains(out, "RUNUSER") || !strings.Contains(out, "source copy refused") {
 				t.Fatalf("got err=%v out=%q, want refused without running rsync", err, out)
 			}
 		})
 	}
-	out, err := runSourceCommandStat(t, "/home/webup", "echo webup")
-	if err != nil || strings.TrimSpace(out) != "RUNUSER -u webup -- rsync --server --sender . /x/" {
-		t.Fatalf("owner webup: got err=%v out=%q", err, out)
+	out, err := runSourceCommandStat(t, "/home/siteacct", "echo siteacct")
+	if err != nil || strings.TrimSpace(out) != "RUNUSER -u siteacct -- rsync --server --sender . /x/" {
+		t.Fatalf("owner siteacct: got err=%v out=%q", err, out)
 	}
 }
 
@@ -198,7 +198,7 @@ func TestRemoteRsyncTail_RsyncPathBeforeSource(t *testing.T) {
 	if strings.Join(args, "|") != strings.Join(want, "|") {
 		t.Fatalf("args = %q, want %q", args, want)
 	}
-	args = remoteRsyncTail([]string{"-aH"}, "", "-p 22", "webup@h", "/home/webup/mail/", "/home/b/mail")
+	args = remoteRsyncTail([]string{"-aH"}, "", "-p 22", "siteacct@h", "/home/siteacct/mail/", "/home/b/mail")
 	if strings.Contains(strings.Join(args, " "), "rsync-path") {
 		t.Fatalf("args = %q, want no --rsync-path for a non-root login", args)
 	}
@@ -233,8 +233,8 @@ func TestRsyncPartialExit(t *testing.T) {
 func TestRsyncErrorLines(t *testing.T) {
 	out := strings.Join([]string{
 		"Number of files: 12 (reg: 10, dir: 2)",
-		`file has vanished: "/home/webup/mail/new/1700000000.M1.mx"`,
-		`rsync: [sender] send_files failed to open "/home/webup/x": Permission denied (13)`,
+		`file has vanished: "/home/siteacct/mail/new/1700000000.M1.mx"`,
+		`rsync: [sender] send_files failed to open "/home/siteacct/x": Permission denied (13)`,
 		"Total bytes sent: 934",
 		"rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1207) [generator=3.4.1]",
 	}, "\n")

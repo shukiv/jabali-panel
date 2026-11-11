@@ -59,7 +59,7 @@ func ownershipMailTree(t *testing.T) *ParsedTarball {
 	mkMaildir(t, mailRoot)
 	mkMaildir(t, filepath.Join(mailRoot, "own.com", "box"))
 	mkMaildir(t, filepath.Join(mailRoot, "victim.com", "admin"))
-	return &ParsedTarball{MailRoot: mailRoot, OwnerEmail: "webup@own.com"}
+	return &ParsedTarball{MailRoot: mailRoot, OwnerEmail: "siteacct@own.com"}
 }
 
 func createdAddrs(mb *fakeMailboxRepoMB) []string {
@@ -83,8 +83,8 @@ func TestImportMailboxes_RefusesAnotherTenantsDomain(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := strings.Join(createdAddrs(mb), ","); got != "webup,box" {
-		t.Fatalf("created rows = %q, want webup,box (own.com only)", got)
+	if got := strings.Join(createdAddrs(mb), ","); got != "siteacct,box" {
+		t.Fatalf("created rows = %q, want siteacct,box (own.com only)", got)
 	}
 	if !containsSubstr(res.Skipped, "mail/victim.com is not a domain of the migrated account — refused") {
 		t.Errorf("want a refusal line for victim.com, got %v", res.Skipped)
