@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -158,6 +159,23 @@ func (m cpanelMailShadow) cred(local string, unreadable bool) sourceMailCred {
 		return sourceMailCred{cause: lockoutSourceUnreadable}
 	}
 	return sourceMailCred{cause: lockoutNoSourceEntry}
+}
+
+// accounts lists every local part the file holds an entry for, in order:
+// cPanel lists each mail account of the domain here, including one that has
+// no Maildir because it never received mail or logged in.
+func (m cpanelMailShadow) accounts() []string {
+	var out []string
+	for _, set := range []map[string]bool{m.unverifiable, m.locked} {
+		for local := range set {
+			out = append(out, local)
+		}
+	}
+	for local := range m.hashes {
+		out = append(out, local)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // summary is the counts-only line for the run summary ("" when nothing was
