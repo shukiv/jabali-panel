@@ -9,6 +9,7 @@ package nginxrules
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/frontcontroller"
@@ -123,6 +124,12 @@ func Compile(d *models.Domain) string {
 			b.WriteString("    }\n")
 
 		case "php_setting":
+			// A rule stored before the validator refused it (sensitive
+			// directive, newline in the value) is skipped, not rendered.
+			if why := PHPSettingRefusal(r.Name, r.Value); why != "" {
+				slog.Warn("nginx rules: php_setting rule skipped", "domain", d.Name, "reason", why)
+				continue
+			}
 			// Injected via fastcgi_param so it reaches PHP-FPM.
 			fmt.Fprintf(&b,
 				"    fastcgi_param PHP_VALUE %s;\n",

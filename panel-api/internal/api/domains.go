@@ -25,6 +25,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -2320,6 +2321,9 @@ func validateNginxRulesWith(rules models.NginxRules, allowInternalProxy bool) er
 		case "php_setting":
 			if r.Name == "" || r.Value == "" {
 				return fmt.Errorf("rule %d: name and value required", i)
+			}
+			if why := nginxrules.PHPSettingRefusal(r.Name, r.Value); why != "" {
+				return fmt.Errorf("rule %d: %s", i, why)
 			}
 		case "max_upload_size":
 			if r.Size == "" {
