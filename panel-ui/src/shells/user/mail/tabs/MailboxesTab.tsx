@@ -155,7 +155,12 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
 
 
   const [editTarget, setEditTarget] = useState<MailboxRow | null>(null);
-  const editTargetDomain = domains.find((d) => d.id === editTarget?.domain_id);
+  // Domains whose mail is hosted elsewhere: their accounts are send-only
+  // (#2491), with no webmail host (mail.<domain>) and nothing to auto-reply to.
+  const elsewhereDomainIds = useMemo(
+    () => new Set(domains.filter(mailHostedElsewhere).map((d) => d.id)),
+    [domains],
+  );
   const [arTarget, setArTarget] = useState<MailboxRow | null>(null);
 
   const deleteMutation = useDeleteMailbox();
@@ -364,12 +369,13 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
                     label: "Webmail",
                     icon: <MailOutlined />,
                     tooltip: "Open webmail for this mailbox",
+                    hidden: elsewhereDomainIds.has(row.domain_id),
                     loading: webmail.isLaunching(row.id),
                     onClick: () => webmail.launch(row.id),
                   },
                   { key: "edit", label: "Edit", icon: <EditOutlined />, onClick: () => setEditTarget(row) },
                   { key: "resetpw", label: "Rotate password", icon: <KeyOutlined />, loading: rotatingId === row.id, onClick: () => rotatePassword({ id: row.id, email: row.email, title: "New mailbox password" }) },
-                  { key: "autoreply", label: "Automatic replies", icon: <ClockCircleOutlined />, onClick: () => setArTarget(row) },
+                  { key: "autoreply", label: "Automatic replies", icon: <ClockCircleOutlined />, hidden: elsewhereDomainIds.has(row.domain_id), onClick: () => setArTarget(row) },
                   {
                     key: "remove",
                     label: "Remove",
@@ -401,7 +407,7 @@ export const MailboxesTab = ({ domainId }: { domainId?: string } = {}) => {
         open={editTarget !== null}
         mailbox={editTarget}
         onClose={() => setEditTarget(null)}
-        sendOnlyLocked={editTargetDomain ? mailHostedElsewhere(editTargetDomain) : false}
+        sendOnlyLocked={!!editTarget && elsewhereDomainIds.has(editTarget.domain_id)}
       />
 
       <AutoReplyModal
