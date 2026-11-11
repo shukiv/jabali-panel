@@ -3332,7 +3332,7 @@ func (r *Reconciler) reconcileSSLForDomain(ctx context.Context, domain *models.D
 		// rate-limits the whole account ("too many failed authorizations (5) per
 		// hostname per hour"). Retrying a capped row every tick just re-caps it
 		// (newRetryCount = cap+1 ≥ cap → marked failed again) and hammers LE
-		// forever — observed on the aramapp fleet: ~45 hopeless Cloudflare-fronted
+		// forever — observed on a production fleet: ~45 hopeless Cloudflare-fronted
 		// domains cycling failed→retry→cap→failed every tick, retry_count climbing
 		// into the 60s. Capped rows wait for an operator "Retry" (which resets
 		// retry_count to 0 and flips status back to pending).

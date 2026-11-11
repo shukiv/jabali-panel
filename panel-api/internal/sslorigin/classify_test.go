@@ -10,10 +10,10 @@ import (
 // produces the 526 (JAB-224).
 const realSelfSignedVhost = `server {
     listen 443 ssl;
-    server_name 4lion.com www.4lion.com;
-    ssl_certificate /etc/ssl/jabali-selfsigned/4lion.com/fullchain.pem;
-    ssl_certificate_key /etc/ssl/jabali-selfsigned/4lion.com/privkey.pem;
-    root /home/x/domains/4lion.com/public_html;
+    server_name example-r.com www.example-r.com;
+    ssl_certificate /etc/ssl/jabali-selfsigned/example-r.com/fullchain.pem;
+    ssl_certificate_key /etc/ssl/jabali-selfsigned/example-r.com/privkey.pem;
+    root /home/x/domains/example-r.com/public_html;
 }`
 
 const realLEVhost = `server {
@@ -30,12 +30,12 @@ func neverSelfSigned(string) (bool, bool) { return false, true }
 func unreadable(string) (bool, bool) { return false, false }
 
 func TestClassifyBody_SelfSignedIsUnsafe(t *testing.T) {
-	o := ClassifyBody("4lion.com", realSelfSignedVhost, neverSelfSigned)
+	o := ClassifyBody("example-r.com", realSelfSignedVhost, neverSelfSigned)
 
 	if o.Kind != KindSelfSigned {
 		t.Fatalf("kind = %q, want %q", o.Kind, KindSelfSigned)
 	}
-	if o.CertPath != "/etc/ssl/jabali-selfsigned/4lion.com/fullchain.pem" {
+	if o.CertPath != "/etc/ssl/jabali-selfsigned/example-r.com/fullchain.pem" {
 		t.Errorf("cert path = %q", o.CertPath)
 	}
 	if o.Kind.SafeForStrictTLS() {
@@ -123,11 +123,11 @@ func TestClassify_MissingVhostIsUnknownNotSafe(t *testing.T) {
 
 func TestClassify_ReadsVhostFromDisk(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "4lion.com.conf"), []byte(realSelfSignedVhost), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "example-r.com.conf"), []byte(realSelfSignedVhost), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
-	if o := Classify("4lion.com", dir); o.Kind != KindSelfSigned {
+	if o := Classify("example-r.com", dir); o.Kind != KindSelfSigned {
 		t.Fatalf("kind = %q", o.Kind)
 	}
 }

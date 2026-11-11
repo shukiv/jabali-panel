@@ -6502,7 +6502,7 @@ ensure_swap() {
 }
 
 # ensure_fleet_swap — JAB-273. Distinct from the build-time ensure_swap above,
-# which only helps ≤4 GB build hosts. newaramaapp (18 GB RAM, 0 swap) wedged
+# which only helps ≤4 GB build hosts. A production box (18 GB RAM, 0 swap) wedged
 # into a kswapd death-spiral: once RAM filled on a swapless box the kernel had
 # nowhere to evict to, load hit ~385 on 8 cores, and sshd could not even
 # complete a login handshake — the operator was locked out mid-incident. Swap
@@ -18379,7 +18379,7 @@ provision_new_software() {
   declare -f seed_panel_mail_lineage_marker >/dev/null && seed_panel_mail_lineage_marker
 
   # JAB-273: self-heal the fleet's zero-swap fragility (kswapd death-spiral that
-  # locked the operator out of newaramaapp) and contain every all-tenant
+  # locked the operator out of a production box) and contain every all-tenant
   # maintenance job in a memory-capped slice. Idempotent; the existing fleet
   # only picks these up on update, so they MUST run here, not just on install.
   ensure_fleet_swap

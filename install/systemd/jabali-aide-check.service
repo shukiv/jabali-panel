@@ -38,7 +38,7 @@ ProtectKernelTunables=yes
 # (man systemd.exec), so AIDE sees every kernel-module entry vanish and
 # reports ~10k "removed" files on every single check — drowning real
 # drift and firing a false aide.tamper.detected daily (observed on
-# aramapp 2026-08-14: 1680 added / 112 changed / 10374 removed, of
+# a production box, 2026-08-14: 1680 added / 112 changed / 10374 removed, of
 # which 10372 were the sandbox artifact). The unit is a read-only FIM
 # scan; CAP_SYS_MODULE removal isn't worth a blind baseline.
 ProtectControlGroups=yes

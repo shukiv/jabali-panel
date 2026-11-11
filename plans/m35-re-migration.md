@@ -5,7 +5,7 @@ live account (files + DB, optionally mail) from the source into an account
 already migrated into jabali. Today validate blocks (`ConflictDomainTaken`) and
 the idempotent writers skip existing DBs/mail — correct for *resume*, wrong for
 *refresh*. This encodes the manual procedure run on 2026-07-02
-(`secureiskfuture` / `sec.futurefinance.co.il`, 5.1 GB WP, cPanel→jabali) as a
+(`secureiskfuture` / `sec.example-q.co.il`, 5.1 GB WP, cPanel→jabali) as a
 supported, backed-up, `--force`-gated operation.
 
 ## Load-bearing invariants (do not violate)

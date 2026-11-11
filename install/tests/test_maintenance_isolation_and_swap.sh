@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install/tests/test_maintenance_isolation_and_swap.sh — JAB-273.
 #
-# newaramaapp wedged into a load-385 kswapd death-spiral: a nightly all-tenant
+# A production box wedged into a load-385 kswapd death-spiral: a nightly all-tenant
 # maintenance sweep filled RAM on a ZERO-swap box, the kernel had nowhere to
 # evict to, and sshd could not complete a login handshake — the operator was
 # locked out mid-incident. The durable fixes are:

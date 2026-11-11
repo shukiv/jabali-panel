@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// PHP error log files (tech-support report 2026-10-22, newaramapp).
+// PHP error log files (tech-support report 2026-10-22).
 //
 // Debian's php.ini sets log_errors=On and no error_log, so under FPM every
 // warning goes to FastCGI stderr. nginx reads the stderr records into the same

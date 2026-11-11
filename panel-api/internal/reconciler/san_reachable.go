@@ -20,7 +20,7 @@ import (
 // Let's Encrypt to validate them, the challenge lands on the old server and
 // 404s — and one failed name fails the WHOLE certificate, apex included. The
 // domain stays on a self-signed origin, which behind Cloudflare Full (strict) is
-// a 526. Observed on newhighsite: "Requesting a certificate for … and 3 more
+// a 526. Observed on a production box: "Requesting a certificate for … and 3 more
 // domains" -> autoconfig./autodiscover./mail. 404 -> "Some challenges failed".
 //
 // So the question is not "does this name resolve" but "will a challenge for it

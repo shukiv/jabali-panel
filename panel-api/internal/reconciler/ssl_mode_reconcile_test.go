@@ -85,7 +85,7 @@ func TestReconcileSSL_ModeRouting(t *testing.T) {
 	// the reconciler stops hammering Let's Encrypt. The failed-cert dispatch must
 	// respect that cap — retrying a capped row every tick just re-caps it and
 	// churns LE into rate-limiting the whole account ("too many failed
-	// authorizations"). Observed live on the aramapp fleet: ~45 hopeless
+	// authorizations"). Observed live on a production fleet: ~45 hopeless
 	// Cloudflare-fronted domains cycling failed→retry→cap→failed every tick.
 	t.Run("le mode failed cert AT the cap is terminal, no ACME hammer", func(t *testing.T) {
 		cp, kp := "/etc/ssl/jabali-selfsigned/example.com/cert.pem", "/etc/ssl/jabali-selfsigned/example.com/key.pem"

@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// JAB-211. Account wineworldc restored green — DB credentials checked out, the
+// JAB-211. Account examplejc restored green — DB credentials checked out, the
 // summary was clean — and every request returned a bare HTTP 500 with an empty
 // body. The migrated .user.ini held
 //
-//	auto_prepend_file = '/home/wineworldc/public_html/malcare-waf.php'
+//	auto_prepend_file = '/home/examplejc/public_html/malcare-waf.php'
 //
 // which is the SOURCE cPanel layout. On jabali the docroot is
 // /home/<user>/domains/<domain>/public_html, so the file was not there and PHP
@@ -20,7 +20,7 @@ import (
 //  1. auto_prepend_file was not in phpIniPathDirectives, so the loop skipped
 //     the line entirely.
 //  2. Even listed, it would still have passed: pathInJail reports TRUE for
-//     /home/wineworldc/..., because the path IS under the user's home. Jail
+//     /home/examplejc/..., because the path IS under the user's home. Jail
 //     membership is the wrong question for a prepend file — the right one is
 //     whether the file EXISTS. A path can be perfectly in-jail and still fatal
 //     the site.
@@ -31,7 +31,7 @@ import (
 // as a fix.
 
 // destDocroot is the jabali-layout docroot used across these tests.
-const destDocroot = "/home/wineworldc/domains/wineworld.co.il/public_html"
+const destDocroot = "/home/examplejc/domains/example-j.co.il/public_html"
 
 // existsOnly builds an exists func that reports true for exactly these paths.
 func existsOnly(paths ...string) func(string) bool {
@@ -45,10 +45,10 @@ func existsOnly(paths ...string) func(string) bool {
 func TestSanitizePhpIni_RemapsAutoPrependIntoDestDocroot(t *testing.T) {
 	t.Parallel()
 
-	in := `auto_prepend_file = '/home/wineworldc/public_html/malcare-waf.php'`
+	in := `auto_prepend_file = '/home/examplejc/public_html/malcare-waf.php'`
 	want := destDocroot + "/malcare-waf.php"
 
-	out, notes, changed := sanitizePhpIni(in, "wineworldc", destDocroot,
+	out, notes, changed := sanitizePhpIni(in, "examplejc", destDocroot,
 		existsOnly(want))
 
 	if !changed {
@@ -58,7 +58,7 @@ func TestSanitizePhpIni_RemapsAutoPrependIntoDestDocroot(t *testing.T) {
 	if !strings.Contains(out, want) {
 		t.Errorf("auto_prepend_file not remapped to the destination docroot:\n%s", out)
 	}
-	if strings.Contains(out, "/home/wineworldc/public_html/malcare-waf.php") {
+	if strings.Contains(out, "/home/examplejc/public_html/malcare-waf.php") {
 		t.Errorf("source-layout path survived:\n%s", out)
 	}
 	// Deleting the directive would also stop the 500 — and disable MalCare's
@@ -77,9 +77,9 @@ func TestSanitizePhpIni_DisablesAutoPrependWhenTargetMissing(t *testing.T) {
 
 	// The plugin directory was excluded from the migration, so nothing can be
 	// remapped. Leaving the directive would keep the site at 500 forever.
-	in := `auto_prepend_file = "/home/wineworldc/public_html/wordfence-waf.php"`
+	in := `auto_prepend_file = "/home/examplejc/public_html/wordfence-waf.php"`
 
-	out, notes, changed := sanitizePhpIni(in, "wineworldc", destDocroot,
+	out, notes, changed := sanitizePhpIni(in, "examplejc", destDocroot,
 		existsOnly( /* nothing exists */ ))
 
 	if !changed {
@@ -110,7 +110,7 @@ func TestSanitizePhpIni_LeavesResolvableAutoPrependAlone(t *testing.T) {
 	live := destDocroot + "/guard.php"
 	in := "auto_prepend_file = " + live
 
-	out, notes, changed := sanitizePhpIni(in, "wineworldc", destDocroot, existsOnly(live))
+	out, notes, changed := sanitizePhpIni(in, "examplejc", destDocroot, existsOnly(live))
 
 	if changed || out != in || notes != nil {
 		t.Errorf("a directive that already resolves must be left verbatim; "+
@@ -122,9 +122,9 @@ func TestSanitizePhpIni_AutoAppendGetsSameTreatment(t *testing.T) {
 	t.Parallel()
 
 	want := destDocroot + "/footer.php"
-	in := `auto_append_file = /home/wineworldc/public_html/footer.php`
+	in := `auto_append_file = /home/examplejc/public_html/footer.php`
 
-	out, _, changed := sanitizePhpIni(in, "wineworldc", destDocroot, existsOnly(want))
+	out, _, changed := sanitizePhpIni(in, "examplejc", destDocroot, existsOnly(want))
 
 	if !changed || !strings.Contains(out, want) {
 		t.Errorf("auto_append_file must be remapped like auto_prepend_file:\n%s", out)
@@ -137,10 +137,10 @@ func TestSanitizePhpIni_RemapsErrorLogDirectory(t *testing.T) {
 	// error_log is already in phpIniPathDirectives, but pathInJail says TRUE
 	// for the source path, so it survived and PHP then failed to open it. The
 	// directory is what has to exist, not the file.
-	in := `error_log = /home/wineworldc/public_html/php_errors.log`
+	in := `error_log = /home/examplejc/public_html/php_errors.log`
 	want := destDocroot + "/php_errors.log"
 
-	out, _, changed := sanitizePhpIni(in, "wineworldc", destDocroot, existsOnly(destDocroot))
+	out, _, changed := sanitizePhpIni(in, "examplejc", destDocroot, existsOnly(destDocroot))
 
 	if !changed || !strings.Contains(out, want) {
 		t.Errorf("in-jail-but-stale error_log path not remapped:\n%s", out)
@@ -154,9 +154,9 @@ func TestSanitizePhpIni_IncludePathDropsOnlyDeadElements(t *testing.T) {
 	// costs a failed stat on every include, and the live elements must survive
 	// untouched — including the relative "." entry.
 	live := destDocroot + "/lib"
-	in := `include_path = ".:/home/wineworldc/public_html/lib:/home/wineworldc/public_html/gone"`
+	in := `include_path = ".:/home/examplejc/public_html/lib:/home/examplejc/public_html/gone"`
 
-	out, notes, changed := sanitizePhpIni(in, "wineworldc", destDocroot, existsOnly(live))
+	out, notes, changed := sanitizePhpIni(in, "examplejc", destDocroot, existsOnly(live))
 
 	if !changed {
 		t.Fatal("expected changed=true")
@@ -207,9 +207,9 @@ func TestSanitizePhpIni_ExistingBehaviourUnchanged(t *testing.T) {
 func TestSanitizePhpIni_NoDocrootDoesNotInventPaths(t *testing.T) {
 	t.Parallel()
 
-	in := `auto_prepend_file = /home/wineworldc/public_html/malcare-waf.php`
+	in := `auto_prepend_file = /home/examplejc/public_html/malcare-waf.php`
 
-	out, _, changed := sanitizePhpIni(in, "wineworldc", "", existsOnly())
+	out, _, changed := sanitizePhpIni(in, "examplejc", "", existsOnly())
 
 	if changed && strings.Contains(out, "auto_prepend_file = /malcare-waf.php") {
 		t.Errorf("empty docroot produced a bogus absolute path:\n%s", out)

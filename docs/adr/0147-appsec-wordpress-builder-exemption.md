@@ -12,7 +12,7 @@ page builder (Elementor) saving a page POSTs arbitrary HTML/CSS/URLs inside
 JSON, which is indistinguishable from injection at the WAF: CRS 942550 (JSON
 SQLi) + 932370 (RCE) + 911100 (method) push the inbound anomaly score past 949110
 → AppSec issues a ~4h **ban on the editor's own IP** → every subsequent request
-(save, `wp-json`, `admin-ajax`) 403s → admin locked out. Hit on `malki-ins.co.il`
+(save, `wp-json`, `admin-ajax`) 403s → admin locked out. Hit on `example-p.co.il`
 during migration ops.
 
 The endpoints: `/wp-json/elementor/*`, `/wp-admin/admin-ajax.php`,

@@ -3,7 +3,7 @@
 //
 // JAB-201. The existing check verifies configuration — plugin active, drop-in
 // and constants present, Redis reachable — and reports green on all of it. On
-// brown-online.co.il every one of those passed while the page cache had never
+// example-h.co.il every one of those passed while the page cache had never
 // stored a single entry: the site was in maintenance mode, so WordPress emitted
 // nocache_headers() on every response and the fail-closed gate (GH #637)
 // correctly refused to store anything. The jcache log showed only MISS and

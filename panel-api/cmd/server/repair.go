@@ -1107,7 +1107,7 @@ func orphanMigrationStagingDirs(_ repairCtx) ([]string, error) {
 // no read → 403. domain_create now lays docroots down 2750 (setgid) so
 // new files inherit the www-data group; this repair retrofits sites
 // provisioned before that, or whose group ownership was clobbered by an
-// out-of-band restore / chown -R (GH reviews-il.co.il, 2026-06-16).
+// out-of-band restore / chown -R (GH example-l.co.il, 2026-06-16).
 //
 // Not destructive (it was until GH #2266, so Auto-Repair skipped it and
 // the row stayed Broken). It puts back the state domain create lays

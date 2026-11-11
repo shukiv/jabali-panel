@@ -47,17 +47,17 @@ func TestAuthoritativeRoute(t *testing.T) {
 	}{
 		{
 			name:   "cloudflare zone covered by token",
-			domain: "arama.co.il",
-			ns:     nsTable{answers: map[string][]string{"arama.co.il": {"kip.ns.cloudflare.com", "uma.ns.cloudflare.com"}}},
-			cf:     fakeZones{ids: map[string]string{"arama.co.il": "zone123"}},
-			want:   ProviderCloudflare, wantZone: "arama.co.il", wantID: "zone123",
+			domain: "example-a.co.il",
+			ns:     nsTable{answers: map[string][]string{"example-a.co.il": {"kip.ns.cloudflare.com", "uma.ns.cloudflare.com"}}},
+			cf:     fakeZones{ids: map[string]string{"example-a.co.il": "zone123"}},
+			want:   ProviderCloudflare, wantZone: "example-a.co.il", wantID: "zone123",
 		},
 		{
 			name:   "subdomain of cloudflare-hosted parent anchors on the parent zone",
-			domain: "pinat.pcc.co.il",
-			ns:     nsTable{answers: map[string][]string{"pcc.co.il": {"kip.ns.cloudflare.com"}}},
-			cf:     fakeZones{ids: map[string]string{"pcc.co.il": "zonepcc"}},
-			want:   ProviderCloudflare, wantZone: "pcc.co.il", wantID: "zonepcc",
+			domain: "pinat.example-e.co.il",
+			ns:     nsTable{answers: map[string][]string{"example-e.co.il": {"kip.ns.cloudflare.com"}}},
+			cf:     fakeZones{ids: map[string]string{"example-e.co.il": "zonepcc"}},
+			want:   ProviderCloudflare, wantZone: "example-e.co.il", wantID: "zonepcc",
 		},
 		{
 			name:   "cloudflare zone NOT covered by token",
@@ -68,10 +68,10 @@ func TestAuthoritativeRoute(t *testing.T) {
 		},
 		{
 			name:   "cloudflare zone but no token configured",
-			domain: "arama.co.il",
-			ns:     nsTable{answers: map[string][]string{"arama.co.il": {"kip.ns.cloudflare.com"}}},
+			domain: "example-a.co.il",
+			ns:     nsTable{answers: map[string][]string{"example-a.co.il": {"kip.ns.cloudflare.com"}}},
 			cf:     nil,
-			want:   ProviderNone, wantZone: "arama.co.il",
+			want:   ProviderNone, wantZone: "example-a.co.il",
 		},
 		{
 			name:   "jabali-authoritative zone",
@@ -99,16 +99,16 @@ func TestAuthoritativeRoute(t *testing.T) {
 		},
 		{
 			name:   "resolver outage is inconclusive (fail open)",
-			domain: "arama.co.il",
+			domain: "example-a.co.il",
 			ns:     nsTable{unreachable: true},
 			want:   ProviderNone,
 		},
 		{
 			name:   "cf zone lookup error surfaces as none",
-			domain: "arama.co.il",
-			ns:     nsTable{answers: map[string][]string{"arama.co.il": {"kip.ns.cloudflare.com"}}},
+			domain: "example-a.co.il",
+			ns:     nsTable{answers: map[string][]string{"example-a.co.il": {"kip.ns.cloudflare.com"}}},
 			cf:     fakeZones{err: errors.New("boom")},
-			want:   ProviderNone, wantZone: "arama.co.il",
+			want:   ProviderNone, wantZone: "example-a.co.il",
 		},
 	}
 	for _, c := range cases {

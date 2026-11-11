@@ -6,7 +6,7 @@ Before=slices.target
 [Slice]
 # JAB-273: a nightly all-tenant sweep (disk-maintenance, cache-doctor,
 # retention, AIDE, sso-reaper) must never be able to exhaust the box and lock
-# the operator out of sshd. newaramaapp wedged into a load-385 kswapd
+# the operator out of sshd. A production box wedged into a load-385 kswapd
 # death-spiral when the disk-maintenance du fan-out filled RAM on a swapless
 # box; capping the whole maintenance cohort here contains the blast radius.
 #

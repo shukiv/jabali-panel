@@ -7,7 +7,7 @@ import "testing"
 // source path. A path-traversal or shell-shaped "domain" must be rejected
 // so a tampered manifest can't escape the vhost tree.
 func TestIsHostnameLike(t *testing.T) {
-	ok := []string{"example.com", "lychee-fruits.co.il", "a.b.c.example.net", "x-1.io"}
+	ok := []string{"example.com", "example-b.co.il", "a.b.c.example.net", "x-1.io"}
 	bad := []string{
 		"",             // empty
 		"nodot",        // no dot

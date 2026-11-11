@@ -28,7 +28,7 @@ import (
 // when we are authoritative, or the customer's Cloudflare zone through the
 // operator's stored API token. Domains with neither provider are parked
 // with a clear reason and re-checked daily — never retried against LE
-// (whose failed-authorization quota is what melted the aramapp fleet).
+// (whose failed-authorization quota is what melted a production fleet).
 
 const (
 	// dns01IssueTimeout bounds one certbot DNS-01 round trip: two hook
