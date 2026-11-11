@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 )
 
 // convertRewriteRule handles `RewriteRule pattern substitution [flags]`,
@@ -214,6 +215,14 @@ func convertPHP(res *Result, directive string, args []string, ln line) {
 	// rule must not set them, whatever the value.
 	if isSensitivePHP(name) {
 		res.warnSec(ln.num, ln.text, "`"+name+"` cannot be set from a site config on this server — not converted")
+		return
+	}
+	// Anything else the nginx-rules validator refuses (a name that is not a
+	// plain ini name, a control character, a '$' nginx would expand from the
+	// request) is dropped here too, so one bad line never makes the
+	// validator refuse the whole import.
+	if why := nginxrules.PHPSettingRefusal(name, value); why != "" {
+		res.warnSec(ln.num, ln.text, why+" — not converted")
 		return
 	}
 	// A path into the source control panel's own tree (cPanel's MultiPHP
