@@ -13,7 +13,7 @@ import (
 //
 // Two steps own the same MySQL account whenever the source DB user is spelled
 // the same as the panel-managed one — the norm when the destination account
-// keeps the source's name (vidoflexco_db -> vidoflexco_db):
+// keeps the source's name (shopacct_db -> shopacct_db):
 //
 //  1. the dump loop creates it with a fresh TEMP password and hands that to
 //     the app-config rewriter, which writes it into wp-config.php;
@@ -32,20 +32,20 @@ func TestRewriteWordPress_KeepsSourcePasswordWhenCompatUserOwnsAccount(t *testin
 	t.Parallel()
 
 	const wpConfig = `<?php
-define('DB_NAME', 'vidoflexco_db');
-define('DB_USER', 'vidoflexco_db');
+define('DB_NAME', 'shopacct_db');
+define('DB_USER', 'shopacct_db');
 define('DB_PASSWORD', 'origPass14chr');
 define('DB_HOST', 'localhost');
 `
 
 	creds := map[string]DBCredential{
-		"vidoflexco_db": {
-			DBName:   "vidoflexco_db",
-			DBUser:   "vidoflexco_db",
+		"shopacct_db": {
+			DBName:   "shopacct_db",
+			DBUser:   "shopacct_db",
 			Password: "TEMPgenerated26charvalue00",
 			// Set by the compat pass once the source user was recreated with
 			// its native hash + granted on the namespaced destination.
-			PreservedUsers: map[string]bool{"vidoflexco_db": true},
+			PreservedUsers: map[string]bool{"shopacct_db": true},
 		},
 	}
 
@@ -62,7 +62,7 @@ define('DB_HOST', 'localhost');
 	}
 	// The preserved user must also survive (it is what the source password
 	// authenticates against).
-	if !strings.Contains(out, "define('DB_USER', 'vidoflexco_db');") {
+	if !strings.Contains(out, "define('DB_USER', 'shopacct_db');") {
 		t.Errorf("the original DB_USER must survive on the preserve path:\n%s", out)
 	}
 	// The rest still has to be rewritten; only user + password are special.
