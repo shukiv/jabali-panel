@@ -454,4 +454,15 @@ describe("MailDomainsPage — send-only domains", () => {
     expect(within(sendRow).queryByRole("button", { name: /Actions for/i })).not.toBeInTheDocument();
     expect(within(onRow).getByRole("button", { name: /Actions for/i })).toBeInTheDocument();
   });
+
+  it("keeps Disable and Delete for a domain with mail on but hosted by another provider", async () => {
+    const google = { ...ROWS[0], id: "d-g", name: "google.test", mail_hosted_elsewhere: true };
+    mocked.get.mockReset().mockResolvedValue({ data: { data: [google], total: 1, page: 1, page_size: 1 } });
+    renderPage();
+    const row = (await screen.findByText("google.test")).closest("tr") as HTMLElement;
+    expect(within(row).getByText("Send-only")).toBeInTheDocument();
+    fireEvent.click(within(row).getByRole("button", { name: /Actions for/i }));
+    expect(await screen.findByRole("menuitem", { name: "Disable" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
 });

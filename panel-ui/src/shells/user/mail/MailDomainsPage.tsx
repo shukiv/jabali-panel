@@ -10,8 +10,9 @@
 // destructive mail-only teardown (POST /domains/:id/email/purge) — it removes
 // mailboxes + mail certs + mail DNS but keeps the website + DNS zone.
 //
-// A domain whose mail is hosted elsewhere is listed too once it has send-only
-// accounts (#2491), tagged "Send-only" and without the mail actions.
+// A domain whose mail is hosted elsewhere is tagged "Send-only" (#2491). One
+// with mail off is listed too once it has send-only accounts, without the mail
+// actions.
 import {
   Alert,
   Button,
@@ -67,10 +68,10 @@ interface MailDomainRow {
   // GH #1612: true when the panel does NOT host this domain's DNS (external DNS).
   // Drives the "External DNS" tag + the "DNS records" action.
   dns_disabled?: boolean;
-  // The domain's mail is off or with another provider; it is listed for its
-  // send-only accounts (#2491). Tagged "Send-only", with no row actions:
-  // there is no mail here to disable or delete, and Jabali's mail DNS
-  // records would be wrong for it.
+  // The domain's mail is off or with another provider, so its accounts are
+  // send-only (#2491). Tagged "Send-only". A mail-off domain is listed only
+  // for those accounts and gets no row actions: there is no mail here to
+  // disable or delete, and Jabali's mail DNS records would be wrong for it.
   mail_hosted_elsewhere?: boolean;
 }
 
@@ -251,7 +252,7 @@ export function MailDomainsPage() {
       // row stays compact. Disable confirms via a modal (a Popconfirm can't
       // anchor cleanly inside a dropdown); Delete opens the type-to-confirm modal.
       render: (_v, row) =>
-        row.mail_hosted_elsewhere ? null : (
+        !row.email_enabled ? null : (
           <Dropdown
             trigger={["click"]}
             menu={{
