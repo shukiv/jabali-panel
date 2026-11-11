@@ -34,7 +34,7 @@ func TestEveryPinnedDialAsksForEd25519First(t *testing.T) {
 			return nil
 		}
 		checked += pins
-		if got := strings.Count(s, algos); got != pins {
+		if strings.Count(s, algos) != pins || strings.Count(s, "migrate.SSHHandshake(") != pins || strings.Contains(s, "ssh.NewClientConn(") {
 			offenders = append(offenders, path)
 		}
 		return nil
@@ -46,6 +46,6 @@ func TestEveryPinnedDialAsksForEd25519First(t *testing.T) {
 		t.Fatal("found no PinningHostKeyCallback uses — the dial pattern has changed and this test checks nothing")
 	}
 	for _, o := range offenders {
-		t.Errorf("%s pins the host key without HostKeyAlgorithms: migrate.HostKeyAlgorithms()", o)
+		t.Errorf("%s pins the host key without HostKeyAlgorithms: migrate.HostKeyAlgorithms() and migrate.SSHHandshake (or still calls ssh.NewClientConn)", o)
 	}
 }

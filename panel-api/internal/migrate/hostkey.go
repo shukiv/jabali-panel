@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -68,6 +69,92 @@ func HostKeyAlgorithms() []string {
 		ssh.KeyAlgoRSA,
 		ssh.InsecureKeyAlgoDSA,
 	}
+}
+
+// hostKeyAlgorithmGroups splits HostKeyAlgorithms by key type, in the same
+// order. A source has at most one host key per type; asking for one group per
+// handshake shows each of them in turn.
+var hostKeyAlgorithmGroups = [][]string{
+	{ssh.KeyAlgoED25519},
+	{ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521},
+	{ssh.KeyAlgoRSASHA512, ssh.KeyAlgoRSASHA256, ssh.KeyAlgoRSA},
+	{ssh.InsecureKeyAlgoDSA},
+}
+
+// DialError is a TCP dial failure from SSHHandshake, kept apart from
+// handshake failures so callers can word them differently.
+type DialError struct{ Err error }
+
+func (e *DialError) Error() string { return e.Err.Error() }
+func (e *DialError) Unwrap() error { return e.Err }
+
+// SSHHandshake opens a connection with dial and runs the SSH client handshake
+// with cfg against addr.
+//
+// With a pin (expectedFP), it asks for one host-key type at a time —
+// ed25519, then ECDSA, then RSA, then DSA — and dials again with the next
+// type when the source's key of that type does not match the pin or the
+// source has none. Only a key that matches the pin is ever accepted, and
+// credentials are sent only after it is. So a pin taken from any of the
+// source's keys works (pins the wizard recorded before ed25519 came first are
+// ECDSA). When no key matches, the error lists each key the source presented.
+//
+// Without a pin it makes one handshake with cfg as given (trust on first use,
+// as PinningHostKeyCallback documents).
+func SSHHandshake(dial func() (net.Conn, error), addr string, cfg *ssh.ClientConfig, expectedFP string) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	expected := normalizeFingerprint(expectedFP)
+	if expected == "" {
+		return sshHandshakeOnce(dial, addr, cfg)
+	}
+	var presented []string
+	var lastErr error
+	for _, group := range hostKeyAlgorithmGroups {
+		c := *cfg
+		c.HostKeyAlgorithms = append([]string(nil), group...)
+		var seen ssh.PublicKey
+		pin := PinningHostKeyCallback(expectedFP)
+		c.HostKeyCallback = func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			seen = key
+			return pin(hostname, remote, key)
+		}
+		sc, chans, reqs, err := sshHandshakeOnce(dial, addr, &c)
+		if err == nil {
+			return sc, chans, reqs, nil
+		}
+		var de *DialError
+		if errors.As(err, &de) {
+			return nil, nil, nil, err
+		}
+		switch {
+		case seen == nil:
+			// No key of this type on the source (or the handshake broke
+			// before one was shown): try the next type.
+			lastErr = err
+		case normalizeFingerprint(ssh.FingerprintSHA256(seen)) != expected:
+			presented = append(presented, seen.Type()+" "+ssh.FingerprintSHA256(seen))
+		default:
+			// The key matched; a later step (authentication) failed.
+			return nil, nil, nil, err
+		}
+	}
+	if len(presented) == 0 {
+		return nil, nil, nil, lastErr
+	}
+	return nil, nil, nil, fmt.Errorf("host key fingerprint mismatch for %s: none of the source's host keys matches the pin %s; it presented %s",
+		addr, expectedFP, strings.Join(presented, ", "))
+}
+
+func sshHandshakeOnce(dial func() (net.Conn, error), addr string, cfg *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
+	conn, err := dial()
+	if err != nil {
+		return nil, nil, nil, &DialError{Err: err}
+	}
+	sc, chans, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	if err != nil {
+		conn.Close()
+		return nil, nil, nil, err
+	}
+	return sc, chans, reqs, nil
 }
 
 // normalizeFingerprint canonicalizes a SHA256 fingerprint for comparison:

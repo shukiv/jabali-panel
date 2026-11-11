@@ -107,13 +107,16 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 		Timeout:           15 * time.Second,
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	conn, err := migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("cpanel.Connect: tcp dial %s: %w", addr, err)
+	// SSHHandshake tries the source's host keys one type at a time and
+	// accepts only the one that matches the pin (migrate/hostkey.go).
+	c, ch, reqs, err := migrate.SSHHandshake(func() (net.Conn, error) {
+		return migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
+	}, addr, cfg, secret.ExpectedHostKey)
+	var dialErr *migrate.DialError
+	if errors.As(err, &dialErr) {
+		return nil, fmt.Errorf("cpanel.Connect: tcp dial %s: %w", addr, dialErr.Err)
 	}
-	c, ch, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
-		conn.Close()
 		if strings.Contains(err.Error(), "unable to authenticate") || strings.Contains(err.Error(), "no supported methods remain") {
 			return nil, fmt.Errorf("cpanel.Connect: source SSH server rejected the credentials for user %q — check the password or key is correct for that user, that the user exists on the source, and note the server may have PasswordAuthentication=no (upload an SSH PRIVATE KEY in the wizard's Connection step instead): %w", user, err)
 		}

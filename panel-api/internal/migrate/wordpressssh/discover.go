@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/hostreserve"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -77,14 +78,17 @@ func Connect(ctx context.Context, host string, port int, user string, secret mig
 		HostKeyAlgorithms: migrate.HostKeyAlgorithms(),
 		Timeout:           15 * time.Second,
 	}
-	conn, err := migrate.DialTCP(ctx, host, port, allowPrivate, 15*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("wordpressssh.Connect: tcp dial: %w", err)
-	}
 	addr := host + ":" + strconv.Itoa(port)
-	c, ch, reqs, err := ssh.NewClientConn(conn, addr, cfg)
+	// SSHHandshake tries the source's host keys one type at a time and
+	// accepts only the one that matches the pin (migrate/hostkey.go).
+	c, ch, reqs, err := migrate.SSHHandshake(func() (net.Conn, error) {
+		return migrate.DialTCP(ctx, host, port, allowPrivate, 15*time.Second)
+	}, addr, cfg, secret.ExpectedHostKey)
+	var dialErr *migrate.DialError
+	if errors.As(err, &dialErr) {
+		return nil, fmt.Errorf("wordpressssh.Connect: tcp dial: %w", dialErr.Err)
+	}
 	if err != nil {
-		conn.Close()
 		// Auth rejected — most often a Cloudways/managed host that disables
 		// password auth for the master user and requires a key. Catch both
 		// "attempted methods [none]" and "[none password]".
