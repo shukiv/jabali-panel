@@ -1290,50 +1290,10 @@ func cpanelRestoreCallback(
 						p.parsed.SourceUser, job.SourceUser))
 					break
 				}
-				for _, root := range []string{
-					filepath.Join(p.parsed.ExtractDir, "cpmove-"+p.parsed.SourceUser, "userdata"),
-					filepath.Join(p.parsed.ExtractDir, "userdata"),
-					filepath.Join(p.parsed.ExtractDir, "cp", p.parsed.SourceUser, "userdata"),
-				} {
-					entries, derr := os.ReadDir(root)
-					if derr != nil {
-						continue
-					}
-					for _, e := range entries {
-						if e.IsDir() {
-							continue
-						}
-						name := e.Name()
-						if strings.HasSuffix(name, ".php-fpm.yaml") ||
-							strings.HasSuffix(name, ".php-fpm.yaml.transferred") ||
-							strings.HasSuffix(name, "_SSL") ||
-							name == "main" || name == "cache.json" || name == "scope" {
-							continue
-						}
-						body, rerr := os.ReadFile(filepath.Join(root, name))
-						if rerr != nil {
-							continue
-						}
-						dom := name
-						var docroot string
-						for _, ln := range strings.Split(string(body), "\n") {
-							ln = strings.TrimSpace(ln)
-							if strings.HasPrefix(ln, "documentroot:") {
-								docroot = strings.TrimSpace(strings.TrimPrefix(ln, "documentroot:"))
-								docroot = strings.Trim(docroot, `'"`)
-							}
-							if strings.HasPrefix(ln, "servername:") {
-								dom = strings.Trim(strings.TrimSpace(strings.TrimPrefix(ln, "servername:")), `'"`)
-							}
-						}
-						if docroot == "" || dom == "" {
-							continue
-						}
-						rsyncRows = append(rsyncRows, rsyncPair{Dom: dom, SrcPath: docroot})
-					}
-					if len(rsyncRows) > 0 {
-						break
-					}
+				// Addon sites come back keyed by their addon domain, not the
+				// backing subdomain their userdata file is named after.
+				for _, s := range cpanel.UserdataSiteDocroots(p.parsed) {
+					rsyncRows = append(rsyncRows, rsyncPair{Dom: s.Domain, SrcPath: s.DocRoot})
 				}
 			}
 			daHomeHandled := false

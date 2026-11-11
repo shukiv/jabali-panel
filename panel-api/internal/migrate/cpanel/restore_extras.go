@@ -31,6 +31,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/forwarderops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -85,6 +86,11 @@ func ImportExtras(
 	{
 		subs := detectSubDomains(parsed, userdataPath)
 		res.SubdomainsDetected = len(subs)
+		// A subdomain that backs an addon domain served the addon's site on
+		// cPanel; its files now go to the addon's docroot, so it is created
+		// as a 301 to the addon instead of a blank page (addon_domains.go).
+		addons, addonWarnings := AddonDomainsBySubdomain(parsed)
+		res.Skipped = append(res.Skipped, addonWarnings...)
 		for _, n := range subs {
 			if n == "" {
 				continue
@@ -106,16 +112,6 @@ func ImportExtras(
 					docRoot = override
 				}
 			}
-			if _, err := agentCli.Call(ctx, "domain.create", map[string]any{
-				"domain_id":      domainID,
-				"domain":         n,
-				"username":       targetUsername,
-				"doc_root":       docRoot,
-				"index_priority": "html_first",
-			}); err != nil {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("subdomain_skip:agent_create:%s:%v", n, err))
-				continue
-			}
 			now := time.Now()
 			d := &models.Domain{
 				ID:            domainID,
@@ -127,6 +123,27 @@ func ImportExtras(
 				GhostState:    "unchecked",
 				CreatedAt:     now,
 				UpdatedAt:     now,
+			}
+			createParams := map[string]any{
+				"domain_id":      domainID,
+				"domain":         n,
+				"username":       targetUsername,
+				"doc_root":       docRoot,
+				"index_priority": "html_first",
+			}
+			if addon := addons[n]; addon != "" {
+				// Set on the row at create (a later Update's column allowlist
+				// could drop it) and rendered into the vhost now, rather than
+				// serving an empty docroot until the reconciler's next pass.
+				to, typ := "https://"+addon+"/", "301"
+				d.RedirectAllTo, d.RedirectAllType = &to, &typ
+				createParams["redirect_directives"] = redirects.Compile(d)
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"subdomain_redirect:%s → %s (backing subdomain of cPanel addon domain %s)", n, to, addon))
+			}
+			if _, err := agentCli.Call(ctx, "domain.create", createParams); err != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("subdomain_skip:agent_create:%s:%v", n, err))
+				continue
 			}
 			if err := markMigratedOwnership(d, now); err != nil {
 				res.Skipped = append(res.Skipped, fmt.Sprintf("subdomain_skip:ownership_token:%s:%v", n, err))
@@ -922,6 +939,9 @@ func isPlainDomainUserdata(name string) bool {
 // there — but the plain file is now the primary source.
 func scanUserdataPHPVersions(parsed *ParsedTarball) map[string][]string {
 	roots := userdataRoots(parsed)
+	// An addon site's userdata file is named after its backing subdomain; the
+	// version belongs to the addon, which is the site (see addon_domains.go).
+	addons, _ := AddonDomainsBySubdomain(parsed)
 	out := map[string][]string{}
 	for _, root := range roots {
 		entries, err := os.ReadDir(root)
@@ -942,7 +962,7 @@ func scanUserdataPHPVersions(parsed *ParsedTarball) map[string][]string {
 			if ver == "" {
 				continue
 			}
-			out[ver] = append(out[ver], domain)
+			out[ver] = append(out[ver], SiteDomain(addons, domain))
 		}
 		if len(out) > 0 {
 			break
