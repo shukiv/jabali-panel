@@ -17,7 +17,7 @@ import (
 func TestMailboxLockoutNotice_DistinguishesNoHashFromFlagOff(t *testing.T) {
 	t.Parallel()
 
-	withFlag := mailboxLockoutNotice("shopacct", "shop.example", true)
+	withFlag := mailboxLockoutNotice("shopacct", "shop.example", lockoutNoSourceEntry)
 	if strings.Contains(withFlag, "use --preserve-source-state") {
 		t.Errorf("must not suggest a flag that is already active:\n%s", withFlag)
 	}
@@ -28,7 +28,7 @@ func TestMailboxLockoutNotice_DistinguishesNoHashFromFlagOff(t *testing.T) {
 		t.Errorf("should say a re-run is pointless — that is the cost being avoided:\n%s", withFlag)
 	}
 
-	withoutFlag := mailboxLockoutNotice("shopacct", "shop.example", false)
+	withoutFlag := mailboxLockoutNotice("shopacct", "shop.example", lockoutPreserveOff)
 	if !strings.Contains(withoutFlag, "use --preserve-source-state") {
 		t.Errorf("with the flag off the hint is correct and must stay:\n%s", withoutFlag)
 	}

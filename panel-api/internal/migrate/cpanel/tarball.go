@@ -34,6 +34,14 @@ type ParsedTarball struct {
 	// <HomeDir>/mail at ImportMailboxes time so cpanel callers
 	// don't need to set it.
 	MailRoot string
+	// MailShadowDir is where an SSH pull staged the source's
+	// <home>/etc/<domain>/shadow files (agent migration.pull_mail_shadow),
+	// as <MailShadowDir>/<domain>/shadow. Empty for an offline cpmove, whose
+	// homedir/etc carries them. See mail_shadow.go.
+	MailShadowDir string
+	// MailShadowUnreadable lists domains whose shadow file the pull could not
+	// read on the source (the account had no access to it).
+	MailShadowUnreadable []string
 	// MySQLDumps lists every per-database SQL file. cPanel layout:
 	// cp/<user>/mysql/<dbname>.sql.
 	MySQLDumps []string

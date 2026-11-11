@@ -13,6 +13,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/domainops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailboxops"
@@ -204,7 +205,7 @@ func ImportMailboxes(ctx context.Context, parsed *ParsedTarball, agentCli agent.
 		res.Skipped = append(res.Skipped, "mailbox_skip:cannot verify mail domain ownership (no repositories) — nothing pushed")
 		return res, nil
 	}
-	rowMsgs, allowedDomains := insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, targetUserID, mbRepo, domainsRepo, res)
+	rowMsgs, allowedDomains := insertMailboxPanelRows(ctx, mailRoot, parsed.OwnerEmail, preserveCreds, mailShadowSourceFor(parsed), targetUserID, mbRepo, domainsRepo, res)
 	res.Skipped = append(res.Skipped, rowMsgs...)
 	if len(allowedDomains) == 0 {
 		if res.MaildirsFound > 0 {
@@ -261,6 +262,7 @@ func insertMailboxPanelRows(
 	mailRoot string,
 	ownerEmail string,
 	preserveCreds bool,
+	shadow mailShadowSource,
 	targetUserID string,
 	mbRepo repository.MailboxRepository,
 	domainsRepo repository.DomainRepository,
@@ -275,6 +277,24 @@ func insertMailboxPanelRows(
 			allowed = append(allowed, name)
 		}
 	}
+	// cPanel's <domain>/shadow (mail_shadow.go), read once per domain and only
+	// for domains already verified as the migrated user's. A HestiaCP
+	// conf/passwd hash, when present, wins: the two never coexist on a source.
+	shadows := map[string]cpanelMailShadow{}
+	credFor := func(dom, local, hestiaHash string) sourceMailCred {
+		if hestiaHash != "" {
+			return sourceMailCred{hash: hestiaHash}
+		}
+		m, ok := shadows[dom]
+		if !ok {
+			m = shadow.read(dom)
+			shadows[dom] = m
+			if line := m.summary(dom); line != "" {
+				msgs = append(msgs, line)
+			}
+		}
+		return m.cred(local, shadow.unreadable[domainops.NormalizeDomainName(dom)])
+	}
 
 	// Owner/default account: top-level mail/{cur,new} → one panel
 	// mailbox row keyed off OwnerEmail (<sourceUser>@<primaryDomain>).
@@ -288,8 +308,8 @@ func insertMailboxPanelRows(
 					msgs = append(msgs, refusal)
 				} else {
 					allow(dn)
-					srcHash := loadSourceMailPasswords(filepath.Join(mailRoot, dn))[lp]
-					msgs = append(msgs, insertOneMailboxRow(ctx, lp, dn, srcHash, preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+					src := credFor(dn, lp, loadSourceMailPasswords(filepath.Join(mailRoot, dn))[lp])
+					msgs = append(msgs, insertOneMailboxRow(ctx, lp, dn, src, preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
 				}
 			}
 		}
@@ -342,7 +362,7 @@ func insertMailboxPanelRows(
 				continue
 			}
 			seen[localPart] = true
-			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, credFor(name, localPart, srcPwds[localPart]), preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
 		}
 		// GH #327: HestiaCP creates a mail account with `mkdir mail/<dom>/<acct>`
 		// but dovecot only materializes cur/new/tmp on first delivery/login — so a
@@ -356,7 +376,7 @@ func insertMailboxPanelRows(
 				continue
 			}
 			seen[localPart] = true
-			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, srcPwds[localPart], preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
+			msgs = append(msgs, insertOneMailboxRow(ctx, localPart, name, credFor(name, localPart, srcPwds[localPart]), preserveCreds, targetUserID, mbRepo, domainsRepo, res)...)
 		}
 	}
 	return msgs, allowed
@@ -386,13 +406,14 @@ func ownedMailDomain(ctx context.Context, domainsRepo repository.DomainRepositor
 func insertOneMailboxRow(
 	ctx context.Context,
 	localPart, domainName string,
-	srcHash string,
+	src sourceMailCred,
 	preserveCreds bool,
 	targetUserID string,
 	mbRepo repository.MailboxRepository,
 	domainsRepo repository.DomainRepository,
 	res *MailImportResult,
 ) []string {
+	srcHash := src.hash
 	// Re-checked here, not only by the caller's per-domain gate: this is the
 	// function that creates a row or retrofits a password onto an existing one,
 	// and it must never do either on a domain the migrated user does not own.
@@ -477,16 +498,19 @@ func insertOneMailboxRow(
 	// JAB-208: the reason matters. Telling an operator who ALREADY passed
 	// --preserve-source-state to pass it reads as a plumbing failure and costs
 	// them a re-run of the whole restore to find out nothing changed. There are
-	// two distinct causes and only one of them is actionable:
+	// several causes and the notice names which one (see lockoutCause):
 	//
-	//   flag off        -> preservation was never attempted; the hint is right.
-	//   flag on, no hash -> nothing portable existed to carry. A cPanel
-	//                       system-account mailbox authenticates against
-	//                       /etc/shadow, so ~/etc/<domain>/shadow holds no
-	//                       entry for it; a hash Stalwart can't verify
-	//                       ({PLAIN}, unknown scheme) is dropped too.
-	//                       Re-running changes nothing.
-	return []string{mailboxLockoutNotice(localPart, domainName, preserveCreds)}
+	//   flag off              -> preservation was never attempted; the hint is right.
+	//   no entry              -> nothing to carry (e.g. a cPanel account's default
+	//                            mailbox signs in with the system password).
+	//   unverifiable scheme   -> an entry Stalwart cannot verify ({PLAIN}, unknown).
+	//   locked on the source  -> the entry is disabled there (! or *).
+	//   source unreadable     -> the account could not read its domain's file.
+	cause := src.cause
+	if !preserveCreds {
+		cause = lockoutPreserveOff
+	}
+	return []string{mailboxLockoutNotice(localPart, domainName, cause)}
 }
 
 // loadSourceMailPasswords reads a HestiaCP dovecot passwd-file at
@@ -787,17 +811,31 @@ func reconcileMailCounts(found int, pushed int64, agentSkipped []string) []strin
 
 // mailboxLockoutNotice builds the "password not carried" summary line.
 //
-// preserveActive distinguishes the two causes: with the flag off the operator
-// can act on the hint, with it on there was simply no portable hash and saying
-// otherwise sends them to re-run a restore that cannot behave differently
-// (JAB-208).
-func mailboxLockoutNotice(localPart, domainName string, preserveActive bool) string {
-	if preserveActive {
+// cause names why: with preserve off the operator can act on the hint; with it
+// on, saying otherwise sends them to re-run a restore that cannot behave
+// differently (JAB-208), so the line says what the source held instead, and
+// claims a re-run changes nothing only where that is true.
+func mailboxLockoutNotice(localPart, domainName string, cause lockoutCause) string {
+	const locked = "the mailbox owner is locked out until you reset it in the panel"
+	switch cause {
+	case lockoutPreserveOff:
 		return fmt.Sprintf(
-			"mailbox_rows: created %s@%s with a NEW password — the source had no portable password hash for this mailbox (a cPanel system-account mailbox authenticates against the system password, not a mail hash), so --preserve-source-state had nothing to carry; the mailbox owner is locked out until you reset it in the panel. Re-running the restore will not change this.",
+			"mailbox_rows: created %s@%s with a NEW password — the ORIGINAL mail password was NOT migrated; "+locked+" (use --preserve-source-state on a trusted same-owner migration to carry the source password)",
 			localPart, domainName)
+	case lockoutUnverifiableScheme:
+		return fmt.Sprintf(
+			"mailbox_rows: created %s@%s with a NEW password — the source's password hash for this mailbox uses a scheme the mail server cannot verify, so --preserve-source-state could not carry it; "+locked+". Re-running the restore will not change this.",
+			localPart, domainName)
+	case lockoutLockedOnSource:
+		return fmt.Sprintf(
+			"mailbox_rows: created %s@%s with a NEW password — the mailbox was locked or suspended on the source (its password entry is disabled), so there was no password to carry; this is not a migration failure. "+locked+". Re-running the restore will not change this.",
+			localPart, domainName)
+	case lockoutSourceUnreadable:
+		return fmt.Sprintf(
+			"mailbox_rows: created %s@%s with a NEW password — the source's password file for %s was not readable by the source account, so its password could not be carried; "+locked+". Fixing that file's ownership on the source and re-running the restore would carry it.",
+			localPart, domainName, domainName)
 	}
 	return fmt.Sprintf(
-		"mailbox_rows: created %s@%s with a NEW password — the ORIGINAL mail password was NOT migrated; the mailbox owner is locked out until you reset it in the panel (use --preserve-source-state on a trusted same-owner migration to carry the source password)",
+		"mailbox_rows: created %s@%s with a NEW password — the source had no portable password hash for this mailbox (no entry in its mail password file; a cPanel account's default mailbox signs in with the account's system password, not a mail hash), so --preserve-source-state had nothing to carry; "+locked+". Re-running the restore will not change this.",
 		localPart, domainName)
 }
