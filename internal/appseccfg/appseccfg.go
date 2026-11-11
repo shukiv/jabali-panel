@@ -378,14 +378,14 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,no
 #     other family (SQLi, XSS, LFI, traversal, scanner detection) stays fully
 #     active on this path.
 #   - v[0-9]+ so a future API version can't silently re-break saves.
-# 942100 vs wp-admin/admin-ajax.php (newzaps, observed 2026-08-02..03).
+# 942100 vs wp-admin/admin-ajax.php (a production box, observed 2026-08-02..03).
 # admin-ajax.php is WordPress's general-purpose AJAX endpoint: every plugin
 # and the block editor POST arbitrary user-authored content through it —
 # post bodies, meta values, saved queries, form-builder field definitions.
 # CRS 942100 is libinjection, which scores on SQL-shaped text rather than a
 # fixed pattern, so ordinary editorial content ("... 1 or 2 items", quoted
 # fragments, anything resembling a boolean clause) reads as SQLi. Measured on
-# newzaps: 26 denies across 5 source addresses, including a consumer ISP
+# That box: 26 denies across 5 source addresses, including a consumer ISP
 # address repeatedly locked out of the site's own wp-admin.
 #
 # 9599201 above already drops 911100/942550/932370 here unconditionally, but

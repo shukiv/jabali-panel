@@ -218,7 +218,7 @@ func TestCloudflareDNS_RemoveLabel(t *testing.T) {
 func TestCloudflareDNS_ChallengeTXTCustomerZone(t *testing.T) {
 	c, f := newTestCFDNS(t)
 	ctx := context.Background()
-	name := "_acme-challenge.arama.co.il"
+	name := "_acme-challenge.example-a.co.il"
 	if err := c.SetChallengeTXT(ctx, "zone-cust", name, "v1"); err != nil {
 		t.Fatal(err)
 	}
@@ -261,16 +261,16 @@ func TestCloudflareDNS_ChallengeTXTCustomerZone(t *testing.T) {
 func TestCloudflareDNS_FindZoneID(t *testing.T) {
 	c, f := newTestCFDNS(t)
 	f.mu.Lock()
-	f.zones["arama.co.il"] = "zid-1"
+	f.zones["example-a.co.il"] = "zid-1"
 	f.mu.Unlock()
 	ctx := context.Background()
-	id, err := c.FindZoneID(ctx, "arama.co.il")
+	id, err := c.FindZoneID(ctx, "example-a.co.il")
 	if err != nil || id != "zid-1" {
 		t.Fatalf("FindZoneID = %q, %v", id, err)
 	}
 	// A zone the token cannot see returns "" with NO error — the caller
 	// turns that into "customer must grant access", not a retry loop.
-	id, err = c.FindZoneID(ctx, "uncovered.co.il")
+	id, err = c.FindZoneID(ctx, "example-k.co.il")
 	if err != nil || id != "" {
 		t.Fatalf("uncovered zone: FindZoneID = %q, %v", id, err)
 	}

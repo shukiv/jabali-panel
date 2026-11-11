@@ -21,7 +21,7 @@ func TestClassify_HitOnSecondFetchIsCaching(t *testing.T) {
 	}
 }
 
-// The brown-online.co.il case: every configuration check passed, and the site
+// The example-h.co.il case: every configuration check passed, and the site
 // had never cached a single response because maintenance mode emitted
 // nocache_headers() on every request. The probe has to name THAT, not just
 // report "no HIT" — the operator can act on the cause, not the symptom.

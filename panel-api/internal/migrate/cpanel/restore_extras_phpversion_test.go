@@ -71,7 +71,7 @@ func writeUserdata(t *testing.T, versions map[string]string) *ParsedTarball {
 // userdata file. Before the fix this returned an empty map.
 func TestDetectPHPVersionsPerDomain_ReadsPlainUserdataNotFPMYaml(t *testing.T) {
 	parsed := writeUserdata(t, map[string]string{
-		"otzma-p.co.il":    "ea-php74",
+		"example-g.co.il":  "ea-php74",
 		"old.arizot-e.com": "ea-php81",
 		"third.example":    "ea-php74",
 	})
@@ -79,7 +79,7 @@ func TestDetectPHPVersionsPerDomain_ReadsPlainUserdataNotFPMYaml(t *testing.T) {
 	got := detectPHPVersionsPerDomain(parsed)
 
 	want := map[string][]string{
-		"7.4": {"otzma-p.co.il", "third.example"},
+		"7.4": {"example-g.co.il", "third.example"},
 		"8.1": {"old.arizot-e.com"},
 	}
 	if !reflect.DeepEqual(got, want) {

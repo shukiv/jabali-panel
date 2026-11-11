@@ -8,7 +8,7 @@ import (
 )
 
 func TestLooksLikePleskSubscription(t *testing.T) {
-	ok := []string{"lychee-fruits.co.il", "example.com", "a.b-c_d.net"}
+	ok := []string{"example-b.co.il", "example.com", "a.b-c_d.net"}
 	bad := []string{"", "bad;rm -rf", "a b", "x`whoami`", "'; DROP", "a/b"}
 	for _, s := range ok {
 		if !looksLikePleskSubscription(s) {
@@ -23,8 +23,8 @@ func TestLooksLikePleskSubscription(t *testing.T) {
 }
 
 func TestPleskSlug(t *testing.T) {
-	if got := pleskSlug("Lychee-Fruits.CO.il"); got != "lychee_fruits_co_il" {
-		t.Errorf("slug = %q, want lychee_fruits_co_il", got)
+	if got := pleskSlug("Example-B.CO.il"); got != "example_b_co_il" {
+		t.Errorf("slug = %q, want example_b_co_il", got)
 	}
 }
 

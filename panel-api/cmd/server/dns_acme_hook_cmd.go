@@ -130,7 +130,7 @@ func acmeChallengeName(domain string) string {
 }
 
 // Cloudflare propagation wait (JAB-235 follow-up). The first version slept a
-// flat 10s after the API write — and lost a real race on hoff.co.il
+// flat 10s after the API write — and lost a real race on example-c.co.il
 // (2026-08-13): the apex TXT, written 23s before validation, passed; the www
 // TXT, written 11s before, was NXDOMAIN at LE's resolver. CF's API→edge
 // propagation is usually seconds but not bounded by any constant we can

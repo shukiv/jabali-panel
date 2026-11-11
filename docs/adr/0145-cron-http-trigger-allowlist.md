@@ -108,8 +108,8 @@ operator review). The new capability is that enabling such a row now validates
 
 ## Consequences
 
-- The 6 real self-domain crons from the zaps.co.il migration become runnable
-  once the operator reviews + enables them; cross-domain (e.g. `nfinance.co.il`)
+- The 6 real self-domain crons from the example-i.co.il migration become runnable
+  once the operator reviews + enables them; cross-domain (e.g. `example-n.co.il`)
   stays blocked (`http_foreign_host`).
 - No new outbound reach vs the existing php-cron path; the guard keeps the
   curl/wget surface minimal and rebind-safe.

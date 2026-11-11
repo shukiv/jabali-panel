@@ -69,7 +69,7 @@ func TestAcmeChallengeName(t *testing.T) {
 	}
 }
 
-// --- waitForChallengeTXT (JAB-235 follow-up: hoff.co.il propagation race) ---
+// --- waitForChallengeTXT (JAB-235 follow-up: example-c.co.il propagation race) ---
 
 func TestWaitForChallengeTXT_VisibleImmediately(t *testing.T) {
 	lookupNS := func(_ context.Context, _ string) ([]string, bool) {

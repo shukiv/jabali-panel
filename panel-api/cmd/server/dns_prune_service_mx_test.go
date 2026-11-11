@@ -27,16 +27,16 @@ func rec(name, typ, content string) models.DNSRecord {
 }
 
 func TestWouldDanglingMX_ProductionShape(t *testing.T) {
-	// Verbatim from the live box: MX -> mail.4lion.com, and the only
-	// mail.4lion.com record is the imported CNAME to the apex.
+	// Verbatim from the live box: MX -> mail.example-r.com, and the only
+	// mail.example-r.com record is the imported CNAME to the apex.
 	recs := []models.DNSRecord{
-		rec("@", "MX", "mail.4lion.com"),
-		rec("mail", "CNAME", "4lion.com."),
+		rec("@", "MX", "mail.example-r.com"),
+		rec("mail", "CNAME", "example-r.com."),
 		rec("@", "A", "182.54.236.69"),
 		rec("cpanel", "A", "1.2.3.4"),
 		rec("webmail", "A", "1.2.3.4"),
 	}
-	mx, addressed := mailRoutingNames("4lion.com", recs)
+	mx, addressed := mailRoutingNames("example-r.com", recs)
 
 	if !mx["mail"] {
 		t.Fatalf("MX target not recognised: %v", mx)
@@ -120,13 +120,13 @@ func TestMailRoutingNames_ForeignAndApexTargets(t *testing.T) {
 	}
 }
 
-// The newzaps shape, which is NOT the aramapp shape and nearly caused a second
+// A second box's shape, which is NOT the first one's and nearly caused a second
 // outage on the same day.
 //
 // There the mail record is an A, not a CNAME, and it is still the MX target:
 //
-//	hoff.co.il        MX  ->  mail.hoff.co.il
-//	mail.hoff.co.il   A   ->  <the box>
+//	example-c.co.il        MX  ->  mail.example-c.co.il
+//	mail.example-c.co.il   A   ->  <the box>
 //
 // 26 domains on that host looked like this, including the server's OWN mail
 // hostname. The pre-flight query that cleared the box asked for domains that had
@@ -138,12 +138,12 @@ func TestMailRoutingNames_ForeignAndApexTargets(t *testing.T) {
 // question about them.
 func TestWouldDanglingMX_AddressRecordIsTheMXTarget(t *testing.T) {
 	recs := []models.DNSRecord{
-		rec("@", "MX", "mail.hoff.co.il"),
+		rec("@", "MX", "mail.example-c.co.il"),
 		rec("mail", "A", "182.54.236.64"),
-		rec("autoconfig", "CNAME", "hoff.co.il."),
-		rec("autodiscover", "CNAME", "hoff.co.il."),
+		rec("autoconfig", "CNAME", "example-c.co.il."),
+		rec("autodiscover", "CNAME", "example-c.co.il."),
 	}
-	mx, addressed := mailRoutingNames("hoff.co.il", recs)
+	mx, addressed := mailRoutingNames("example-c.co.il", recs)
 
 	if !wouldDanglingMX("mail", "A", mx, addressed) {
 		t.Error("mail A is the MX target and its only provider — deleting it breaks inbound mail")

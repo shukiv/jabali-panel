@@ -8,7 +8,7 @@ import (
 )
 
 func TestValidDBName(t *testing.T) {
-	ok := []string{"lycheefr_wp2", "db1", "A_b_9"}
+	ok := []string{"exampleb_wp2", "db1", "A_b_9"}
 	bad := []string{"", "../etc", "a.sql", "a b", "a;b", "a/b", "a'b"}
 	for _, s := range ok {
 		if !validDBName(s) {
@@ -24,14 +24,14 @@ func TestValidDBName(t *testing.T) {
 
 func TestPopulatePleskDBs_StreamsValidSkipsBad(t *testing.T) {
 	extract := t.TempDir()
-	slug := "lychee_fruits_co_il"
+	slug := "example_b_co_il"
 	base := filepath.Join(extract, "cpmove-"+slug)
 	if err := os.MkdirAll(base, 0o750); err != nil {
 		t.Fatal(err)
 	}
 	// databases.txt: two valid + one path-traversal attempt (must be skipped).
 	if err := os.WriteFile(filepath.Join(base, "databases.txt"),
-		[]byte("lycheefr_wp2\nshop_db\n../../etc/passwd\n"), 0o640); err != nil {
+		[]byte("exampleb_wp2\nshop_db\n../../etc/passwd\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
 
@@ -53,7 +53,7 @@ func TestPopulatePleskDBs_StreamsValidSkipsBad(t *testing.T) {
 	}
 	// dumps landed under mysql/ with safe filenames.
 	for _, want := range []string{
-		filepath.Join(base, "mysql", "lycheefr_wp2.sql"),
+		filepath.Join(base, "mysql", "exampleb_wp2.sql"),
 		filepath.Join(base, "mysql", "shop_db.sql"),
 	} {
 		if _, err := os.Stat(want); err != nil {
@@ -75,7 +75,7 @@ func TestPopulatePleskDBs_NoManifestIsQuiet(t *testing.T) {
 }
 
 func TestSlugExported(t *testing.T) {
-	if Slug("Lychee-Fruits.CO.il") != "lychee_fruits_co_il" {
-		t.Errorf("Slug wrapper wrong: %q", Slug("Lychee-Fruits.CO.il"))
+	if Slug("Example-B.CO.il") != "example_b_co_il" {
+		t.Errorf("Slug wrapper wrong: %q", Slug("Example-B.CO.il"))
 	}
 }

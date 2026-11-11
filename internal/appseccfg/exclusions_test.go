@@ -8,7 +8,7 @@ import (
 func validExclusion() Exclusion {
 	return Exclusion{
 		Host:      "arizot-e.com",
-		URIPrefix: "/wp-json/aramapp-leads/v1/inbound",
+		URIPrefix: "/wp-json/example-leads/v1/inbound",
 		RuleID:    "931120",
 		Note:      "WhatsApp webhook: message text contains URLs",
 	}
@@ -105,7 +105,7 @@ func TestRenderExclusions_HostChainedAndScoped(t *testing.T) {
 	if !strings.Contains(out, `SecRule REQUEST_HEADERS:Host "@streq arizot-e.com"`) {
 		t.Errorf("host not matched first:\n%s", out)
 	}
-	if !strings.Contains(out, `SecRule REQUEST_URI "@beginsWith /wp-json/aramapp-leads/v1/inbound"`) {
+	if !strings.Contains(out, `SecRule REQUEST_URI "@beginsWith /wp-json/example-leads/v1/inbound"`) {
 		t.Errorf("uri prefix missing:\n%s", out)
 	}
 	if !strings.Contains(out, "ctl:ruleRemoveById=931120") {

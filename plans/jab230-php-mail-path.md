@@ -103,7 +103,7 @@ Sendmail-compatible CLI, runs as the tenant uid, exec'd by PHP `mail()`:
 - Unit: shim flag/header parsing, Bcc strip, cred selection + fallback, exit codes;
   SMTP against an in-test fake server. Provisioning idempotency (second tick = no
   writes). Pool template assertion. Contract tests for the new agent command.
-- E2E on testserver (NOT newzaps): fresh WP site → `wp_mail()` + raw `mail()` →
+- E2E on testserver (NOT a production box): fresh WP site → `wp_mail()` + raw `mail()` →
   assert Stalwart accepted AND delivered (log/maildir content, not just `true` —
   feedback_verify_via_user_facing_path); `wordpress@<domain>` From does not 501;
   mail-off domain sends; CLI/cron `mail()` works.

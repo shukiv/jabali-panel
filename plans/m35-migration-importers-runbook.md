@@ -243,7 +243,7 @@ If a restored docroot ends up group-owned by the user instead of
 `www-data` (or its directories miss the setgid bit), nginx (www-data)
 can't read files the PHP-FPM pool writes -> 403 on newly uploaded media.
 Note: any account migrated in the 19->21 importer window can carry this
-residual perm damage (only `malki` was found on the reference host, but
+residual perm damage (only one account was found on the reference host, but
 re-run the fix on any account from that window to be safe). Remediate:
 ```
 jabali domain fix-perms <username>

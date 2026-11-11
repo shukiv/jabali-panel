@@ -9,7 +9,7 @@ import "testing"
 // The domain then sits on a self-signed origin, which behind Cloudflare Full
 // (strict) is a hard 526.
 //
-// Observed on newhighsite: "Requesting a certificate for … and 3 more domains"
+// Observed on a production box: "Requesting a certificate for … and 3 more domains"
 // -> autoconfig./autodiscover./mail. 404 -> "Some challenges have failed".
 
 // The regression that let it happen: the mail-infra filter matched these names

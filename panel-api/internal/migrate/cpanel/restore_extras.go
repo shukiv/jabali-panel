@@ -793,10 +793,10 @@ func userdataRoots(parsed *ParsedTarball) []string {
 // Read from `<userdata>/main`, which is cpanel's own manifest:
 //
 //	addon_domains: {}
-//	main_domain: bbestgun.co.il
+//	main_domain: example-d.co.il
 //	parked_domains: []
 //	sub_domains:
-//	  - staging.bbestgun.co.il
+//	  - staging.example-d.co.il
 //
 // An earlier revision read a `SUB_DOMAINS=` key out of the `cp/<user>` file
 // instead. That key does not exist — checked against a live cpanel account,

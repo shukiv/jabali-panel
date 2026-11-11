@@ -41,7 +41,7 @@ func TestSANReachability(t *testing.T) {
 		{
 			name: "proxied apex, SAN left on the old box", san: []string{oldBoxIP},
 			apex: []string{cfIP1}, ours: []string{ourIP},
-			wantKeep: false, why: "exactly the newhighsite incident",
+			wantKeep: false, why: "exactly the production incident",
 		},
 		{
 			name: "no DNS at all", san: nil,

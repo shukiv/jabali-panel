@@ -13,11 +13,11 @@ import (
 const realMainManifest = `---
 addon_domains: {}
 
-main_domain: bbestgun.co.il
+main_domain: example-d.co.il
 parked_domains: []
 
 sub_domains:
-  - staging.bbestgun.co.il
+  - staging.example-d.co.il
 `
 
 // realMainNoSubs is the same manifest for an account with none — an inline
@@ -45,8 +45,8 @@ func writeMain(t *testing.T, body string) *ParsedTarball {
 // The regression: the real manifest must yield the subdomain.
 func TestDetectSubDomains_ReadsRealMainManifest(t *testing.T) {
 	got := detectSubDomains(writeMain(t, realMainManifest), "")
-	if !reflect.DeepEqual(got, []string{"staging.bbestgun.co.il"}) {
-		t.Fatalf("got %#v, want [staging.bbestgun.co.il]", got)
+	if !reflect.DeepEqual(got, []string{"staging.example-d.co.il"}) {
+		t.Fatalf("got %#v, want [staging.example-d.co.il]", got)
 	}
 }
 
@@ -113,7 +113,7 @@ func TestDetectSubDomains_ManifestBeatsLegacyKey(t *testing.T) {
 	}
 
 	got := detectSubDomains(parsed, legacy)
-	if !reflect.DeepEqual(got, []string{"staging.bbestgun.co.il"}) {
+	if !reflect.DeepEqual(got, []string{"staging.example-d.co.il"}) {
 		t.Fatalf("legacy key overrode the manifest: %#v", got)
 	}
 }
