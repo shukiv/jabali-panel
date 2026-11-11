@@ -71,10 +71,11 @@ func Connect(ctx context.Context, host string, port int, user string, secret mig
 		return nil, fmt.Errorf("wordpressssh.Connect: load secret: %w", err)
 	}
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            auth,
-		HostKeyCallback: migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
-		Timeout:         15 * time.Second,
+		User:              user,
+		Auth:              auth,
+		HostKeyCallback:   migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
+		HostKeyAlgorithms: migrate.HostKeyAlgorithms(),
+		Timeout:           15 * time.Second,
 	}
 	conn, err := migrate.DialTCP(ctx, host, port, allowPrivate, 15*time.Second)
 	if err != nil {

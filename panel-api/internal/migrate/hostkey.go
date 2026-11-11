@@ -40,10 +40,33 @@ func PinningHostKeyCallback(expectedFP string) ssh.HostKeyCallback {
 		}
 		got := normalizeFingerprint(ssh.FingerprintSHA256(key))
 		if got != expected {
-			return fmt.Errorf("host key fingerprint mismatch for %s: got %s, expected %s",
-				hostname, ssh.FingerprintSHA256(key), expectedFP)
+			return fmt.Errorf("host key fingerprint mismatch for %s: the source presented its %s key, %s; expected %s (the pin must be the fingerprint of the source's %s host key — the panel asks for ed25519 first)",
+				hostname, key.Type(), ssh.FingerprintSHA256(key), expectedFP, key.Type())
 		}
 		return nil
+	}
+}
+
+// HostKeyAlgorithms is the host-key algorithm preference for every migration
+// SSH dial: ed25519, then ECDSA, then RSA with SHA-2, then the legacy ssh-rsa
+// and ssh-dss that x/crypto's default also offers, so an old source that
+// connects today still does. No certificate algorithms: the pin is a plain
+// key's fingerprint, and a host certificate's never matches it.
+//
+// x/crypto's default lists ECDSA and RSA before ED25519, so a source with
+// both keys presented its ECDSA key while `ssh-keyscan -t ed25519` (what the
+// wizard asks the operator to pin) gave the ed25519 one, and the pin never
+// matched. A fresh slice each call: ssh.ClientConfig keeps the reference.
+func HostKeyAlgorithms() []string {
+	return []string{
+		ssh.KeyAlgoED25519,
+		ssh.KeyAlgoECDSA256,
+		ssh.KeyAlgoECDSA384,
+		ssh.KeyAlgoECDSA521,
+		ssh.KeyAlgoRSASHA512,
+		ssh.KeyAlgoRSASHA256,
+		ssh.KeyAlgoRSA,
+		ssh.InsecureKeyAlgoDSA,
 	}
 }
 

@@ -123,10 +123,11 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 		return nil, fmt.Errorf("cloudpanel.Connect: load secret: %w", err)
 	}
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            auth,
-		HostKeyCallback: migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
-		Timeout:         15 * time.Second,
+		User:              user,
+		Auth:              auth,
+		HostKeyCallback:   migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
+		HostKeyAlgorithms: migrate.HostKeyAlgorithms(),
+		Timeout:           15 * time.Second,
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
