@@ -285,6 +285,9 @@ func insertMailboxPanelRows(
 		if hestiaHash != "" {
 			return sourceMailCred{hash: hestiaHash}
 		}
+		if shadow.notCopied {
+			return sourceMailCred{cause: lockoutCopyFailed}
+		}
 		m, ok := shadows[dom]
 		if !ok {
 			m = shadow.read(dom)
@@ -834,6 +837,10 @@ func mailboxLockoutNotice(localPart, domainName string, cause lockoutCause) stri
 		return fmt.Sprintf(
 			"mailbox_rows: created %s@%s with a NEW password — the source's password file for %s was not readable by the source account, so its password could not be carried; "+locked+". Fixing that file's ownership on the source and re-running the restore would carry it.",
 			localPart, domainName, domainName)
+	case lockoutCopyFailed:
+		return fmt.Sprintf(
+			"mailbox_rows: created %s@%s with a NEW password — the source's mail password files were not copied (see the mail_passwords line), so its password could not be carried; "+locked+". Re-running the restore once that copy succeeds would carry it.",
+			localPart, domainName)
 	}
 	return fmt.Sprintf(
 		"mailbox_rows: created %s@%s with a NEW password — the source had no portable password hash for this mailbox (no entry in its mail password file; a cPanel account's default mailbox signs in with the account's system password, not a mail hash), so --preserve-source-state had nothing to carry; "+locked+". Re-running the restore will not change this.",

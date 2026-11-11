@@ -1768,9 +1768,10 @@ func cpanelRestoreCallback(
 			// removed as soon as it is over (dropMailShadow, deferred as a
 			// backstop).
 			if crit == "" {
-				shadowDir, unreadable, shadowLines := cpanelPullMailShadow(ctx, restoreAgent.Call, job, p.parsed.SourceUser, preserve.Credentials)
+				shadowDir, unreadable, shadowLines, notCopied := cpanelPullMailShadow(ctx, restoreAgent.Call, job, p.parsed.SourceUser, preserve.Credentials)
 				warnings = append(warnings, shadowLines...)
 				p.parsed.MailShadowUnreadable = unreadable
+				p.parsed.MailShadowNotCopied = notCopied
 				if shadowDir != "" {
 					p.parsed.MailShadowDir = shadowDir
 					defer func() { _ = dropMailShadow(p.parsed) }()

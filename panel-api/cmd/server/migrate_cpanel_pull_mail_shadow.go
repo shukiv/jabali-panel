@@ -31,19 +31,20 @@ func cpanelMailShadowDir(jobID string) string {
 // names every mailbox that got a new password and why.
 //
 // Returns the staged dir ("" when nothing was staged), the domains whose
-// password file the source account could not read, and run-summary lines
-// (counts and domain names only).
-func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.MigrationJob, srcUser string, preserveCreds bool) (string, []string, []string) {
+// password file the source account could not read, run-summary lines
+// (counts and domain names only), and whether a copy that should have
+// happened did not (notCopied).
+func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.MigrationJob, srcUser string, preserveCreds bool) (dir string, unreadable []string, lines []string, notCopied bool) {
 	if job == nil || job.SourceHost == "" || !preserveCreds {
-		return "", nil, nil
+		return "", nil, nil, false
 	}
 	if job.SourceKind != models.MigrationSourceCpanel && job.SourceKind != models.MigrationSourceWHMpkgacct {
-		return "", nil, nil
+		return "", nil, nil, false
 	}
 	// Same checks as the ~/mail leg (cpanelPullMail), which already raised
 	// the critical for a bad or mismatched account.
 	if srcUser == "" || srcUser == "." || srcUser == ".." || strings.ContainsAny(srcUser, "/\x00") || srcUser != job.SourceUser {
-		return "", nil, []string{"mail_passwords: source mail password files not copied (source account not verified) — every mailbox gets a new password"}
+		return "", nil, []string{"mail_passwords: source mail password files not copied (source account not verified) — every mailbox gets a new password"}, true
 	}
 	raw, err := call(ctx, "migration.pull_mail_shadow", map[string]any{
 		"port":        srcSSHPort(job),
@@ -56,7 +57,7 @@ func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.M
 	})
 	if err != nil {
 		return "", nil, []string{fmt.Sprintf(
-			"mail_passwords: copying the source's mail password files failed — every mailbox gets a new password: %v", err)}
+			"mail_passwords: copying the source's mail password files failed — every mailbox gets a new password: %v", err)}, true
 	}
 	var rs struct {
 		Domains    int      `json:"domains"`
@@ -66,13 +67,12 @@ func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.M
 		Unreadable []string `json:"unreadable"`
 	}
 	_ = json.Unmarshal(raw, &rs)
-	lines := []string{fmt.Sprintf(
+	lines = []string{fmt.Sprintf(
 		"mail_passwords: copied %d domain password file(s) (%d bytes) from the source", rs.Files, rs.Bytes)}
 	if rs.Removed > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"mail_passwords: %d entr(ies) other than a domain's password file were dropped from the copy", rs.Removed))
 	}
-	var unreadable []string
 	for _, d := range rs.Unreadable {
 		d = domainops.NormalizeDomainName(d)
 		if domainops.ValidateDomainName(d) == nil {
@@ -87,7 +87,7 @@ func cpanelPullMailShadow(ctx context.Context, call agentCallFunc, job *models.M
 	if note := rsyncPartialNote("mail_passwords", raw); note != "" {
 		lines = append(lines, note)
 	}
-	return cpanelMailShadowDir(job.ID), unreadable, lines
+	return cpanelMailShadowDir(job.ID), unreadable, lines, false
 }
 
 // dropMailShadow removes the staged mail password files once the mailbox

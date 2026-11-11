@@ -38,6 +38,7 @@ const (
 	lockoutUnverifiableScheme                     // an entry exists, in a scheme Stalwart cannot verify
 	lockoutLockedOnSource                         // the entry is locked/suspended on the source (! or *)
 	lockoutSourceUnreadable                       // the domain's password file was not readable by the account
+	lockoutCopyFailed                             // an SSH pull did not copy the password files
 )
 
 // sourceMailCred is what the source holds for one mailbox's password: a
@@ -55,6 +56,8 @@ type mailShadowSource struct {
 	// unreadable lists domains whose shadow the pull could not read on the
 	// source (the account had no access).
 	unreadable map[string]bool
+	// notCopied: an SSH pull should have staged the files and did not.
+	notCopied bool
 }
 
 // mailShadowSourceFor picks the shadow files for a restore: the staged copy
@@ -70,6 +73,10 @@ func mailShadowSourceFor(parsed *ParsedTarball) mailShadowSource {
 	}
 	if parsed.MailShadowDir != "" {
 		return mailShadowSource{base: parsed.MailShadowDir, relDir: ".", unreadable: unreadable}
+	}
+	// An SSH pull ships no homedir, so there is nothing to fall back to.
+	if parsed.MailShadowNotCopied {
+		return mailShadowSource{unreadable: unreadable, notCopied: true}
 	}
 	if parsed.ExtractDir == "" || parsed.HomeDir == "" {
 		return mailShadowSource{unreadable: unreadable}

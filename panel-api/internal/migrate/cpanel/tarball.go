@@ -42,6 +42,10 @@ type ParsedTarball struct {
 	// MailShadowUnreadable lists domains whose shadow file the pull could not
 	// read on the source (the account had no access to it).
 	MailShadowUnreadable []string
+	// MailShadowNotCopied: an SSH pull tried to stage the shadow files and
+	// could not, so no mailbox has a source hash to carry (and the empty
+	// homedir of a --skiphomedir tarball is not read in their place).
+	MailShadowNotCopied bool
 	// MySQLDumps lists every per-database SQL file. cPanel layout:
 	// cp/<user>/mysql/<dbname>.sql.
 	MySQLDumps []string

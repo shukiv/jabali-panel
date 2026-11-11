@@ -253,3 +253,22 @@ func TestMailShadowSourceFor_StagedPullDir(t *testing.T) {
 		t.Fatalf("staged hash not read: %v (refused %q)", m.hashes, m.refused)
 	}
 }
+
+// An SSH pull whose password-file copy failed must say so, not "no entry …
+// re-running will not change this": the tarball's homedir is empty by design
+// (--skiphomedir), so falling back to it reads nothing. Here the extract does
+// hold a shadow file, and it must not be read in place of the failed copy.
+func TestImportMailboxes_CpanelShadowCopyFailedNamed(t *testing.T) {
+	parsed := buildCpanelOfflineTree(t, "box:"+testSrcSHA512+":19000::::::\n")
+	parsed.MailShadowNotCopied = true
+	mb, skipped := importOneCpanelMailbox(t, parsed, true)
+	if mb.created[0].PasswordHash == testSrcSHA512 {
+		t.Fatal("read the extract's homedir in place of the failed copy")
+	}
+	if !skippedContains(skipped, "mail password files were not copied") {
+		t.Fatalf("copy-failed cause not named: %v", skipped)
+	}
+	if skippedContains(skipped, "will not change this") {
+		t.Fatalf("told the operator a re-run is pointless: %v", skipped)
+	}
+}

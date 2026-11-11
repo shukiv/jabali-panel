@@ -27,8 +27,11 @@ func TestCpanelPullMailShadow_DispatchParams(t *testing.T) {
 			rec := &mailLegRecorder{reply: json.RawMessage(`{"domains":2,"files":2,"bytes":512}`)}
 			job := &models.MigrationJob{ID: "job1", SourceKind: tc.kind, SourceHost: "203.0.113.5", SourceUser: "acct", SourcePort: 2222}
 
-			dir, unreadable, lines := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
+			dir, unreadable, lines, notCopied := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
 
+			if notCopied {
+				t.Fatal("notCopied on a good copy")
+			}
 			if dir != "/var/lib/jabali-migrations/job1/mail-shadow" {
 				t.Fatalf("dir = %q", dir)
 			}
@@ -79,7 +82,7 @@ func TestCpanelPullMailShadow_NotRun(t *testing.T) {
 	cases := map[string]struct {
 		mutate   func(*models.MigrationJob)
 		preserve bool
-		wantLine bool
+		wantLine bool // a refused copy: a warning and notCopied
 		srcUser  string
 	}{
 		"preserve off":     {func(*models.MigrationJob) {}, false, false, "acct"},
@@ -93,9 +96,12 @@ func TestCpanelPullMailShadow_NotRun(t *testing.T) {
 			job := base
 			tc.mutate(&job)
 			rec := &mailLegRecorder{reply: json.RawMessage(`{}`)}
-			dir, _, lines := cpanelPullMailShadow(context.Background(), rec.call, &job, tc.srcUser, tc.preserve)
+			dir, _, lines, notCopied := cpanelPullMailShadow(context.Background(), rec.call, &job, tc.srcUser, tc.preserve)
 			if len(rec.calls) != 0 || dir != "" {
 				t.Fatalf("called agent %+v, dir %q", rec.calls, dir)
+			}
+			if notCopied != tc.wantLine {
+				t.Fatalf("notCopied = %v", notCopied)
 			}
 			if tc.wantLine != (len(lines) == 1 && strings.Contains(lines[0], "new password")) {
 				t.Fatalf("lines = %v", lines)
@@ -109,8 +115,8 @@ func TestCpanelPullMailShadow_NotRun(t *testing.T) {
 func TestCpanelPullMailShadow_FailureIsWarning(t *testing.T) {
 	rec := &mailLegRecorder{err: errors.New("agent: rsync failed")}
 	job := &models.MigrationJob{ID: "job1", SourceKind: models.MigrationSourceCpanel, SourceHost: "203.0.113.5", SourceUser: "acct"}
-	dir, unreadable, lines := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
-	if dir != "" || unreadable != nil {
+	dir, unreadable, lines, notCopied := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
+	if dir != "" || unreadable != nil || !notCopied {
 		t.Fatalf("dir %q unreadable %v", dir, unreadable)
 	}
 	if len(lines) != 1 || !strings.Contains(lines[0], "every mailbox gets a new password") || !strings.Contains(lines[0], "rsync failed") {
@@ -123,7 +129,7 @@ func TestCpanelPullMailShadow_FailureIsWarning(t *testing.T) {
 func TestCpanelPullMailShadow_UnreadableAndPartial(t *testing.T) {
 	rec := &mailLegRecorder{reply: json.RawMessage(`{"domains":1,"files":1,"bytes":90,"removed":1,"unreadable":["Shop.Example","../etc","bad name"],"partial":true,"exit_code":23}`)}
 	job := &models.MigrationJob{ID: "job1", SourceKind: models.MigrationSourceCpanel, SourceHost: "203.0.113.5", SourceUser: "acct"}
-	_, unreadable, lines := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
+	_, unreadable, lines, _ := cpanelPullMailShadow(context.Background(), rec.call, job, "acct", true)
 	if len(unreadable) != 1 || unreadable[0] != "shop.example" {
 		t.Fatalf("unreadable = %v, want [shop.example]", unreadable)
 	}
@@ -179,13 +185,14 @@ func TestCpanelMailShadow_WiredAroundImportMailboxes(t *testing.T) {
 	pullShadow := strings.Index(body, "cpanelPullMailShadow(ctx, restoreAgent.Call, job, p.parsed.SourceUser, preserve.Credentials)")
 	setDir := strings.Index(body, "p.parsed.MailShadowDir = shadowDir")
 	setUnreadable := strings.Index(body, "p.parsed.MailShadowUnreadable = unreadable")
+	setNotCopied := strings.Index(body, "p.parsed.MailShadowNotCopied = notCopied")
 	backstop := strings.Index(body, "defer func() { _ = dropMailShadow(p.parsed) }()")
 	imp := strings.Index(body, "mailRes, err := cpanel.ImportMailboxes(")
-	if pullMail < 0 || pullShadow < 0 || setDir < 0 || setUnreadable < 0 || backstop < 0 || imp < 0 {
+	if pullMail < 0 || pullShadow < 0 || setDir < 0 || setUnreadable < 0 || setNotCopied < 0 || backstop < 0 || imp < 0 {
 		t.Fatalf("missing wiring: pullMail=%d pullShadow=%d setDir=%d setUnreadable=%d backstop=%d import=%d",
 			pullMail, pullShadow, setDir, setUnreadable, backstop, imp)
 	}
-	if !(pullMail < pullShadow && pullShadow < setDir && setDir < imp && setUnreadable < imp && backstop < imp) {
+	if !(pullMail < pullShadow && pullShadow < setDir && setDir < imp && setUnreadable < imp && setNotCopied < imp && backstop < imp) {
 		t.Fatal("password files must be pulled after ~/mail and set on ParsedTarball before ImportMailboxes")
 	}
 	after := body[imp:]
