@@ -26,6 +26,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/term"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/kratosclient"
@@ -161,8 +162,10 @@ failed stage. Already-done stages are skipped.`,
 			// override; absent values fall through to:
 			//   user → job.SourceUser (always present)
 			//   email → cpmove contactemail file or CONTACTEMAIL kv
-			//   password → 16-char random (printed to stdout once
-			//              so the operator can hand it to the user)
+			//   password → only when the user must be created: 16-char
+			//              random, shown once on an interactive terminal
+			//              and never in a non-interactive run's output
+			//              (findOrPrepareTargetUser)
 			// Source's crypt(3) shadow hash isn't reusable (Kratos
 			// expects Argon2/bcrypt) but is surfaced so the operator
 			// can verify the hash style before sending a reset link.
@@ -214,24 +217,17 @@ failed stage. Already-done stages are skipped.`,
 				targetEmail = targetUser + "@" + hostPart
 				fmt.Printf("  → target-email synthesized (no contactemail in tarball): %s\n", targetEmail)
 			}
-			if targetPassword == "" {
-				// Generate a random strong password the operator can
-				// hand to the customer. Print ONCE — we never store
-				// this in the DB.
-				if pw, perr := randomPassword(16); perr == nil {
-					targetPassword = pw
-					fmt.Printf("  → target-password auto-generated: %s   (share with customer; reset via Kratos when needed)\n", targetPassword)
-					if meta != nil && meta.PasswordHash != "" {
-						fmt.Printf("    (source had a crypt(3) hash but Kratos uses Argon2; original password not recoverable)\n")
-					}
-				}
-			}
-
-			user, err := usersRepo.FindByUsername(ctx, targetUser)
+			// The lookup comes first: an existing user keeps its password, so
+			// none is generated or printed for it. A password is resolved only
+			// when the user has to be created.
+			user, createPassword, err := findOrPrepareTargetUser(ctx, usersRepo, cmd.OutOrStdout(),
+				term.IsTerminal(int(os.Stdout.Fd())), targetUser, targetPassword,
+				meta != nil && meta.PasswordHash != "")
 			if err != nil {
-				if !errors.Is(err, repository.ErrNotFound) {
-					return failJob(fmt.Errorf("destination user %q lookup: %w", targetUser, err))
-				}
+				return failJob(err)
+			}
+			if user == nil {
+				targetPassword = createPassword
 				// Auto-create when operator supplied --target-email
 				// + --target-password. Otherwise fail with helpful
 				// message pointing at the auto-create flags.
