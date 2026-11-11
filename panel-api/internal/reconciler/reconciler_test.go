@@ -33,23 +33,33 @@ type fakeCall struct {
 	params interface{}
 }
 
+// set reconfigures the fake under its lock. Use it for a change made after
+// ReconcileAll: module convergence may still be calling from a goroutine.
+func (f *fakeAgent) set(change func(f *fakeAgent)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	change(f)
+}
+
 func (f *fakeAgent) Call(ctx context.Context, method string, params interface{}) (json.RawMessage, error) {
+	// The configured failures and results are read under the lock too: module
+	// convergence calls from detached goroutines (reconcile_modules.go) that
+	// can outlive ReconcileAll, while the test reconfigures the fake via set.
 	f.mu.Lock()
 	f.calls = append(f.calls, fakeCall{method, params})
+	e, hasErr := f.errByMethod[method]
+	failed := method == f.failMethod
+	raw, hasResult := f.resultByMethod[method]
 	f.mu.Unlock()
 
-	if f.errByMethod != nil {
-		if e, ok := f.errByMethod[method]; ok {
-			return nil, e
-		}
+	if hasErr {
+		return nil, e
 	}
-	if method == f.failMethod {
+	if failed {
 		return nil, fmt.Errorf("agent call failed for method: %s", method)
 	}
-	if f.resultByMethod != nil {
-		if raw, ok := f.resultByMethod[method]; ok {
-			return raw, nil
-		}
+	if hasResult {
+		return raw, nil
 	}
 
 	switch method {

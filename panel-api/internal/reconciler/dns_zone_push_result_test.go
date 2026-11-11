@@ -37,7 +37,7 @@ func TestReconcileDNSZone_FailedPushIsRecordedThenClearedBySuccess(t *testing.T)
 
 	// The cause is fixed (credentials restored, agent restarted): the next
 	// pass pushes again, because nothing was stamped, and the row says so.
-	agent.errByMethod = nil
+	agent.set(func(f *fakeAgent) { f.errByMethod = nil })
 	if err := r.ReconcileAll(ctx); err != nil {
 		t.Fatal(err)
 	}
