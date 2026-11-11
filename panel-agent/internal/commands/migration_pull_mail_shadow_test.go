@@ -396,3 +396,99 @@ func TestHandMailShadowToJobOwner_RefusesSymlinkedDomainDir(t *testing.T) {
 		t.Fatal("followed a symlinked domain dir")
 	}
 }
+
+// reportJobDirOwner makes mailShadowFstat report uid for the job dir only.
+func reportJobDirOwner(t *testing.T, job string, uid uint32) {
+	t.Helper()
+	var jst syscall.Stat_t
+	if err := syscall.Stat(job, &jst); err != nil {
+		t.Fatal(err)
+	}
+	old := mailShadowFstat
+	mailShadowFstat = func(fd int, st *unix.Stat_t) error {
+		if err := old(fd, st); err != nil {
+			return err
+		}
+		if st.Ino == jst.Ino && st.Dev == jst.Dev {
+			st.Uid = uid
+		}
+		return nil
+	}
+	t.Cleanup(func() { mailShadowFstat = old })
+}
+
+func recordMailShadowChowns(t *testing.T) *int {
+	t.Helper()
+	n := 0
+	old := mailShadowFchownat
+	mailShadowFchownat = func(dirfd int, name string, uid, gid, flags int) error {
+		n++
+		return old(dirfd, name, uid, gid, flags)
+	}
+	t.Cleanup(func() { mailShadowFchownat = old })
+	return &n
+}
+
+// The hashes go to the job dir's owner, so that owner must be root or the
+// staging root's owner (the panel). A job dir owned by any other uid is
+// refused before anything is copied, and nothing is chowned.
+func TestMailShadow_RefusesJobDirOwnedByAThirdUID(t *testing.T) {
+	job := withMailShadowStaging(t)
+	reportJobDirOwner(t, job, 4242)
+	chowns := recordMailShadowChowns(t)
+
+	if _, aerr := prepareMailShadowDir(testMailShadowJob); aerr == nil || !strings.Contains(aerr.Message, "uid 4242") {
+		t.Fatalf("prepare: want a refusal naming uid 4242, got %v", aerr)
+	}
+	if _, err := os.Lstat(filepath.Join(job, mailShadowDirName)); !os.IsNotExist(err) {
+		t.Fatalf("mail-shadow created for a third-uid job dir: %v", err)
+	}
+
+	// The hand-off checks again (the owner could change during the copy).
+	mailShadowTestWrite(t, filepath.Join(job, mailShadowDirName, "a.example", "shadow"), "x")
+	if err := handMailShadowToJobOwner(testMailShadowJob); err == nil || !strings.Contains(err.Error(), "uid 4242") {
+		t.Fatalf("hand-off: want a refusal naming uid 4242, got %v", err)
+	}
+	if *chowns != 0 {
+		t.Fatalf("%d chown(s) for a third-uid job dir", *chowns)
+	}
+}
+
+// Root-owned and staging-root-owned job dirs are accepted.
+func TestMailShadow_AcceptsRootOrStagingRootOwner(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		uid  func() uint32
+	}{
+		{"staging root's owner", func() uint32 { return uint32(os.Getuid()) }},
+		{"root", func() uint32 { return 0 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			job := withMailShadowStaging(t)
+			reportJobDirOwner(t, job, tc.uid())
+			var gotUID []int
+			old := mailShadowFchownat
+			mailShadowFchownat = func(dirfd int, name string, uid, gid, flags int) error {
+				gotUID = append(gotUID, uid)
+				return nil // a non-root test cannot chown to root
+			}
+			t.Cleanup(func() { mailShadowFchownat = old })
+
+			if _, aerr := prepareMailShadowDir(testMailShadowJob); aerr != nil {
+				t.Fatal(aerr)
+			}
+			mailShadowTestWrite(t, filepath.Join(job, mailShadowDirName, "a.example", "shadow"), "x")
+			if err := handMailShadowToJobOwner(testMailShadowJob); err != nil {
+				t.Fatal(err)
+			}
+			if len(gotUID) != 3 {
+				t.Fatalf("chowns = %v", gotUID)
+			}
+			for _, u := range gotUID {
+				if u != int(tc.uid()) {
+					t.Fatalf("chowned to uid %d, want %d", u, tc.uid())
+				}
+			}
+		})
+	}
+}

@@ -239,6 +239,10 @@ func prepareMailShadowDir(jobID string) (string, *agentwire.AgentError) {
 			Message: fmt.Sprintf("job staging dir %s/%s missing or not a directory: %v", root, jobID, err)}
 	}
 	defer unix.Close(jobFd)
+	// Refuse before anything is copied: the files go to this dir's owner.
+	if _, _, err := mailShadowJobOwner(rootFd, jobFd); err != nil {
+		return "", &agentwire.AgentError{Code: agentwire.CodeFailedPrecondition, Message: err.Error()}
+	}
 
 	dest := filepath.Join(root, jobID, mailShadowDirName)
 	var st unix.Stat_t
@@ -277,6 +281,28 @@ func prepareMailShadowDir(jobID string) (string, *agentwire.AgentError) {
 // mailShadowFchownat is unix.Fchownat; a var so tests can see the calls.
 var mailShadowFchownat = unix.Fchownat
 
+// mailShadowFstat is unix.Fstat; a var so tests can report another owner.
+var mailShadowFstat = unix.Fstat
+
+// mailShadowJobOwner returns the uid/gid the copied files are handed to: the
+// owner of the job dir, accepted only when it is root or the owner of the
+// staging root itself (the panel's service user, set by the installer). Any
+// other owner — a mis-set install, a future writer under the staging root —
+// is refused, so the source's password hashes never go to a third account.
+func mailShadowJobOwner(rootFd, jobFd int) (int, int, error) {
+	var rst, jst unix.Stat_t
+	if err := mailShadowFstat(rootFd, &rst); err != nil {
+		return 0, 0, fmt.Errorf("stat staging root: %w", err)
+	}
+	if err := mailShadowFstat(jobFd, &jst); err != nil {
+		return 0, 0, fmt.Errorf("stat job dir: %w", err)
+	}
+	if jst.Uid != 0 && jst.Uid != rst.Uid {
+		return 0, 0, fmt.Errorf("refusing: the job staging dir is owned by uid %d, which is neither root nor the staging root's owner (uid %d)", jst.Uid, rst.Uid)
+	}
+	return int(jst.Uid), int(jst.Gid), nil
+}
+
 // handMailShadowToJobOwner gives the swept mail-shadow tree to the owner of
 // <staging>/<job_id> — the panel, which reads the files during the mailbox
 // import and removes the dir after it. Modes stay 0700/0600. Until the last
@@ -296,11 +322,10 @@ func handMailShadowToJobOwner(jobID string) error {
 		return fmt.Errorf("job dir: %w", err)
 	}
 	defer unix.Close(jobFd)
-	var jst unix.Stat_t
-	if err := unix.Fstat(jobFd, &jst); err != nil {
-		return fmt.Errorf("stat job dir: %w", err)
+	uid, gid, err := mailShadowJobOwner(rootFd, jobFd)
+	if err != nil {
+		return err
 	}
-	uid, gid := int(jst.Uid), int(jst.Gid)
 
 	dfd, err := unix.Openat(jobFd, mailShadowDirName, dirFlags, 0)
 	if err != nil {
