@@ -196,7 +196,10 @@ func rotateDKIMKey(ctx context.Context, domainID, typ, selector, path string, fi
 	return backup, nil
 }
 
-// setDkimSignatureKey replaces the private key of the signatures ids.
+// setDkimSignatureKey replaces the private key of the signatures ids. JMAP
+// applies each update on its own, so with several ids one can be refused
+// after another took the new key; the panel creates one signature per type,
+// so a domain it manages has a single id here.
 func setDkimSignatureKey(ctx context.Context, ids []string, pemPrivateKey string) error {
 	update := make(map[string]any, len(ids))
 	for _, id := range ids {
