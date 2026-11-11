@@ -59,4 +59,4 @@ jabali mail deliverability --domain <domain>
 jabali domain email-dkim-rotate <domain>
 ```
 
-`jabali mail deliverability` prints the same score as the page. `jabali domain email-dkim-rotate` makes a new DKIM key for a domain.
+`jabali mail deliverability` prints the same score as the page. `jabali domain email-dkim-rotate` replaces a domain's DKIM keys (Ed25519 and RSA) and republishes both records.

@@ -64,6 +64,12 @@ var domainEmailDkimEnsureRequestFixture []byte
 //go:embed testdata/domain_email_dkim_ensure_response.json
 var domainEmailDkimEnsureResponseFixture []byte
 
+//go:embed testdata/domain_email_dkim_rotate_request.json
+var domainEmailDkimRotateRequestFixture []byte
+
+//go:embed testdata/domain_email_dkim_rotate_response.json
+var domainEmailDkimRotateResponseFixture []byte
+
 //go:embed testdata/domain_email_disable_request.json
 var domainEmailDisableRequestFixture []byte
 
@@ -138,6 +144,21 @@ type DomainEmailDkimEnsureResponse struct {
 	RSASelector      string   `json:"rsa_selector"`
 	RSAPublicKey     string   `json:"rsa_public_key"`
 	Created          []string `json:"created"`
+}
+
+// domain.email_dkim_rotate, as domainmailops.RotateDKIM sends and reads it.
+// The RSA keys and warnings are GH #2475.
+type DomainEmailDkimRotateRequest struct {
+	DomainName string `json:"domain_name"`
+}
+
+type DomainEmailDkimRotateResponse struct {
+	OldDKIMPublicKey    string   `json:"old_dkim_public_key"`
+	NewDKIMPublicKey    string   `json:"new_dkim_public_key"`
+	OldKeyBackupPath    string   `json:"old_key_backup_path"`
+	OldDKIMRSAPublicKey string   `json:"old_dkim_rsa_public_key"`
+	NewDKIMRSAPublicKey string   `json:"new_dkim_rsa_public_key"`
+	Warnings            []string `json:"warnings"`
 }
 
 // --- round-trip helper ----------------------------------------------
@@ -256,6 +277,16 @@ func TestDomainEmailDkimEnsureRequest_RoundTrips(t *testing.T) {
 func TestDomainEmailDkimEnsureResponse_RoundTrips(t *testing.T) {
 	t.Parallel()
 	roundTripJSON[DomainEmailDkimEnsureResponse](t, domainEmailDkimEnsureResponseFixture)
+}
+
+func TestDomainEmailDkimRotateRequest_RoundTrips(t *testing.T) {
+	t.Parallel()
+	roundTripJSON[DomainEmailDkimRotateRequest](t, domainEmailDkimRotateRequestFixture)
+}
+
+func TestDomainEmailDkimRotateResponse_RoundTrips(t *testing.T) {
+	t.Parallel()
+	roundTripJSON[DomainEmailDkimRotateResponse](t, domainEmailDkimRotateResponseFixture)
 }
 
 func TestDomainEmailDisableRequest_RoundTrips(t *testing.T) {

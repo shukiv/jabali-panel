@@ -136,6 +136,9 @@ const (
 	WarnSSLLookupFailed
 	// WarnSSLFlipFailed: a transient failure flipping the cert to "renewing".
 	WarnSSLFlipFailed
+	// WarnKeyNotRotated: RotateDKIM left one of the domain's keys or
+	// signatures as it was (GH #2475); Detail is the agent's text.
+	WarnKeyNotRotated
 )
 
 // Warning is one typed managed-DNS or SSL-SAN result from Enable / RotateDKIM /
@@ -144,11 +147,12 @@ const (
 // flow could clear it, while Message() reproduces the exact operator-facing text
 // the module produced before, so the REST `warnings` JSON field and the CLI
 // prints do not change. Record and RecordType are set only for the per-record
-// kinds (WarnConflict, WarnPublishFailed).
+// kinds (WarnConflict, WarnPublishFailed), Detail only for WarnKeyNotRotated.
 type Warning struct {
 	Kind       WarningKind
 	Record     string
 	RecordType string
+	Detail     string
 }
 
 // Message renders the operator-facing text for this warning, byte-for-byte
@@ -171,6 +175,8 @@ func (w Warning) Message() string {
 		return "SSL cert lookup failed; retry ssl reconcile manually"
 	case WarnSSLFlipFailed:
 		return "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"
+	case WarnKeyNotRotated:
+		return w.Detail
 	default:
 		return ""
 	}
@@ -186,7 +192,7 @@ func (w Warning) Retryable() bool {
 	case WarnZoneReadFailed, WarnRecordsReadFailed, WarnPublishFailed,
 		WarnSSLLookupFailed, WarnSSLFlipFailed:
 		return true
-	default: // WarnNoZone, WarnConflict
+	default: // WarnNoZone, WarnConflict, WarnKeyNotRotated
 		return false
 	}
 }
@@ -330,29 +336,37 @@ func Disable(ctx context.Context, d Deps, dom *models.Domain) error {
 }
 
 // RotateResult carries the agent's DKIM rotation output for the adapter to
-// echo. Selector is the stable "jabali" selector; the old public key + backup
-// path are informational (the operator removes the .old key after DNS
-// propagation).
+// echo. Selector is the stable "jabali" selector; the old public keys and the
+// backup path (the previous Ed25519 private key, kept as a record) are
+// informational. NewDKIMRSAPublicKey is "" when the RSA key was not rotated.
 type RotateResult struct {
-	Selector         string
-	OldDKIMPublicKey string
-	NewDKIMPublicKey string
-	OldKeyBackupPath string
+	Selector            string
+	OldDKIMPublicKey    string
+	NewDKIMPublicKey    string
+	OldKeyBackupPath    string
+	OldDKIMRSAPublicKey string
+	NewDKIMRSAPublicKey string
 }
 
-// RotateDKIM rotates the domain's DKIM keypair (ADR-0043 §"Rotation";
-// operator-driven, not automatic). The agent generates a fresh Ed25519 key,
-// snapshots the old private key, and reloads Stalwart; we persist the new
-// public key under the stable "jabali" selector, then wipe + republish the
-// M6-managed DNS so the new DKIM TXT replaces the old at
-// jabali._domainkey.<domain>. The reconciler re-converges on its next tick too,
-// so the immediate republish is a belt-and-suspenders UI refresh.
+// RotateDKIM rotates the domain's DKIM keys (ADR-0043 §"Rotation";
+// operator-driven, not automatic). The agent gives Stalwart's signatures new
+// Ed25519 and RSA keys (GH #2475) and writes them to the key files; we persist
+// the new public keys under the stable selectors, then wipe + republish the
+// M6-managed DNS so the new TXT records replace the old ones at
+// jabali._domainkey.<domain> and jabalirsa._domainkey.<domain>.
 //
-// Ordering mirrors Enable and is the whole point of the guard sequence: agent
-// first (a failed rotate or an incomplete response leaves the DB row and DNS
-// untouched — the last usable key stays authoritative), then persist, then
-// best-effort DNS. On nil err the passed dom is mutated (selector + public key)
-// so the caller can echo the new state without re-fetching.
+// The Ed25519 key is required. An RSA key the agent did not rotate (Stalwart
+// refused it, or an agent from before GH #2475) keeps signing with its
+// current key, so its stored and published key stay as they are; the agent's
+// warnings come back as WarnKeyNotRotated.
+//
+// Ordering mirrors Enable: agent first (a failed rotate or an incomplete
+// response leaves the DB row and DNS untouched), then persist, then
+// best-effort DNS. Once the agent answers, Stalwart already signs with the new
+// keys: on ErrPersistFailed the returned RotateResult still carries them, for
+// the operator to publish by hand. On nil err the passed dom is mutated
+// (selector + public keys) so the caller can echo the new state without
+// re-fetching.
 //
 // The persist step writes the domain's *existing* email_enabled_at back
 // unchanged: UpdateEmailState always assigns that column from the struct, so a
@@ -378,9 +392,12 @@ func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, 
 		return RotateResult{}, nil, fmt.Errorf("%w: %v", ErrAgentFailed, err)
 	}
 	var resp struct {
-		OldDKIMPublicKey string `json:"old_dkim_public_key"`
-		NewDKIMPublicKey string `json:"new_dkim_public_key"`
-		OldKeyBackupPath string `json:"old_key_backup_path"`
+		OldDKIMPublicKey    string   `json:"old_dkim_public_key"`
+		NewDKIMPublicKey    string   `json:"new_dkim_public_key"`
+		OldKeyBackupPath    string   `json:"old_key_backup_path"`
+		OldDKIMRSAPublicKey string   `json:"old_dkim_rsa_public_key"`
+		NewDKIMRSAPublicKey string   `json:"new_dkim_rsa_public_key"`
+		Warnings            []string `json:"warnings"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return RotateResult{}, nil, fmt.Errorf("%w: unmarshal: %v", ErrAgentBadResponse, err)
@@ -392,30 +409,49 @@ func RotateDKIM(ctx context.Context, d Deps, dom *models.Domain) (RotateResult, 
 
 	selector := dnscompile.EmailRecordsSelector
 	pubKey := resp.NewDKIMPublicKey
-	if err := d.Domains.UpdateEmailState(ctx, dom.ID, repository.DomainEmailState{
+	res := RotateResult{
+		Selector:            selector,
+		OldDKIMPublicKey:    resp.OldDKIMPublicKey,
+		NewDKIMPublicKey:    pubKey,
+		OldKeyBackupPath:    resp.OldKeyBackupPath,
+		OldDKIMRSAPublicKey: resp.OldDKIMRSAPublicKey,
+		NewDKIMRSAPublicKey: resp.NewDKIMRSAPublicKey,
+	}
+	st := repository.DomainEmailState{
 		Enabled:        true,
 		DkimSelector:   &selector,
 		DkimPublicKey:  &pubKey,
 		EmailEnabledAt: dom.EmailEnabledAt, // preserve — see doc comment
-	}); err != nil {
-		return RotateResult{}, nil, fmt.Errorf("%w: %v", ErrPersistFailed, err)
+	}
+	var rsaKey *string
+	if resp.NewDKIMRSAPublicKey != "" {
+		rsaKey = &resp.NewDKIMRSAPublicKey
+		st.DkimRSAPublicKey = rsaKey
+	}
+	if err := d.Domains.UpdateEmailState(ctx, dom.ID, st); err != nil {
+		return res, nil, fmt.Errorf("%w: %v", ErrPersistFailed, err)
 	}
 
-	// Mutate caller's struct so the response reflects the rotated key.
+	// Mutate caller's struct so the response reflects the rotated keys. The
+	// RSA key must be set before the republish below, or it would publish the
+	// old RSA key while Stalwart signs with the new one.
 	dom.DkimSelector = &selector
 	dom.DkimPublicKey = &pubKey
+	if rsaKey != nil {
+		dom.DkimRSAPublicKey = rsaKey
+	}
 
-	// Wipe the old M6-managed records + republish so the new DKIM TXT replaces
-	// the old one immediately (reconciler re-converges on its next tick too).
+	var warnings []Warning
+	for _, w := range resp.Warnings {
+		warnings = append(warnings, Warning{Kind: WarnKeyNotRotated, Detail: w})
+	}
+	// Wipe the old M6-managed records + republish so the new DKIM TXT records
+	// replace the old ones immediately (reconciler re-converges on its next
+	// tick too).
 	DeleteManagedDNSOnDisable(ctx, d, dom.ID)
-	warnings := SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey, derefString(dom.DkimRSAPublicKey))
+	warnings = append(warnings, SyncManagedDNSOnEnable(ctx, d, dom.ID, selector, pubKey, derefString(dom.DkimRSAPublicKey))...)
 
-	return RotateResult{
-		Selector:         selector,
-		OldDKIMPublicKey: resp.OldDKIMPublicKey,
-		NewDKIMPublicKey: pubKey,
-		OldKeyBackupPath: resp.OldKeyBackupPath,
-	}, warnings, nil
+	return res, warnings, nil
 }
 
 // SyncManagedDNSOnEnable publishes the M6 DNS record set (DKIM TXT, autoconfig/

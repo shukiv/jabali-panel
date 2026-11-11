@@ -535,6 +535,93 @@ func TestRotateDKIM_PersistError_Typed_NoWipe(t *testing.T) {
 	require.False(t, records.deleted, "DNS wipe only runs after the new key persists")
 }
 
+// rsaRecords returns the content of the republished jabalirsa._domainkey TXT
+// records.
+func rsaRecords(recs []models.DNSRecord) []string {
+	var out []string
+	for _, r := range recs {
+		if r.Type == "TXT" && strings.HasPrefix(r.Name, "jabalirsa._domainkey") {
+			out = append(out, r.Content)
+		}
+	}
+	return out
+}
+
+// The RSA key is rotated with the Ed25519 one (GH #2475): the panel stores
+// it and republishes its record with the new key, never the old one.
+func TestRotateDKIM_RotatesRSA_PersistsAndRepublishesTheNewKey(t *testing.T) {
+	domains, _, records, d := baseDeps()
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"old_dkim_public_key":"v=DKIM1; k=ed25519; p=OLD","new_dkim_public_key":"v=DKIM1; k=ed25519; p=NEW",` +
+			`"old_dkim_rsa_public_key":"v=DKIM1; k=rsa; p=OLDRSA","new_dkim_rsa_public_key":"v=DKIM1; k=rsa; p=NEWRSA"}`), nil
+	}
+	dom, _ := enabledDomain()
+	oldRSA := "v=DKIM1; k=rsa; p=OLDRSA"
+	dom.DkimRSAPublicKey = &oldRSA
+
+	res, warnings, err := RotateDKIM(context.Background(), d, dom)
+	require.NoError(t, err)
+	require.Empty(t, warnings)
+	require.Equal(t, "v=DKIM1; k=rsa; p=NEWRSA", res.NewDKIMRSAPublicKey)
+	require.Equal(t, "v=DKIM1; k=rsa; p=OLDRSA", res.OldDKIMRSAPublicKey)
+	require.NotNil(t, domains.updated.DkimRSAPublicKey)
+	require.Equal(t, "v=DKIM1; k=rsa; p=NEWRSA", *domains.updated.DkimRSAPublicKey)
+	require.Equal(t, "v=DKIM1; k=rsa; p=NEWRSA", *dom.DkimRSAPublicKey)
+
+	rsa := rsaRecords(records.created)
+	require.Len(t, rsa, 1, "the RSA record is republished")
+	require.Contains(t, rsa[0], "p=NEWRSA", "with the key Stalwart now signs with")
+}
+
+// An RSA key the agent did not rotate (Stalwart refused it, or an agent from
+// before this change) keeps signing with its current key: the panel keeps
+// that key stored and published, and shows the agent's warning.
+func TestRotateDKIM_RSANotRotated_KeepsItPublished(t *testing.T) {
+	for name, reply := range map[string]string{
+		"refused":   `{"new_dkim_public_key":"v=DKIM1; k=ed25519; p=NEW","warnings":["The RSA DKIM key was not rotated and keeps signing with its current key (refused)."]}`,
+		"old agent": `{"new_dkim_public_key":"v=DKIM1; k=ed25519; p=NEW"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			domains, _, records, d := baseDeps()
+			d.Call = func(context.Context, string, any) (json.RawMessage, error) { return json.RawMessage(reply), nil }
+			dom, _ := enabledDomain()
+			oldRSA := "v=DKIM1; k=rsa; p=OLDRSA"
+			dom.DkimRSAPublicKey = &oldRSA
+
+			_, warnings, err := RotateDKIM(context.Background(), d, dom)
+			require.NoError(t, err)
+			require.Nil(t, domains.updated.DkimRSAPublicKey, "the stored RSA key is left as it is")
+			rsa := rsaRecords(records.created)
+			require.Len(t, rsa, 1, "the RSA record is republished")
+			require.Contains(t, rsa[0], "p=OLDRSA")
+			if name == "refused" {
+				require.Equal(t, []string{"The RSA DKIM key was not rotated and keeps signing with its current key (refused)."},
+					WarningMessages(warnings))
+				require.Equal(t, WarnKeyNotRotated, warnings[0].Kind)
+			} else {
+				require.Empty(t, warnings)
+			}
+		})
+	}
+}
+
+// After the agent call Stalwart signs with the new keys, so a failure to
+// store them leaves DNS publishing keys nothing signs with: the result
+// carries the new keys so the operator can publish them by hand.
+func TestRotateDKIM_PersistError_ReturnsTheNewKeys(t *testing.T) {
+	domains, _, _, d := baseDeps()
+	domains.updateErr = errors.New("db down")
+	d.Call = func(context.Context, string, any) (json.RawMessage, error) {
+		return json.RawMessage(`{"new_dkim_public_key":"v=DKIM1; k=ed25519; p=NEW","new_dkim_rsa_public_key":"v=DKIM1; k=rsa; p=NEWRSA"}`), nil
+	}
+	dom, _ := enabledDomain()
+
+	res, _, err := RotateDKIM(context.Background(), d, dom)
+	require.ErrorIs(t, err, ErrPersistFailed)
+	require.Equal(t, "v=DKIM1; k=ed25519; p=NEW", res.NewDKIMPublicKey)
+	require.Equal(t, "v=DKIM1; k=rsa; p=NEWRSA", res.NewDKIMRSAPublicKey)
+}
+
 // --- JAB-286 AC3: typed managed-DNS / SSL-SAN warnings ---
 
 // TestWarning_Message_Golden pins the operator-facing text for every Kind
@@ -559,6 +646,7 @@ func TestWarning_Message_Golden(t *testing.T) {
 		},
 		{Warning{Kind: WarnSSLLookupFailed}, "SSL cert lookup failed; retry ssl reconcile manually"},
 		{Warning{Kind: WarnSSLFlipFailed}, "SSL cert flip-to-renewing failed; mail.<domain> may be missing from cert until manual renewal"},
+		{Warning{Kind: WarnKeyNotRotated, Detail: "The RSA DKIM key was not rotated."}, "The RSA DKIM key was not rotated."},
 	}
 	for _, c := range cases {
 		require.Equal(t, c.want, c.w.Message(), "Kind %d message drifted", c.w.Kind)
@@ -578,6 +666,7 @@ func TestWarning_Retryable(t *testing.T) {
 		WarnPublishFailed:     true,
 		WarnSSLLookupFailed:   true,
 		WarnSSLFlipFailed:     true,
+		WarnKeyNotRotated:     false,
 	}
 	for k, want := range retryable {
 		require.Equal(t, want, Warning{Kind: k}.Retryable(), "Kind %d retryable classification", k)

@@ -17,6 +17,8 @@ type fakeDkim2Registry struct {
 	sigs      map[string]map[string]any // id -> object
 	nextID    int
 	lastCreIt map[string]any // last create payload, for shape asserts
+	// refuseUpdate lists signature ids whose update Stalwart refuses.
+	refuseUpdate map[string]bool
 }
 
 func newDkim2TestServer(t *testing.T, reg *fakeDkim2Registry) {
@@ -30,7 +32,7 @@ func newDkim2TestServer(t *testing.T, reg *fakeDkim2Registry) {
 }
 
 // routes serves x:DkimSignature/get and /set from the registry. Shared with
-// the DKIM1 ensure and email_enable tests.
+// the DKIM1 ensure, email_enable and rotate tests.
 func (reg *fakeDkim2Registry) routes() map[string]jmapHandler {
 	if reg.sigs == nil {
 		reg.sigs = map[string]map[string]any{}
@@ -46,6 +48,7 @@ func (reg *fakeDkim2Registry) routes() map[string]jmapHandler {
 		"x:DkimSignature/set": func(raw json.RawMessage) (any, *jmapFakeError) {
 			var req struct {
 				Create  map[string]map[string]any `json:"create"`
+				Update  map[string]map[string]any `json:"update"`
 				Destroy []string                  `json:"destroy"`
 			}
 			if err := json.Unmarshal(raw, &req); err != nil {
@@ -67,7 +70,19 @@ func (reg *fakeDkim2Registry) routes() map[string]jmapHandler {
 					destroyed = append(destroyed, id)
 				}
 			}
-			return map[string]any{"created": created, "destroyed": destroyed}, nil
+			updated, notUpdated := map[string]any{}, map[string]any{}
+			for id, patch := range req.Update {
+				s, ok := reg.sigs[id]
+				if !ok || reg.refuseUpdate[id] {
+					notUpdated[id] = map[string]any{"type": "invalidPatch"}
+					continue
+				}
+				for k, v := range patch {
+					s[k] = v
+				}
+				updated[id] = nil
+			}
+			return map[string]any{"created": created, "updated": updated, "notUpdated": notUpdated, "destroyed": destroyed}, nil
 		},
 	}
 }

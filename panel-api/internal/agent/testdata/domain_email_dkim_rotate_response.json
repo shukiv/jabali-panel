@@ -1,0 +1,10 @@
+{
+  "old_dkim_public_key": "v=DKIM1; k=ed25519; p=OLDEDKEYFORCONTRACTTESTSONLYAAAAAAAAAAAAAAA=",
+  "new_dkim_public_key": "v=DKIM1; k=ed25519; p=NEWEDKEYFORCONTRACTTESTSONLYAAAAAAAAAAAAAAA=",
+  "old_key_backup_path": "/etc/jabali-panel/dkim/example.com.key.old",
+  "old_dkim_rsa_public_key": "v=DKIM1; k=rsa; p=OLDRSAKEYFORCONTRACTTESTSONLYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIDAQAB",
+  "new_dkim_rsa_public_key": "v=DKIM1; k=rsa; p=NEWRSAKEYFORCONTRACTTESTSONLYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIDAQAB",
+  "warnings": [
+    "The DKIM2 signature may still use the previous Ed25519 key, so its signatures would fail: turn DKIM2 signing off and on again in Server Settings (refused)."
+  ]
+}

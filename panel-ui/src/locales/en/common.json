@@ -567,7 +567,7 @@
     "panel_hostname_domain_mail_only": "Panel hostname domain (mail-only)"
   },
   "domainemailsection": {
-    "a_fresh_dkim_keypair_is_generated_and_the_dn": "A fresh DKIM keypair is generated and the DNS TXT record changes. Remote receivers may need propagation time before they accept the new signature; the old key is kept as a backup.",
+    "a_fresh_dkim_keypair_is_generated_and_the_dn": "New DKIM keys (Ed25519 and RSA) are generated. The mail server signs with them from the next message, and both DKIM TXT records change. Receivers that cached the old records fail the new signatures until those expire. If this domain's DNS is hosted elsewhere, update both records there.",
     "copy_value": "Copy value",
     "dkim_key_missing": "DKIM key missing",
     "dns_autoconfig_partially_applied": "DNS autoconfig partially applied",

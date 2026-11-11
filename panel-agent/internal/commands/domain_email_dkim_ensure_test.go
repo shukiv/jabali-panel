@@ -182,9 +182,9 @@ func TestDkimEnsure_RejectsBadDomainName(t *testing.T) {
 	}
 }
 
-// The panel's side of the domain.email_enable and domain_email.dkim_ensure
-// contracts (GH #2475): the fixtures the panel decodes decode into this
-// handler's shapes with every field kept.
+// The panel's side of the domain.email_enable, domain_email.dkim_ensure and
+// domain.email_dkim_rotate contracts (GH #2475): the fixtures the panel
+// decodes decode into the handlers' shapes with every field kept.
 func TestDkimEnsure_PanelContract(t *testing.T) {
 	dir := "../../../panel-api/internal/agent/testdata/"
 	for _, c := range []struct {
@@ -194,6 +194,8 @@ func TestDkimEnsure_PanelContract(t *testing.T) {
 		{"domain_email_enable_response.json", &domainEmailEnableResponse{}},
 		{"domain_email_dkim_ensure_request.json", &dkimEnsureParams{}},
 		{"domain_email_dkim_ensure_response.json", &dkimEnsureResponse{}},
+		{"domain_email_dkim_rotate_request.json", &domainEmailDKIMRotateParams{}},
+		{"domain_email_dkim_rotate_response.json", &domainEmailDKIMRotateResponse{}},
 	} {
 		raw, err := os.ReadFile(dir + c.file)
 		if err != nil {

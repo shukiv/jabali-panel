@@ -57,14 +57,20 @@ export const DomainEmailSection = ({ domainId }: Props) => {
   const [wmFlipping, setWmFlipping] = useState(false);
   const [rotating, setRotating] = useState(false);
 
-  // Rotate DKIM (Gitea #542): the agent generates a fresh keypair, the panel
-  // republishes the DKIM TXT. Remote receivers may need DNS propagation time.
+  // Rotate DKIM (Gitea #542): the mail server gets new Ed25519 and RSA keys,
+  // the panel republishes both DKIM TXT records. A key that was not rotated
+  // comes back as a warning (GH #2475).
   const onRotateDKIM = async () => {
     setRotating(true);
     try {
-      await apiClient.post(`/domains/${domainId}/email/dkim-rotate`);
+      const resp = await apiClient.post<{ warnings?: string[] }>(`/domains/${domainId}/email/dkim-rotate`);
       qc.invalidateQueries({ queryKey: ["one", "domain-email", domainId] });
-      feedback.message.success("DKIM rotated — new key published; allow time for DNS propagation");
+      const warnings = resp.data?.warnings ?? [];
+      if (warnings.length > 0) {
+        feedback.message.warning(`DKIM rotated, with warnings: ${warnings.join(" ")}`);
+      } else {
+        feedback.message.success("DKIM rotated — new keys published; allow time for DNS propagation");
+      }
     } catch (err) {
       const resp = (err as { response?: { data?: { detail?: string; error?: string } } })?.response?.data;
       feedback.message.error(resp?.detail ?? resp?.error ?? "DKIM rotation failed");
