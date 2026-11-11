@@ -17,7 +17,7 @@ import (
 func TestMailboxLockoutNotice_DistinguishesNoHashFromFlagOff(t *testing.T) {
 	t.Parallel()
 
-	withFlag := mailboxLockoutNotice("vidoflexco", "vidoflex.com", true)
+	withFlag := mailboxLockoutNotice("shopacct", "shop.example", true)
 	if strings.Contains(withFlag, "use --preserve-source-state") {
 		t.Errorf("must not suggest a flag that is already active:\n%s", withFlag)
 	}
@@ -28,7 +28,7 @@ func TestMailboxLockoutNotice_DistinguishesNoHashFromFlagOff(t *testing.T) {
 		t.Errorf("should say a re-run is pointless — that is the cost being avoided:\n%s", withFlag)
 	}
 
-	withoutFlag := mailboxLockoutNotice("vidoflexco", "vidoflex.com", false)
+	withoutFlag := mailboxLockoutNotice("shopacct", "shop.example", false)
 	if !strings.Contains(withoutFlag, "use --preserve-source-state") {
 		t.Errorf("with the flag off the hint is correct and must stay:\n%s", withoutFlag)
 	}
@@ -37,7 +37,7 @@ func TestMailboxLockoutNotice_DistinguishesNoHashFromFlagOff(t *testing.T) {
 	// loudness was itself a fix (a quiet "temp password set" got a locked-out
 	// mailbox handed to a tenant).
 	for _, msg := range []string{withFlag, withoutFlag} {
-		if !strings.Contains(msg, "vidoflexco@vidoflex.com") || !strings.Contains(msg, "locked out") {
+		if !strings.Contains(msg, "shopacct@shop.example") || !strings.Contains(msg, "locked out") {
 			t.Errorf("notice lost the mailbox identity or the lockout warning:\n%s", msg)
 		}
 	}
