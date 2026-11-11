@@ -11,7 +11,8 @@ package commands
 //
 // Everything about the copy is fixed here, not by the caller:
 //   - source: <src_home>/etc/, where src_home is /home[N]/<src_account>;
-//   - destination: <staging>/<job_id>/mail-shadow/, created 0700, files 0600;
+//   - destination: <staging>/<job_id>/mail-shadow/, created 0700, files 0600,
+//     handed to the job dir's owner (the panel) once the copy is swept;
 //   - filters: one level of directories, and in them only files named
 //     `shadow`, at most 1 MiB. No -l/-L/-D: a symlink or device on the source
 //     is skipped, never followed or recreated.
@@ -141,6 +142,10 @@ func migrationPullMailShadowHandler(ctx context.Context, raw json.RawMessage) (a
 	if sErr != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "sweep " + mailShadowDirName + ": " + sErr.Error()}
 	}
+	if cErr := handMailShadowToJobOwner(p.JobID); cErr != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal,
+			Message: "hand " + mailShadowDirName + " to the job dir's owner: " + cErr.Error()}
+	}
 	res.Unreadable = mailShadowUnreadableDomains(string(out), srcEtc)
 	if partial != 0 {
 		res.Partial = true
@@ -267,6 +272,64 @@ func prepareMailShadowDir(jobID string) (string, *agentwire.AgentError) {
 			Message: fmt.Sprintf("chmod %s: %v", dest, err)}
 	}
 	return dest, nil
+}
+
+// mailShadowFchownat is unix.Fchownat; a var so tests can see the calls.
+var mailShadowFchownat = unix.Fchownat
+
+// handMailShadowToJobOwner gives the swept mail-shadow tree to the owner of
+// <staging>/<job_id> — the panel, which reads the files during the mailbox
+// import and removes the dir after it. Modes stay 0700/0600. Until the last
+// call the tree is root's 0700, so nothing else can have changed it; every
+// chown is AT_SYMLINK_NOFOLLOW relative to a directory fd opened O_NOFOLLOW,
+// and the mail-shadow dir itself goes last.
+func handMailShadowToJobOwner(jobID string) error {
+	root := canonicalizeRootPrefix(mailShadowStagingRoot, migrationStagingRoot)
+	const dirFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	rootFd, err := unix.Open(root, dirFlags, 0)
+	if err != nil {
+		return fmt.Errorf("staging root: %w", err)
+	}
+	defer unix.Close(rootFd)
+	jobFd, err := unix.Openat(rootFd, jobID, dirFlags, 0)
+	if err != nil {
+		return fmt.Errorf("job dir: %w", err)
+	}
+	defer unix.Close(jobFd)
+	var jst unix.Stat_t
+	if err := unix.Fstat(jobFd, &jst); err != nil {
+		return fmt.Errorf("stat job dir: %w", err)
+	}
+	uid, gid := int(jst.Uid), int(jst.Gid)
+
+	dfd, err := unix.Openat(jobFd, mailShadowDirName, dirFlags, 0)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", mailShadowDirName, err)
+	}
+	d := os.NewFile(uintptr(dfd), mailShadowDirName)
+	defer d.Close()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return fmt.Errorf("list %s: %w", mailShadowDirName, err)
+	}
+	for _, name := range names {
+		domFd, err := unix.Openat(dfd, name, dirFlags, 0)
+		if err != nil {
+			return fmt.Errorf("open %s: %w", name, err)
+		}
+		cerr := mailShadowFchownat(domFd, "shadow", uid, gid, unix.AT_SYMLINK_NOFOLLOW)
+		if cerr == nil {
+			cerr = mailShadowFchownat(dfd, name, uid, gid, unix.AT_SYMLINK_NOFOLLOW)
+		}
+		unix.Close(domFd)
+		if cerr != nil {
+			return fmt.Errorf("chown %s: %w", name, cerr)
+		}
+	}
+	if err := mailShadowFchownat(jobFd, mailShadowDirName, uid, gid, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return fmt.Errorf("chown %s: %w", mailShadowDirName, err)
+	}
+	return nil
 }
 
 // mailShadowFilterArgs are the rsync options that decide what is copied.

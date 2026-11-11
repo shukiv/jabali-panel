@@ -8,7 +8,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 const testMailShadowJob = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
@@ -312,5 +315,84 @@ func TestPullMailShadowHandler_FailedRunLeavesNothing(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(job, mailShadowDirName)); !os.IsNotExist(err) {
 		t.Fatalf("mail-shadow left behind: %v", err)
+	}
+}
+
+// The panel (owner of the job dir) reads the copied files and removes the
+// dir after the import, so the swept tree is handed to that owner: every
+// domain dir and shadow file, then mail-shadow itself last.
+func TestHandMailShadowToJobOwner(t *testing.T) {
+	job := withMailShadowStaging(t)
+	dest, aerr := prepareMailShadowDir(testMailShadowJob)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	mailShadowTestWrite(t, filepath.Join(dest, "a.example", "shadow"), "x")
+	mailShadowTestWrite(t, filepath.Join(dest, "b.example", "shadow"), "y")
+	var st syscall.Stat_t
+	if err := syscall.Stat(job, &st); err != nil {
+		t.Fatal(err)
+	}
+	type call struct {
+		name     string
+		uid, gid int
+		flags    int
+	}
+	var calls []call
+	old := mailShadowFchownat
+	mailShadowFchownat = func(dirfd int, name string, uid, gid, flags int) error {
+		calls = append(calls, call{name, uid, gid, flags})
+		return old(dirfd, name, uid, gid, flags)
+	}
+	t.Cleanup(func() { mailShadowFchownat = old })
+
+	if err := handMailShadowToJobOwner(testMailShadowJob); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 5 {
+		t.Fatalf("want 5 chowns (2 files, 2 dirs, mail-shadow), got %+v", calls)
+	}
+	got := map[string]int{}
+	for _, c := range calls {
+		if c.uid != int(st.Uid) || c.gid != int(st.Gid) {
+			t.Fatalf("%s chowned to %d:%d, want the job dir's %d:%d", c.name, c.uid, c.gid, st.Uid, st.Gid)
+		}
+		if c.flags&unix.AT_SYMLINK_NOFOLLOW == 0 {
+			t.Fatalf("%s chowned without AT_SYMLINK_NOFOLLOW", c.name)
+		}
+		got[c.name]++
+	}
+	if got["shadow"] != 2 || got["a.example"] != 1 || got["b.example"] != 1 {
+		t.Fatalf("chowned %v", got)
+	}
+	if last := calls[len(calls)-1].name; last != mailShadowDirName {
+		t.Fatalf("last chown %q, want %s last", last, mailShadowDirName)
+	}
+	for _, p := range []string{dest, filepath.Join(dest, "a.example"), filepath.Join(dest, "a.example", "shadow")} {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := os.FileMode(0o700); fi.IsDir() && fi.Mode().Perm() != want {
+			t.Fatalf("%s mode %v", p, fi.Mode().Perm())
+		}
+		if !fi.IsDir() && fi.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode %v", p, fi.Mode().Perm())
+		}
+	}
+}
+
+// A domain entry that is a symlink is not followed.
+func TestHandMailShadowToJobOwner_RefusesSymlinkedDomainDir(t *testing.T) {
+	withMailShadowStaging(t)
+	dest, aerr := prepareMailShadowDir(testMailShadowJob)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	if err := os.Symlink(t.TempDir(), filepath.Join(dest, "a.example")); err != nil {
+		t.Fatal(err)
+	}
+	if err := handMailShadowToJobOwner(testMailShadowJob); err == nil {
+		t.Fatal("followed a symlinked domain dir")
 	}
 }
