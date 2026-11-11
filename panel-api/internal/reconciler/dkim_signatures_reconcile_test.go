@@ -15,9 +15,10 @@ import (
 
 // fakeDkimEnsureAgent answers domain_email.dkim_ensure per domain.
 type fakeDkimEnsureAgent struct {
-	calls []string
-	resp  map[string]string // domain -> raw JSON response
-	err   map[string]error
+	calls  []string
+	params map[string]map[string]any // domain -> last params sent
+	resp   map[string]string         // domain -> raw JSON response
+	err    map[string]error
 }
 
 func (f *fakeDkimEnsureAgent) Call(_ context.Context, method string, params interface{}) (json.RawMessage, error) {
@@ -26,6 +27,10 @@ func (f *fakeDkimEnsureAgent) Call(_ context.Context, method string, params inte
 	}
 	name, _ := params.(map[string]any)["domain_name"].(string)
 	f.calls = append(f.calls, name)
+	if f.params == nil {
+		f.params = map[string]map[string]any{}
+	}
+	f.params[name] = params.(map[string]any)
 	if e := f.err[name]; e != nil {
 		return nil, e
 	}
@@ -253,5 +258,32 @@ func TestReconcileDKIMSignatures_OldAgentRetriesQuietly(t *testing.T) {
 	r.reconcileDKIMSignatures(context.Background())
 	if got := strings.Join(ag.calls, ","); got != "a.example.com,a.example.com" {
 		t.Fatalf("calls = %s, want one per tick", got)
+	}
+}
+
+// The pass sends the keys the panel publishes, so the agent can give a
+// signature that signs with a key nothing publishes the published key (a
+// rotation from before Rotate DKIM updated Stalwart). A healed signature
+// changes nothing on the panel's side: DNS already carries that key.
+func TestReconcileDKIMSignatures_SendsThePublishedKeys(t *testing.T) {
+	recs := &fakeDNSRecordRepo{records: map[string]*models.DNSRecord{}}
+	zones := &fakeDNSZoneRepo{zones: map[string]*models.DNSZone{}}
+	d := dkimMailDomain("d1", "example.com", "v=DKIM1; k=ed25519; p=PUB")
+	d.DkimRSAPublicKey = strp(longRSA)
+	doms := &fakeDkimSigDomainRepo{rows: []models.Domain{d}}
+	ag := &fakeDkimEnsureAgent{resp: map[string]string{
+		"example.com": `{"ok":true,"ed25519_public_key":"v=DKIM1; k=ed25519; p=PUB","rsa_public_key":"` + longRSA +
+			`","created":[],"healed":["Dkim1Ed25519Sha256"]}`,
+	}}
+	r := dkimSigReconciler(ag, doms, recs, zones)
+
+	r.reconcileDKIMSignatures(context.Background())
+
+	p := ag.params["example.com"]
+	if p["published_ed25519_public_key"] != "v=DKIM1; k=ed25519; p=PUB" || p["published_rsa_public_key"] != longRSA {
+		t.Fatalf("params = %v, want the published keys", p)
+	}
+	if doms.updates != 0 {
+		t.Errorf("keys written %d times, want none", doms.updates)
 	}
 }

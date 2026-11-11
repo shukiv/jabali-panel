@@ -26,6 +26,12 @@ const dkimEd25519SignatureType = "Dkim1Ed25519Sha256"
 // key, and how a domain whose Stalwart entry was created without signatures
 // gets signed at all; mail enable gives a new domain both directly.
 //
+// The call carries the keys the panel publishes. A signature that signs with
+// another key while the key file holds the published one (a rotation from
+// before Rotate DKIM updated Stalwart left domains like that, failing DKIM at
+// every receiver) is given the published key by the agent. DNS already
+// carries that key, so nothing changes here.
+//
 // A domain whose mail is not set up yet (no selector) is left to the enable
 // convergence. Applied-state map as in reconcileDKIM2: every domain is
 // converged once after boot (the agent call is a noop when both signatures
@@ -80,7 +86,11 @@ func (r *Reconciler) reconcileDKIMSignatures(ctx context.Context) {
 // next tick. agentTooOld reports an agent without domain_email.dkim_ensure.
 func (r *Reconciler) ensureDomainDKIMSignatures(ctx context.Context, d *models.Domain) (done, agentTooOld bool) {
 	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	raw, err := r.agent.Call(cctx, "domain_email.dkim_ensure", map[string]any{"domain_name": d.Name})
+	raw, err := r.agent.Call(cctx, "domain_email.dkim_ensure", map[string]any{
+		"domain_name":                  d.Name,
+		"published_ed25519_public_key": stringOrEmpty(d.DkimPublicKey),
+		"published_rsa_public_key":     stringOrEmpty(d.DkimRSAPublicKey),
+	})
 	cancel()
 	if err != nil {
 		var ae *agent.AgentError
@@ -103,10 +113,15 @@ func (r *Reconciler) ensureDomainDKIMSignatures(ctx context.Context, d *models.D
 		Ed25519PublicKey string   `json:"ed25519_public_key"`
 		RSAPublicKey     string   `json:"rsa_public_key"`
 		Created          []string `json:"created"`
+		Healed           []string `json:"healed"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		r.log.Warn("dkim signatures: bad agent response", "domain", d.Name, "error", err)
 		return false, false
+	}
+	if len(resp.Healed) > 0 {
+		r.log.Info("dkim signatures: the mail server signed with a key nothing published; it now signs with the published key",
+			"domain", d.Name, "signatures", resp.Healed)
 	}
 
 	// The RSA key is recorded whenever it is known and differs. The Ed25519

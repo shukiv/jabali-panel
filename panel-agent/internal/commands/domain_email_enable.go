@@ -134,7 +134,7 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 			return nil, err
 		}
 	}
-	sigs, err := ensureDomainDKIM(ctx, p.DomainName, domainID)
+	sigs, err := ensureDomainDKIM(ctx, p.DomainName, domainID, dkimPublishedKeys{})
 	if err != nil {
 		return nil, err
 	}

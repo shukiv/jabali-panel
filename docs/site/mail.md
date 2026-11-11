@@ -76,6 +76,12 @@ for a retry fails at its receiver. The previous private keys stay in
 record, not a rollback. If the RSA key can't be rotated, the Ed25519 one still
 is, and the rotation says so.
 
+Before this release, Rotate DKIM changed the key file and the published record
+but not the key the mail server signs with, so the domain's mail failed DKIM
+after a rotation. The first reconcile after the update finds such a domain (the
+mail server's key differs from the key file, and the key file's key is the one
+published) and gives the mail server the published key.
+
 ### Mail-only delete
 
 A domain can have **just its mail torn down while the web domain stays** —

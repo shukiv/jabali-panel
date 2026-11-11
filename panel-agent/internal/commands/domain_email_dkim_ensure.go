@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dkim"
@@ -26,7 +28,10 @@ import (
 //   - a missing signature is created from the key file, and the key is
 //     generated only when the file is missing too;
 //   - a signature whose key file is gone is kept, and its public key is
-//     reported as "" so the panel keeps the one it published.
+//     reported as "" so the panel keeps the one it published;
+//   - a signature that signs with a key nothing publishes, while the panel
+//     publishes the key file's key, gets the key file's key (see
+//     healDKIMSignatures).
 const (
 	dkim1Ed25519Type = "Dkim1Ed25519Sha256"
 	dkim1RSAType     = "Dkim1RsaSha256"
@@ -46,11 +51,19 @@ type dkimEnsureResult struct {
 	RSAPublicKey     string
 	// Created lists the signature types this call created.
 	Created []string
+	// Healed lists the signature types given the key file's key.
+	Healed []string
+}
+
+// dkimPublishedKeys are the TXT values the panel publishes for a domain; ""
+// when unknown, which turns healing off.
+type dkimPublishedKeys struct {
+	Ed25519, RSA string
 }
 
 // ensureDomainDKIM gives the Stalwart domain domainID an Ed25519 and an RSA
 // DKIM1 signature, under the rules above.
-func ensureDomainDKIM(ctx context.Context, domainName, domainID string) (dkimEnsureResult, error) {
+func ensureDomainDKIM(ctx context.Context, domainName, domainID string, published dkimPublishedKeys) (dkimEnsureResult, error) {
 	var res dkimEnsureResult
 
 	edIDs, err := dkimSignatureIDs(ctx, domainID, dkim1Ed25519Type)
@@ -66,6 +79,16 @@ func ensureDomainDKIM(ctx context.Context, domainName, domainID string) (dkimEns
 			}
 			return dkim.PublicDKIMTxtFromSeed(seed)
 		})
+		if res.Ed25519PublicKey != "" && res.Ed25519PublicKey == published.Ed25519 {
+			seed, err := dkim.LoadEd25519(edPath)
+			if err == nil {
+				var pemKey []byte
+				if pemKey, err = dkim.SeedToPKCS8PEM(seed); err == nil {
+					res.Healed = append(res.Healed, healDKIMSignatures(ctx, domainName, domainID,
+						[]string{dkim1Ed25519Type, dkim2SignatureType}, res.Ed25519PublicKey, string(pemKey))...)
+				}
+			}
+		}
 	} else {
 		txt, err := ensureDKIMKey(edPath)
 		if err != nil {
@@ -99,6 +122,12 @@ func ensureDomainDKIM(ctx context.Context, domainName, domainID string) (dkimEns
 			}
 			return dkim.PublicRSADKIMTxtFromPEM(pemKey)
 		})
+		if res.RSAPublicKey != "" && res.RSAPublicKey == published.RSA {
+			if pemKey, err := dkim.LoadRSA(rsaPath); err == nil {
+				res.Healed = append(res.Healed, healDKIMSignatures(ctx, domainName, domainID,
+					[]string{dkim1RSAType}, res.RSAPublicKey, string(pemKey))...)
+			}
+		}
 	} else {
 		pemKey, txt, err := ensureDKIMRSAKey(rsaPath)
 		if err != nil {
@@ -111,6 +140,59 @@ func ensureDomainDKIM(ctx context.Context, domainName, domainID string) (dkimEns
 		res.Created = append(res.Created, dkim1RSAType)
 	}
 	return res, nil
+}
+
+// healDKIMSignatures gives domainID's signatures of the types typs the key
+// file's key, pemKey, where Stalwart signs with another one. The caller has
+// checked that the panel publishes the key file's key, fileTXT, so such a
+// signature signs with a key nothing publishes and fails at every receiver: a
+// rotation from before Rotate DKIM updated Stalwart left domains like that.
+// Giving it the published key can only make it verify. A signature whose
+// public key Stalwart doesn't report is left alone, and a refusal is logged:
+// the signature keeps working as it did. Returns the types it healed.
+func healDKIMSignatures(ctx context.Context, domainName, domainID string, typs []string, fileTXT, pemKey string) []string {
+	want := dkimTXTKey(fileTXT)
+	if want == "" {
+		return nil
+	}
+	var result jmapGetResult
+	if err := jmapCall(ctx, "x:DkimSignature/get", map[string]any{
+		"properties": []string{"id", "@type", "domainId", "publicKey"},
+	}, &result); err != nil {
+		slog.Warn("dkim: could not read the signatures' keys", "domain", domainName, "err", err)
+		return nil
+	}
+	var healed []string
+	for _, raw := range result.List {
+		var sig struct {
+			ID        string `json:"id"`
+			Type      string `json:"@type"`
+			DomainID  string `json:"domainId"`
+			PublicKey string `json:"publicKey"`
+		}
+		if err := json.Unmarshal(raw, &sig); err != nil || sig.DomainID != domainID ||
+			!slices.Contains(typs, sig.Type) || sig.PublicKey == "" || sig.PublicKey == want {
+			continue
+		}
+		if err := setDkimSignatureKey(ctx, []string{sig.ID}, pemKey); err != nil {
+			slog.Warn("dkim: signature signs with a key nothing publishes, and the published key was refused",
+				"domain", domainName, "type", sig.Type, "err", err)
+			continue
+		}
+		slog.Info("dkim: signature signed with a key nothing publishes; it now signs with the published key",
+			"domain", domainName, "type", sig.Type)
+		healed = append(healed, sig.Type)
+	}
+	return healed
+}
+
+// dkimTXTKey returns the p= value of a DKIM TXT record, "" when it has none.
+func dkimTXTKey(txt string) string {
+	_, key, ok := strings.Cut(txt, "p=")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(key)
 }
 
 // existingKeyTXT derives the TXT of the key a signature already uses, or
@@ -160,6 +242,10 @@ func dkimInternal(format string, a ...any) error {
 
 type dkimEnsureParams struct {
 	DomainName string `json:"domain_name"`
+	// The TXT values the panel publishes for the domain; they enable
+	// healDKIMSignatures.
+	PublishedEd25519PublicKey string `json:"published_ed25519_public_key,omitempty"`
+	PublishedRSAPublicKey     string `json:"published_rsa_public_key,omitempty"`
 }
 
 type dkimEnsureResponse struct {
@@ -169,6 +255,7 @@ type dkimEnsureResponse struct {
 	RSASelector      string   `json:"rsa_selector"`
 	RSAPublicKey     string   `json:"rsa_public_key"`
 	Created          []string `json:"created"`
+	Healed           []string `json:"healed"`
 }
 
 // dkimEnsureHandler is domain_email.dkim_ensure, the reconciler's pass that
@@ -192,13 +279,18 @@ func dkimEnsureHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 			Message: fmt.Sprintf("domain %q has no Stalwart registry entry", p.DomainName),
 		}
 	}
-	res, err := ensureDomainDKIM(ctx, p.DomainName, domainID)
+	res, err := ensureDomainDKIM(ctx, p.DomainName, domainID, dkimPublishedKeys{
+		Ed25519: p.PublishedEd25519PublicKey, RSA: p.PublishedRSAPublicKey,
+	})
 	if err != nil {
 		return nil, err
 	}
-	created := res.Created
+	created, healed := res.Created, res.Healed
 	if created == nil {
 		created = []string{}
+	}
+	if healed == nil {
+		healed = []string{}
 	}
 	return dkimEnsureResponse{
 		Ok:               true,
@@ -207,6 +299,7 @@ func dkimEnsureHandler(ctx context.Context, raw json.RawMessage) (any, error) {
 		RSASelector:      dkimRSASelector,
 		RSAPublicKey:     res.RSAPublicKey,
 		Created:          created,
+		Healed:           healed,
 	}, nil
 }
 
