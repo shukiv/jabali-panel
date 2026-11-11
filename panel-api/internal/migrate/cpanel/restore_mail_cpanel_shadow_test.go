@@ -143,7 +143,11 @@ func TestImportMailboxes_CpanelShadowInTreeSymlinkRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(other, "shadow"), []byte("box:"+testSrcSHA512+":19000::::::\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("../other.example/shadow", filepath.Join(parsed.HomeDir, "etc", "main.example", "shadow")); err != nil {
+	etcDom := filepath.Join(parsed.HomeDir, "etc", "main.example")
+	if err := os.Remove(etcDom); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("other.example", etcDom); err != nil {
 		t.Fatal(err)
 	}
 	mb, skipped := importOneCpanelMailbox(t, parsed, true)
