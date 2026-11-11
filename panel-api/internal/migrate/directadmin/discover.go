@@ -97,19 +97,23 @@ func (d *Discoverer) Connect(ctx context.Context, host, user string, secret migr
 	}
 	// Verify the source host key (Gitea #461) instead of blindly trusting it.
 	cfg := &ssh.ClientConfig{
-		User:            user,
-		Auth:            auth,
-		HostKeyCallback: migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
-		Timeout:         15 * time.Second,
+		User:              user,
+		Auth:              auth,
+		HostKeyCallback:   migrate.PinningHostKeyCallback(secret.ExpectedHostKey),
+		HostKeyAlgorithms: migrate.HostKeyAlgorithms(),
+		Timeout:           15 * time.Second,
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	conn, err := migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("directadmin.Connect: tcp dial %s: %w", addr, err)
+	// SSHHandshake tries the source's host keys one type at a time and
+	// accepts only the one that matches the pin (migrate/hostkey.go).
+	c, ch, reqs, err := migrate.SSHHandshake(func() (net.Conn, error) {
+		return migrate.DialTCP(ctx, host, port, d.AllowPrivate, 15*time.Second)
+	}, addr, cfg, secret.ExpectedHostKey)
+	var dialErr *migrate.DialError
+	if errors.As(err, &dialErr) {
+		return nil, fmt.Errorf("directadmin.Connect: tcp dial %s: %w", addr, dialErr.Err)
 	}
-	c, ch, reqs, err := ssh.NewClientConn(conn, addr, cfg)
 	if err != nil {
-		conn.Close()
 		// Go ssh client filters our offered methods against the
 		// server's advertised list. "attempted methods [none]"
 		// means we offered something (e.g. password) but the
