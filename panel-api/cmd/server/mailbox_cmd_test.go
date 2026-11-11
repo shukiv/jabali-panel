@@ -89,6 +89,25 @@ func (f *fakeMailboxRepo) CountByDomainID(_ context.Context, domainID string) (i
 	return n, nil
 }
 
+// CountByOwner counts every non-system row: the fake keeps no domain owners,
+// and the CLI tests use one owner.
+func (f *fakeMailboxRepo) CountByOwner(_ context.Context, _ string) (int64, error) {
+	var n int64
+	for _, mb := range f.rows {
+		if !mb.System {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (f *fakeMailboxRepo) CreateWithinCap(ctx context.Context, mb *models.Mailbox, owner string, max uint32) error {
+	if n, _ := f.CountByOwner(ctx, owner); n >= int64(max) {
+		return repository.ErrMailboxCapExceeded
+	}
+	return f.Create(ctx, mb)
+}
+
 func (f *fakeMailboxRepo) Create(_ context.Context, mb *models.Mailbox) error {
 	if f.createErr != nil {
 		return f.createErr

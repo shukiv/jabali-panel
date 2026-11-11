@@ -23,6 +23,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/mailaddr"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dbops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -64,6 +65,30 @@ type Deps struct {
 	// such an address signs in to that account. The create operations refuse
 	// when it is nil or fails.
 	Addresses AddressReleaser
+	// Users and Packages give Create the domain owner's package limit on
+	// email accounts. Without Users the limit is not applied; every
+	// production adapter (the API and the CLI) wires both.
+	Users    repository.UserRepository
+	Packages repository.PackageRepository
+}
+
+// emailAccountLimit is the domain owner's package limit on email accounts. 0
+// means none: no package, or a package that sets 0 (GH #282). A package that
+// is set but can't be loaded refuses the create rather than lifting the limit
+// (dbops.PackageLimit).
+func emailAccountLimit(ctx context.Context, d Deps, ownerID string) (uint32, error) {
+	if d.Users == nil {
+		return 0, nil
+	}
+	user, err := d.Users.FindByID(ctx, ownerID)
+	if err != nil {
+		return 0, fmt.Errorf("%w: load the domain's owner: %v", ErrQuotaUnavailable, err)
+	}
+	limit, err := dbops.PackageLimit(ctx, d.Packages, user, func(p *models.HostingPackage) uint32 { return p.MaxEmailAccounts })
+	if err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrQuotaUnavailable, err)
+	}
+	return limit, nil
 }
 
 // AddressReleaser takes an address off every Stalwart account that still
@@ -113,6 +138,12 @@ var (
 	// ErrOwnershipPending: the domain's owner has not proven the name yet
 	// (GH #1816 / ADR-0170), so it gets no mail principals.
 	ErrOwnershipPending = errors.New("mailboxops: domain ownership is not proven yet")
+	// ErrQuotaExceeded: the owner's hosting package allows no more email
+	// accounts.
+	ErrQuotaExceeded = errors.New("mailboxops: the hosting package allows no more email accounts")
+	// ErrQuotaUnavailable: the owner's package is set but could not be read,
+	// so the create is refused rather than let past the limit.
+	ErrQuotaUnavailable = errors.New("mailboxops: the hosting package's limits cannot be loaded")
 )
 
 // CreateInput is one interactive mailbox creation. Note the ABSENCE of a System
@@ -159,6 +190,23 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 	if exists {
 		return nil, "", ErrMailboxExists
 	}
+	// The package limit counts every account the owner has, send-only ones
+	// included. This is the early answer; the insert below re-checks it under
+	// a lock on the owner, so creates at the same time can't both take the
+	// last slot.
+	limit, err := emailAccountLimit(ctx, d, in.Domain.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+	if limit > 0 {
+		n, err := d.Mailboxes.CountByOwner(ctx, in.Domain.UserID)
+		if err != nil {
+			return nil, "", fmt.Errorf("%w: count the owner's mailboxes: %v", ErrInternal, err)
+		}
+		if n >= int64(limit) {
+			return nil, "", fmt.Errorf("%w (%d of %d)", ErrQuotaExceeded, n, limit)
+		}
+	}
 
 	password := in.Password
 	generated := ""
@@ -202,7 +250,16 @@ func Create(ctx context.Context, d Deps, in CreateInput, notify NotifyFunc) (*mo
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
-	if err := d.Mailboxes.Create(ctx, mb); err != nil {
+	insert := d.Mailboxes.Create
+	if limit > 0 {
+		insert = func(ctx context.Context, mb *models.Mailbox) error {
+			return d.Mailboxes.CreateWithinCap(ctx, mb, in.Domain.UserID, limit)
+		}
+	}
+	if err := insert(ctx, mb); err != nil {
+		if errors.Is(err, repository.ErrMailboxCapExceeded) {
+			return nil, "", fmt.Errorf("%w (%d)", ErrQuotaExceeded, limit)
+		}
 		if errors.Is(err, repository.ErrConflict) {
 			return nil, "", ErrMailboxExists
 		}

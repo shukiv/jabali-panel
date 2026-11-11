@@ -54,6 +54,11 @@ type MailboxHandlerConfig struct {
 	// SSORateLimit bounds minting webmail sign-in links, per user. Wire from
 	// rl.SSOPerActor(); nil disables it.
 	SSORateLimit gin.HandlerFunc
+	// Users and Packages give a create the domain owner's package limit on
+	// email accounts (mailboxops.Deps). Without Users the limit is not
+	// applied; app.go wires both.
+	Users    repository.UserRepository
+	Packages repository.PackageRepository
 }
 
 // MailAddressReleaser takes an address off the Stalwart accounts that still
@@ -278,7 +283,7 @@ func (h *mailboxHandler) create(c *gin.Context) {
 	// canonicalization, quota default/floor, password gen/hash/seal, duplicate
 	// rule, and display_name/send_only all live in the op. Authorization stayed
 	// here (the ownership check above).
-	deps := mailboxops.Deps{Mailboxes: h.cfg.Mailboxes, SSOKey: h.cfg.SSOKey}
+	deps := mailboxops.Deps{Mailboxes: h.cfg.Mailboxes, SSOKey: h.cfg.SSOKey, Users: h.cfg.Users, Packages: h.cfg.Packages}
 	if h.cfg.Addresses != nil {
 		deps.Addresses = h.cfg.Addresses
 	}
@@ -305,6 +310,11 @@ func (h *mailboxHandler) create(c *gin.Context) {
 		case errors.Is(err, mailboxops.ErrMailServer):
 			slog.Warn("mailbox create: mail server release failed", "err", err)
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "mail_server_unavailable", "detail": "the mail server could not be reached; try again"})
+		case errors.Is(err, mailboxops.ErrQuotaExceeded):
+			c.JSON(http.StatusConflict, gin.H{"error": "quota_exceeded", "resource": "email_accounts", "detail": "the hosting package allows no more email accounts"})
+		case errors.Is(err, mailboxops.ErrQuotaUnavailable):
+			slog.Warn("mailbox create: package limits unavailable", "err", err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "quota_unavailable", "detail": "the hosting package's limits cannot be loaded right now"})
 		case errors.Is(err, mailboxops.ErrQuotaTooSmall):
 			c.JSON(http.StatusBadRequest, gin.H{"error": "quota_too_small", "detail": "quota_bytes must be at least 16 MiB"})
 		case errors.Is(err, mailboxops.ErrWeakPassword):

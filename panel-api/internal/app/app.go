@@ -997,6 +997,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				// passwords at once.
 				MailCredentials: deps.MailCredentials,
 				SSORateLimit:    rl.SSOPerActor(),
+				// The domain owner's package limit on email accounts.
+				Users:    deps.Users,
+				Packages: deps.Packages,
 			})
 		}
 		if deps.MailGroups != nil && deps.Mailboxes != nil && deps.Domains != nil {

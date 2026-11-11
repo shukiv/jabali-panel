@@ -38,7 +38,14 @@ type MailboxRepository interface {
 	// backward-compatible mode.
 	ListDirectoryPage(ctx context.Context, opts ListOptions, ownerUserID string) ([]MailboxWithDomain, int64, error)
 	CountByDomainID(ctx context.Context, domainID string) (int64, error)
+	// CountByOwner counts the mailboxes on all of ownerID's domains, leaving
+	// out the panel's system relays: what the package's email-account limit
+	// counts.
+	CountByOwner(ctx context.Context, ownerID string) (int64, error)
 	Create(ctx context.Context, mb *models.Mailbox) error
+	// CreateWithinCap is Create held to max mailboxes for ownerID (counted
+	// like CountByOwner), with ErrMailboxCapExceeded at the cap.
+	CreateWithinCap(ctx context.Context, mb *models.Mailbox, ownerID string, max uint32) error
 	Delete(ctx context.Context, id string) error
 	UpdatePasswordHash(ctx context.Context, id string, hash string) error
 	// UpdatePasswordHashAndEnc writes both the bcrypt hash (used by
@@ -361,6 +368,44 @@ func (r *mailboxRepo) CountByDomainID(ctx context.Context, domainID string) (int
 // sweep goes by created_at for it.
 func (r *mailboxRepo) Create(ctx context.Context, mb *models.Mailbox) error {
 	return mapAddressInUse(mapPostmasterReserved(r.db.WithContext(ctx).Create(mb).Error))
+}
+
+// mailboxOwnerCountQuery counts an owner's mailboxes for the package's
+// email-account limit: a mailbox belongs to its owner through its domain, and
+// the system relays (noreply@ for a site's mail) are the panel's, not the
+// owner's.
+const mailboxOwnerCountQuery = "SELECT COUNT(*) FROM mailboxes m JOIN domains d ON d.id = m.domain_id WHERE d.user_id = ? AND m.system = 0"
+
+func (r *mailboxRepo) CountByOwner(ctx context.Context, ownerID string) (int64, error) {
+	var n int64
+	if err := r.db.WithContext(ctx).Raw(mailboxOwnerCountQuery, ownerID).Scan(&n).Error; err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// CreateWithinCap locks the owner's users row FOR UPDATE, counts and inserts
+// in one transaction, like insertWithinOwnerCap: two creates racing for the
+// last slot serialize on the lock.
+func (r *mailboxRepo) CreateWithinCap(ctx context.Context, mb *models.Mailbox, ownerID string, max uint32) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var lockedID string
+		if err := tx.Raw("SELECT id FROM users WHERE id = ? FOR UPDATE", ownerID).Scan(&lockedID).Error; err != nil {
+			return err
+		}
+		if lockedID == "" {
+			return ErrNotFound
+		}
+		var count int64
+		if err := tx.Raw(mailboxOwnerCountQuery, ownerID).Scan(&count).Error; err != nil {
+			return err
+		}
+		if count >= int64(max) {
+			return ErrMailboxCapExceeded
+		}
+		return tx.Create(mb).Error
+	})
+	return mapAddressInUse(mapPostmasterReserved(err))
 }
 
 func (r *mailboxRepo) Delete(ctx context.Context, id string) error {
