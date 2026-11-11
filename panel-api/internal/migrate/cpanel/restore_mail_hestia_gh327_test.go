@@ -48,7 +48,7 @@ func TestInsertMailboxPanelRows_HestiaFreshAccountsFromPasswd(t *testing.T) {
 	mb := &fakeMailboxRepoMB{}
 	dr := &fakeDomainRepoMB{id: "01DOMAIN0000000000000000TS"}
 	res := &MailImportResult{}
-	insertMailboxPanelRows(context.Background(), mailRoot, "", true, fakeTargetUserID, mb, dr, res)
+	insertMailboxPanelRows(context.Background(), mailRoot, "", true, mailShadowSource{}, fakeTargetUserID, mb, dr, res)
 
 	got := map[string]bool{}
 	for _, m := range mb.created {

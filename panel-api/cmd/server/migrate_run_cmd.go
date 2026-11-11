@@ -1718,10 +1718,28 @@ func cpanelRestoreCallback(
 			if root != "" {
 				p.parsed.MailRoot = root
 			}
+			// The same pull leaves out <home>/etc/<domain>/shadow, so every
+			// mailbox got a new password even with --preserve-source-state.
+			// Copy just those files; the import reads them and they are
+			// removed as soon as it is over (dropMailShadow, deferred as a
+			// backstop).
+			if crit == "" {
+				shadowDir, unreadable, shadowLines, notCopied := cpanelPullMailShadow(ctx, restoreAgent.Call, job, p.parsed.SourceUser, preserve.Credentials)
+				warnings = append(warnings, shadowLines...)
+				p.parsed.MailShadowUnreadable = unreadable
+				p.parsed.MailShadowNotCopied = notCopied
+				if shadowDir != "" {
+					p.parsed.MailShadowDir = shadowDir
+					defer func() { _ = dropMailShadow(p.parsed) }()
+				}
+			}
 		}
 
 		if plan.Mailboxes {
 			mailRes, err := cpanel.ImportMailboxes(ctx, p.parsed, restoreAgent, job.ID, mbRepo, domainsRepo, preserve.Credentials, p.targetUsername, p.targetUserID)
+			if line := dropMailShadow(p.parsed); line != "" {
+				warnings = append(warnings, line)
+			}
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("mailboxes: %w", err)
 			}
