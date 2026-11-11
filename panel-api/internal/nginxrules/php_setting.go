@@ -19,7 +19,10 @@ var phpIniNameRe = regexp.MustCompile(`^[A-Za-z0-9_.]+$`)
 //     are admin-only and set through the domain's PHP Settings, never as a
 //     PHP_VALUE a request carries into a shared worker;
 //   - the value must not hold a control character: PHP_VALUE reads a newline
-//     as the start of a second directive.
+//     as the start of a second directive;
+//   - the value must not hold `$`: nginx expands variables inside a
+//     fastcgi_param value, so "$request_body" or "$http_x" would put
+//     request-controlled text, newlines included, into PHP_VALUE.
 //
 // The validator refuses such a rule for every writer, and Compile skips one
 // that was stored before.
@@ -34,6 +37,9 @@ func PHPSettingRefusal(name, value string) string {
 	}
 	if strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 		return "the value must not contain control characters (a newline would set a second PHP directive)"
+	}
+	if strings.Contains(value, "$") {
+		return "the value must not contain '$' (nginx would expand it as a variable from the request)"
 	}
 	return ""
 }

@@ -44,3 +44,21 @@ func TestCompile_SkipsUnsafeStoredPHPSettings(t *testing.T) {
 		t.Errorf("%d PHP_VALUE lines, want 2:\n%s", n, got)
 	}
 }
+
+// nginx expands $variables inside a fastcgi_param value, so a value holding
+// `$` would carry request-controlled text (newlines included) into
+// PHP_VALUE. Stored rules like that are skipped.
+func TestCompile_SkipsStoredPHPSettingWithNginxVariable(t *testing.T) {
+	for _, v := range []string{"$request_body", "1$uri", "${arg_x}", "$http_x_set"} {
+		got := Compile(&models.Domain{Name: "main.example", NginxRules: []models.NginxRule{
+			{Type: "php_setting", Name: "display_errors", Value: v},
+			{Type: "php_setting", Name: "memory_limit", Value: "256M"},
+		}})
+		if strings.Contains(got, "display_errors") || strings.Contains(got, "$") {
+			t.Errorf("%q rendered:\n%s", v, got)
+		}
+		if !strings.Contains(got, `PHP_VALUE "memory_limit=256M"`) {
+			t.Errorf("%q: safe rule lost:\n%s", v, got)
+		}
+	}
+}

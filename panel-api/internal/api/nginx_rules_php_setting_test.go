@@ -20,6 +20,9 @@ func TestValidateNginxRules_RefusesUnsafePHPSettings(t *testing.T) {
 		{Type: "php_setting", Name: "display_errors\nopen_basedir", Value: "/"},
 		{Type: "php_setting", Name: " open_basedir", Value: "/"},
 		{Type: "php_setting", Name: "memory_limit=1G", Value: "x"},
+		{Type: "php_setting", Name: "display_errors", Value: "$request_body"},
+		{Type: "php_setting", Name: "display_errors", Value: "1$uri"},
+		{Type: "php_setting", Name: "display_errors", Value: "${arg_x}"},
 	}
 	for _, name := range models.PHPSensitiveDirectives {
 		bad = append(bad,
