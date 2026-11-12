@@ -276,34 +276,72 @@ REPO_TOKEN="${_cli_token:-${JABALI_GITHUB_TOKEN:-${JABALI_GITEA_TOKEN:-${_positi
 JABALI_DEBUG="${_cli_debug:-${JABALI_DEBUG:-}}"
 export JABALI_DEBUG
 
-# Per-run log file — always on, independent of --debug. Captures every
+# The install log — always on, independent of --debug. Captures every
 # _log/_ok/_warn/_err/_die line AND every _spin wrapped command's output,
 # so a post-mortem after install stalls or errors doesn't depend on
-# scrollback. Filename is timestamped so reruns don't clobber. Lives in
-# /root because install.sh already requires root (preflight() asserts
-# EUID==0); if touch fails (fallback for weird jails / testing) we try
-# /tmp and emit a warning later. Mode 0600 — the log may echo hostnames,
-# IPs, and package lists but never secrets (we redact/avoid passwords).
-# Canonical log dir for everything jabali writes locally. logrotate
-# drop-in (install/logrotate/jabali) rotates /var/log/jabali/*.log
-# weekly, keeps 8. Falls back to /tmp on a weird jail where /var/log
-# isn't writable so we still get a post-mortem trail.
+# scrollback. Mode 0600 — the log may echo hostnames, IPs, and package
+# lists but never secrets (we redact/avoid passwords).
+#
+# One file, like any other program's log: every install.sh run, and every
+# `source install.sh` step of `jabali update`, appends to
+# /var/log/jabali/install.log, and logrotate (install/logrotate/jabali)
+# rotates it. Each run opens with a header line, so runs stay apart.
+# Until 2026-11 every run wrote its own install-<ts>.log, about 26 a night
+# from the update steps alone, and logrotate never removed them;
+# fold_legacy_install_logs folds those into install.log.1.
+#
+# Falls back to a per-run file in /tmp on a weird jail where /var/log
+# isn't writable, so we still get a post-mortem trail. Per-run there
+# (mktemp), not one fixed name: a fixed name in a world-writable
+# directory is one another user can create first.
 LOG_DIR="/var/log/jabali"
-mkdir -p "$LOG_DIR" 2>/dev/null || true
-chmod 0750 "$LOG_DIR" 2>/dev/null || true
-LOG_FILE="$LOG_DIR/install-$(date +%Y-%m-%d_%H-%M-%S).log"
-if ! touch "$LOG_FILE" 2>/dev/null; then
-  LOG_FILE="/tmp/jabali_install-$(date +%Y-%m-%d_%H-%M-%S).log"
-  touch "$LOG_FILE" 2>/dev/null || LOG_FILE=""
-fi
-if [[ -n "$LOG_FILE" ]]; then
-  chmod 0600 "$LOG_FILE" 2>/dev/null || true
-  # Keep a stable "latest" symlink so docs/runbooks can reference
-  # /var/log/jabali/install.log without a timestamp.
-  if [[ "$LOG_FILE" == "$LOG_DIR/"* ]]; then
-    ln -sfn "$(basename "$LOG_FILE")" "$LOG_DIR/install.log" 2>/dev/null || true
+
+# _install_log_run_label says what this process is running, for the header:
+# the install mode for a run of install.sh, or the command that sourced it
+# (`jabali update` runs `bash -c "source install.sh && <function>"`). Never the
+# raw arguments: --token carries a secret.
+_install_log_run_label() {
+  if [[ -n "${BASH_SOURCE[0]:-}" && "${BASH_SOURCE[0]}" != "$0" ]]; then
+    local by="${BASH_EXECUTION_STRING:-}"
+    if [[ -n "$by" ]]; then
+      printf 'sourced: %s' "${by:0:200}"
+    else
+      printf 'sourced'
+    fi
+    return 0
   fi
-fi
+  local mode="install"
+  if [[ -n "${_cli_uninstall:-}" ]]; then
+    mode="--uninstall"
+    [[ -n "${_cli_purge_packages:-}" ]] && mode+=" --purge-packages"
+  elif [[ -n "${_cli_install_module:-}" ]]; then
+    mode="--install-module ${_cli_install_module:0:40}"
+  fi
+  [[ -n "${_cli_dry_run:-}" ]] && mode+=" --dry-run"
+  [[ -n "${JABALI_DEBUG:-}" ]] && mode+=" --debug"
+  printf 'run: %s' "$mode"
+}
+
+# _init_install_log sets LOG_FILE and writes this run's header line.
+_init_install_log() {
+  local dir="$1" tmpdir="${2:-/tmp}"
+  mkdir -p "$dir" 2>/dev/null || true
+  chmod 0750 "$dir" 2>/dev/null || true
+  LOG_FILE="$dir/install.log"
+  # install.log used to be a symlink to the newest install-<ts>.log;
+  # appending through it would write into that old file.
+  if [[ -L "$LOG_FILE" ]]; then
+    rm -f "$LOG_FILE" 2>/dev/null || true
+  fi
+  if ! touch "$LOG_FILE" 2>/dev/null; then
+    LOG_FILE="$(mktemp "$tmpdir/jabali_install-XXXXXXXX.log" 2>/dev/null)" || LOG_FILE=""
+  fi
+  [[ -n "$LOG_FILE" ]] || return 0
+  chmod 0600 "$LOG_FILE" 2>/dev/null || true
+  printf '\n===== %s install.sh[%s] %s =====\n' \
+    "$(date -Iseconds)" "$$" "$(_install_log_run_label)" >> "$LOG_FILE" 2>/dev/null || true
+}
+_init_install_log "$LOG_DIR"
 
 if [[ -n "$JABALI_DEBUG" ]]; then
   # Dim + line-tagged so xtrace output is visually distinct from the
@@ -14152,17 +14190,47 @@ RESTARTCONF
 #
 # Idempotent: writes the helper script + template unit unconditionally,
 # only daemon-reloads when content changed.
-# prune_old_install_logs — every install.sh run, and every `source install.sh`
-# step of `jabali update`, writes its own install-<ts>.log. logrotate renames
-# each one to install-<ts>.log.1, and since no file keeps that name,
-# `rotate 8` never applies: the rotated files were kept forever (5,983 on .60
-# since May; tens of thousands on a host in a module-install retry loop,
-# GH #2056). Delete rotated install logs older than the 8 weeks the logrotate
-# drop-in keeps. Logs not yet rotated are left to logrotate.
-prune_old_install_logs() {
+# fold_legacy_install_logs — until 2026-11 every install.sh run, and every
+# `source install.sh` step of `jabali update`, wrote its own install-<ts>.log,
+# and logrotate renamed each to install-<ts>.log.1 and never removed it: one
+# box had 735 files in /var/log/jabali (5,983 on .60 before the old 8-week
+# prune; tens of thousands on a host in a module-install retry loop,
+# GH #2056). Everything now goes to install.log. Fold the old files, oldest
+# first and each under its old name, into install.log.1 — logrotate's
+# history slot, ahead of whatever is already there — then remove them. A
+# no-op once they are gone. Runs under install.sh's ERR trap, so nothing in
+# here may fail.
+fold_legacy_install_logs() {
   local dir="${1:-/var/log/jabali}"
   [[ -d "$dir" ]] || return 0
-  find "$dir" -maxdepth 1 -type f -name 'install-*.log.*' -mtime +56 -delete 2>/dev/null || true
+  local -a legacy=()
+  local f
+  while IFS= read -r f; do
+    legacy+=("$f")
+  done < <(find "$dir" -maxdepth 1 -type f -name 'install-*.log*' 2>/dev/null | LC_ALL=C sort || true)
+  (( ${#legacy[@]} > 0 )) || return 0
+  local hist="$dir/install.log.1" tmp
+  tmp="$(mktemp "$dir/.install.log.1.XXXXXXXX" 2>/dev/null)" || return 0
+  {
+    for f in "${legacy[@]}"; do
+      printf '\n===== %s =====\n' "${f##*/}"
+      if [[ "$f" == *.gz ]]; then
+        zcat -- "$f" 2>/dev/null || true
+      else
+        cat -- "$f" 2>/dev/null || true
+      fi
+    done
+    if [[ -f "$hist" ]]; then
+      cat -- "$hist" 2>/dev/null || true
+    fi
+  } > "$tmp" 2>/dev/null || true
+  chmod 0600 "$tmp" 2>/dev/null || true
+  if mv -f -- "$tmp" "$hist" 2>/dev/null; then
+    rm -f -- "${legacy[@]}" 2>/dev/null || true
+    _log "folded ${#legacy[@]} old install-<ts>.log files into $hist"
+  else
+    rm -f -- "$tmp" 2>/dev/null || true
+  fi
 }
 
 install_logrotate() {
@@ -14216,13 +14284,13 @@ install_logrotate() {
     fi
   fi
 
-  # JAB-104: the install logger falls back to /tmp/jabali_install-<ts>.log
-  # when /var/log/jabali can't be created (see LOG_FILE bootstrap). Those
+  # JAB-104: the install logger falls back to /tmp/jabali_install-*.log
+  # when /var/log/jabali can't be created (see _init_install_log). Those
   # fall outside every logrotate policy, so age them out opportunistically on
   # each install/update tick — the only events that create them — so they
   # can't accumulate forever on hosts with weak /tmp cleanup.
   find /tmp -maxdepth 1 -name 'jabali_install-*.log' -type f -mtime +14 -delete 2>/dev/null || true
-  prune_old_install_logs
+  fold_legacy_install_logs
 }
 
 install_pdns_local_address_helper() {
