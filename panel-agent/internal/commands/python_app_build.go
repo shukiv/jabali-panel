@@ -163,6 +163,24 @@ func appBuildStep(appID, username string, plan func() (bool, error), run func(ct
 	return pythonBuildRunning, nil
 }
 
+// appBuildRunning reports whether a build of the app has started and not yet
+// ended. A build that ended but was not collected by an apply yet is not
+// running.
+func appBuildRunning(appID string) bool {
+	pythonBuilds.Lock()
+	defer pythonBuilds.Unlock()
+	b, ok := pythonBuilds.m[appID]
+	if !ok {
+		return false
+	}
+	select {
+	case <-b.done:
+		return false
+	default:
+		return true
+	}
+}
+
 // cancelPythonBuildsForUser stops every build running as username, forgets
 // them, and waits up to wait for them to exit. user.delete calls it before
 // userdel.
