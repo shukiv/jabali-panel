@@ -161,7 +161,7 @@ refuses `PORT` and `HOST`.
   failed build at once, without waiting out the 15 minutes. While a build is
   running, Rebuild is refused until that build ends. An app with no
   `package.json` has nothing to build: use Restart. A deploy script calls
-  the same action with an API token that has the **apps** scope:
+  the same action with an API token that has the `write:apps` scope:
 
   ```bash
   curl -fsS -X POST -H "Authorization: Bearer <token>" \
