@@ -8,3 +8,6 @@ f8a6f0a7ac252bb958e21ebfedc433f855308f55:panel-api/internal/gitdeploy/webhook_te
 
 # Database statement tests: fake database user password (PR #2412).
 247a0648234c0f4a12635c865faedb72d1594b84:panel-agent/internal/commands/sql_stdin_test.go:generic-api-key:156
+
+# Install log test: fake --token value, checked never to reach the log.
+d15c70bce0f74ce6accb9ba63fa013d072f9354d:install/tests/test_install_log_single_file.sh:generic-api-key:43
