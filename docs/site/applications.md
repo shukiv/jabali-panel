@@ -154,10 +154,13 @@ refuses `PORT` and `HOST`.
   or the lockfile changes, so new code alone (a `git pull`, an upload) is
   not built: a Next.js app keeps serving its old build. **Rebuild** in the
   app's menu builds it again (`npm ci` or `npm install`, then `npm run
-  build`) within a minute and restarts the app when the build is done; the
-  app keeps running its old build until then. It also retries a failed
-  build at once, without waiting out the 15 minutes. While a build is
-  running, Rebuild is refused until that build ends. A deploy script calls
+  build`) within a minute and restarts the app when the build is done. The
+  build runs in the app's directory while the app runs: `npm ci` replaces
+  `node_modules` and the build replaces its output, so the app can answer
+  with errors until it restarts, as during any build. It also retries a
+  failed build at once, without waiting out the 15 minutes. While a build is
+  running, Rebuild is refused until that build ends. An app with no
+  `package.json` has nothing to build: use Restart. A deploy script calls
   the same action with an API token that has the **apps** scope:
 
   ```bash

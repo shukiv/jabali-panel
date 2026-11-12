@@ -316,7 +316,7 @@ export function PythonAppsPage() {
                   confirm: {
                     title: "Rebuild app?",
                     description: r.runtime === "node"
-                      ? "Installs the dependencies and runs npm run build again, then restarts the app. Use it after you change the app's code."
+                      ? "Installs the dependencies and runs npm run build again, then restarts the app. Use it after you change the app's code. The app can answer with errors while it builds."
                       : "Installs requirements.txt again, then restarts the app.",
                     okText: "Rebuild",
                   },

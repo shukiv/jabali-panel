@@ -53,8 +53,10 @@ func pythonAppControlHandler(ctx context.Context, params json.RawMessage) (any, 
 		// git pull of a Next.js app, is never built. Rebuild forgets the
 		// last build: the next apply (the reconciler applies every app on
 		// each pass, about once a minute) installs and builds the app again
-		// and restarts it once the build is done. The running app is left
-		// alone until then. No unit is needed: an app whose first build
+		// and restarts it once the build is done. The unit is not touched
+		// until then, though the build runs in the app's directory under the
+		// running app, as every build does. An app with no manifests has
+		// nothing to build and is not restarted. No unit is needed: an app whose first build
 		// failed has none, and this skips that failure's backoff. A build
 		// already running would record its result when it ends and undo
 		// this, so it is refused until that build has finished.

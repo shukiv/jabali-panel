@@ -67,6 +67,40 @@ func TestNodeAppRebuild_SkipsTheFailureBackoff(t *testing.T) {
 	}
 }
 
+// A Python app: requirements.txt unchanged, nothing to do; after a rebuild
+// pip installs it again and the apply restarts the app.
+func TestPythonAppRebuild_InstallsTheRequirementsAgain(t *testing.T) {
+	f := newPyBuildFixture(t, "01PYREBUILD000000000000000")
+	_ = os.WriteFile(f.rel, nil, 0o644)
+	build := func() (pythonBuildState, error) {
+		t.Helper()
+		if st, err := f.step(); err != nil || st != pythonBuildRunning {
+			t.Fatalf("first step = %v, %v; want running", st, err)
+		}
+		waitPythonBuild(t, f.p.AppID)
+		return f.step()
+	}
+	pipRuns := func() int {
+		b, _ := os.ReadFile(f.log)
+		return strings.Count(string(b), " -r ")
+	}
+	if st, err := build(); err != nil || st != pythonBuildFinished {
+		t.Fatalf("first build: %v, %v", st, err)
+	}
+	if st, err := f.step(); err != nil || st != pythonBuildNotNeeded {
+		t.Fatalf("converged: %v, %v; want not needed", st, err)
+	}
+
+	clearAppBuildMarkers(f.stateDir, f.p.AppID)
+
+	if st, err := build(); err != nil || st != pythonBuildFinished {
+		t.Fatalf("after rebuild: %v, %v; want finished", st, err)
+	}
+	if n := pipRuns(); n != 2 {
+		t.Fatalf("pip install -r ran %d times, want 2", n)
+	}
+}
+
 // Every runtime's build markers go; the app's env file and other apps'
 // markers stay.
 func TestClearAppBuildMarkers(t *testing.T) {
