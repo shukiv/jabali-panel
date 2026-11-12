@@ -28,6 +28,7 @@ func newPythonAppCmd() *cobra.Command {
 		newPythonAppControlCmd("start", "Start an app"),
 		newPythonAppControlCmd("stop", "Stop an app"),
 		newPythonAppControlCmd("restart", "Restart an app"),
+		newPythonAppControlCmd("rebuild", "Build an app again on the next pass (npm or pip) and restart it when done"),
 		newPythonAppLogsCmd(),
 		newPythonAppDeleteCmd(),
 		newPythonAppCreateCmd(),
