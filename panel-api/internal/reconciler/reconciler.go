@@ -2988,6 +2988,7 @@ func (r *Reconciler) reconcileDNSZone(ctx context.Context, domain *models.Domain
 	// list records for compile. Safe to call every tick: idempotent by
 	// design (re-running finds no rows matching the sentinel content).
 	r.migrateBootstrapShape(ctx, zone, srv)
+	r.convergeServerAddrRecords(ctx, zone, srv)
 
 	// M24: converge the apex A/AAAA records to the domain's effective
 	// listen IP. Idempotent — only writes when content drifts from the
@@ -4019,6 +4020,8 @@ func indexByte(s string, b byte) int {
 // the tenant's vhost binds. The `mail` reconcile is out of scope for
 // Step 7 (no bug reported, no plan task) — if we ever want it, it needs
 // its own sentinel logic.
+// convergeServerAddrRecords now moves the bootstrap `mail` A/AAAA (and
+// the bootstrap SPF) to the server's current public addresses.
 func (r *Reconciler) convergeApexAddrRecords(ctx context.Context, zone *models.DNSZone, domain *models.Domain) {
 	if r.dnsRecords == nil || zone == nil || domain == nil {
 		return
