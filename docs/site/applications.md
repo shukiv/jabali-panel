@@ -74,6 +74,7 @@ Every app uses the same 6-step pipeline:
 When a Python app is created, or its `requirements.txt` changes, the panel builds it as the account's user: it creates the app's virtualenv, runs `pip install -r requirements.txt`, and installs the app server (gunicorn for WSGI, uvicorn for ASGI) if `requirements.txt` did not already. A first install of a real project can take several minutes, so the build runs in the background. The app shows **building** until it finishes, then **running**, or **failed** with the reason on hover.
 
 - A failed `pip install` shows the packages pip was working on and the last lines of its output. The panel retries it after 15 minutes, or straight away when `requirements.txt` changes.
+- **Rebuild** in the app's menu runs `pip install -r requirements.txt` again within a minute and restarts the app when it is done, and retries a failed build without waiting out the 15 minutes (`jabali python-app rebuild <app-id>` for an administrator). It is refused while a build is running.
 - Each pip step stops after 8 minutes. A build that never finishes in that time shows **failed** with `timed out`.
 - Restarting the agent stops a build that is running; the next pass starts it again, and pip keeps what it already installed.
 - The build runs in the account's slice, under its package's CPU, memory and task limits, like the app itself (see [Resource limits](./resource-limits.md)). Each step (`python -m venv`, each `pip install`, and each step of a framework's first setup) runs in a scope of its own, `jabali-app-build-<app id>-<n>.scope`, which is stopped when the step ends: nothing a build starts keeps running after it.
@@ -149,6 +150,24 @@ refuses `PORT` and `HOST`.
   of npm's output; it is retried after 15 minutes, or straight away when
   `package.json` or the lockfile changes. A `node` app with no
   `package.json` has nothing to install.
+- **Rebuild after a code change.** The build runs only when `package.json`
+  or the lockfile changes, so new code alone (a `git pull`, an upload) is
+  not built: a Next.js app keeps serving its old build. **Rebuild** in the
+  app's menu builds it again (`npm ci` or `npm install`, then `npm run
+  build`) within a minute and restarts the app when the build is done; the
+  app keeps running its old build until then. It also retries a failed
+  build at once, without waiting out the 15 minutes. While a build is
+  running, Rebuild is refused until that build ends. A deploy script calls
+  the same action with an API token that has the **apps** scope:
+
+  ```bash
+  curl -fsS -X POST -H "Authorization: Bearer <token>" \
+    -H "Content-Type: application/json" -d '{"action":"rebuild"}' \
+    "https://<panel-address>/api/v1/python-apps/<app-id>/control"
+  ```
+
+  A `409` with `build_running` means a build is still running: wait and
+  call it again.
 - **npm registry.** npm downloads from `registry.npmjs.org` over HTTPS. The
   default egress policy allows port 443, so this works as installed; an
   account on a stricter custom egress policy needs `registry.npmjs.org`
@@ -169,6 +188,7 @@ jabali python-app create --runtime node --domain example.com --name api \
   --app-root apps/api --entrypoint server.js
 jabali python-app create --runtime node --app-type npm --domain example.com \
   --name web --app-root apps/web           # runs npm run start
+jabali python-app rebuild <app-id>          # build again after a code change
 ```
 
 ## Database admin tooling

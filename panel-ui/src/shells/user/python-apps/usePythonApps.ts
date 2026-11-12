@@ -245,6 +245,28 @@ export function useControlPythonApp() {
   });
 }
 
+// controlSuccessMessage is the toast after a control was accepted. A rebuild
+// is not done when the request returns: the app builds on the next pass and
+// restarts when the build is done.
+export function controlSuccessMessage(action: string): string {
+  if (action === "rebuild") {
+    return "Rebuild requested: the app builds again within a minute and restarts when the build is done.";
+  }
+  return `${action} requested`;
+}
+
+// controlErrorMessage is the toast after a control failed: the server's
+// detail rather than axios' status line, and a 409 build_running (a rebuild
+// while a build runs) says to wait for that build.
+export function controlErrorMessage(action: string, err: unknown): string {
+  const e = err as { response?: { status?: number; data?: { error?: string; detail?: string } }; message?: string } | undefined;
+  if (e?.response?.status === 409 && e.response.data?.error === "build_running") {
+    return "The app is already building. Rebuild again once that build has finished.";
+  }
+  const reason = (e?.response?.data?.detail || e?.response?.data?.error || e?.message || "").trim();
+  return reason ? `${action} failed: ${reason}` : `${action} failed`;
+}
+
 export async function fetchPythonAppLogs(id: string): Promise<string> {
   const { data } = await apiClient.get<{ logs: string }>(
     `/python-apps/${id}/logs`,
