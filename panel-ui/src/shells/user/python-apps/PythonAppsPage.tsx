@@ -19,7 +19,7 @@ import {
   Tooltip,
   Typography,
 } from "antd";
-import { CodeOutlined, PlusOutlined, ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined, FolderOpenOutlined } from "@icons";
+import { CodeOutlined, PlusOutlined, ReloadOutlined, PauseCircleOutlined, FileTextOutlined, DeleteOutlined, SettingOutlined, FolderOpenOutlined, ToolOutlined } from "@icons";
 import { RowActions } from "../../../components/RowActions";
 import { PythonAppEnvDrawer } from "./PythonAppEnvDrawer";
 import { useEffect, useMemo, useState } from "react";
@@ -33,6 +33,8 @@ import type { AppRuntime, CreateAppForm, Framework, PythonApp } from "./usePytho
 import {
   NODE_APP_VERSION,
   appRuntimes,
+  controlErrorMessage,
+  controlSuccessMessage,
   createAppBody,
   fetchPythonAppLogs,
   nodeEntrypointRe,
@@ -223,9 +225,9 @@ export function PythonAppsPage() {
   const doControl = async (id: string, action: string) => {
     try {
       await control.mutateAsync({ id, action });
-      message.success(`${action} requested`);
+      message.success(controlSuccessMessage(action));
     } catch (e) {
-      message.error(e instanceof Error ? e.message : `${action} failed`);
+      message.error(controlErrorMessage(action, e));
     }
   };
 
@@ -306,6 +308,19 @@ export function PythonAppsPage() {
             <RowActions
               actions={[
                 { key: "restart", label: "Restart", icon: <ReloadOutlined />, onClick: () => void doControl(r.id, "restart") },
+                {
+                  key: "rebuild",
+                  label: "Rebuild",
+                  icon: <ToolOutlined />,
+                  onClick: () => void doControl(r.id, "rebuild"),
+                  confirm: {
+                    title: "Rebuild app?",
+                    description: r.runtime === "node"
+                      ? "Installs the dependencies and runs npm run build again, then restarts the app. Use it after you change the app's code. The app can answer with errors while it builds."
+                      : "Installs requirements.txt again, then restarts the app.",
+                    okText: "Rebuild",
+                  },
+                },
                 { key: "stop", label: "Stop", icon: <PauseCircleOutlined />, onClick: () => void doControl(r.id, "stop") },
                 { key: "logs", label: "Logs", icon: <FileTextOutlined />, onClick: () => void openLogs(r) },
                 { key: "env", label: "Environment", icon: <SettingOutlined />, onClick: () => setEnvApp(r) },

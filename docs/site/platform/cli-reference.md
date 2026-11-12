@@ -4893,6 +4893,14 @@ jabali python-app logs <app-id> [flags]
 
 - `--lines` — number of log lines (default `200`)
 
+#### `jabali python-app rebuild`
+
+Build an app again on the next pass (npm or pip) and restart it when done
+
+```
+jabali python-app rebuild <app-id>
+```
+
 #### `jabali python-app restart`
 
 Restart an app

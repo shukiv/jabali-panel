@@ -451,8 +451,8 @@ jabali per-user-egress   approve|deny|flip-mature|get|requests|set-policy|
                          summary
 jabali php               ext|pool|version
 jabali php-defense       incidents|incidents-clear|mode|rule-toggle|rules|status
-jabali python-app        create|delete|env|frameworks|list|logs|restart|start|
-                         stop
+jabali python-app        create|delete|env|frameworks|list|logs|rebuild|restart|
+                         start|stop
 jabali release           promote
 jabali repair            # Detect and fix known deployment-host issues
 jabali retention-sweep   # Prune expired rows from unbounded log/report tables

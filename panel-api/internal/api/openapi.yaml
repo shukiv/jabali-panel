@@ -1990,11 +1990,17 @@ paths:
   /python-apps/{id}/control:
     post:
       tags: [Python Apps]
-      summary: Start / stop / restart a Python app
+      summary: Start / stop / restart / rebuild a Python or Node.js app
+      description: >-
+        rebuild builds the app again on the next reconcile pass (about a minute): npm ci or
+        npm install plus npm run build for a Node.js app, pip install -r requirements.txt for a
+        Python app. The app is restarted when the build is done. Without it an app is built
+        only when its package.json, lockfile or requirements.txt change, so call it after
+        deploying new code.
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: id, required: true, schema: { type: string, format: ulid } } ]
-      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [start, stop, restart] } } } } } }
-      responses: { "200": { description: Applied } }
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { action: { type: string, enum: [start, stop, restart, rebuild] } } } } } }
+      responses: { "200": { description: Applied }, "400": { description: Unknown action (invalid_action) }, "409": { description: A build of the app is already running (build_running); rebuild once it has finished } }
 
 
 

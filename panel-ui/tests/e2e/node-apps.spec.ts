@@ -170,6 +170,44 @@ test("both runtimes: the dialog offers the choice and a switch to Node.js sends 
   });
 });
 
+// Rebuild builds the app again after a code change (an app is otherwise built
+// only when package.json or the lockfile change): a confirm says what it does,
+// the request sends action rebuild, the toast says when it happens, and a
+// rebuild while a build runs (409 build_running) says to wait.
+test("Rebuild: a confirm, action rebuild, and a 409 that says the app is already building", async ({ page }) => {
+  await setup(page, { python: false, node: true });
+  const sent: unknown[] = [];
+  await page.route(`**/api/v1/python-apps/${nodeApp.id}/control`, (route) => {
+    sent.push(route.request().postDataJSON());
+    if (sent.length === 1) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ active: true, state: "active" }) });
+    }
+    return route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "build_running", detail: "a build of this app is already running; rebuild it once that build has finished" }),
+    });
+  });
+
+  await page.goto("/jabali-panel/python-apps");
+  const rebuild = async () => {
+    await page.getByRole("row", { name: /web/ }).getByRole("button", { name: "More actions" }).click();
+    await page.getByRole("menuitem", { name: "Rebuild" }).click();
+    const confirm = page.getByRole("dialog").filter({ hasText: "Rebuild app?" });
+    await expect(confirm).toContainText("npm run build");
+    await confirm.getByRole("button", { name: "Rebuild" }).click();
+  };
+
+  await rebuild();
+  await expect.poll(() => sent.length).toBe(1);
+  expect(sent[0]).toEqual({ action: "rebuild" });
+  await expect(page.getByText(/Rebuild requested: the app builds again within a minute/)).toBeVisible();
+
+  await rebuild();
+  await expect.poll(() => sent.length).toBe(2);
+  await expect(page.getByText("The app is already building. Rebuild again once that build has finished.")).toBeVisible();
+});
+
 test("a Node.js app's environment refuses PORT and HOST", async ({ page }) => {
   await setup(page, { python: false, node: true });
   let saved = false;

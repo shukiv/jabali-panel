@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/oklog/ulid/v2"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	ginctx "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
@@ -555,13 +557,32 @@ func (h *pythonAppHandler) control(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_request"})
 		return
 	}
+	if !pythonAppControlActions[req.Action] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_action", "detail": "action must be start, stop, restart or rebuild"})
+		return
+	}
 	raw, err := h.cfg.Agent.Call(c.Request.Context(), "app.python.control", map[string]any{"app_id": app.ID, "action": req.Action})
 	if err != nil {
+		// A rebuild while a build runs is refused until it ends (the running
+		// build would record its result and undo the rebuild): a 409 a deploy
+		// script can retry on, not a failure.
+		var ae *agentwire.AgentError
+		if req.Action == "rebuild" && errors.As(err, &ae) && ae.Code == agent.CodeFailedPrecondition {
+			c.JSON(http.StatusConflict, gin.H{"error": "build_running", "detail": "a build of this app is already running; rebuild it once that build has finished"})
+			return
+		}
 		respondAgentError(c, err)
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
 }
+
+// pythonAppControlActions are the controls an app owner may send. rebuild
+// builds the app again (npm ci/install + npm run build, or pip install -r)
+// on the next reconcile pass and restarts it when the build is done: an app
+// is otherwise built only when its package.json, lockfile or
+// requirements.txt change, so new code alone is never built.
+var pythonAppControlActions = map[string]bool{"start": true, "stop": true, "restart": true, "rebuild": true}
 
 func (h *pythonAppHandler) logs(c *gin.Context) {
 	app, ok := h.loadOwned(c)
