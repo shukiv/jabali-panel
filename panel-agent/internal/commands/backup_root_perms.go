@@ -81,7 +81,7 @@ func ensureRestoreStaging() error {
 		return fmt.Errorf("open %s: %w", backupsRootDir, err)
 	}
 	defer unix.Close(root)
-	if _, err := claimDirFD(root, gid, 0o750); err != nil {
+	if err := claimDirFD(root, gid, 0o750); err != nil {
 		return fmt.Errorf("%s: %w", backupsRootDir, err)
 	}
 	names, err := dirNamesFD(root)
@@ -124,8 +124,7 @@ func claimBackupsEntry(root int, name string) error {
 			return err
 		}
 		defer unix.Close(fd)
-		_, err = claimDirFD(fd, -1, -1)
-		return err
+		return claimDirFD(fd, -1, -1)
 	case unix.S_IFREG:
 		// The agent's own lock files are made again on use. Any other file is
 		// left where it is: root never reads a file it didn't make there.
@@ -136,9 +135,9 @@ func claimBackupsEntry(root int, name string) error {
 	return nil
 }
 
-// secureRestoreStaging makes restore-staging a root-only folder. When it wasn't
-// root's, every entry in it that isn't root's is removed: those can't be a
-// stage the agent made.
+// secureRestoreStaging makes restore-staging a root-only folder, and removes
+// every entry in it that isn't root's: the agent makes each stage itself, as
+// root, so those can't be one.
 func secureRestoreStaging(root int) error {
 	var st unix.Stat_t
 	err := unix.Fstatat(root, restoreStagingName, &st, unix.AT_SYMLINK_NOFOLLOW)
@@ -159,8 +158,7 @@ func secureRestoreStaging(root int) error {
 		return err
 	}
 	defer unix.Close(fd)
-	wasRoots, err := claimDirFD(fd, -1, 0o700)
-	if err != nil || wasRoots {
+	if err := claimDirFD(fd, -1, 0o700); err != nil {
 		return err
 	}
 	names, err := dirNamesFD(fd)
@@ -194,17 +192,15 @@ func secureRestoreStaging(root int) error {
 }
 
 // claimDirFD gives the open folder to root and gid (-1 keeps the group), with
-// perm (-1 keeps the mode less group and other write). It reports whether the
-// folder was root's already.
-func claimDirFD(fd, gid, perm int) (bool, error) {
+// perm (-1 keeps the mode less group and other write).
+func claimDirFD(fd, gid, perm int) error {
 	var st unix.Stat_t
 	if err := unix.Fstat(fd, &st); err != nil {
-		return false, err
+		return err
 	}
-	wasRoots := int(st.Uid) == backupsOwnerUID
-	if !wasRoots || (gid >= 0 && int(st.Gid) != gid) {
+	if int(st.Uid) != backupsOwnerUID || (gid >= 0 && int(st.Gid) != gid) {
 		if err := backupsFchown(fd, backupsOwnerUID, gid); err != nil {
-			return wasRoots, fmt.Errorf("chown: %w", err)
+			return fmt.Errorf("chown: %w", err)
 		}
 	}
 	mode := int(st.Mode & 0o7777)
@@ -214,10 +210,10 @@ func claimDirFD(fd, gid, perm int) (bool, error) {
 	}
 	if mode != want {
 		if err := unix.Fchmod(fd, uint32(want)); err != nil {
-			return wasRoots, fmt.Errorf("chmod: %w", err)
+			return fmt.Errorf("chmod: %w", err)
 		}
 	}
-	return wasRoots, nil
+	return nil
 }
 
 // trustedOwner reports whether uid is root (or, in tests, the test user).

@@ -430,3 +430,54 @@ func TestEvictStaleSysApplyStages_SweepsRestoreStaging(t *testing.T) {
 		t.Fatalf("left %v, want only the fresh stage", names)
 	}
 }
+
+// As root, the two cases a test user can't build: a link the panel's user left
+// in a folder that is root's now (it planted the link before an update gave the
+// folder to root) is not followed, and an entry in root's restore-staging that
+// isn't root's is removed while root's stage stays.
+func TestBackupsRoot_AsRoot_ForeignLinkAndForeignStage(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root, to give test files to another user")
+	}
+	const nobody = 65534
+	root, calls := withBackupsRoot(t)
+	victim := victimDir(t)
+
+	dir := filepath.Join(backupsWalkBase, "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "backups")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Lchown(link, nobody, nobody); err != nil {
+		t.Fatal(err)
+	}
+	backupsRootDir = link
+	if err := ensureRestoreStaging(); err == nil {
+		t.Fatal("a link another user owns must not be followed, even in root's folder")
+	}
+	mustVictimUntouched(t, victim, *calls)
+	mustNotExist(t, filepath.Join(victim, restoreStagingName))
+
+	backupsRootDir = root
+	staging := filepath.Join(root, restoreStagingName)
+	keep := filepath.Join(staging, "01JABCDEFGHJKMNPQRSTVWXYZ0")
+	foreign := filepath.Join(staging, "01JABCDEFGHJKMNPQRSTVWXYZ1-upload")
+	for _, d := range []string{keep, foreign} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chown(foreign, nobody, nobody); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureRestoreStaging(); err != nil {
+		t.Fatalf("ensureRestoreStaging: %v", err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("root's stage must stay: %v", err)
+	}
+	mustNotExist(t, foreign)
+}
