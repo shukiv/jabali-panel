@@ -142,6 +142,11 @@ var (
 	// host list (GH #2380). One entry for the host, keyed on the list; the
 	// interval repairs a config rendered since from another list.
 	PhaseAppSecWebmail = Phase{Name: "crowdsec.appsec_webmail", AuditInterval: domainReDispatchInterval}
+	// PhaseWebmailBranding is webmail's branding: the server-wide brand text
+	// and logos, and each domain's own (GH #2502). One entry for the host,
+	// keyed on all of it; the interval puts back a server logo a webmail
+	// upgrade removed.
+	PhaseWebmailBranding = Phase{Name: "webmail.branding", AuditInterval: time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call

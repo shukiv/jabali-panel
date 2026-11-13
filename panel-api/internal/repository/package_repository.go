@@ -121,6 +121,8 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 		"composer_enabled",
 		// GH #2277: Git deploy entitlement — same silent-drop scar.
 		"git_deploy_enabled",
+		// GH #2502: webmail branding entitlement — same silent-drop scar.
+		"webmail_branding_enabled",
 		// GH #2165: Redis keys per call — same silent-drop scar.
 		"redis_keys_per_call",
 		// GH #339: FPM performance-policy columns were missing from the Select

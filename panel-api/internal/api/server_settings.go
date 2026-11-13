@@ -347,7 +347,6 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	// detected from `before` by settingsops.SSHEffects — no per-flag prev* locals
 	// needed for either family.
 	prevHostname := current.Hostname
-	prevPanelBrandText := current.PanelBrandText
 	prevWebadminEnabled := current.StalwartWebadminEnabled
 	prevWebadminCIDRs := current.StalwartWebadminAllowCIDRs
 	prevTimezone := current.Timezone
@@ -974,19 +973,9 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 
 	// GH #200: brand text drives Bulwark webmail branding (app name +
-	// login company name) server-wide. Push it when it changes; the
-	// agent restarts jabali-webmail only on a real change.
-	if current.PanelBrandText != prevPanelBrandText && h.cfg.Agent != nil {
-		go func(brandText string) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := h.cfg.Agent.Call(bgCtx, "webmail.branding.apply", map[string]any{
-				"brand_text": brandText,
-			}); err != nil {
-				h.cfg.Log.Warn("webmail branding sync failed", "err", err)
-			}
-		}(current.PanelBrandText)
-	}
+	// login company name) server-wide. The reconciler's webmail.branding
+	// phase sends it, with every domain's branding (GH #2502), on its next
+	// pass; the agent restarts jabali-webmail only on a real change.
 
 	// Optional-module lifecycle, continued: docker marketplace, tenant Docker, and
 	// the Python runtime — the same settingsops plan. Tenant Docker additionally

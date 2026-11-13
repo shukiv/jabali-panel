@@ -1021,6 +1021,16 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				SSLCerts:       deps.SSLCerts,
 				SSLReconciler:  deps.Reconciler,
 			})
+			// GH #2502: the domain's webmail branding on mail.<domain>.
+			if deps.DB != nil && deps.Users != nil {
+				api.RegisterDomainWebmailBrandingRoutes(mailGroup, api.DomainWebmailBrandingHandlerConfig{
+					Domains:         deps.Domains,
+					Users:           deps.Users,
+					Packages:        deps.Packages,
+					Branding:        repository.NewDomainWebmailBrandingRepository(deps.DB),
+					StrictRateLimit: rl.StrictPerActor(),
+				})
+			}
 			// GH #1387: mail-only domain delete (destructive teardown that keeps
 			// the web domain + DNS zone). Distinct route from the soft disable.
 			api.RegisterDomainMailPurgeRoutes(mailGroup, api.DomainMailPurgeHandlerConfig{
@@ -1222,9 +1232,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// M28 — admin logo upload/delete. Public GET lives on the
 			// root router above so it's reachable pre-auth.
 			api.RegisterBrandingRoutes(v1, api.BrandingHandlerConfig{
-				Repo:  deps.ServerSettings,
-				Log:   deps.Log,
-				Agent: deps.Agent,
+				Repo: deps.ServerSettings,
+				Log:  deps.Log,
 			})
 		}
 		// M37 Phase 4: Postgres lifecycle admin endpoints (status +

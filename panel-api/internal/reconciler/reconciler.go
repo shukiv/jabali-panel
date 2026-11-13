@@ -289,6 +289,10 @@ type Reconciler struct {
 	sharedCerts repository.SharedCertificateRepository
 	// sharedCertExpiryChecked gates the expiry warn to once per panel-api boot.
 	sharedCertExpiryChecked atomic.Bool
+	// GH #2502 — domains' webmail branding; nil skips the webmail.branding
+	// phase. webmailBrandingDir overrides webmailbranding.Dir (tests).
+	webmailBranding    repository.DomainWebmailBrandingRepository
+	webmailBrandingDir string
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
@@ -1174,6 +1178,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// The admin's extra IP blocklists, refreshed daily. After the
 	// self-allowlist, which the agent reads to keep this host off them.
 	r.reconcileCrowdsecLists(ctx)
+	// GH #2502: webmail's branding, server-wide and per domain.
+	r.reconcileWebmailBranding(ctx)
 
 	tt.mark("mail_shared_egress")
 
@@ -1521,6 +1527,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 	r.ReconcileNginxRateLimits(ctx)
 	r.ReconcileNginxBots(ctx)
 	r.reconcileCrowdsecLists(ctx)
+	r.reconcileWebmailBranding(ctx)
 
 	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {

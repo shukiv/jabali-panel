@@ -92,6 +92,9 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
   location / {
     proxy_pass http://jabali_bulwark/;
     proxy_set_header Host $host;
+    # Bulwark picks a domain's branding by X-Forwarded-Host before Host
+    # (GH #2502): set it here so the browser can't name another host.
+    proxy_set_header X-Forwarded-Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header Accept-Encoding "";
@@ -100,6 +103,19 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
     proxy_set_header Connection "upgrade";
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
+  }
+
+  # Each domain's webmail branding pictures (GH #2502), kept by panel-api
+  # outside Bulwark's own directory, which a webmail upgrade replaces.
+  # Every one is a PNG panel-api encoded itself; served as nothing else.
+  location ^~ /jabali-webmail-branding/ {
+    alias /var/lib/jabali-panel/webmail-branding/;
+    autoindex off;
+    types { }
+    default_type image/png;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Content-Security-Policy "default-src 'none'; sandbox" always;
+    add_header Cache-Control "public, max-age=86400" always;
   }
 {{ end }}
   location /jmap {

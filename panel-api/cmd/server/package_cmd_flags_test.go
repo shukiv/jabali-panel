@@ -49,6 +49,7 @@ var packageFieldFlag = map[string]string{
 	"website_sends_email":              "website-mail",         // GH #2056
 	"composer_enabled":                 "composer",             // GH #2276
 	"git_deploy_enabled":               "git-deploy",           // GH #2277
+	"webmail_branding_enabled":         "webmail-branding",     // GH #2502
 	"redis_keys_per_call":              "redis-keys-per-call",  // GH #2165
 	"fpm_max_children_cap":             "fpm-max-children",
 	"fpm_worker_mem_mb":                "fpm-worker-mem-mb",

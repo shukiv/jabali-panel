@@ -123,6 +123,12 @@ type HostingPackage struct {
 	// users with no package can't deploy (GH #282: a privileged feature).
 	GitDeployEnabled bool `gorm:"column:git_deploy_enabled;type:tinyint(1);not null;default:0" json:"git_deploy_enabled"`
 
+	// WebmailBrandingEnabled (GH #2502) lets users on this package brand the
+	// webmail of their domains (mail.<domain>): its name, logos, favicon and
+	// links. Off by default, existing packages included; users with no
+	// package can't (GH #282). An administrator can brand any domain.
+	WebmailBrandingEnabled bool `gorm:"column:webmail_branding_enabled;type:tinyint(1);not null;default:0" json:"webmail_branding_enabled"`
+
 	// RedisKeysPerCall (GH #2165) is how many keys one call of the Redis key
 	// browser API may list (its `limit`) or delete, RedisKeysPerCallMin to
 	// RedisKeysPerCallMax. Unlike the other limits, 0 is not "unlimited": it
