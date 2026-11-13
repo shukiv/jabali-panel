@@ -9,8 +9,8 @@
 # CI on the bot's PR — the PR body then carries a loud warning and the PR
 # must be closed/reopened (or the branch touched) to trigger checks.
 #
-# The self-hosted runner has curl + python3 but no gh CLI — REST over curl,
-# same as monthly-deps.yml / release.yml.
+# The steps use REST over curl + python3 (like monthly-deps.yml / release.yml),
+# so they do not depend on the runner image having gh or jq.
 name: Monthly catalog bump
 
 on:
@@ -27,7 +27,7 @@ env:
 
 jobs:
   bump:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,9 +35,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: false — see monthly-deps.yml: setup-go's cache layer
-          # conflicts with the runner's persistent GOMODCACHE and hangs the
-          # post-run step, wedging the single runner.
+          # cache: false — the job runs once a month, so a cold module download costs little.
           cache: false
 
       - name: Check upstreams and rewrite the catalog

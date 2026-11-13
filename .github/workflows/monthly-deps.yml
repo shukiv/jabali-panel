@@ -3,8 +3,8 @@
 # month covering all three pinning surfaces (install.sh pins + go.mod + npm).
 # It only REPORTS — a human still bumps + E2Es + merges. See scripts/deps-check.sh.
 #
-# The self-hosted runner has curl + python3 + a GITHUB_TOKEN but no gh CLI, so
-# this follows release.yml's REST-over-curl pattern rather than using gh.
+# The steps use REST over curl + python3 (like release.yml), so they do not
+# depend on the runner image having gh or jq.
 name: Monthly dependency review
 
 on:
@@ -22,16 +22,13 @@ env:
 
 jobs:
   review:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          # cache: false — matches ci.yml. The self-hosted runner's persistent
-          # $GOMODCACHE already caches; setup-go's tar layer conflicts with it and
-          # HANGS the "Post Run setup-go" cache-save step, which held the single
-          # runner and left the whole monthly run (and queued CI) stuck.
+          # cache: false — the job runs once a month, so a cold module download costs little.
           cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -67,7 +64,7 @@ jobs:
           NUM="$(curl -sS "${hdr[@]}" "${API}/repos/${REPO}/issues?state=open&labels=deps&per_page=100" \
                  | python3 -c 'import json,sys; items=json.load(sys.stdin); t=sys.argv[1]; print(next((i["number"] for i in items if i.get("title")==t and "pull_request" not in i), ""))' "$TITLE")"
 
-          # JSON-encode the payload (python3 handles body escaping; no jq on the runner).
+          # JSON-encode the payload (python3 handles body escaping, so the step does not need jq).
           PAYLOAD="$(python3 -c 'import json,sys; print(json.dumps({"title":sys.argv[1],"body":open(sys.argv[2]).read(),"labels":["deps"]}))' "$TITLE" "$RUNNER_TEMP/body.md")"
 
           if [[ -n "$NUM" ]]; then

@@ -196,7 +196,8 @@ update.
   release-asset storage quota (unlike Codeberg), so there is no prune step.
 - **`.github/workflows/nightly.yml`** runs the full suite + `npm audit` daily.
 
-CI runs on a **self-hosted** GitHub Actions runner (`runs-on: self-hosted`).
+CI runs on GitHub-hosted runners (`ubuntu-latest`); the release builds pin
+`ubuntu-24.04` because their binaries link the builder's glibc.
 
 ### Merge flow
 

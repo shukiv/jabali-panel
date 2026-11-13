@@ -55,7 +55,10 @@ jobs:
     name: Build + publish release tarball
     needs: migrations
     if: github.ref == 'refs/heads/main'
-    runs-on: self-hosted
+    # Pin ubuntu-24.04: the binaries are built with cgo and link the builder's
+    # glibc, so the builder must not be newer than the oldest supported target
+    # (Ubuntu 24.04, glibc 2.39; Debian 13 is newer).
+    runs-on: ubuntu-24.04
     env:
       GO_VERSION: "1.27.3"
       NODE_VERSION: "20"
@@ -66,6 +69,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
+          # cache: false — shipped release binaries are never built from a reused build cache.
           cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
