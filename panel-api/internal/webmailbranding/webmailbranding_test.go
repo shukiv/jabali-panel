@@ -8,8 +8,10 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -193,5 +195,114 @@ func TestAgentDomains(t *testing.T) {
 	}
 	if got := AgentDomains(nil); got == nil || len(got) != 0 {
 		t.Fatalf("AgentDomains(nil) = %#v, want an empty list (sent as [], not null)", got)
+	}
+}
+
+// A backup's picture is one the panel stored: a PNG encoded again, which can
+// be larger than an upload may be. EncodeStored takes it up to its own cap,
+// and checks it as Encode checks an upload.
+func TestEncodeStored(t *testing.T) {
+	rnd := rand.New(rand.NewSource(1))
+	img := image.NewNRGBA(image.Rect(0, 0, 400, 400))
+	rnd.Read(img.Pix)
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	big := b.Bytes()
+	if len(big) <= MaxUploadBytes {
+		t.Fatalf("test picture is %d bytes, want one over the upload cap", len(big))
+	}
+	if _, _, err := Encode(bytes.NewReader(big)); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Encode = %v, want ErrTooLarge", err)
+	}
+	out, hash, err := EncodeStored(big, 4<<20)
+	if err != nil || len(hash) != 12 {
+		t.Fatalf("EncodeStored = %d bytes, %q, %v", len(out), hash, err)
+	}
+	if again, h2, err := EncodeStored(out, 4<<20); err != nil || h2 != hash || !bytes.Equal(again, out) {
+		t.Fatalf("a stored picture encoded again changed: %q vs %q, %v", h2, hash, err)
+	}
+	if _, _, err := EncodeStored(big, len(big)-1); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if _, _, err := EncodeStored([]byte("<svg/>"), 4<<20); !errors.Is(err, ErrBadPicture) {
+		t.Fatalf("not a picture: %v", err)
+	}
+	if _, _, err := EncodeStored(picture(t, MaxSide+1, 1, pngOf), 4<<20); !errors.Is(err, ErrBadSize) {
+		t.Fatalf("too wide: %v", err)
+	}
+}
+
+// Run as root (a restore by `jabali backup account-restore`), Write gives
+// the directories and the picture the owner of dir's parent, the panel's
+// user; run as anyone else it gives nothing away.
+func TestWriteAsRootGivesThePanelItsPictures(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "webmail-branding")
+	origEUID, origChown := geteuid, fchown
+	t.Cleanup(func() { geteuid, fchown = origEUID, origChown })
+	var got []string
+	fchown = func(fd, uid, gid int) error {
+		if uid != os.Getuid() || gid != os.Getgid() {
+			t.Errorf("chown to %d:%d, want the parent's owner %d:%d", uid, gid, os.Getuid(), os.Getgid())
+		}
+		p, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, strings.TrimPrefix(p, dir))
+		return nil
+	}
+
+	geteuid = func() int { return 1000 }
+	if err := Write(dir, testDomainID, LogoLight, []byte("png")); err != nil || len(got) != 0 {
+		t.Fatalf("not root: chowned %v, %v", got, err)
+	}
+	geteuid = func() int { return 0 }
+	if err := Write(dir, testDomainID, Favicon, []byte("png")); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 || got[0] != "" || got[1] != "/"+testDomainID || !strings.HasPrefix(got[2], "/"+testDomainID+"/.favicon.") {
+		t.Fatalf("chowned %q, want dir, the domain's dir and the new picture", got)
+	}
+}
+
+// A link in place of dir or of the domain's directory makes Write and Remove
+// fail: run as root, they would otherwise write or delete wherever the
+// panel's user pointed it.
+func TestWriteRemoveNeverFollowALink(t *testing.T) {
+	root := t.TempDir()
+	elsewhere := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "logo-light.png"), []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "webmail-branding")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(dir, testDomainID)); err != nil {
+		t.Fatal(err)
+	}
+	linkedDir := filepath.Join(root, "linked")
+	if err := os.Symlink(elsewhere, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ dir, id string }{{dir, testDomainID}, {linkedDir, testDomainID}} {
+		if err := Write(c.dir, c.id, Favicon, []byte("png")); err == nil {
+			t.Fatalf("Write through a link in %s succeeded", c.dir)
+		}
+		if err := Remove(c.dir, c.id, LogoLight); err == nil {
+			t.Fatalf("Remove through a link in %s succeeded", c.dir)
+		}
+	}
+	entries, _ := os.ReadDir(elsewhere)
+	if len(entries) != 1 || entries[0].Name() != "logo-light.png" {
+		t.Fatalf("the linked directory holds %v, want only its own file", entries)
+	}
+	if fi, _ := os.Stat(elsewhere); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("the linked directory's mode became %v", fi.Mode().Perm())
 	}
 }

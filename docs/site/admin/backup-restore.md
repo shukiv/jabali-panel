@@ -185,6 +185,22 @@ pending. Once an alias is added, the panel rebuilds the domain's site
 configuration and certificate to cover it. A backup made before Jabali
 recorded aliases restores none.
 
+### Webmail branding
+
+An account backup carries each domain's
+[webmail branding](../user/email.md#webmail-branding): its names, links,
+logos and favicon. A restore brings it back through the checks of the
+**Webmail branding** card. A name or link the card would refuse leaves the
+domain's branding out, and a picture that isn't a PNG or JPEG of at most
+1024 × 1024 pixels is left out; the restore report says which. A domain that
+already has branding keeps it, unless **Overwrite existing items with the
+backup** is on.
+
+Branding restored from an uploaded archive counts as the owner's, even when an
+administrator set it: it shows only while the owner's hosting package has
+**Webmail branding**. A backup made before Jabali recorded webmail branding
+restores none.
+
 ## Restore — `system_backup`
 
 System restores are typically performed on a freshly-bootstrapped panel host. Sequence:
@@ -201,6 +217,8 @@ System restores are typically performed on a freshly-bootstrapped panel host. Se
 
 4. The restore covers all 7 stages: panel-DB × 3, OS users, Stalwart state, Kratos state, hosted sites, config snapshot, plus the wrapping restic snapshot integrity check.
 5. After completion, run `jabali repair --diagnose` to surface any drift between restored state and the fresh host (typically only IP-related mismatches if the new host has a different IP).
+
+The config snapshot holds `/etc/jabali-panel` and the pictures uploaded in the panel: the panel's logos (`/var/lib/jabali-panel/branding`) and each domain's webmail branding pictures (`/var/lib/jabali-panel/webmail-branding`). The restore puts each of the two directories back as the backup holds it. A system backup made before the pictures were included holds only `/etc/jabali-panel`; after restoring one, upload the logos and webmail branding pictures again.
 
 Round-trip restore was live-verified on 192.168.100.150.
 
@@ -219,6 +237,8 @@ differ from an account restore:
 - **Web domain aliases** aren't restored, because this restore doesn't run the
   alias checks. Add them on the domain's **Aliases** tab, or restore the
   account afterwards.
+- **Webmail branding** isn't restored. Set it again on the domain, or restore
+  the account afterwards.
 
 A domain comes back verified, unless its backup records it as pending.
 

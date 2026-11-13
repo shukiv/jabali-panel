@@ -538,6 +538,11 @@ func runMetadataStage(ctx context.Context, req backupCreateParams) backup.Manife
 	// GH #1993: each domain's own certificate and key, so a restore on
 	// another server can serve it until Let's Encrypt takes over.
 	enrichSSLCertificates(req.Metadata)
+	// GH #2502: each domain's webmail branding pictures, which a restore on
+	// another server stores again.
+	for _, w := range enrichWebmailBranding(req.Metadata) {
+		st.Warnings = append(st.Warnings, "webmail branding: "+w)
+	}
 	body, err := json.Marshal(req.Metadata)
 	if err != nil {
 		st.Status = backup.StageStatusFailed

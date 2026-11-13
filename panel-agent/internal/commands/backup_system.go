@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -155,9 +156,11 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// panel_config: 0600 master password is the operator's off-host
 	// responsibility (ADR-0075) — exclude from snapshots so a stolen
 	// system_backup tarball doesn't leak the key needed to decrypt it.
+	// GH #2502: the panel's branding pictures (panelStateDirs) travel with
+	// it, so they come back with the panel_db rows that name them.
 	manifest.Stages = append(manifest.Stages,
-		runSystemPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StagePanelConfig, "/etc/jabali-panel",
-			[]string{"restic-repo.password"}))
+		runSystemMultiPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StagePanelConfig, panelConfigPaths(),
+			[]string{"/etc/jabali-panel/restic-repo.password"}))
 
 	// service_config: every config tree the panel + reconciler write to.
 	// Glob expansion on /etc/nginx/sites-* / /etc/php/*/fpm /
@@ -736,6 +739,9 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, "/etc/jabali-panel")
 			applied = append(applied, ownApplied...)
 			warnings = append(warnings, ownWarn...)
+			stateApplied, stateWarn := applyPanelStateDirs(stageDir)
+			applied = append(applied, stateApplied...)
+			warnings = append(warnings, stateWarn...)
 		case backup.StageTLS:
 			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
@@ -884,28 +890,9 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 // a link, and no link in it may point outside target once in place (see
 // linkStaysIn).
 func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) error {
-	// The staged tree mirrors the original absolute path: e.g.
-	// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
-	// holds <stageDir>/etc/jabali-panel/... — we want to sync the
-	// inner /etc/jabali-panel/... part onto /etc/jabali-panel.
-	src := filepath.Join(stageDir, target) + "/"
-	p := stageDir
-	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
-		p = filepath.Join(p, c)
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return fmt.Errorf("staged source %s missing: %w", src, err)
-		}
-		if !fi.IsDir() {
-			return fmt.Errorf("staged source %s: %s is not a folder", src, p)
-		}
-	}
-	bad, err := outsideLinks(filepath.Join(stageDir, target), target)
+	src, err := stagedSource(stageDir, target)
 	if err != nil {
-		return fmt.Errorf("check staged links: %w", err)
-	}
-	if len(bad) > 0 {
-		return fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
+		return err
 	}
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("mkdir target: %w", err)
@@ -914,7 +901,7 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 	for _, e := range excludes {
 		args = append(args, "--exclude="+e)
 	}
-	args = append(args, src, target+"/")
+	args = append(args, src+"/", target+"/")
 	cmd := execCommandContext(ctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -922,6 +909,35 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 			strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// stagedSource returns where the staged tree holds target. It mirrors the
+// original absolute path: e.g.
+// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
+// holds <stageDir>/etc/jabali-panel/... for /etc/jabali-panel. Each folder on
+// the way must be a real folder, and no link in the tree may point outside
+// target.
+func stagedSource(stageDir, target string) (string, error) {
+	src := filepath.Join(stageDir, target)
+	p := stageDir
+	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
+		p = filepath.Join(p, c)
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return "", fmt.Errorf("staged source %s/ missing: %w", src, err)
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("staged source %s/: %s is not a folder", src, p)
+		}
+	}
+	bad, err := outsideLinks(src, target)
+	if err != nil {
+		return "", fmt.Errorf("check staged links: %w", err)
+	}
+	if len(bad) > 0 {
+		return "", fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
+	}
+	return src, nil
 }
 
 // isSystemPanelDatabase reports whether db is one of systemPanelDatabases.
@@ -999,6 +1015,101 @@ func linkStaysIn(live, dest string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// panelStateDirs are the panel's own files outside /etc/jabali-panel that
+// travel in panel_config (GH #2502): the server-wide logos and each
+// domain's webmail branding pictures. Rows in panel_db name them, and
+// they belong to the panel's service user.
+var panelStateDirs = []string{"/var/lib/jabali-panel/branding", "/var/lib/jabali-panel/webmail-branding"}
+
+// panelConfigPaths is what panel_config captures: /etc/jabali-panel and the
+// panelStateDirs this host has. A host with no webmail branding has no such
+// directory, which is not worth a warning on every backup.
+func panelConfigPaths() []string {
+	paths := []string{"/etc/jabali-panel"}
+	for _, d := range panelStateDirs {
+		if _, err := os.Stat(d); err == nil {
+			paths = append(paths, d)
+		}
+	}
+	return paths
+}
+
+// applyPanelStateDirs puts back the panelStateDirs a panel_config stage
+// holds. A backup made before they were captured has none, which is not an
+// error.
+func applyPanelStateDirs(stageDir string) (applied, warnings []string) {
+	for _, d := range panelStateDirs {
+		if _, err := os.Lstat(filepath.Join(stageDir, d)); err != nil {
+			continue
+		}
+		if err := swapInPanelStateDir(stageDir, d); err != nil {
+			warnings = append(warnings, fmt.Sprintf("panel_config %s: %v", d, err))
+			continue
+		}
+		applied = append(applied, "panel_config → "+d)
+	}
+	return applied, warnings
+}
+
+// swapInPanelStateDir puts the staged d in place of the live one, as the
+// backup holds it, owned by the owner of d's parent: the panel's user, which
+// install.sh gives /var/lib/jabali-panel.
+//
+// The panel's user owns that parent, so while a restore runs it can put a
+// link where d, or a folder under it, was, and root would write or delete
+// wherever the link points. So the restore never writes into the live tree:
+// it gives the staged copy, in the staging that only root can enter, to the
+// panel's user, and swaps it with the live d in one rename. The old d lands
+// in the staging and is removed there.
+func swapInPanelStateDir(stageDir, d string) error {
+	src, err := stagedSource(stageDir, d)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(d)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", parent, err)
+	}
+	pfd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(pfd)
+	var st unix.Stat_t
+	if err := unix.Fstat(pfd, &st); err != nil {
+		return err
+	}
+	if err := filepath.WalkDir(src, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Lchown(p, int(st.Uid), int(st.Gid))
+	}); err != nil {
+		return fmt.Errorf("give the staged copy to the panel's user: %w", err)
+	}
+	sfd, err := unix.Open(filepath.Dir(src), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(sfd)
+	name := filepath.Base(d)
+	err = unix.Renameat2(sfd, name, pfd, name, unix.RENAME_EXCHANGE)
+	if errors.Is(err, unix.ENOENT) {
+		// No live d to swap with.
+		err = unix.Renameat2(sfd, name, pfd, name, unix.RENAME_NOREPLACE)
+	}
+	if errors.Is(err, unix.EXDEV) {
+		return fmt.Errorf("not restored: %s is on another filesystem than the restore's staging", parent)
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return fmt.Errorf("remove the replaced copy from the staging: %w", err)
+	}
+	return nil
 }
 
 // runSystemMultiPathStage is the multi-path variant of runSystemPathStage.

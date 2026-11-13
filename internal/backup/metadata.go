@@ -215,6 +215,10 @@ type MetadataDomain struct {
 	// they re-derive from domain config via the reconciler.
 	DNSRecords []MetadataDNSRecord `json:"dns_records,omitempty"`
 	DNSSECKeys []MetadataDNSSECKey `json:"dnssec_keys,omitempty"`
+
+	// WebmailBranding (GH #2502) is the domain's own webmail branding, nil
+	// when it has none.
+	WebmailBranding *MetadataWebmailBranding `json:"webmail_branding,omitempty"`
 }
 
 // MetadataDomainAlias mirrors models.WebDomainAlias. A restore gives each
@@ -226,6 +230,38 @@ type MetadataDomainAlias struct {
 	Hostname        string `json:"hostname"`
 	OwnershipStatus string `json:"ownership_status,omitempty"`
 }
+
+// MetadataWebmailBranding mirrors models.DomainWebmailBranding (GH #2502).
+// LogoLight, LogoDark and Favicon are the hashes the panel's row names each
+// picture by. The pictures themselves (LogoLightPNG, …) are read by the agent
+// from the domain's picture directory when the backup is made, each only when
+// its hash matches; a restore stores each again under a new hash.
+type MetadataWebmailBranding struct {
+	AppName     string `json:"app_name,omitempty"`
+	CompanyName string `json:"company_name,omitempty"`
+	WebsiteURL  string `json:"website_url,omitempty"`
+	PrivacyURL  string `json:"privacy_url,omitempty"`
+	ImprintURL  string `json:"imprint_url,omitempty"`
+	LogoLight   string `json:"logo_light,omitempty"`
+	LogoDark    string `json:"logo_dark,omitempty"`
+	Favicon     string `json:"favicon,omitempty"`
+	SetByAdmin  bool   `json:"set_by_admin,omitempty"`
+
+	LogoLightPNG []byte `json:"logo_light_png,omitempty"`
+	LogoDarkPNG  []byte `json:"logo_dark_png,omitempty"`
+	FaviconPNG   []byte `json:"favicon_png,omitempty"`
+}
+
+// MaxWebmailBrandingPictureBytes bounds each webmail branding picture a
+// backup carries and a restore takes. The panel stores a picture of at most
+// 1024 × 1024 pixels encoded again as PNG, which can be larger than the
+// upload it came from.
+const MaxWebmailBrandingPictureBytes = 4 << 20
+
+// MaxWebmailBrandingBackupBytes bounds all of an account's webmail branding
+// pictures in one backup. The metadata travels whole in the restore's reply
+// to the panel, so a backup it would not fit in can't be restored at all.
+const MaxWebmailBrandingBackupBytes = 16 << 20
 
 // MetadataSSLCert mirrors models.SSLCertificate (sans large per-cert
 // content — the cert + key are on disk under /etc/letsencrypt and the

@@ -82,6 +82,10 @@ func (f *wbBranding) ListAll(context.Context) ([]repository.WebmailBrandingRow, 
 	return nil, nil
 }
 
+func (f *wbBranding) ListByDomainIDs(context.Context, []string) ([]models.DomainWebmailBranding, error) {
+	return nil, nil
+}
+
 type wbFixture struct {
 	router   *gin.Engine
 	branding *wbBranding

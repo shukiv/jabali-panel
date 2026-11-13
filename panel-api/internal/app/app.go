@@ -1455,6 +1455,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Scheduler:        restoreScheduler, // GH #1993: restored DNS records
 				Log:              deps.Log,
 				SSOKey:           deps.SSOKey,
+
+				// GH #2502: each domain's webmail branding, backed up and restored.
+				WebmailBranding: repository.NewDomainWebmailBrandingRepository(deps.DB),
 			})
 			api.RegisterMeBackupRoutes(v1, api.MeBackupsHandlerConfig{
 				Agent:          deps.Agent,
@@ -1500,6 +1503,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 
 				// GH #1993: the tenant's own backup carries its domains' aliases.
 				WebDomainAliases: deps.WebDomainAliases,
+				// GH #2502: and their webmail branding.
+				WebmailBranding: repository.NewDomainWebmailBrandingRepository(deps.DB),
 			})
 		}
 		// M30.1 (ADR-0078): backup destinations + schedules.

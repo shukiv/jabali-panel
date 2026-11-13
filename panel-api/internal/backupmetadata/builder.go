@@ -94,6 +94,10 @@ type Deps struct {
 	// (api.RestoreAliasCheck) and returns the hostname as the page stores
 	// it. Nil refuses every alias.
 	CheckAlias func(ctx context.Context, dom *models.Domain, hostname string) (string, error)
+	// WebmailBranding (GH #2502): the builder reads each domain's webmail
+	// branding, and Apply restores it. Nil leaves it out of the backup, and a
+	// restore of a backup that has some reports it not restored.
+	WebmailBranding repository.DomainWebmailBrandingRepository
 	// RestoresDNS: the door restores the domains' DNS records once Apply is
 	// done (api.RestoreBundleDNS), which publishes MTA-STS's records too. A
 	// domain's MTA-STS comes back on only then: without its records a
@@ -461,6 +465,22 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			}
 		}
 
+		brandingByDomain := map[string]*internalbackup.MetadataWebmailBranding{}
+		if d.WebmailBranding != nil && len(domIDs) > 0 {
+			rows, berr := d.WebmailBranding.ListByDomainIDs(ctx, domIDs)
+			if berr != nil {
+				d.warn("metadata: list webmail branding (batch)", berr, "user_id", user.ID)
+			}
+			for _, b := range rows {
+				brandingByDomain[b.DomainID] = &internalbackup.MetadataWebmailBranding{
+					AppName: b.AppName, CompanyName: b.CompanyName,
+					WebsiteURL: b.WebsiteURL, PrivacyURL: b.PrivacyURL, ImprintURL: b.ImprintURL,
+					LogoLight: b.LogoLight, LogoDark: b.LogoDark, Favicon: b.Favicon,
+					SetByAdmin: b.SetByAdmin,
+				}
+			}
+		}
+
 		dnssecByDomain := map[string][]models.DomainDNSSECKey{}
 		if d.DNSSECKeys != nil && len(domIDs) > 0 {
 			keys, kerr := d.DNSSECKeys.ListByDomainIDs(ctx, domIDs)
@@ -544,6 +564,7 @@ func Build(ctx context.Context, user *models.User, d Deps) *internalbackup.Accou
 			dRow.SSLMode, dRow.SkipAutoSAN = dom.SSLMode, dom.SkipAutoSAN
 			setMetadataMailSettings(&dRow, &dom)
 			dRow.Aliases = aliasesByDomain[dom.ID]
+			dRow.WebmailBranding = brandingByDomain[dom.ID]
 			if pr, err := json.Marshal(dom.PageRedirects); err == nil && string(pr) != "null" {
 				dRow.PageRedirects = string(pr)
 			}

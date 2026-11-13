@@ -12,6 +12,7 @@ package webmailbranding
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -27,6 +28,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/sys/unix"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -141,6 +144,21 @@ func Encode(r io.Reader) ([]byte, string, error) {
 	if len(raw) > MaxUploadBytes {
 		return nil, "", ErrTooLarge
 	}
+	return encode(raw)
+}
+
+// EncodeStored checks a picture a backup carries (GH #2502) as Encode checks
+// an upload, but against max bytes: the panel stores a picture encoded again
+// as PNG, which can be larger than the upload it came from. It returns the
+// picture encoded again with its short hash.
+func EncodeStored(raw []byte, max int) ([]byte, string, error) {
+	if len(raw) > max {
+		return nil, "", ErrTooLarge
+	}
+	return encode(raw)
+}
+
+func encode(raw []byte) ([]byte, string, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil || (format != "png" && format != "jpeg") {
 		return nil, "", ErrBadPicture
@@ -170,52 +188,163 @@ func Path(dir, domainID string, a Asset) string {
 }
 
 // Write stores the domain's picture under dir, readable by nginx.
+//
+// dir and its parent belong to the panel's user, and a restore run as root
+// (`jabali backup account-restore`) writes here too, so Write works from
+// directory handles and never through a link: a link in place of dir or of
+// the domain's directory makes it fail rather than write elsewhere. Run as
+// root, it gives the directories and the picture the owner of dir's parent,
+// /var/lib/jabali-panel, which install.sh gives the panel's user, so the
+// panel can change and remove them later.
 func Write(dir, domainID string, a Asset, data []byte) error {
 	if !domainIDRe.MatchString(domainID) {
 		return fmt.Errorf("webmailbranding: bad domain id %q", domainID)
 	}
-	d := filepath.Join(dir, domainID)
-	if err := os.MkdirAll(d, 0o755); err != nil {
-		return err
-	}
-	// MkdirAll leaves an existing directory's mode alone, and the umask can
-	// narrow a new one; nginx has to traverse both.
-	for _, p := range []string{dir, d} {
-		if err := os.Chmod(p, 0o755); err != nil {
-			return err
-		}
-	}
-	tmp, err := os.CreateTemp(d, "."+string(a)+".*.tmp")
+	pfd, owner, err := openParent(dir)
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	defer unix.Close(pfd)
+	dfd, err := openDirAt(pfd, filepath.Base(dir), true, owner)
+	if err != nil {
+		return fmt.Errorf("webmailbranding: %s: %w", dir, err)
+	}
+	defer unix.Close(dfd)
+	ddfd, err := openDirAt(dfd, domainID, true, owner)
+	if err != nil {
+		return fmt.Errorf("webmailbranding: %s: %w", filepath.Join(dir, domainID), err)
+	}
+	defer unix.Close(ddfd)
+
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
 		return err
 	}
-	if err := tmp.Close(); err != nil {
+	tmp := "." + string(a) + "." + hex.EncodeToString(rnd[:]) + ".tmp"
+	fd, err := unix.Openat(ddfd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	f := os.NewFile(uintptr(fd), tmp)
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = unix.Unlinkat(ddfd, tmp, 0)
+		}
+	}()
+	if _, err := f.Write(data); err != nil {
+		f.Close()
 		return err
 	}
-	return os.Rename(tmp.Name(), Path(dir, domainID, a))
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if owner != nil {
+		if err := fchown(int(f.Fd()), owner.uid, owner.gid); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := unix.Renameat(ddfd, tmp, ddfd, string(a)+".png"); err != nil {
+		return err
+	}
+	renamed = true
+	return nil
+}
+
+// geteuid and fchown are swapped by tests.
+var (
+	geteuid = os.Geteuid
+	fchown  = unix.Fchown
+)
+
+type fileOwner struct{ uid, gid int }
+
+// openParent opens dir's parent and, run as root, returns its owner.
+func openParent(dir string) (int, *fileOwner, error) {
+	fd, err := unix.Open(filepath.Dir(dir), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, nil, err
+	}
+	if geteuid() != 0 {
+		return fd, nil, nil
+	}
+	var st unix.Stat_t
+	if err := unix.Fstat(fd, &st); err != nil {
+		unix.Close(fd)
+		return -1, nil, err
+	}
+	return fd, &fileOwner{int(st.Uid), int(st.Gid)}, nil
+}
+
+// openDirAt opens the directory name under dirfd, never through a link,
+// making it first when mk. It leaves it 0755, which nginx needs to reach
+// the pictures (the umask can narrow a new one), and gives it to owner
+// unless that is nil.
+func openDirAt(dirfd int, name string, mk bool, owner *fileOwner) (int, error) {
+	if mk {
+		if err := unix.Mkdirat(dirfd, name, 0o755); err != nil && !errors.Is(err, unix.EEXIST) {
+			return -1, err
+		}
+	}
+	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, err
+	}
+	if !mk {
+		return fd, nil
+	}
+	if owner != nil {
+		if err := fchown(fd, owner.uid, owner.gid); err != nil {
+			unix.Close(fd)
+			return -1, err
+		}
+	}
+	if err := unix.Fchmod(fd, 0o755); err != nil {
+		unix.Close(fd)
+		return -1, err
+	}
+	return fd, nil
 }
 
 // Remove deletes the domain's picture under dir. A missing one is not an
-// error.
+// error. Like Write it never goes through a link.
 func Remove(dir, domainID string, a Asset) error {
 	if !domainIDRe.MatchString(domainID) {
 		return fmt.Errorf("webmailbranding: bad domain id %q", domainID)
 	}
-	if err := os.Remove(Path(dir, domainID, a)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	pfd, _, err := openParent(dir)
+	if errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer unix.Close(pfd)
+	fd := pfd
+	for _, name := range []string{filepath.Base(dir), domainID} {
+		next, err := openDirAt(fd, name, false, nil)
+		if errors.Is(err, unix.ENOENT) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("webmailbranding: %s: %w", name, err)
+		}
+		defer unix.Close(next)
+		fd = next
+	}
+	if err := unix.Unlinkat(fd, string(a)+".png", 0); err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
 	return nil
 }
 
-// RemoveAll deletes all of the domain's pictures under dir.
+// RemoveAll deletes all of the domain's pictures under dir. It goes by path,
+// so only the panel's own process calls it, never a restore run as root.
 func RemoveAll(dir, domainID string) error {
 	if !domainIDRe.MatchString(domainID) {
 		return fmt.Errorf("webmailbranding: bad domain id %q", domainID)
@@ -225,7 +354,8 @@ func RemoveAll(dir, domainID string) error {
 
 // Prune deletes the pictures of every domain under dir that keep doesn't
 // hold: a deleted domain's branding row goes with it, its pictures stay
-// until here. It touches only directories named like a domain id.
+// until here. It touches only directories named like a domain id. Like
+// RemoveAll, only the panel's own process calls it.
 func Prune(dir string, keep map[string]bool) error {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
