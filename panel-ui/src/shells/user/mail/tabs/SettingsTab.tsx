@@ -16,6 +16,9 @@
 // GH #1916 (johnnyq): the catch-all moved here from its own tab too. Same
 // owner-scoped GET/PUT/DELETE /domains/:id/catchall; the target is picked from
 // the domain's mailboxes (#234).
+//
+// GH #2502 (johnnyq): the domain's webmail branding on mail.<domain>, editable
+// while the package has "Webmail branding" (WebmailBrandingCard).
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Button, Card, Form, Input, Popconfirm, Select, Skeleton, Space, Switch, Typography } from "antd";
@@ -32,6 +35,7 @@ import {
 } from "../../../../hooks/useCatchAll";
 import type { Mailbox } from "../../../../hooks/useMailboxes";
 import type { Domain } from "../../../../components/domains/types";
+import { WebmailBrandingCard } from "../../../../components/mail/WebmailBrandingCard";
 
 function apiErrorMessage(err: unknown, fallback: string): string {
   return (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? fallback;
@@ -287,6 +291,7 @@ export const SettingsTab = ({ domainId }: { domainId?: string } = {}) => {
           </Typography.Text>
         </Space>
       </Card>
+      {(domain.webmail_enabled ?? true) && <WebmailBrandingCard domainId={domain.id} />}
       <CatchAllCard domain={domain} />
       <DisclaimerCard domainId={domain.id} />
     </Space>
