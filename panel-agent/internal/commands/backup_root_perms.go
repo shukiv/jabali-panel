@@ -26,13 +26,22 @@ import (
 // logs/ through it. restore-staging is root-only, 0700. Below the folder, a link
 // that isn't root's is removed (the agent never makes one), a folder that isn't
 // root's goes back to root, and so does a lock file. Every step works from a
-// directory handle, so a link put in place of a folder is never followed.
+// directory handle, so a link put in place of a folder is never followed. The
+// folders above it must be root's alone (install.sh makes /var/lib/jabali
+// root's), or nothing is staged.
 
 var (
 	backupsRootDir = "/var/lib/jabali-backups"
 	// Test seams: the owner every entry must have, the chown call, and the
-	// panel group's id.
-	backupsOwnerUID = 0
+	// panel group's id. backupsTrustedUID is the one owner besides root the
+	// path walk trusts above the folder: root again in production, the test
+	// user (who owns the temp dirs) in tests.
+	backupsTrustedUID = 0
+	backupsOwnerUID   = 0
+	// backupsWalkBase is where the path walk starts trusting: "/" in
+	// production; the test's temp dir in tests, whose parents the sandbox
+	// may not give to root.
+	backupsWalkBase = "/"
 	backupsFchown   = unix.Fchown
 	backupsGroupGID = func() (int, error) {
 		g, err := user.LookupGroup(serviceGroupName())
@@ -171,7 +180,8 @@ func secureRestoreStaging(root int) error {
 			continue
 		}
 		if stage == nil {
-			if stage, err = os.OpenRoot(restoreStagingRoot()); err != nil {
+			// Through the handle already open, not the path again.
+			if stage, err = os.OpenRoot(fmt.Sprintf("/proc/self/fd/%d", fd)); err != nil {
 				return err
 			}
 			defer stage.Close()
@@ -210,36 +220,59 @@ func claimDirFD(fd, gid, perm int) (bool, error) {
 	return wasRoots, nil
 }
 
-// openDirRootLinksOnly opens a folder one path component at a time. A link is
-// followed only when root owns it and the folder it sits in, and nobody else
-// can write that folder: install.sh's /var/lib/jabali-backups link, or one an
-// admin made to move the backups to another disk. Any other link fails.
+// trustedOwner reports whether uid is root (or, in tests, the test user).
+func trustedOwner(uid uint32) bool {
+	return uid == 0 || int(uid) == backupsTrustedUID
+}
+
+// trustedParent reports whether only a trusted owner can rename or replace
+// child inside parent: parent is a trusted owner's and nobody else can write
+// it, or it is sticky (like /tmp) and child is a trusted owner's.
+func trustedParent(parent, child *unix.Stat_t) bool {
+	if !trustedOwner(parent.Uid) {
+		return false
+	}
+	if parent.Mode&0o022 == 0 {
+		return true
+	}
+	return parent.Mode&unix.S_ISVTX != 0 && trustedOwner(child.Uid)
+}
+
+// openDirRootLinksOnly opens a folder one path component at a time, and only
+// through folders where nobody but root can rename or replace the next
+// component. A link is followed only when root owns it too: install.sh's
+// /var/lib/jabali-backups link, or one an admin made to move the backups to
+// another disk. Once it returns, nobody but root can change the path, so the
+// path stays good for the handlers that use it after.
 func openDirRootLinksOnly(path string) (int, error) {
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	fd, walked, comps, err := walkStart(path)
 	if err != nil {
 		return -1, err
 	}
-	comps := strings.Split(path, "/")
 	for hops := 0; len(comps) > 0; {
 		name := comps[0]
 		comps = comps[1:]
 		if name == "" || name == "." {
 			continue
 		}
-		var st unix.Stat_t
+		var st, parent unix.Stat_t
 		if err := unix.Fstatat(fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 			unix.Close(fd)
 			return -1, err
 		}
+		if err := unix.Fstat(fd, &parent); err != nil {
+			unix.Close(fd)
+			return -1, err
+		}
+		if !trustedParent(&parent, &st) {
+			unix.Close(fd)
+			return -1, fmt.Errorf("%s isn't root's alone, so %s in it could be replaced; make it root's (chown root:root %s, or run jabali update)", walked, name, walked)
+		}
+		walked = filepath.Join(walked, name)
 		if st.Mode&unix.S_IFMT == unix.S_IFLNK {
-			var parent unix.Stat_t
-			if err := unix.Fstat(fd, &parent); err != nil {
+			if !trustedOwner(st.Uid) {
 				unix.Close(fd)
-				return -1, err
-			}
-			if int(st.Uid) != backupsOwnerUID || int(parent.Uid) != backupsOwnerUID || parent.Mode&0o022 != 0 {
-				unix.Close(fd)
-				return -1, fmt.Errorf("%s is a link root doesn't own alone; not followed", name)
+				return -1, fmt.Errorf("%s is a link root doesn't own; not followed", walked)
 			}
 			if hops++; hops > 8 {
 				unix.Close(fd)
@@ -254,10 +287,14 @@ func openDirRootLinksOnly(path string) (int, error) {
 			target := string(buf[:n])
 			if strings.HasPrefix(target, "/") {
 				unix.Close(fd)
-				if fd, err = unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0); err != nil {
+				var rest []string
+				if fd, walked, rest, err = walkStart(target); err != nil {
 					return -1, err
 				}
+				comps = append(rest, comps...)
+				continue
 			}
+			walked = filepath.Dir(walked)
 			comps = append(strings.Split(target, "/"), comps...)
 			continue
 		}
@@ -269,6 +306,24 @@ func openDirRootLinksOnly(path string) (int, error) {
 		fd = next
 	}
 	return fd, nil
+}
+
+// walkStart opens where a walk of the absolute path begins: "/", or in tests
+// backupsWalkBase when the path is below it. It returns the open folder, its
+// path, and the components left to walk.
+func walkStart(path string) (int, string, []string, error) {
+	if !strings.HasPrefix(path, "/") {
+		return -1, "", nil, fmt.Errorf("%s: not an absolute path", path)
+	}
+	base := "/"
+	if b := backupsWalkBase; b != "/" && (path == b || strings.HasPrefix(path, b+"/")) {
+		base = b
+	}
+	fd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, "", nil, err
+	}
+	return fd, base, strings.Split(strings.TrimPrefix(path, base), "/"), nil
 }
 
 // dirNamesFD lists an open folder through a duplicate of its handle.

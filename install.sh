@@ -6229,8 +6229,11 @@ ensure_user_and_dirs() {
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   # Working folder root (server_settings.working_folder default).
   # Migration staging + backup repo subdirs live underneath; admin can
-  # retarget via Settings → Storage after install.
-  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali
+  # retarget via Settings → Storage after install. The folder itself is
+  # root's: the agent keeps its own state directly in it, and only root may
+  # rename what sits there. The panel writes only inside its own subfolders
+  # (migrations/, restore/), which stay the service user's.
+  install -d -m 0755 -o root -g root /var/lib/jabali
   _svc_subdir 0750 "$SERVICE_USER" "$SERVICE_USER" /var/lib/jabali/migrations
   # Backups are root's: the agent stages restores here and applies them as
   # root. Group jabali lets the panel reach downloads/ and logs/; the agent

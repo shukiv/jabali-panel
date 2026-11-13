@@ -26,12 +26,22 @@ type fchownCall struct {
 // the chown is recorded, not made.
 func withBackupsRoot(t *testing.T) (string, *[]fchownCall) {
 	t.Helper()
-	root := filepath.Join(t.TempDir(), "backups")
+	base := t.TempDir()
+	if err := os.Chmod(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "backups")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	var calls []fchownCall
 	prevDir, prevOwner, prevChown, prevGID := backupsRootDir, backupsOwnerUID, backupsFchown, backupsGroupGID
+	prevTrusted, prevBase := backupsTrustedUID, backupsWalkBase
+	t.Cleanup(func() { backupsTrustedUID, backupsWalkBase = prevTrusted, prevBase })
+	// The walk starts at the test's temp dir, and the test user, who owns it,
+	// is trusted above the folder.
+	backupsWalkBase = base
+	backupsTrustedUID = os.Getuid()
 	backupsRootDir = root
 	backupsOwnerUID = 0
 	backupsFchown = func(fd, uid, gid int) error {
@@ -168,27 +178,46 @@ func TestEnsureRestoreStaging_ReplacesALinkWhereStagingBelongs(t *testing.T) {
 	mustVictimUntouched(t, victim, *calls)
 }
 
-func TestEnsureRestoreStaging_RefusesABackupsFolderLinkedByAnotherUser(t *testing.T) {
-	root, calls := withBackupsRoot(t)
+func TestEnsureRestoreStaging_RefusesAFolderOthersCanReplace(t *testing.T) {
+	_, calls := withBackupsRoot(t)
 	victim := victimDir(t)
-	link := filepath.Join(filepath.Dir(root), "linked-backups")
+	open := filepath.Join(backupsWalkBase, "open")
+	if err := os.Mkdir(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(open, 0o755) })
+
+	// A link, then a real folder, in a folder anyone can write: either could
+	// be swapped after the check, so neither is used.
+	link := filepath.Join(open, "backups-link")
 	if err := os.Symlink(victim, link); err != nil {
 		t.Fatal(err)
 	}
-	backupsRootDir = link
-
-	if err := ensureRestoreStaging(); err == nil {
-		t.Fatal("a link that isn't root's alone must not be followed")
+	real := filepath.Join(open, "backups")
+	if err := os.Mkdir(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{link, real} {
+		backupsRootDir = p
+		if err := ensureRestoreStaging(); err == nil {
+			t.Fatalf("%s: a folder others can replace must not be used", p)
+		}
 	}
 	mustVictimUntouched(t, victim, *calls)
 	mustNotExist(t, filepath.Join(victim, restoreStagingName))
+	mustNotExist(t, filepath.Join(real, restoreStagingName))
+	if len(*calls) != 0 {
+		t.Fatalf("nothing may be chowned: %+v", *calls)
+	}
 }
 
 func TestOpenDirRootLinksOnly(t *testing.T) {
 	_, _ = withBackupsRoot(t)
-	backupsOwnerUID = os.Getuid() // the test user plays root here
-	dir := t.TempDir()
-	if err := os.Chmod(dir, 0o755); err != nil {
+	dir := filepath.Join(backupsWalkBase, "d")
+	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	real := filepath.Join(dir, "real")
@@ -201,33 +230,74 @@ func TestOpenDirRootLinksOnly(t *testing.T) {
 	if err := os.Symlink("real", filepath.Join(dir, "rel")); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"abs", "rel", "real"} {
+	opens := func(name string) bool {
 		fd, err := openDirRootLinksOnly(filepath.Join(dir, name))
 		if err != nil {
-			t.Fatalf("%s: a link root owns in a folder only root can write is followed: %v", name, err)
+			return false
 		}
 		p, _ := os.Readlink(fmt.Sprintf("/proc/self/fd/%d", fd))
 		_ = unix.Close(fd)
 		if p != real {
 			t.Fatalf("%s opened %s, want %s", name, p, real)
 		}
+		return true
+	}
+	for _, name := range []string{"abs", "rel", "real"} {
+		if !opens(name) {
+			t.Fatalf("%s: in a folder only a trusted owner can write, it opens", name)
+		}
 	}
 
-	// The same link in a folder others can write is not followed.
+	// Sticky like /tmp: what a trusted owner put there still opens.
+	if err := os.Chmod(dir, 0o777|os.ModeSticky); err != nil {
+		t.Fatal(err)
+	}
+	if !opens("abs") {
+		t.Fatal("a trusted link in a sticky folder opens")
+	}
+
+	// Writable by others and not sticky: nothing in it opens.
 	if err := os.Chmod(dir, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if fd, err := openDirRootLinksOnly(filepath.Join(dir, "abs")); err == nil {
-		_ = unix.Close(fd)
-		t.Fatal("a link in a folder others can write must not be followed")
+	for _, name := range []string{"abs", "real"} {
+		if opens(name) {
+			t.Fatalf("%s: in a folder others can write, it must not open", name)
+		}
 	}
 	_ = os.Chmod(dir, 0o755)
 
-	// A link someone else owns is not followed.
-	backupsOwnerUID = os.Getuid() + 1
-	if fd, err := openDirRootLinksOnly(filepath.Join(dir, "abs")); err == nil {
-		_ = unix.Close(fd)
-		t.Fatal("a link root doesn't own must not be followed")
+	// Folders owned by an untrusted user: nothing below them opens.
+	backupsTrustedUID = os.Getuid() + 1
+	if opens("real") {
+		t.Fatal("below a folder an untrusted user owns, nothing opens")
+	}
+}
+
+func TestTrustedParentAndOwner(t *testing.T) {
+	prev := backupsTrustedUID
+	backupsTrustedUID = 0
+	t.Cleanup(func() { backupsTrustedUID = prev })
+	st := func(uid uint32, mode uint32) *unix.Stat_t { return &unix.Stat_t{Uid: uid, Mode: mode} }
+	cases := []struct {
+		name          string
+		parent, child *unix.Stat_t
+		want          bool
+	}{
+		{"root's 0755", st(0, unix.S_IFDIR|0o755), st(1000, unix.S_IFDIR|0o755), true},
+		{"panel user's 0755", st(1000, unix.S_IFDIR|0o755), st(0, unix.S_IFDIR|0o755), false},
+		{"root's, group-writable", st(0, unix.S_IFDIR|0o775), st(0, unix.S_IFDIR|0o755), false},
+		{"root's, other-writable", st(0, unix.S_IFDIR|0o777), st(0, unix.S_IFDIR|0o755), false},
+		{"sticky, root's child", st(0, unix.S_IFDIR|unix.S_ISVTX|0o777), st(0, unix.S_IFLNK|0o777), true},
+		{"sticky, panel user's child", st(0, unix.S_IFDIR|unix.S_ISVTX|0o777), st(1000, unix.S_IFLNK|0o777), false},
+	}
+	for _, c := range cases {
+		if got := trustedParent(c.parent, c.child); got != c.want {
+			t.Errorf("trustedParent %s = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if !trustedOwner(0) || trustedOwner(1000) {
+		t.Error("trustedOwner: only root, with no test user set")
 	}
 }
 
@@ -307,7 +377,12 @@ func TestSysRestoreContainerPathClean(t *testing.T) {
 	if got, err := sysRestoreContainerPathClean(good); err != nil || got != good {
 		t.Fatalf("root's copy in restore-staging: got %q, %v", got, err)
 	}
+	elsewhere := filepath.Join(t.TempDir(), "sysrestore-01JABCDEFGHJKMNPQRSTVWXYZ0.tar")
+	if err := os.WriteFile(elsewhere, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bad := []string{
+		elsewhere,
 		"/var/lib/jabali-uploads/sysrestore-01JABCDEFGHJKMNPQRSTVWXYZ0.tar",
 		filepath.Join(staging, "other.tar"),
 		staging + "/sub/../sysrestore-01JABCDEFGHJKMNPQRSTVWXYZ0.tar",
