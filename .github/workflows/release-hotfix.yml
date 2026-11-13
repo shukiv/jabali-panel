@@ -94,7 +94,8 @@ jobs:
   release:
     name: Build + publish hotfix release tarball
     needs: [provenance, migrations]
-    runs-on: self-hosted
+    # Pin ubuntu-24.04 — see release.yml for why the builder must not be newer.
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     env:

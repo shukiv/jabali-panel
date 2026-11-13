@@ -94,7 +94,7 @@ latest_release() {
 # release_body repo -> the /releases/latest notes (markdown), truncated so the
 # monthly issue stays readable. Surfaces WHAT a bump brings — new features to
 # consider adopting into jabali, not just a version number (GH #1456). gh
-# locally; curl + REST on the self-hosted runner. Empty on failure.
+# locally; curl + REST when gh is missing. Empty on failure.
 RELEASE_NOTES_MAX_LINES="${RELEASE_NOTES_MAX_LINES:-40}"
 release_body() {
   local repo="$1" body=""

@@ -2,15 +2,12 @@
 # retired Codeberg/Forgejo workflow when the project moved its source-of-truth
 # to GitHub (shukiv/jabali-panel).
 #
-# JAB-238: PR CI runs on GITHUB-HOSTED runners (ubuntu-latest), NOT the
-# self-hosted box. This workflow executes arbitrary code from any fork PR,
-# and the repo is public — on a self-hosted runner that is remote code
-# execution on our own infrastructure, and a poisoned runner then persists
-# into the trusted release.yml/nightly jobs that share the box. Ephemeral
-# GitHub-hosted runners make every PR run single-use and isolated. The
-# self-hosted runner is reserved for the trusted, maintainer-only triggers:
-# push-to-main (release.yml), schedule (nightly.yml), and workflow_dispatch
-# utilities.
+# JAB-238: PR CI runs on GITHUB-HOSTED runners (ubuntu-latest). This workflow
+# executes arbitrary code from any fork PR, and the repo is public — running
+# that code on persistent project infrastructure would be remote code
+# execution on our own box. Ephemeral GitHub-hosted runners make every PR run
+# single-use and isolated. Every workflow runs on GitHub-hosted runners;
+# the release and hotfix builds pin ubuntu-24.04 (see release.yml).
 #
 # Jobs (all run unconditionally): Go tests+vet, install.sh lint, jabali-cache
 # plugin tests, vitest+eslint, secret scan (gitleaks), new dependency
@@ -91,7 +88,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           # cache: true — ephemeral GitHub-hosted runners start cold every
           # run (JAB-238); the tar-layer conflict noted here historically
-          # was specific to the self-hosted box's persistent $GOMODCACHE.
+          # was specific to the old runner's persistent $GOMODCACHE.
           cache: true
       - name: go vet
         run: make vet

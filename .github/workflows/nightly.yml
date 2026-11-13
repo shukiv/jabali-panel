@@ -21,19 +21,19 @@ env:
 jobs:
   go:
     name: Go tests + vet (race)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: false
+          cache: true
       - run: make vet
       - run: make test
 
   ui-unit:
     name: panel-ui unit tests (vitest)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -47,7 +47,7 @@ jobs:
 
   e2e:
     name: Playwright E2E (full)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     concurrency:
       group: e2e-port-4173
       cancel-in-progress: false
@@ -85,7 +85,7 @@ jobs:
 
   audit:
     name: npm audit (advisory)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -98,17 +98,17 @@ jobs:
   # Failure notification — closes the blind spot that let nine red nights pass
   # silently (Nightly had no alert step, only a Playwright-artifact upload).
   # Fires on any job failure OR cancellation (always() so a cancelled job still
-  # alerts). Sends through the panel's own Stalwart submission endpoint; the
-  # ONLY secret is the webmaster mailbox password (NIGHTLY_SMTP_PASSWORD) — host
-  # and address are non-sensitive. No third-party action, so the supply-chain
-  # surface stays at zero (cf. release.yml). Self-hosted so it reaches the mail
-  # server on the internal network; a TOTAL runner outage won't self-alert, so
-  # also enable GitHub's built-in Actions failure email as a backstop.
+  # alerts). Sends through the project mailbox's SMTP submission endpoint
+  # (mx1.reeva.me:465); the ONLY secret is the webmaster mailbox password
+  # (NIGHTLY_SMTP_PASSWORD) — host and address are non-sensitive. No third-party
+  # action, so the supply-chain surface stays at zero (cf. release.yml). If
+  # this job itself fails (for example, the mail server is unreachable),
+  # GitHub's built-in Actions failure email is the backstop.
   notify:
     name: Email on failure
     needs: [go, ui-unit, e2e, audit]
     if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     steps:
       - name: Send failure email
         env:
