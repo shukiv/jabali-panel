@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -22,7 +23,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -739,13 +739,9 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, "/etc/jabali-panel")
 			applied = append(applied, ownApplied...)
 			warnings = append(warnings, ownWarn...)
-			stateApplied, stateWarn := applyPanelStateDirs(ctx, stagingRoot, stageDir)
+			stateApplied, stateWarn := applyPanelStateDirs(stageDir)
 			applied = append(applied, stateApplied...)
-			for _, w := range stateWarn {
-				if !slices.Contains(warnings, w) { // a missing os_users.json warns once
-					warnings = append(warnings, w)
-				}
-			}
+			warnings = append(warnings, stateWarn...)
 		case backup.StageTLS:
 			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
@@ -1041,36 +1037,33 @@ func panelConfigPaths() []string {
 }
 
 // applyPanelStateDirs puts back the panelStateDirs a panel_config stage
-// holds, owned by name like /etc/jabali-panel. A backup made before they
-// were captured has none, which is not an error.
-func applyPanelStateDirs(ctx context.Context, stagingRoot, stageDir string) (applied, warnings []string) {
+// holds. A backup made before they were captured has none, which is not an
+// error.
+func applyPanelStateDirs(stageDir string) (applied, warnings []string) {
 	for _, d := range panelStateDirs {
 		if _, err := os.Lstat(filepath.Join(stageDir, d)); err != nil {
 			continue
 		}
-		if err := syncPanelStateDir(ctx, stageDir, d); err != nil {
+		if err := swapInPanelStateDir(stageDir, d); err != nil {
 			warnings = append(warnings, fmt.Sprintf("panel_config %s: %v", d, err))
 			continue
 		}
 		applied = append(applied, "panel_config → "+d)
-		ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, d)
-		applied = append(applied, ownApplied...)
-		for _, w := range ownWarn {
-			if !slices.Contains(warnings, w) {
-				warnings = append(warnings, w)
-			}
-		}
 	}
 	return applied, warnings
 }
 
-// syncPanelStateDir puts the staged d back as the backup holds it. The
-// panel's user owns d's parent, /var/lib/jabali-panel, so it can put a link
-// where d was, and rsync, run as root, would write and delete wherever the
-// link points. d is therefore synced as an entry of its parent: rsync
-// replaces a link there with a folder rather than follow it (no
-// --keep-dirlinks), and deletes only inside d.
-func syncPanelStateDir(ctx context.Context, stageDir, d string) error {
+// swapInPanelStateDir puts the staged d in place of the live one, as the
+// backup holds it, owned by the owner of d's parent: the panel's user, which
+// install.sh gives /var/lib/jabali-panel.
+//
+// The panel's user owns that parent, so while a restore runs it can put a
+// link where d, or a folder under it, was, and root would write or delete
+// wherever the link points. So the restore never writes into the live tree:
+// it gives the staged copy, in the staging that only root can enter, to the
+// panel's user, and swaps it with the live d in one rename. The old d lands
+// in the staging and is removed there.
+func swapInPanelStateDir(stageDir, d string) error {
 	src, err := stagedSource(stageDir, d)
 	if err != nil {
 		return err
@@ -1079,9 +1072,42 @@ func syncPanelStateDir(ctx context.Context, stageDir, d string) error {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", parent, err)
 	}
-	out, err := execCommandContext(ctx, "rsync", "-a", "--delete-after", src, parent+"/").CombinedOutput()
+	pfd, err := unix.Open(parent, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, d, err, strings.TrimSpace(string(out)))
+		return err
+	}
+	defer unix.Close(pfd)
+	var st unix.Stat_t
+	if err := unix.Fstat(pfd, &st); err != nil {
+		return err
+	}
+	if err := filepath.WalkDir(src, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		return os.Lchown(p, int(st.Uid), int(st.Gid))
+	}); err != nil {
+		return fmt.Errorf("give the staged copy to the panel's user: %w", err)
+	}
+	sfd, err := unix.Open(filepath.Dir(src), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(sfd)
+	name := filepath.Base(d)
+	err = unix.Renameat2(sfd, name, pfd, name, unix.RENAME_EXCHANGE)
+	if errors.Is(err, unix.ENOENT) {
+		// No live d to swap with.
+		err = unix.Renameat2(sfd, name, pfd, name, unix.RENAME_NOREPLACE)
+	}
+	if errors.Is(err, unix.EXDEV) {
+		return fmt.Errorf("not restored: %s is on another filesystem than the restore's staging", parent)
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return fmt.Errorf("remove the replaced copy from the staging: %w", err)
 	}
 	return nil
 }
