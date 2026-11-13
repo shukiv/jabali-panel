@@ -894,28 +894,9 @@ func applyPanelDBStage(ctx context.Context, stageDir string, st backup.ManifestS
 // a link, and no link in it may point outside target once in place (see
 // linkStaysIn).
 func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []string) error {
-	// The staged tree mirrors the original absolute path: e.g.
-	// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
-	// holds <stageDir>/etc/jabali-panel/... — we want to sync the
-	// inner /etc/jabali-panel/... part onto /etc/jabali-panel.
-	src := filepath.Join(stageDir, target) + "/"
-	p := stageDir
-	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
-		p = filepath.Join(p, c)
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return fmt.Errorf("staged source %s missing: %w", src, err)
-		}
-		if !fi.IsDir() {
-			return fmt.Errorf("staged source %s: %s is not a folder", src, p)
-		}
-	}
-	bad, err := outsideLinks(filepath.Join(stageDir, target), target)
+	src, err := stagedSource(stageDir, target)
 	if err != nil {
-		return fmt.Errorf("check staged links: %w", err)
-	}
-	if len(bad) > 0 {
-		return fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
+		return err
 	}
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		return fmt.Errorf("mkdir target: %w", err)
@@ -924,7 +905,7 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 	for _, e := range excludes {
 		args = append(args, "--exclude="+e)
 	}
-	args = append(args, src, target+"/")
+	args = append(args, src+"/", target+"/")
 	cmd := execCommandContext(ctx, "rsync", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -932,6 +913,35 @@ func rsyncStageOnto(ctx context.Context, stageDir, target string, excludes []str
 			strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// stagedSource returns where the staged tree holds target. It mirrors the
+// original absolute path: e.g.
+// stageDir=/var/lib/jabali-backups/restore-staging/<job>/panel_config
+// holds <stageDir>/etc/jabali-panel/... for /etc/jabali-panel. Each folder on
+// the way must be a real folder, and no link in the tree may point outside
+// target.
+func stagedSource(stageDir, target string) (string, error) {
+	src := filepath.Join(stageDir, target)
+	p := stageDir
+	for _, c := range strings.Split(strings.TrimPrefix(target, "/"), "/") {
+		p = filepath.Join(p, c)
+		fi, err := os.Lstat(p)
+		if err != nil {
+			return "", fmt.Errorf("staged source %s/ missing: %w", src, err)
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("staged source %s/: %s is not a folder", src, p)
+		}
+	}
+	bad, err := outsideLinks(src, target)
+	if err != nil {
+		return "", fmt.Errorf("check staged links: %w", err)
+	}
+	if len(bad) > 0 {
+		return "", fmt.Errorf("nothing applied: the staged %s holds links that point outside it: %s", target, strings.Join(bad, "; "))
+	}
+	return src, nil
 }
 
 // isSystemPanelDatabase reports whether db is one of systemPanelDatabases.
@@ -1038,7 +1048,7 @@ func applyPanelStateDirs(ctx context.Context, stagingRoot, stageDir string) (app
 		if _, err := os.Lstat(filepath.Join(stageDir, d)); err != nil {
 			continue
 		}
-		if err := rsyncStageOnto(ctx, stageDir, d, nil); err != nil {
+		if err := syncPanelStateDir(ctx, stageDir, d); err != nil {
 			warnings = append(warnings, fmt.Sprintf("panel_config %s: %v", d, err))
 			continue
 		}
@@ -1052,6 +1062,28 @@ func applyPanelStateDirs(ctx context.Context, stagingRoot, stageDir string) (app
 		}
 	}
 	return applied, warnings
+}
+
+// syncPanelStateDir puts the staged d back as the backup holds it. The
+// panel's user owns d's parent, /var/lib/jabali-panel, so it can put a link
+// where d was, and rsync, run as root, would write and delete wherever the
+// link points. d is therefore synced as an entry of its parent: rsync
+// replaces a link there with a folder rather than follow it (no
+// --keep-dirlinks), and deletes only inside d.
+func syncPanelStateDir(ctx context.Context, stageDir, d string) error {
+	src, err := stagedSource(stageDir, d)
+	if err != nil {
+		return err
+	}
+	parent := filepath.Dir(d)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", parent, err)
+	}
+	out, err := execCommandContext(ctx, "rsync", "-a", "--delete-after", src, parent+"/").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("rsync %s -> %s: %w (output: %s)", src, d, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // runSystemMultiPathStage is the multi-path variant of runSystemPathStage.

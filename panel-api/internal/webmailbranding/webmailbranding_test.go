@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -233,41 +234,75 @@ func TestEncodeStored(t *testing.T) {
 	}
 }
 
-// Run as root, OwnForPanel gives the pictures the panel's owner (the owner
-// of dir's parent); run as anyone else it changes nothing.
-func TestOwnForPanel(t *testing.T) {
-	parent := t.TempDir()
-	dir := filepath.Join(parent, "webmail-branding")
-	if err := Write(dir, testDomainID, LogoLight, []byte("png")); err != nil {
-		t.Fatal(err)
-	}
-	if err := Write(dir, testDomainID, Favicon, []byte("png")); err != nil {
-		t.Fatal(err)
-	}
+// Run as root (a restore by `jabali backup account-restore`), Write gives
+// the directories and the picture the owner of dir's parent, the panel's
+// user; run as anyone else it gives nothing away.
+func TestWriteAsRootGivesThePanelItsPictures(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "webmail-branding")
+	origEUID, origChown := geteuid, fchown
+	t.Cleanup(func() { geteuid, fchown = origEUID, origChown })
 	var got []string
-	origEUID, origChown := geteuid, lchown
-	t.Cleanup(func() { geteuid, lchown = origEUID, origChown })
-	lchown = func(p string, uid, gid int) error {
+	fchown = func(fd, uid, gid int) error {
 		if uid != os.Getuid() || gid != os.Getgid() {
-			t.Errorf("chown %s to %d:%d, want the parent's owner %d:%d", p, uid, gid, os.Getuid(), os.Getgid())
+			t.Errorf("chown to %d:%d, want the parent's owner %d:%d", uid, gid, os.Getuid(), os.Getgid())
+		}
+		p, err := os.Readlink("/proc/self/fd/" + strconv.Itoa(fd))
+		if err != nil {
+			t.Fatal(err)
 		}
 		got = append(got, strings.TrimPrefix(p, dir))
 		return nil
 	}
 
 	geteuid = func() int { return 1000 }
-	if err := OwnForPanel(dir, testDomainID); err != nil || len(got) != 0 {
+	if err := Write(dir, testDomainID, LogoLight, []byte("png")); err != nil || len(got) != 0 {
 		t.Fatalf("not root: chowned %v, %v", got, err)
 	}
 	geteuid = func() int { return 0 }
-	if err := OwnForPanel(dir, testDomainID); err != nil {
+	if err := Write(dir, testDomainID, Favicon, []byte("png")); err != nil {
 		t.Fatal(err)
 	}
-	want := "|/" + testDomainID + "|/" + testDomainID + "/favicon.png|/" + testDomainID + "/logo-light.png"
-	if strings.Join(got, "|") != want {
-		t.Fatalf("chowned %q, want %q", strings.Join(got, "|"), want)
+	if len(got) != 3 || got[0] != "" || got[1] != "/"+testDomainID || !strings.HasPrefix(got[2], "/"+testDomainID+"/.favicon.") {
+		t.Fatalf("chowned %q, want dir, the domain's dir and the new picture", got)
 	}
-	if err := OwnForPanel(dir, "../etc"); err == nil {
-		t.Fatal("a bad domain id was taken")
+}
+
+// A link in place of dir or of the domain's directory makes Write and Remove
+// fail: run as root, they would otherwise write or delete wherever the
+// panel's user pointed it.
+func TestWriteRemoveNeverFollowALink(t *testing.T) {
+	root := t.TempDir()
+	elsewhere := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "logo-light.png"), []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "webmail-branding")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(dir, testDomainID)); err != nil {
+		t.Fatal(err)
+	}
+	linkedDir := filepath.Join(root, "linked")
+	if err := os.Symlink(elsewhere, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ dir, id string }{{dir, testDomainID}, {linkedDir, testDomainID}} {
+		if err := Write(c.dir, c.id, Favicon, []byte("png")); err == nil {
+			t.Fatalf("Write through a link in %s succeeded", c.dir)
+		}
+		if err := Remove(c.dir, c.id, LogoLight); err == nil {
+			t.Fatalf("Remove through a link in %s succeeded", c.dir)
+		}
+	}
+	entries, _ := os.ReadDir(elsewhere)
+	if len(entries) != 1 || entries[0].Name() != "logo-light.png" {
+		t.Fatalf("the linked directory holds %v, want only its own file", entries)
+	}
+	if fi, _ := os.Stat(elsewhere); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("the linked directory's mode became %v", fi.Mode().Perm())
 	}
 }

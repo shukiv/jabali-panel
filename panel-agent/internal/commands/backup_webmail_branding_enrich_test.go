@@ -46,6 +46,19 @@ func TestEnrichWebmailBranding(t *testing.T) {
 	if err := os.Symlink(secret, filepath.Join(dir, id, "logo-dark.png")); err != nil {
 		t.Fatal(err)
 	}
+	// A domain directory that is a link, to one holding a picture of the
+	// hash the branding names: never read either.
+	const linkedID = "01HXXXXXXXXXXXXXXXXXXXXXXX"
+	other := filepath.Join(root, "other")
+	if err := os.MkdirAll(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "logo-light.png"), logo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(dir, linkedID)); err != nil {
+		t.Fatal(err)
+	}
 
 	meta := &backup.AccountMetadata{Domains: []backup.MetadataDomain{
 		{ID: id, Name: "good.org", WebmailBranding: &backup.MetadataWebmailBranding{
@@ -58,6 +71,7 @@ func TestEnrichWebmailBranding(t *testing.T) {
 			LogoLight: wbHash(logo), FaviconPNG: []byte("from the panel"),
 		}},
 		{ID: "01HYYYYYYYYYYYYYYYYYYYYYYY", Name: "plain.org"},
+		{ID: linkedID, Name: "linked.org", WebmailBranding: &backup.MetadataWebmailBranding{LogoLight: wbHash(logo)}},
 	}}
 	warnings := enrichWebmailBranding(meta)
 
@@ -72,17 +86,21 @@ func TestEnrichWebmailBranding(t *testing.T) {
 	if bad.LogoLightPNG != nil || bad.FaviconPNG != nil {
 		t.Fatalf("bad.org carried %q / %q", bad.LogoLightPNG, bad.FaviconPNG)
 	}
+	if meta.Domains[3].WebmailBranding.LogoLightPNG != nil {
+		t.Fatal("linked.org's picture was read through its linked directory")
+	}
 	got := strings.Join(warnings, "\n")
 	for _, want := range []string{
 		"good.org logo-dark left out: ",
 		"good.org favicon left out: it is not the picture the branding names",
 		"bad.org logo-light left out: not a domain id",
+		"linked.org logo-light left out: ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("warnings:\n%s\nwant %q", got, want)
 		}
 	}
-	if len(warnings) != 3 {
+	if len(warnings) != 4 {
 		t.Fatalf("warnings:\n%s", got)
 	}
 

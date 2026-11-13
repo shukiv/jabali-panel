@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 
 	"golang.org/x/sys/unix"
@@ -79,18 +78,20 @@ func readWebmailBrandingPicture(domainID, asset, hash string) ([]byte, error) {
 	if !webmailBrandingDomainIDRe.MatchString(domainID) {
 		return nil, errors.New("not a domain id")
 	}
-	dir := filepath.Join(webmailBrandingDir, domainID)
-	for _, p := range []string{webmailBrandingDir, dir} {
-		fi, err := os.Lstat(p)
-		if err != nil {
-			return nil, err
-		}
-		if !fi.IsDir() {
-			return nil, fmt.Errorf("%s is not a directory", p)
-		}
+	// From directory handles, never through a link: the panel's user owns
+	// these directories.
+	dfd, err := unix.Open(webmailBrandingDir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
 	}
+	defer unix.Close(dfd)
+	ddfd, err := unix.Openat(dfd, domainID, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unix.Close(ddfd)
 	// O_NONBLOCK: a FIFO in its place must not hang the backup.
-	fd, err := unix.Open(filepath.Join(dir, asset+".png"), unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(ddfd, asset+".png", unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
 	}

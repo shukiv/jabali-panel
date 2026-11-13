@@ -120,16 +120,14 @@ func restoreWebmailBranding(ctx context.Context, d Deps, r *ApplyResult, dm inte
 		return
 	}
 	r.WebmailBranding++
-	wrote, failed := false, false
+	failed := false
 	for _, p := range pics {
 		switch {
 		case p.encoded != nil:
 			if err := webmailbranding.Write(webmailBrandingDir, dom.ID, p.asset, p.encoded); err != nil {
 				report("%s not restored: %v", p.asset, err)
 				*p.hash, failed = "", true
-				continue
 			}
-			wrote = true
 		case p.here != "":
 			// This server's picture, which the backup's branding has none of.
 			if err := webmailbranding.Remove(webmailBrandingDir, dom.ID, p.asset); err != nil {
@@ -141,11 +139,6 @@ func restoreWebmailBranding(ctx context.Context, d Deps, r *ApplyResult, dm inte
 		// The row must not name a picture that isn't there.
 		if err := d.WebmailBranding.Put(ctx, row); err != nil {
 			report("names a picture that was not restored: %v", err)
-		}
-	}
-	if wrote {
-		if err := webmailbranding.OwnForPanel(webmailBrandingDir, dom.ID); err != nil {
-			report("pictures not given to the panel's user: %v", err)
 		}
 	}
 }

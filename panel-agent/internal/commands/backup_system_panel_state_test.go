@@ -76,4 +76,40 @@ func TestPanelStateDirs_CaptureAndRestore(t *testing.T) {
 			t.Fatalf("unexpected warning %q", w)
 		}
 	}
+
+	// The panel's user owns the dirs' parent, so it can put a link where a
+	// dir was. The restore, run as root, replaces the link with the backup's
+	// dir; it neither writes nor deletes where the link points, nor touches
+	// the parent's other entries.
+	elsewhere := filepath.Join(tmp, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(elsewhere, "keep"), []byte("theirs"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(webmail); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(elsewhere, webmail); err != nil {
+		t.Fatal(err)
+	}
+	sibling := filepath.Join(filepath.Dir(webmail), "last-built-sha")
+	if err := os.WriteFile(sibling, []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, warnings = applyPanelStateDirs(context.Background(), stagingRoot, stageDir)
+	if fi, err := os.Lstat(webmail); err != nil || !fi.IsDir() {
+		t.Fatalf("webmail-branding is %v (%v), want the backup's folder in place of the link (warnings %v)", fi.Mode(), err, warnings)
+	}
+	if b, err := os.ReadFile(filepath.Join(webmail, pic)); err != nil || string(b) != "png" {
+		t.Fatalf("picture not restored in place of the link: %q, %v", b, err)
+	}
+	entries, _ := os.ReadDir(elsewhere)
+	if len(entries) != 1 || entries[0].Name() != "keep" {
+		t.Fatalf("the linked folder holds %v, want only its own file", entries)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Fatalf("the parent's other file went: %v", err)
+	}
 }
