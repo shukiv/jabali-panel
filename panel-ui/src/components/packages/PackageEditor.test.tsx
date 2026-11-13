@@ -330,6 +330,32 @@ describe("PackageEditor Git deploy (GH #2277)", () => {
   });
 });
 
+// GH #2502: a new package starts without per-domain webmail branding; a
+// stored package loads its value.
+describe("PackageEditor Webmail branding (GH #2502)", () => {
+  it("renders the switch defaulting OFF for a new package", () => {
+    renderEditor();
+    const sw = screen.getByRole("switch", { name: "Webmail branding" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("loads a stored package's value (edit mode)", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <PackageEditor
+          title="Edit package"
+          initialValue={{ ...PACKAGE_DEFAULTS, id: "pkg-1", name: "Basic", webmail_branding_enabled: true }}
+          submitting={false}
+          onSubmit={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    const sw = await screen.findByRole("switch", { name: "Webmail branding" });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+  });
+});
+
 describe("PackageEditor Redis keys per call (GH #2165)", () => {
   it("starts a new package at 500", () => {
     renderEditor();

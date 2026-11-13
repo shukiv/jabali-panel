@@ -63,6 +63,15 @@ function mockGets(opts: {
         },
       });
     }
+    if (url === "/domains/d1/webmail-branding") {
+      return Promise.resolve({
+        data: {
+          host: "mail.on.test", can_edit: false, applies: false, set_by_admin: false,
+          app_name: "", company_name: "", website_url: "", privacy_url: "", imprint_url: "",
+          logo_light: "", logo_dark: "", favicon: "",
+        },
+      });
+    }
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
 }
@@ -113,6 +122,17 @@ describe("GH #1628 slice 4 — SettingsTab per-domain webmail toggle", () => {
     // The disclaimer endpoint answers 403 email_not_enabled; don't ask it.
     expect(mocked.get).not.toHaveBeenCalledWith("/domains/d1/disclaimer");
     expect(mocked.get).not.toHaveBeenCalledWith("/domains/d1/catchall");
+    expect(mocked.get).not.toHaveBeenCalledWith("/domains/d1/webmail-branding");
+  });
+
+  // GH #2502: the webmail branding card sits under the webmail switch.
+  it("shows the webmail branding card", async () => {
+    mockGets({ emailEnabled: true });
+
+    renderTab();
+
+    expect(await screen.findByText(/doesn't include webmail branding/i)).toBeInTheDocument();
+    expect(mocked.get).toHaveBeenCalledWith("/domains/d1/webmail-branding");
   });
 });
 

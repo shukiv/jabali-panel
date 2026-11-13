@@ -399,6 +399,20 @@ export const PackageEditor = ({ title, initialValue, isLoading, submitting, onSu
           <Typography.Text>Webmail Enabled</Typography.Text>
         </div>
 
+        {/* GH #2502: the owner of a domain on this package may give the
+            webmail on mail.<domain> its own name, logos, favicon and links. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item
+            name="webmail_branding_enabled"
+            valuePropName="checked"
+            tooltip="Lets users on this package brand the webmail of their domains (mail.<domain>): its name, logos, favicon and links. Empty fields keep the server-wide branding."
+            noStyle
+          >
+            <Switch aria-label="Webmail branding" checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />} />
+          </Form.Item>
+          <Typography.Text>Webmail branding</Typography.Text>
+        </div>
+
         {/* GH #2056: whether this package's sites may send email with PHP
             mail() (contact forms, WordPress), through the local mail server or
             the smarthost picked under Server Settings > Email. */}

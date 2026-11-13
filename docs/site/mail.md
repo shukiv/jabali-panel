@@ -41,6 +41,11 @@ Per-domain tabs:
 - **Catch-all** — send unmatched recipients to a chosen mailbox or `:drop` / `:reject`.
 - **Disclaimer** — append HTML / plaintext disclaimer server-side to outbound mail per domain.
 - **Shared Folders** — create IMAP shared folders for the team; manage ACLs.
+- **Webmail branding** (in **Settings**) — the name, company name, logos,
+  favicon and login-page links webmail shows on `mail.<domain>`; empty fields
+  keep the server-wide branding. The owner sets it when their package has
+  `webmail_branding_enabled` ([Hosting packages](admin/hosting-packages.md)),
+  an admin for any domain. See [Webmail branding](user/email.md#webmail-branding).
 - **CalDAV / CardDAV override** — repoint a domain's calendar + contacts SRV
   records at an external server instead of the built-in Stalwart DAV.
 - **Logs** and **Statistics** — scoped to the selected domain (sortable Mail Logs

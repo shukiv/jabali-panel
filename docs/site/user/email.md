@@ -9,7 +9,7 @@
 - [Autoresponders](./autoresponders.md) — vacation responder per mailbox with start and end window.
 - [Catch-all](./catch-all.md) — what happens to mail addressed to a recipient that does not exist.
 - [Disclaimer](./disclaimer.md) — append a server-side disclaimer to outbound mail.
-- **Settings** — per-domain mail options. Currently the webmail toggle (see below).
+- **Settings** — per-domain mail options: the webmail switch and the webmail branding (see below), the catch-all and the disclaimer.
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
 - **Distribution lists** — each member gets a copy; a list can also deliver to outside addresses, a Gmail address for example. See [Outside addresses on a distribution list](../mail.md#outside-addresses-on-a-distribution-list).
 - **Groups** — shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups).
@@ -20,6 +20,19 @@
 `https://mail.<domain>/` provides **Bulwark** (Next.js JMAP) webmail. The Mailboxes tab has a one-click **Open Webmail** button per mailbox that authenticates you via a single-use self-deleting SSO file.
 
 The **Settings** tab has a per-domain webmail switch. Turning it off removes webmail from `mail.<domain>` for that domain. IMAP, SMTP and mail delivery are unaffected, and mail apps still set themselves up and sync calendars and contacts through `mail.<domain>` (autoconfig/autodiscover, CalDAV/CardDAV, JMAP). Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
+
+### Webmail branding
+
+When your hosting plan includes webmail branding, the **Settings** tab has a **Webmail branding** card. It sets what webmail shows on `mail.<domain>`:
+
+- **Name** — the webmail's name, in the browser tab and on the login page.
+- **Company name** — on the login page.
+- **Website**, **privacy policy** and **imprint** links — on the login page; `https://` or `http://` links only.
+- **Logo**, **logo for the dark theme** and **favicon** — PNG or JPEG, at most 512 KB and 1024 × 1024 pixels. The panel converts them to PNG. Without a dark-theme logo, webmail uses the logo in both themes.
+
+Empty fields keep the server-wide branding. A change reaches webmail within about five minutes, and webmail restarts for a few seconds when it does; signed-in users stay signed in. **Remove branding** deletes it all and goes back to the server-wide branding.
+
+Without the switch in your plan, the card says so; ask your administrator. An administrator can also brand your domain's webmail, and you then see that your provider set it.
 
 ## The domain directory
 

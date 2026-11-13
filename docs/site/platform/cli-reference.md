@@ -4173,6 +4173,7 @@ jabali package create [flags]
 - `--scheduled-backups` — allow tenant scheduled backups
 - `--ssh` — enable SSH access
 - `--webmail` — enable webmail (Bulwark UI) for this package (default `true`)
+- `--webmail-branding` — let users on this package brand the webmail of their domains (mail.<domain>): its name, logos, favicon and links
 - `--website-mail` — let the sites on this package send email with PHP mail()
 
 #### `jabali package delete`
@@ -4236,6 +4237,7 @@ jabali package edit <package-id> [flags]
 - `--scheduled-backups` — tenant scheduled backups (true/false)
 - `--ssh` — SSH access (true/false)
 - `--webmail` — webmail Bulwark UI (true/false)
+- `--webmail-branding` — let users on this package brand the webmail of their domains (mail.<domain>): its name, logos, favicon and links (true/false)
 - `--website-mail` — sites may send email with PHP mail() (true/false)
 
 #### `jabali package list`

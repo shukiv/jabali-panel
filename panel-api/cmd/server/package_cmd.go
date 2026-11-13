@@ -102,6 +102,8 @@ type packageCreateFlags struct {
 	gitDeployEnabled                bool // GH #2277; defaults OFF
 	redisKeysPerCall                int  // GH #2165; defaults 500
 
+	webmailBranding bool // GH #2502; defaults OFF
+
 	// GH #1798: per-package egress allowances (default false = DENY).
 	egressSSHOut, egressICMP bool
 	egressSSHOutCIDRs        string
@@ -158,6 +160,8 @@ func buildPackageFromCreateFlags(f packageCreateFlags) (*models.HostingPackage, 
 		ComposerEnabled:   f.composerEnabled,  // GH #2276: off unless asked
 		GitDeployEnabled:  f.gitDeployEnabled, // GH #2277: off unless asked
 		RedisKeysPerCall:  f.redisKeysPerCall, // GH #2165; Validate bounds it
+
+		WebmailBrandingEnabled: f.webmailBranding, // GH #2502: off unless asked
 
 		EgressSSHOut:      f.egressSSHOut, // GH #1798
 		EgressSSHOutCIDRs: f.egressSSHOutCIDRs,
@@ -322,6 +326,8 @@ func registerPackageCreateFlags(cmd *cobra.Command, f *packageCreateFlags) {
 	fl.BoolVar(&f.composerEnabled, "composer", false, composerFlagHelp)
 	// GH #2277: off for a new package, like the REST create.
 	fl.BoolVar(&f.gitDeployEnabled, "git-deploy", false, gitDeployFlagHelp)
+	// GH #2502: off for a new package, like the REST create.
+	fl.BoolVar(&f.webmailBranding, "webmail-branding", false, webmailBrandingFlagHelp)
 	// GH #2165: defaults to 500 like the REST create; 0 is not "unlimited".
 	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", models.RedisKeysPerCallDefault, redisKeysPerCallFlagHelp)
 	fl.Uint32Var(&f.fpmMaxChildren, "fpm-max-children", 0, "FPM pm.max_children cap (0=default 20)")
@@ -360,6 +366,7 @@ type packageEditFlags struct {
 	gitDeployEnabled                              string // GH #2277
 	redisKeysPerCall                              int    // GH #2165
 	scheduledBackups, fpmUserCanEdit, fpmAdvanced string
+	webmailBranding                               string // GH #2502
 	// GH #1798: per-package egress allowances. The two flags are tri-state
 	// (true/false/unset); the CIDR scope is a plain string.
 	egressSSHOut, egressICMP string
@@ -460,6 +467,8 @@ func applyPackageEditFlags(changed func(string) bool, p *models.HostingPackage, 
 		p.RedisKeysPerCall = f.redisKeysPerCall
 		dirty = true
 	}
+	// GH #2502
+	tri("webmail-branding", &p.WebmailBrandingEnabled, f.webmailBranding)
 	tri("egress-ssh-out", &p.EgressSSHOut, f.egressSSHOut) // GH #1798
 	tri("egress-icmp", &p.EgressICMP, f.egressICMP)        // GH #1798
 	tri("scheduled-backups", &p.ScheduledBackupsEnabled, f.scheduledBackups)
@@ -645,6 +654,7 @@ func registerPackageEditFlags(cmd *cobra.Command, f *packageEditFlags) {
 	fl.StringVar(&f.websiteSendsEmail, "website-mail", "", "sites may send email with PHP mail() (true/false)") // GH #2056
 	fl.StringVar(&f.composerEnabled, "composer", "", composerFlagHelp+" (true/false)")                          // GH #2276
 	fl.StringVar(&f.gitDeployEnabled, "git-deploy", "", gitDeployFlagHelp+" (true/false)")                      // GH #2277
+	fl.StringVar(&f.webmailBranding, "webmail-branding", "", webmailBrandingFlagHelp+" (true/false)")           // GH #2502
 	fl.IntVar(&f.redisKeysPerCall, "redis-keys-per-call", 0, redisKeysPerCallEditFlagHelp)                      // GH #2165
 	fl.StringVar(&f.egressSSHOut, "egress-ssh-out", "", "allow outbound SSH :22 for enforced tenants (true/false)")
 	fl.StringVar(&f.egressICMP, "egress-icmp", "", "allow outbound ICMP ping for enforced tenants (true/false)")
@@ -822,3 +832,7 @@ const composerFlagHelp = "let users on this package run Composer for their domai
 // gitDeployFlagHelp (GH #2277, ADR-0178): a deployment runs the user's
 // composer.json scripts and deploy hooks in their SSH sandbox.
 const gitDeployFlagHelp = "let users on this package deploy their domains from a Git repository; a deployment runs their own commands in their SSH sandbox, so grant it as you would SSH"
+
+// webmailBrandingFlagHelp (GH #2502): the owner sets the name, logos,
+// favicon and links webmail shows on mail.<domain>.
+const webmailBrandingFlagHelp = "let users on this package brand the webmail of their domains (mail.<domain>): its name, logos, favicon and links"

@@ -190,6 +190,8 @@ tags:
     description: Terminal endpoints.
   - name: User
     description: User endpoints.
+  - name: Webmail Branding
+    description: A domain's webmail branding on mail.<domain> (GH #2502).
   - name: Whois
     description: Whois endpoints.
   - name: DDNS
@@ -543,6 +545,30 @@ components:
         expires_at:   { type: string, format: date-time, nullable: true }
         revoked_at:   { type: string, format: date-time, nullable: true }
         created_at:   { type: string, format: date-time }
+    WebmailBrandingText:
+      type: object
+      description: >-
+        The text of a domain's webmail branding. An empty field keeps the
+        server-wide branding. Links are http(s) only.
+      properties:
+        app_name:     { type: string, maxLength: 64, example: Acme Mail }
+        company_name: { type: string, maxLength: 128, example: Acme Ltd }
+        website_url:  { type: string, maxLength: 512, example: "https://acme.example" }
+        privacy_url:  { type: string, maxLength: 512 }
+        imprint_url:  { type: string, maxLength: 512 }
+    WebmailBranding:
+      allOf:
+        - $ref: "#/components/schemas/WebmailBrandingText"
+        - type: object
+          required: [host, can_edit, applies, set_by_admin]
+          properties:
+            host:         { type: string, example: mail.acme.example }
+            can_edit:     { type: boolean, description: "An admin, or the owner while their package has webmail_branding_enabled." }
+            applies:      { type: boolean, description: "Webmail shows it: set by an admin, or the owner's package allows it." }
+            set_by_admin: { type: boolean }
+            logo_light:   { type: string, description: "Content hash of the picture; empty when there is none." }
+            logo_dark:    { type: string }
+            favicon:      { type: string }
     UserAPITokenCreate:
       type: object
       required: [name]
@@ -3877,6 +3903,91 @@ paths:
 
 
   # --- Disclaimer (auto) ---
+
+  # --- Webmail Branding (GH #2502) ---
+
+  /domains/{id}/webmail-branding:
+    get:
+      tags: [Webmail Branding]
+      summary: Get a domain's webmail branding
+      description: >-
+        What webmail shows on mail.<domain>. The domain's owner or an admin.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebmailBranding" } } } }
+    put:
+      tags: [Webmail Branding]
+      summary: Set a domain's webmail branding
+      description: >-
+        Sets the text fields; pictures keep. The owner while their package has
+        webmail_branding_enabled (403 webmail_branding_not_in_package
+        otherwise), an admin always. Webmail shows it on the reconciler's next
+        pass.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WebmailBrandingText" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebmailBranding" } } } }
+        "403": { description: Not in the package, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: Invalid field, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [Webmail Branding]
+      summary: Remove a domain's webmail branding
+      description: Removes the text and the pictures; webmail goes back to the server-wide branding.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebmailBranding" } } } }
+
+  /domains/{id}/webmail-branding/{asset}:
+    get:
+      tags: [Webmail Branding]
+      summary: Get a branding picture
+      description: The stored picture, as PNG.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: asset, required: true, schema: { type: string, enum: [logo-light, logo-dark, favicon] } }
+      responses:
+        "200": { description: OK, content: { image/png: { schema: { type: string, format: binary } } } }
+        "404": { description: No such picture }
+    post:
+      tags: [Webmail Branding]
+      summary: Upload a branding picture
+      description: >-
+        PNG or JPEG, at most 512 KB and 1024 × 1024 pixels, in the form field
+        "file". The panel re-encodes it as PNG. Same access as PUT.
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: asset, required: true, schema: { type: string, enum: [logo-light, logo-dark, favicon] } }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebmailBranding" } } } }
+        "413": { description: picture_too_large, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "422": { description: invalid_picture or picture_size, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    delete:
+      tags: [Webmail Branding]
+      summary: Remove a branding picture
+      security: [ { KratosSession: [] } ]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string } }
+        - { in: path, name: asset, required: true, schema: { type: string, enum: [logo-light, logo-dark, favicon] } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/WebmailBranding" } } } }
 
   /domains/{id}/disclaimer:
     delete:

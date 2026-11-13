@@ -65,6 +65,11 @@ RuntimeDirectoryPreserve=no
 # before Step 8 has created it; runtime settings (JMAP_SERVER_URL etc.)
 # land there.
 EnvironmentFile=-/etc/jabali-panel/bulwark.env
+# Webmail branding, server-wide and per domain (GH #200, GH #2502), written
+# by the agent's webmail.branding.apply. Loaded second so its keys win over
+# bulwark.env's defaults; install.sh never writes it, so it outlives the
+# re-render of bulwark.env at every update.
+EnvironmentFile=-/etc/jabali-panel/bulwark-branding.env
 
 # Bulwark must always be running while enabled. Restart=on-failure left
 # the unit "inactive" after clean exits — observed when the stock

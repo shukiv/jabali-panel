@@ -120,6 +120,8 @@ type createPackageRequest struct {
 	ComposerEnabled bool `json:"composer_enabled"`
 	// GitDeployEnabled (GH #2277): off unless asked, like ComposerEnabled.
 	GitDeployEnabled bool `json:"git_deploy_enabled"`
+	// WebmailBrandingEnabled (GH #2502): off unless asked, like GitDeployEnabled.
+	WebmailBrandingEnabled bool `json:"webmail_branding_enabled"`
 	// RedisKeysPerCall (GH #2165) is a pointer so an omitted field gets the
 	// default (500) while an explicit 0 is refused, not taken as "unlimited".
 	RedisKeysPerCall   *int   `json:"redis_keys_per_call"`
@@ -182,6 +184,8 @@ type updatePackageRequest struct {
 	DockerAppSlugs     *string `json:"docker_app_slugs"`
 	PHPSettingsPolicy  *string `json:"php_settings_policy"` // GH #1701
 	NspawnImageVersion *string `json:"nspawn_image_version"`
+
+	WebmailBrandingEnabled *bool `json:"webmail_branding_enabled"` // GH #2502
 }
 
 // ---- handlers ----
@@ -319,6 +323,7 @@ func (h *packageHandler) create(c *gin.Context) {
 	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
 		pkg.RedisKeysPerCall = *req.RedisKeysPerCall
 	}
+	pkg.WebmailBrandingEnabled = req.WebmailBrandingEnabled // GH #2502: off unless asked
 	if v := strings.TrimSpace(req.NspawnImageVersion); v != "" {
 		if !isImageNamePattern(v) {
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -477,6 +482,9 @@ func (h *packageHandler) update(c *gin.Context) {
 	}
 	if req.GitDeployEnabled != nil { // GH #2277
 		pkg.GitDeployEnabled = *req.GitDeployEnabled
+	}
+	if req.WebmailBrandingEnabled != nil { // GH #2502
+		pkg.WebmailBrandingEnabled = *req.WebmailBrandingEnabled
 	}
 	if req.RedisKeysPerCall != nil { // GH #2165; packageops.Validate bounds it
 		pkg.RedisKeysPerCall = *req.RedisKeysPerCall

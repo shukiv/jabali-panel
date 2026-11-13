@@ -23,6 +23,7 @@ import { useOneQuery } from "../../../hooks/useQueries";
 import { countDomainMailboxes, mailAwayContent } from "../../../components/mail/mailAwayConfirm";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../../../apiClient";
+import { WebmailBrandingCard } from "../../../components/mail/WebmailBrandingCard";
 
 type Props = {
   domainId: string;
@@ -200,6 +201,9 @@ export const DomainEmailSection = ({ domainId }: Props) => {
           </span>
         </Space>
       )}
+
+      {/* GH #2502: the domain's webmail branding on mail.<domain>. */}
+      {enabled && (domain?.webmail_enabled ?? true) && <WebmailBrandingCard domainId={domainId} />}
 
       {enabled && (
         <Card size="small" title="DMARC (DMARCbis)">
