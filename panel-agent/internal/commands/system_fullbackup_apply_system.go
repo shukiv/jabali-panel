@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -19,6 +20,10 @@ import (
 const (
 	sysApplyStagePrefix = "sysapply-"
 	sysApplyStageTTL    = 24 * time.Hour
+
+	// sysRestoreCopyPrefix names the CLI's copy of the operator's container
+	// (panel-api/cmd/server/system_restore_cmd.go).
+	sysRestoreCopyPrefix = "sysrestore-"
 )
 
 // system_fullbackup_apply_system.go — GH #1408 slice 3 (Option C).
@@ -60,26 +65,33 @@ type systemFullbackupApplySystemResult struct {
 	Recon          bool     `json:"recon"`
 }
 
-// systemFullbackupApplySystemHandler applies (or recons) the system leg of an
-// uploaded container. The container is confined under the uploads root exactly
-// like restore_from_tar / extract_uploaded.
+// systemFullbackupApplySystemHandler applies (or recons) the system leg of a
+// container. Only root's CLI calls it: the CLI copies the operator's container
+// into restore-staging, which only root can enter, and the stage is made there
+// too.
 func systemFullbackupApplySystemHandler(ctx context.Context, raw json.RawMessage) (any, error) {
+	if !PeerIsRoot(ctx) {
+		return nil, &agentwire.AgentError{Code: agentwire.CodePermissionDenied, Message: "system.fullbackup.apply_system_from_tar runs only for root (jabali system restore --from-tar)"}
+	}
 	var p systemFullbackupApplySystemParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, bkInvalidArg(fmt.Sprintf("invalid params: %v", err))
 	}
-	clean, aerr := fullContainerPathClean(p.ContainerPath)
+	if err := ensureRestoreStaging(); err != nil {
+		return nil, bkInternal("secure restore staging", err)
+	}
+	clean, aerr := sysRestoreContainerPathClean(p.ContainerPath)
 	if aerr != nil {
 		return nil, aerr
 	}
-	if err := checkHostReserve("/var/lib/jabali-backups", 0); err != nil {
+	if err := checkHostReserve(backupsRootDir, 0); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeUnavailable, Message: "system-restore staging is under the host disk reserve: " + err.Error()}
 	}
 	// A defer only reaps a live agent; the fleet agent auto-restarts nightly and a
 	// dropped CLI leaks its staged copy — sweep older stages/copies at entry.
 	evictStaleSysApplyStages()
 
-	stage := filepath.Join(restoreUploadsRoot, sysApplyStagePrefix+randomULID())
+	stage := filepath.Join(restoreStagingRoot(), sysApplyStagePrefix+randomULID())
 	_ = os.RemoveAll(stage)
 	if err := os.MkdirAll(stage, 0o750); err != nil {
 		return nil, bkInternal("mkdir stage", err)
@@ -268,16 +280,38 @@ func extractSystemInnerFromContainer(containerPath, destPath string) error {
 	return fmt.Errorf("container has no system.tar.zst member — it holds no system backup leg")
 }
 
+// sysRestoreContainerPathClean confines the container to the CLI's copy: a
+// root-owned regular sysrestore-*.tar directly under restore-staging.
+func sysRestoreContainerPathClean(p string) (string, error) {
+	clean := filepath.Clean(p)
+	dir := restoreStagingRoot()
+	if clean != p || filepath.Dir(clean) != dir ||
+		!strings.HasPrefix(filepath.Base(clean), sysRestoreCopyPrefix) || !strings.HasSuffix(clean, ".tar") {
+		return "", bkInvalidArg("container_path must be a " + sysRestoreCopyPrefix + "*.tar directly under " + dir)
+	}
+	fi, err := os.Lstat(clean)
+	if err != nil || !fi.Mode().IsRegular() {
+		return "", bkInvalidArg("container_path is not a regular file")
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != backupsOwnerUID {
+		return "", bkInvalidArg("container_path is not root's")
+	}
+	return clean, nil
+}
+
 // evictStaleSysApplyStages removes leftover sysapply-* stages and the CLI's
 // sysrestore-*.tar staged copies older than the TTL. Mirrors the fullrestore-*
-// eviction; runs at handler entry.
+// eviction; runs at handler entry. The uploads root held both before they
+// moved to restore-staging.
 func evictStaleSysApplyStages() {
 	cutoff := time.Now().Add(-sysApplyStageTTL)
-	for _, pat := range []string{sysApplyStagePrefix + "*", "sysrestore-*.tar"} {
-		matches, _ := filepath.Glob(filepath.Join(restoreUploadsRoot, pat))
-		for _, m := range matches {
-			if fi, err := os.Stat(m); err == nil && fi.ModTime().Before(cutoff) {
-				_ = os.RemoveAll(m)
+	for _, root := range []string{restoreStagingRoot(), restoreUploadsRoot} {
+		for _, pat := range []string{sysApplyStagePrefix + "*", sysRestoreCopyPrefix + "*.tar"} {
+			matches, _ := filepath.Glob(filepath.Join(root, pat))
+			for _, m := range matches {
+				if fi, err := os.Lstat(m); err == nil && fi.ModTime().Before(cutoff) {
+					_ = os.RemoveAll(m)
+				}
 			}
 		}
 	}

@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 	"golang.org/x/term"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
@@ -202,25 +203,28 @@ the running panel.`,
 	return cmd
 }
 
+// sysRestoreStagingDir is the agent's restore-staging
+// (panel-agent/internal/commands/backup_root_perms.go). Only root can enter it.
+const sysRestoreStagingDir = "/var/lib/jabali-backups/restore-staging"
+
 // runSystemRestoreFromTar restores the system leg (panel_db/panel_config/tls)
 // from a downloaded Full Server container, via the agent's local-tar apply
-// verb. The container is copied into the agent-readable uploads dir (the verb
-// confines its input there), the panel is stopped for the DB load, and the
-// agent — which stays up — owns the apply. See system_fullbackup_apply_system.go.
+// verb. The container is copied into restore-staging (the verb takes its input
+// only from there, and only from root), the panel is stopped for the DB load,
+// and the agent — which stays up — owns the apply. See
+// system_fullbackup_apply_system.go.
 func runSystemRestoreFromTar(ctx context.Context, cmd *cobra.Command, container string, apply bool, applyStages []string) error {
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("--from-tar must run as root")
+	}
 	fi, err := os.Stat(container)
 	if err != nil || !fi.Mode().IsRegular() {
 		return fmt.Errorf("--from-tar: %q is not a readable file", container)
 	}
 
-	// The apply verb only accepts a path under /var/lib/jabali-uploads (its
-	// socket-peer confinement). Copy the operator's container there; the copy is
-	// removed on return.
-	if err := os.MkdirAll("/var/lib/jabali-uploads", 0o750); err != nil {
-		return fmt.Errorf("prepare uploads dir: %w", err)
-	}
-	staged := filepath.Join("/var/lib/jabali-uploads", "sysrestore-"+ids.NewULID()+".tar")
-	if err := copyFileTo(container, staged); err != nil {
+	// The copy is removed on return.
+	staged, err := stageSysRestoreContainer(container)
+	if err != nil {
 		return fmt.Errorf("stage container: %w", err)
 	}
 	defer os.Remove(staged)
@@ -255,23 +259,56 @@ func runSystemRestoreFromTar(ctx context.Context, cmd *cobra.Command, container 
 	return nil
 }
 
-// copyFileTo copies src to dst (0600), overwriting. Small helper for staging a
-// container into the agent-readable dir.
-func copyFileTo(src, dst string) error {
+// stageSysRestoreContainer copies src into restore-staging as a new
+// sysrestore-<ULID>.tar (0600) and returns its path. It works from a handle on
+// the folder, which must be a real folder of root's, and makes it 0700.
+func stageSysRestoreContainer(src string) (string, error) {
+	return stageSysRestoreContainerIn(sysRestoreStagingDir, 0, src)
+}
+
+// stageSysRestoreContainerIn is stageSysRestoreContainer with the folder and
+// its owner as parameters, for tests.
+func stageSysRestoreContainerIn(dir string, owner uint32, src string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return "", fmt.Errorf("open %s: %w", dir, err)
+	}
+	defer unix.Close(dfd)
+	var st unix.Stat_t
+	if err := unix.Fstat(dfd, &st); err != nil {
+		return "", err
+	}
+	if st.Uid != owner {
+		return "", fmt.Errorf("%s isn't root's: restart jabali-agent, which gives it back to root, then run this again", dir)
+	}
+	if err := unix.Fchmod(dfd, 0o700); err != nil {
+		return "", err
+	}
 	in, err := os.Open(src)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	name := "sysrestore-" + ids.NewULID() + ".tar"
+	ffd, err := unix.Openat(dfd, name, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o600)
 	if err != nil {
-		return err
+		return "", err
 	}
+	out := os.NewFile(uintptr(ffd), name)
+	dst := filepath.Join(dir, name)
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
-		return err
+		_ = unix.Unlinkat(dfd, name, 0)
+		return "", err
 	}
-	return out.Close()
+	if err := out.Close(); err != nil {
+		_ = unix.Unlinkat(dfd, name, 0)
+		return "", err
+	}
+	return dst, nil
 }
 
 // restartPanelUntilActive restarts jabali-panel and waits for it to report

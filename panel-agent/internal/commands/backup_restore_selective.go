@@ -107,6 +107,10 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 
 	out := backupRestoreSelectiveResult{JobID: p.JobID}
 
+	if err := ensureRestoreStaging(); err != nil {
+		return nil, bkInternal("secure restore staging", err)
+	}
+
 	// Global restore flock — same lock the admin restore uses, so a tenant
 	// selective restore can't run concurrently with any other restore.
 	if err := os.MkdirAll(filepath.Dir(restoreLockPath), 0o750); err != nil {
@@ -231,7 +235,7 @@ func backupRestoreSelectiveHandler(ctx context.Context, raw json.RawMessage) (an
 		return out, nil
 	}
 
-	stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", p.JobID+"-sel")
+	stagingRoot := filepath.Join(restoreStagingRoot(), p.JobID+"-sel")
 	defer os.RemoveAll(stagingRoot)
 
 	// Databases — reuse the proven applyAccountRestore with a db-only stage list.
