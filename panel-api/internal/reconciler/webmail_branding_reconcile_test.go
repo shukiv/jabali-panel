@@ -35,7 +35,8 @@ func countAgentCalls(ag *fakeAgent, method string) int {
 // The agent gets the brand text and the branding of every domain whose
 // branding applies; an owner's branding whose package lost the switch is
 // left out. An unchanged branding is not sent again; a change is, on the
-// next pass. The pictures of a domain whose row is gone are removed.
+// next pass at least webmailBrandingMinInterval after the last send. The
+// pictures of a domain whose row is gone are removed.
 func TestReconcileWebmailBranding_SendsWhatApplies(t *testing.T) {
 	r, ag, _, _ := frontedVhostFixture(t, selfSignedCertPath, selfSignedKeyPath, cfEdgeAddrs, true)
 	s, _ := r.serverSettings.Get(context.Background())
@@ -89,7 +90,12 @@ func TestReconcileWebmailBranding_SendsWhatApplies(t *testing.T) {
 
 	repo.rows[1].Applies = true // the owner's package got the switch
 	run()
+	if n := countAgentCalls(ag, "webmail.branding.apply"); n != 1 {
+		t.Fatalf("a change was sent %d times within webmailBrandingMinInterval of the last send; each restarts webmail", n)
+	}
+	r.webmailBrandingSent = r.webmailBrandingSent.Add(-webmailBrandingMinInterval)
+	run()
 	if n := countAgentCalls(ag, "webmail.branding.apply"); n != 2 {
-		t.Fatalf("a change was not sent on the next pass (%d calls)", n)
+		t.Fatalf("a change was not sent once the interval passed (%d calls)", n)
 	}
 }

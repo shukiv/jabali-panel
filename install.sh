@@ -16868,6 +16868,9 @@ _install_bulwark_systemd() {
   if [[ ! -f "${REPO_DIR}/install/systemd/jabali-webmail.service" ]]; then
     _die "Bulwark systemd unit not found at ${REPO_DIR}/install/systemd/jabali-webmail.service"
   fi
+  local _bw_unit_changed=0
+  cmp -s "${REPO_DIR}/install/systemd/jabali-webmail.service" /etc/systemd/system/jabali-webmail.service \
+    || _bw_unit_changed=1
   install -m 0644 -o root -g root "${REPO_DIR}/install/systemd/jabali-webmail.service" \
     /etc/systemd/system/jabali-webmail.service
 
@@ -16912,6 +16915,12 @@ _install_bulwark_systemd() {
   fi
 
   systemctl daemon-reload
+  # GH #2502: a changed unit (such as the bulwark-branding.env line) only
+  # takes effect when webmail restarts. try-restart leaves a stopped webmail
+  # stopped.
+  if [[ "$_bw_unit_changed" -eq 1 ]]; then
+    systemctl try-restart jabali-webmail.service >/dev/null 2>&1 || true
+  fi
   _ok "jabali-webmail.service installed (disabled — starts on first domain.email_enable)"
   _install_bulwark_env
   _install_bulwark_libravatar_plugin

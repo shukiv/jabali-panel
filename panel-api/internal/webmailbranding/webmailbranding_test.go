@@ -169,6 +169,9 @@ func TestAgentDomains(t *testing.T) {
 		row("Customer-A.com", true, models.DomainWebmailBranding{DomainID: testDomainID, AppName: "A Mail", LogoLight: "aaaaaaaaaaaa", Favicon: "ffffffffffff"}),
 		row("b.com", false, models.DomainWebmailBranding{DomainID: "01HYYYYYYYYYYYYYYYYYYYYYYY", AppName: "B Mail"}),
 		row("c.com", true, models.DomainWebmailBranding{DomainID: "01HXXXXXXXXXXXXXXXXXXXXXXX"}),
+		// The agent refuses the whole list over one host it doesn't take, so a
+		// name stored outside the FQDN shape (an old import) is left out.
+		row("old_import.com", true, models.DomainWebmailBranding{DomainID: "01HWWWWWWWWWWWWWWWWWWWWWWW", AppName: "D Mail"}),
 	})
 	if len(got) != 1 {
 		t.Fatalf("entries = %+v, want only the one that applies and sets something", got)

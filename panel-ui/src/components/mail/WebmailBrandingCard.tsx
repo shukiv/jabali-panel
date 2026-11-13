@@ -212,7 +212,7 @@ const Editor = ({ domainId, saved }: { domainId: string; saved: WebmailBranding 
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         What webmail shows on <Typography.Text code>{saved.host}</Typography.Text>. Empty fields keep the
-        server-wide branding. A change reaches webmail within a couple of minutes; webmail restarts for a few
+        server-wide branding. A change reaches webmail within about five minutes; webmail restarts for a few
         seconds when it does.
       </Typography.Text>
       {hasBranding(saved) && !saved.applies && (

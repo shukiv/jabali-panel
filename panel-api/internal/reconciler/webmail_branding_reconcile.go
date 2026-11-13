@@ -10,6 +10,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailbranding"
 )
 
+// webmailBrandingMinInterval is the least time between two sends. A send
+// that changes the branding restarts webmail for every domain, so saves
+// closer together than this wait and go out as one.
+const webmailBrandingMinInterval = 5 * time.Minute
+
 // WithWebmailBranding injects the domains' webmail branding (GH #2502).
 func (r *Reconciler) WithWebmailBranding(repo repository.DomainWebmailBrandingRepository) *Reconciler {
 	r.webmailBranding = repo
@@ -22,9 +27,10 @@ func (r *Reconciler) WithWebmailBranding(repo repository.DomainWebmailBrandingRe
 // owner's package has webmail branding). The agent writes them to webmail's
 // branding environment file and restarts webmail only when that changed.
 //
-// It is the only sender: every call carries the whole branding, so a save
-// in the panel shows within one pass, and many saves in one pass cost one
-// webmail restart. A domain's branding can drop out while its row stays
+// It is the only sender: every call carries the whole branding, so many
+// saves cost one webmail restart. It sends at most once in
+// webmailBrandingMinInterval, so a save shows within about five minutes.
+// A domain's branding can drop out while its row stays
 // (its owner's package lost webmail branding); the pictures of a domain with
 // no row any more (it was deleted) are removed here.
 func (r *Reconciler) reconcileWebmailBranding(ctx context.Context) {
@@ -63,6 +69,11 @@ func (r *Reconciler) reconcileWebmailBranding(ctx context.Context) {
 	if err := webmailbranding.Prune(dir, keep); err != nil {
 		r.log.Warn("reconcile webmail branding: remove a deleted domain's pictures", "err", err)
 	}
+	r.webmailBrandingMu.Lock()
+	defer r.webmailBrandingMu.Unlock()
+	if time.Since(r.webmailBrandingSent) < webmailBrandingMinInterval {
+		return // a later pass sends what changed meanwhile
+	}
 	params := map[string]any{
 		"brand_text": brandText,
 		"domains":    webmailbranding.AgentDomains(rows),
@@ -75,6 +86,7 @@ func (r *Reconciler) reconcileWebmailBranding(ctx context.Context) {
 			r.log.Warn("reconcile webmail branding: apply failed", "err", err)
 			return err
 		}
+		r.webmailBrandingSent = time.Now()
 		return nil
 	})
 }

@@ -42,7 +42,7 @@ type DomainWebmailBrandingHandlerConfig struct {
 //
 // :asset is logo-light, logo-dark or favicon. The owner may change it while
 // their package has webmail branding; an administrator always. The reconciler
-// sends it to webmail on its next pass, about a minute.
+// sends it to webmail within about five minutes (webmailBrandingMinInterval).
 func RegisterDomainWebmailBrandingRoutes(g *gin.RouterGroup, cfg DomainWebmailBrandingHandlerConfig) {
 	if cfg.Domains == nil || cfg.Users == nil || cfg.Branding == nil {
 		panic("api.RegisterDomainWebmailBrandingRoutes: Domains, Users and Branding are required")

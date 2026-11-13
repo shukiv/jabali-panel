@@ -293,6 +293,10 @@ type Reconciler struct {
 	// phase. webmailBrandingDir overrides webmailbranding.Dir (tests).
 	webmailBranding    repository.DomainWebmailBrandingRepository
 	webmailBrandingDir string
+	// webmailBrandingMu serializes the phase; webmailBrandingSent is when
+	// it last sent the branding (each send that changes it restarts webmail).
+	webmailBrandingMu   sync.Mutex
+	webmailBrandingSent time.Time
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository

@@ -163,6 +163,11 @@ func Encode(r io.Reader) ([]byte, string, error) {
 // domainIDRe is a ULID, the only directory name under Dir.
 var domainIDRe = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
+// agentHostRe is the host shape webmail.branding.apply takes (the agent's
+// brandingHostRe). The agent refuses the whole list over one host outside
+// it, so AgentDomains leaves such a domain out instead.
+var agentHostRe = regexp.MustCompile(`^mail(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?){2,}$`)
+
 // Path is where the domain's picture is stored under dir.
 func Path(dir, domainID string, a Asset) string {
 	return filepath.Join(dir, domainID, string(a)+".png")
@@ -274,7 +279,8 @@ type AgentDomain struct {
 func AgentDomains(rows []repository.WebmailBrandingRow) []AgentDomain {
 	out := []AgentDomain{}
 	for _, r := range rows {
-		if !r.Applies || r.Empty() || r.DomainName == "" {
+		host := "mail." + strings.ToLower(r.DomainName)
+		if !r.Applies || r.Empty() || !agentHostRe.MatchString(host) || !domainIDRe.MatchString(r.DomainID) {
 			continue
 		}
 		light := PictureURL(r.DomainID, LogoLight, r.LogoLight)
@@ -283,7 +289,7 @@ func AgentDomains(rows []repository.WebmailBrandingRow) []AgentDomain {
 			dark = light
 		}
 		out = append(out, AgentDomain{
-			Host:         "mail." + strings.ToLower(r.DomainName),
+			Host:         host,
 			AppName:      r.AppName,
 			CompanyName:  r.CompanyName,
 			WebsiteURL:   r.WebsiteURL,
