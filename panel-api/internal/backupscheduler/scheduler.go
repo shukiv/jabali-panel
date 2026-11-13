@@ -104,6 +104,10 @@ type Deps struct {
 	EgressPolicies   repository.UserEgressPolicyRepository
 	EgressRequests   repository.UserEgressRequestRepository
 
+	// WebmailBranding lets a scheduled backup carry each domain's webmail
+	// branding (GH #2502).
+	WebmailBranding repository.DomainWebmailBrandingRepository
+
 	Agent agent.AgentInterface
 
 	// M30.2.x — sso key for unsealing per-destination restic
@@ -1068,6 +1072,9 @@ func scheduleMetaDeps(deps Deps, logger *slog.Logger) backupmetadata.Deps {
 		EgressPolicies:   deps.EgressPolicies,
 		EgressRequests:   deps.EgressRequests,
 		Log:              logger,
+
+		// GH #2502: each domain's webmail branding.
+		WebmailBranding: deps.WebmailBranding,
 	}
 }
 

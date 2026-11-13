@@ -8,6 +8,7 @@ import (
 	"image/gif"
 	"image/jpeg"
 	"image/png"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,5 +194,80 @@ func TestAgentDomains(t *testing.T) {
 	}
 	if got := AgentDomains(nil); got == nil || len(got) != 0 {
 		t.Fatalf("AgentDomains(nil) = %#v, want an empty list (sent as [], not null)", got)
+	}
+}
+
+// A backup's picture is one the panel stored: a PNG encoded again, which can
+// be larger than an upload may be. EncodeStored takes it up to its own cap,
+// and checks it as Encode checks an upload.
+func TestEncodeStored(t *testing.T) {
+	rnd := rand.New(rand.NewSource(1))
+	img := image.NewNRGBA(image.Rect(0, 0, 400, 400))
+	rnd.Read(img.Pix)
+	var b bytes.Buffer
+	if err := png.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	big := b.Bytes()
+	if len(big) <= MaxUploadBytes {
+		t.Fatalf("test picture is %d bytes, want one over the upload cap", len(big))
+	}
+	if _, _, err := Encode(bytes.NewReader(big)); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Encode = %v, want ErrTooLarge", err)
+	}
+	out, hash, err := EncodeStored(big, 4<<20)
+	if err != nil || len(hash) != 12 {
+		t.Fatalf("EncodeStored = %d bytes, %q, %v", len(out), hash, err)
+	}
+	if again, h2, err := EncodeStored(out, 4<<20); err != nil || h2 != hash || !bytes.Equal(again, out) {
+		t.Fatalf("a stored picture encoded again changed: %q vs %q, %v", h2, hash, err)
+	}
+	if _, _, err := EncodeStored(big, len(big)-1); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("over the cap: %v", err)
+	}
+	if _, _, err := EncodeStored([]byte("<svg/>"), 4<<20); !errors.Is(err, ErrBadPicture) {
+		t.Fatalf("not a picture: %v", err)
+	}
+	if _, _, err := EncodeStored(picture(t, MaxSide+1, 1, pngOf), 4<<20); !errors.Is(err, ErrBadSize) {
+		t.Fatalf("too wide: %v", err)
+	}
+}
+
+// Run as root, OwnForPanel gives the pictures the panel's owner (the owner
+// of dir's parent); run as anyone else it changes nothing.
+func TestOwnForPanel(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "webmail-branding")
+	if err := Write(dir, testDomainID, LogoLight, []byte("png")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Write(dir, testDomainID, Favicon, []byte("png")); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	origEUID, origChown := geteuid, lchown
+	t.Cleanup(func() { geteuid, lchown = origEUID, origChown })
+	lchown = func(p string, uid, gid int) error {
+		if uid != os.Getuid() || gid != os.Getgid() {
+			t.Errorf("chown %s to %d:%d, want the parent's owner %d:%d", p, uid, gid, os.Getuid(), os.Getgid())
+		}
+		got = append(got, strings.TrimPrefix(p, dir))
+		return nil
+	}
+
+	geteuid = func() int { return 1000 }
+	if err := OwnForPanel(dir, testDomainID); err != nil || len(got) != 0 {
+		t.Fatalf("not root: chowned %v, %v", got, err)
+	}
+	geteuid = func() int { return 0 }
+	if err := OwnForPanel(dir, testDomainID); err != nil {
+		t.Fatal(err)
+	}
+	want := "|/" + testDomainID + "|/" + testDomainID + "/favicon.png|/" + testDomainID + "/logo-light.png"
+	if strings.Join(got, "|") != want {
+		t.Fatalf("chowned %q, want %q", strings.Join(got, "|"), want)
+	}
+	if err := OwnForPanel(dir, "../etc"); err == nil {
+		t.Fatal("a bad domain id was taken")
 	}
 }

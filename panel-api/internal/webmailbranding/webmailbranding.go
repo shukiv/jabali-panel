@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 
@@ -141,6 +142,21 @@ func Encode(r io.Reader) ([]byte, string, error) {
 	if len(raw) > MaxUploadBytes {
 		return nil, "", ErrTooLarge
 	}
+	return encode(raw)
+}
+
+// EncodeStored checks a picture a backup carries (GH #2502) as Encode checks
+// an upload, but against max bytes: the panel stores a picture encoded again
+// as PNG, which can be larger than the upload it came from. It returns the
+// picture encoded again with its short hash.
+func EncodeStored(raw []byte, max int) ([]byte, string, error) {
+	if len(raw) > max {
+		return nil, "", ErrTooLarge
+	}
+	return encode(raw)
+}
+
+func encode(raw []byte) ([]byte, string, error) {
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(raw))
 	if err != nil || (format != "png" && format != "jpeg") {
 		return nil, "", ErrBadPicture
@@ -201,6 +217,52 @@ func Write(dir, domainID string, a Asset, data []byte) error {
 		return err
 	}
 	return os.Rename(tmp.Name(), Path(dir, domainID, a))
+}
+
+// geteuid and lchown are swapped by tests.
+var (
+	geteuid = os.Geteuid
+	lchown  = os.Lchown
+)
+
+// OwnForPanel gives dir, the domain's directory under it and its pictures the
+// owner of dir's parent, /var/lib/jabali-panel, which install.sh gives the
+// panel's service user. A restore run as root (`jabali backup
+// account-restore`) would otherwise leave them root's, and the panel could
+// no longer change or remove them. Run as anyone else it does nothing: what
+// it wrote is already the panel's.
+func OwnForPanel(dir, domainID string) error {
+	if geteuid() != 0 {
+		return nil
+	}
+	if !domainIDRe.MatchString(domainID) {
+		return fmt.Errorf("webmailbranding: bad domain id %q", domainID)
+	}
+	fi, err := os.Stat(filepath.Dir(dir))
+	if err != nil {
+		return err
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("webmailbranding: owner of %s unknown", filepath.Dir(dir))
+	}
+	uid, gid := int(st.Uid), int(st.Gid)
+	d := filepath.Join(dir, domainID)
+	paths := []string{dir, d}
+	entries, err := os.ReadDir(d)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		paths = append(paths, filepath.Join(d, e.Name()))
+	}
+	var errs []error
+	for _, p := range paths {
+		if err := lchown(p, uid, gid); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Remove deletes the domain's picture under dir. A missing one is not an

@@ -95,6 +95,8 @@ inFlight map dedupe duplicate dispatches.`,
 
 				// GH #1993: a scheduled backup carries the domains' aliases.
 				WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
+				// GH #2502: and their webmail branding.
+				WebmailBranding: repository.NewDomainWebmailBrandingRepository(sharedDB),
 			})
 			if s == nil {
 				return fmt.Errorf("scheduler.New returned nil — required deps missing (check serve.go's Deps assembly)")

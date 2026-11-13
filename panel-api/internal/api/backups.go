@@ -97,6 +97,9 @@ type BackupHandlerConfig struct {
 	// refuses them when either is nil, rather than skip a guard.
 	WebDomainAliases repository.WebDomainAliasRepository
 	ServerSettings   repository.ServerSettingsRepository
+	// WebmailBranding lets a backup carry each domain's webmail branding and
+	// a restore bring it back (GH #2502).
+	WebmailBranding repository.DomainWebmailBrandingRepository
 	// Scheduler, optional, has the reconciler create a restored domain's DNS
 	// zone at once so the restore can add the backup's DNS records to it
 	// (GH #1993); nil waits for the periodic pass.
@@ -1531,6 +1534,8 @@ func (h *backupHandler) restoreMetadataDeps(uploaded *uploadedData) backupmetada
 		// GH #1993: a restored web domain alias passes the alias page's checks.
 		WebDomainAliases: h.cfg.WebDomainAliases,
 		CheckAlias:       RestoreAliasCheck(h.cfg.Domains, h.cfg.WebDomainAliases, h.cfg.ServerSettings),
+		// GH #2502: each domain's webmail branding.
+		WebmailBranding: h.cfg.WebmailBranding,
 	}
 	if uploaded != nil {
 		deps.RestoredDatabases = stringSet(uploaded.databases)
@@ -1610,6 +1615,7 @@ func (cfg BackupHandlerConfig) metadataDeps() backupmetadata.Deps {
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
+		WebmailBranding:  cfg.WebmailBranding,
 		Log:              cfg.Log,
 	}
 }
@@ -1658,6 +1664,8 @@ type MeBackupsHandlerConfig struct {
 	// WebDomainAliases lets the tenant's backup carry its domains' aliases
 	// (GH #1993).
 	WebDomainAliases repository.WebDomainAliasRepository
+	// WebmailBranding lets it carry their webmail branding (GH #2502).
+	WebmailBranding repository.DomainWebmailBrandingRepository
 	// Packages resolves the caller's hosting-package backup limits (GH #454).
 	// REQUIRED — RegisterMeBackupRoutes panics if nil, and the create gate fails
 	// CLOSED (denies) rather than skipping when the entitlement can't be resolved.
@@ -1698,6 +1706,7 @@ func (cfg MeBackupsHandlerConfig) metadataDeps() backupmetadata.Deps {
 		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
+		WebmailBranding:  cfg.WebmailBranding,
 		Log:              cfg.Log,
 	}
 }

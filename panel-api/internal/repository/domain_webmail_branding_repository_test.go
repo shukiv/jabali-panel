@@ -78,3 +78,27 @@ func TestWebmailBranding_GetNotFound(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// ListByDomainIDs reads the branding of the backup's domains in one query,
+// and none for no domains.
+func TestWebmailBranding_ListByDomainIDs(t *testing.T) {
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewDomainWebmailBrandingRepository(gdb)
+
+	rows, err := repo.ListByDomainIDs(context.Background(), nil)
+	require.NoError(t, err)
+	require.Empty(t, rows)
+
+	mock.ExpectQuery("SELECT \\* FROM `domain_webmail_branding` WHERE domain_id IN \\(\\?,\\?\\) ORDER BY domain_id").
+		WithArgs("dom1", "dom2").
+		WillReturnRows(sqlmock.NewRows([]string{"domain_id", "app_name", "favicon"}).
+			AddRow("dom1", "A Mail", "bbbbbbbbbbbb"))
+
+	rows, err = repo.ListByDomainIDs(context.Background(), []string{"dom1", "dom2"})
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "A Mail", rows[0].AppName)
+	require.Equal(t, "bbbbbbbbbbbb", rows[0].Favicon)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

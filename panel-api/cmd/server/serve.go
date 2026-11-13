@@ -1185,6 +1185,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 		// GH #1993: a scheduled backup carries the domains' aliases.
 		WebDomainAliases: deps.WebDomainAliases,
+		// GH #2502: and their webmail branding.
+		WebmailBranding: repository.NewDomainWebmailBrandingRepository(sharedDB),
 	}); sched != nil {
 		go sched.Start(ctx)
 	} else {

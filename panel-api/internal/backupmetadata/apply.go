@@ -70,6 +70,9 @@ type ApplyResult struct {
 	FtpAccounts    int
 	Skipped        int
 	Errors         []string
+	// WebmailBranding counts the domains whose webmail branding was restored
+	// (GH #2502).
+	WebmailBranding int
 	// LoginRestored is true when the user's Kratos identity exists AND has a
 	// password credential after the apply — i.e. the account can actually sign
 	// in with its old password. When false, LoginNote says why + what to do
@@ -430,9 +433,13 @@ func Apply(ctx context.Context, m *internalbackup.AccountMetadata, d Deps) Apply
 
 	// 3a) Web domain aliases (GH #1625, GH #1993), once every domain is in:
 	// an alias must not take a name a domain of the same backup has.
+	// Webmail branding (GH #2502) alongside.
 	for _, dm := range m.Domains {
 		if dom := domainRows[dm.ID]; dom != nil && len(dm.Aliases) > 0 {
 			restoreDomainAliases(ctx, d, &r, dm, dom, now)
+		}
+		if dom := domainRows[dm.ID]; dom != nil && dm.WebmailBranding != nil {
+			restoreWebmailBranding(ctx, d, &r, dm, dom, now)
 		}
 	}
 

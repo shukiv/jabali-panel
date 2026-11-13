@@ -93,6 +93,8 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 		WebDomainAliases: repository.NewWebDomainAliasRepository(sharedDB),
 		CheckAlias: api.RestoreAliasCheck(repository.NewDomainRepository(sharedDB),
 			repository.NewWebDomainAliasRepository(sharedDB), repository.NewServerSettingsRepository(sharedDB)),
+		// Each domain's webmail branding (GH #2502).
+		WebmailBranding: repository.NewDomainWebmailBrandingRepository(sharedDB),
 	}
 	r := backupmetadata.Apply(ctx, &meta, deps)
 	w := cmd.OutOrStdout()
@@ -107,6 +109,7 @@ func applyPanelMetadata(ctx context.Context, cmd *cobra.Command, raw json.RawMes
 	fmt.Fprintf(w, "  ssh_keys:       %d\n", r.SSHKeys)
 	fmt.Fprintf(w, "  cron_jobs:      %d\n", r.CronJobs)
 	fmt.Fprintf(w, "  ftp_accounts:   %d\n", r.FtpAccounts)
+	fmt.Fprintf(w, "  webmail_brand:  %d\n", r.WebmailBranding)
 	fmt.Fprintf(w, "  skipped:        %d (already present)\n", r.Skipped)
 	// GH #954: definitive login status — resolved against live Kratos after
 	// the apply, not inferred from which restore path ran.

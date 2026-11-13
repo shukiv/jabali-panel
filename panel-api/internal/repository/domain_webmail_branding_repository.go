@@ -22,6 +22,9 @@ type DomainWebmailBrandingRepository interface {
 	// ListAll returns every domain's branding with the domain's name and
 	// whether it applies, by domain name.
 	ListAll(ctx context.Context) ([]WebmailBrandingRow, error)
+	// ListByDomainIDs returns the branding of those of the domains that
+	// have one, for an account's backup.
+	ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DomainWebmailBranding, error)
 }
 
 // WebmailBrandingRow is a domain's branding with the domain's name, and
@@ -77,5 +80,14 @@ func (r *domainWebmailBrandingRepo) ListAll(ctx context.Context) ([]WebmailBrand
 		Joins("LEFT JOIN hosting_packages p ON p.id = u.package_id").
 		Order("d.name").
 		Scan(&rows).Error
+	return rows, err
+}
+
+func (r *domainWebmailBrandingRepo) ListByDomainIDs(ctx context.Context, domainIDs []string) ([]models.DomainWebmailBranding, error) {
+	if len(domainIDs) == 0 {
+		return nil, nil
+	}
+	var rows []models.DomainWebmailBranding
+	err := r.db.WithContext(ctx).Where("domain_id IN ?", domainIDs).Order("domain_id").Find(&rows).Error
 	return rows, err
 }
