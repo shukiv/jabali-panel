@@ -69,7 +69,7 @@ current_pin() {
 
 # latest_release repo tag_prefix -> bare latest version, or "" on failure.
 # Prefers gh (authenticated locally); falls back to curl + the REST API so it
-# also works on the self-hosted CI runner, which has curl + a token but no gh.
+# also works when gh is missing (curl + a token are enough).
 latest_release() {
   local repo="$1" prefix="$2" tag=""
   if command -v gh >/dev/null 2>&1; then
@@ -104,9 +104,8 @@ release_body() {
   if [[ -z "$body" ]]; then
     local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
     local -a auth=(); [[ -n "$tok" ]] && auth=(-H "Authorization: Bearer ${tok}")
-    # The self-hosted CI runner has no gh and no jq — only python3 — so decode
-    # the JSON-escaped .body with python3 (same tool the workflow uses to build
-    # the issue payload). jq is used only if python3 is somehow absent.
+    # When gh is missing, decode the JSON-escaped .body with python3 (the same
+    # tool the workflow uses to build the issue payload); jq only if python3 is absent.
     local json
     json="$(curl -fsSL "${auth[@]}" -H "Accept: application/vnd.github+json" \
       "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null)"
