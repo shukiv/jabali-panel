@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -155,9 +156,11 @@ func runSystemBackupOrchestrator(ctx context.Context, req systemBackupParams) er
 	// panel_config: 0600 master password is the operator's off-host
 	// responsibility (ADR-0075) — exclude from snapshots so a stolen
 	// system_backup tarball doesn't leak the key needed to decrypt it.
+	// GH #2502: the panel's branding pictures (panelStateDirs) travel with
+	// it, so they come back with the panel_db rows that name them.
 	manifest.Stages = append(manifest.Stages,
-		runSystemPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StagePanelConfig, "/etc/jabali-panel",
-			[]string{"restic-repo.password"}))
+		runSystemMultiPathStage(ctx, c, req.JobID, host, req.ScheduleID, backup.StagePanelConfig, panelConfigPaths(),
+			[]string{"/etc/jabali-panel/restic-repo.password"}))
 
 	// service_config: every config tree the panel + reconciler write to.
 	// Glob expansion on /etc/nginx/sites-* / /etc/php/*/fpm /
@@ -736,6 +739,13 @@ func applySystemRestore(ctx context.Context, stagingRoot string, stages []backup
 			ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, "/etc/jabali-panel")
 			applied = append(applied, ownApplied...)
 			warnings = append(warnings, ownWarn...)
+			stateApplied, stateWarn := applyPanelStateDirs(ctx, stagingRoot, stageDir)
+			applied = append(applied, stateApplied...)
+			for _, w := range stateWarn {
+				if !slices.Contains(warnings, w) { // a missing os_users.json warns once
+					warnings = append(warnings, w)
+				}
+			}
 		case backup.StageTLS:
 			if err := rsyncStageOnto(ctx, stageDir, "/etc/letsencrypt", nil); err != nil {
 				warnings = append(warnings, fmt.Sprintf("tls: %v", err))
@@ -999,6 +1009,49 @@ func linkStaysIn(live, dest string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// panelStateDirs are the panel's own files outside /etc/jabali-panel that
+// travel in panel_config (GH #2502): the server-wide logos and each
+// domain's webmail branding pictures. Rows in panel_db name them, and
+// they belong to the panel's service user.
+var panelStateDirs = []string{"/var/lib/jabali-panel/branding", "/var/lib/jabali-panel/webmail-branding"}
+
+// panelConfigPaths is what panel_config captures: /etc/jabali-panel and the
+// panelStateDirs this host has. A host with no webmail branding has no such
+// directory, which is not worth a warning on every backup.
+func panelConfigPaths() []string {
+	paths := []string{"/etc/jabali-panel"}
+	for _, d := range panelStateDirs {
+		if _, err := os.Stat(d); err == nil {
+			paths = append(paths, d)
+		}
+	}
+	return paths
+}
+
+// applyPanelStateDirs puts back the panelStateDirs a panel_config stage
+// holds, owned by name like /etc/jabali-panel. A backup made before they
+// were captured has none, which is not an error.
+func applyPanelStateDirs(ctx context.Context, stagingRoot, stageDir string) (applied, warnings []string) {
+	for _, d := range panelStateDirs {
+		if _, err := os.Lstat(filepath.Join(stageDir, d)); err != nil {
+			continue
+		}
+		if err := rsyncStageOnto(ctx, stageDir, d, nil); err != nil {
+			warnings = append(warnings, fmt.Sprintf("panel_config %s: %v", d, err))
+			continue
+		}
+		applied = append(applied, "panel_config → "+d)
+		ownApplied, ownWarn := normalizePanelConfigOwnership(stagingRoot, d)
+		applied = append(applied, ownApplied...)
+		for _, w := range ownWarn {
+			if !slices.Contains(warnings, w) {
+				warnings = append(warnings, w)
+			}
+		}
+	}
+	return applied, warnings
 }
 
 // runSystemMultiPathStage is the multi-path variant of runSystemPathStage.
