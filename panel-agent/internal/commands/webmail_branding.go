@@ -5,15 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -42,19 +38,9 @@ var (
 // webmailEnvFile is webmail's main environment file, rendered by install.sh.
 const webmailEnvFile = "/etc/jabali-panel/bulwark.env"
 
-// webmailDomainBranding is one domain's branding as panel-api sends it
-// (webmailbranding.AgentDomain).
-type webmailDomainBranding struct {
-	Host         string `json:"host"`
-	AppName      string `json:"app_name"`
-	CompanyName  string `json:"company_name"`
-	WebsiteURL   string `json:"website_url"`
-	PrivacyURL   string `json:"privacy_url"`
-	ImprintURL   string `json:"imprint_url"`
-	LogoLightURL string `json:"logo_light_url"`
-	LogoDarkURL  string `json:"logo_dark_url"`
-	FaviconURL   string `json:"favicon_url"`
-}
+// webmailDomainBranding is one domain's branding as panel-api sends it;
+// its rules are agentwire's, which panel-api checks before sending.
+type webmailDomainBranding = agentwire.WebmailBrandingDomain
 
 type webmailBrandingApplyParams struct {
 	BrandText string                  `json:"brand_text"`
@@ -77,88 +63,25 @@ type bulwarkDomainBranding struct {
 	FaviconURL            string `json:"faviconUrl,omitempty"`
 }
 
-const (
-	maxBrandingDomains = 10000
-	maxBrandingText    = 128
-	maxBrandingLink    = 512
-)
-
-var (
-	// brandingHostRe is a domain's webmail address, mail.<domain>, lower case.
-	brandingHostRe = regexp.MustCompile(`^mail(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?){2,}$`)
-	// brandingPictureRe is a picture panel-api stored, as the webmail vhost
-	// serves it (webmailbranding.PictureURL).
-	brandingPictureRe = regexp.MustCompile(`^/jabali-webmail-branding/[0-9A-HJKMNP-TV-Z]{26}/(logo-light|logo-dark|favicon)\.png\?v=[0-9a-f]{1,64}$`)
-)
-
-// validBrandingText: a name webmail shows, at most maxBrandingText
-// characters, no control characters.
-func validBrandingText(s string) bool {
-	if !utf8.ValidString(s) || utf8.RuneCountInString(s) > maxBrandingText {
-		return false
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			return false
-		}
-	}
-	return true
-}
-
-// validBrandingLink: empty, or an http(s) URL with a host and no user info.
-func validBrandingLink(s string) bool {
-	if s == "" {
-		return true
-	}
-	if len(s) > maxBrandingLink {
-		return false
-	}
-	for _, r := range s {
-		if unicode.IsControl(r) || unicode.IsSpace(r) {
-			return false
-		}
-	}
-	u, err := url.Parse(s)
-	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" && u.User == nil
-}
-
-func validBrandingPicture(s string) bool {
-	return s == "" || brandingPictureRe.MatchString(s)
-}
-
 // validate checks every value again: panel-api checked them when they were
-// saved, and each one ends up in webmail's environment and pages.
+// saved and before sending, and each one ends up in webmail's environment
+// and pages.
 func (p *webmailBrandingApplyParams) validate() error {
-	if !validBrandingText(p.BrandText) {
+	if !agentwire.ValidWebmailBrandingText(p.BrandText) {
 		return fmt.Errorf("brand_text: not a valid name")
 	}
-	if len(p.Domains) > maxBrandingDomains {
-		return fmt.Errorf("domains: more than %d", maxBrandingDomains)
+	if len(p.Domains) > agentwire.WebmailBrandingMaxDomains {
+		return fmt.Errorf("domains: more than %d", agentwire.WebmailBrandingMaxDomains)
 	}
 	seen := make(map[string]bool, len(p.Domains))
 	for i, d := range p.Domains {
-		if len(d.Host) > 253 || !brandingHostRe.MatchString(d.Host) {
-			return fmt.Errorf("domains[%d].host: %q is not a webmail address", i, d.Host)
+		if err := d.Validate(); err != nil {
+			return fmt.Errorf("domains[%d].%w", i, err)
 		}
 		if seen[d.Host] {
 			return fmt.Errorf("domains[%d].host: %q twice", i, d.Host)
 		}
 		seen[d.Host] = true
-		for field, v := range map[string]string{"app_name": d.AppName, "company_name": d.CompanyName} {
-			if !validBrandingText(v) {
-				return fmt.Errorf("domains[%d].%s: not a valid name", i, field)
-			}
-		}
-		for field, v := range map[string]string{"website_url": d.WebsiteURL, "privacy_url": d.PrivacyURL, "imprint_url": d.ImprintURL} {
-			if !validBrandingLink(v) {
-				return fmt.Errorf("domains[%d].%s: not an http(s) address", i, field)
-			}
-		}
-		for field, v := range map[string]string{"logo_light_url": d.LogoLightURL, "logo_dark_url": d.LogoDarkURL, "favicon_url": d.FaviconURL} {
-			if !validBrandingPicture(v) {
-				return fmt.Errorf("domains[%d].%s: not a stored branding picture", i, field)
-			}
-		}
 	}
 	return nil
 }

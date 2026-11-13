@@ -172,6 +172,10 @@ func TestAgentDomains(t *testing.T) {
 		// The agent refuses the whole list over one host it doesn't take, so a
 		// name stored outside the FQDN shape (an old import) is left out.
 		row("old_import.com", true, models.DomainWebmailBranding{DomainID: "01HWWWWWWWWWWWWWWWWWWWWWWW", AppName: "D Mail"}),
+		// ...as is one the agent would refuse for any other value, and a
+		// host seen already (the agent refuses a list with a host twice).
+		row("e.com", true, models.DomainWebmailBranding{DomainID: "01HVVVVVVVVVVVVVVVVVVVVVVV", AppName: "E\nAPP_NAME=x"}),
+		row("customer-a.com", true, models.DomainWebmailBranding{DomainID: "01HTTTTTTTTTTTTTTTTTTTTTTT", AppName: "Again"}),
 	})
 	if len(got) != 1 {
 		t.Fatalf("entries = %+v, want only the one that applies and sets something", got)

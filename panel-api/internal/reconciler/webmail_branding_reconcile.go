@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailbranding"
 )
@@ -42,7 +43,8 @@ func (r *Reconciler) reconcileWebmailBranding(ctx context.Context) {
 	s, err := r.settingsGet(ctx)
 	switch {
 	case err == nil && s != nil:
-		brandText = s.PanelBrandText
+		// Saving it only trims it; the agent refuses a control character.
+		brandText = agentwire.CleanWebmailBrandingText(s.PanelBrandText)
 		// The agent reads the logo files itself; their size and time make
 		// a new upload a change.
 		for _, p := range []string{s.LogoLightPath, s.LogoDarkPath} {

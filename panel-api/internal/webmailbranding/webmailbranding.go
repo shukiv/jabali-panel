@@ -28,6 +28,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -163,11 +164,6 @@ func Encode(r io.Reader) ([]byte, string, error) {
 // domainIDRe is a ULID, the only directory name under Dir.
 var domainIDRe = regexp.MustCompile(`^[0-9A-HJKMNP-TV-Z]{26}$`)
 
-// agentHostRe is the host shape webmail.branding.apply takes (the agent's
-// brandingHostRe). The agent refuses the whole list over one host outside
-// it, so AgentDomains leaves such a domain out instead.
-var agentHostRe = regexp.MustCompile(`^mail(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?){2,}$`)
-
 // Path is where the domain's picture is stored under dir.
 func Path(dir, domainID string, a Asset) string {
 	return filepath.Join(dir, domainID, string(a)+".png")
@@ -260,27 +256,22 @@ func PictureURL(domainID string, a Asset, hash string) string {
 }
 
 // AgentDomain is one entry of webmail.branding.apply's domains.
-type AgentDomain struct {
-	Host         string `json:"host"`
-	AppName      string `json:"app_name,omitempty"`
-	CompanyName  string `json:"company_name,omitempty"`
-	WebsiteURL   string `json:"website_url,omitempty"`
-	PrivacyURL   string `json:"privacy_url,omitempty"`
-	ImprintURL   string `json:"imprint_url,omitempty"`
-	LogoLightURL string `json:"logo_light_url,omitempty"`
-	LogoDarkURL  string `json:"logo_dark_url,omitempty"`
-	FaviconURL   string `json:"favicon_url,omitempty"`
-}
+type AgentDomain = agentwire.WebmailBrandingDomain
 
 // AgentDomains turns the branding rows into the agent's entries: one per
 // row that applies and sets anything, for its web address mail.<domain>.
 // A domain with only a light logo shows it in dark mode too, rather than
 // the server's dark logo.
+//
+// The agent refuses the whole list over one entry it doesn't take, which
+// would freeze every domain's branding, so an entry that fails the agent's
+// own check (a name an old import stored outside the FQDN shape, say) or
+// repeats a host is left out.
 func AgentDomains(rows []repository.WebmailBrandingRow) []AgentDomain {
 	out := []AgentDomain{}
+	seen := make(map[string]bool, len(rows))
 	for _, r := range rows {
-		host := "mail." + strings.ToLower(r.DomainName)
-		if !r.Applies || r.Empty() || !agentHostRe.MatchString(host) || !domainIDRe.MatchString(r.DomainID) {
+		if !r.Applies || r.Empty() {
 			continue
 		}
 		light := PictureURL(r.DomainID, LogoLight, r.LogoLight)
@@ -288,8 +279,8 @@ func AgentDomains(rows []repository.WebmailBrandingRow) []AgentDomain {
 		if dark == "" {
 			dark = light
 		}
-		out = append(out, AgentDomain{
-			Host:         host,
+		d := AgentDomain{
+			Host:         "mail." + strings.ToLower(r.DomainName),
 			AppName:      r.AppName,
 			CompanyName:  r.CompanyName,
 			WebsiteURL:   r.WebsiteURL,
@@ -298,7 +289,12 @@ func AgentDomains(rows []repository.WebmailBrandingRow) []AgentDomain {
 			LogoLightURL: light,
 			LogoDarkURL:  dark,
 			FaviconURL:   PictureURL(r.DomainID, Favicon, r.Favicon),
-		})
+		}
+		if seen[d.Host] || d.Validate() != nil {
+			continue
+		}
+		seen[d.Host] = true
+		out = append(out, d)
 	}
 	return out
 }
