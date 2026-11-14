@@ -83,6 +83,7 @@ type ftpReownSummary struct {
 	Stopped    bool   `json:"stopped,omitempty"`
 	Failed     int    `json:"failed,omitempty"`
 	FirstError string `json:"first_error,omitempty"`
+	Linked     int    `json:"linked,omitempty"`
 	Skipped    string `json:"skipped,omitempty"`
 }
 
@@ -109,14 +110,14 @@ func reownDeletedAccountFiles(ctx context.Context, tenant *ftpTenant, jailPath s
 		return -1
 	}
 	st, err := ftpReownTree(jailPath, mountpoint, match, tenant.UID, newGID, stop)
-	sum := ftpReownSummary{Reowned: st.Reowned[uint32(uid)], Stopped: st.Stopped, Failed: st.Failed, FirstError: st.FirstError}
+	sum := ftpReownSummary{Reowned: st.Reowned[uint32(uid)], Stopped: st.Stopped, Failed: st.Failed, FirstError: st.FirstError, Linked: st.Linked}
 	if err != nil {
 		sum.Skipped = err.Error()
 	}
-	if err != nil || sum.Stopped || sum.Failed > 0 {
+	if err != nil || sum.Stopped || sum.Failed > 0 || sum.Linked > 0 {
 		slog.Warn("ftpaccount.delete: files of the deleted account not all handed to the tenant; the sweep finishes",
 			"tenant", tenant.Username, "uid", uid, "reowned", sum.Reowned, "stopped", sum.Stopped,
-			"failed", sum.Failed, "first_error", sum.FirstError, "err", err)
+			"failed", sum.Failed, "linked", sum.Linked, "first_error", sum.FirstError, "err", err)
 	}
 	return sum
 }
@@ -256,9 +257,9 @@ func ftpReownOrphansHandler(ctx context.Context, params json.RawMessage) (any, e
 	for uid, n := range st.Reowned {
 		reowned[strconv.FormatUint(uint64(uid), 10)] = n
 	}
-	if st.Failed > 0 {
-		slog.Warn("ftpaccount.reown_orphans: some entries could not be handed to the tenant",
-			"tenant", tenant.Username, "failed", st.Failed, "first_error", st.FirstError)
+	if st.Failed > 0 || st.Linked > 0 {
+		slog.Warn("ftpaccount.reown_orphans: some entries were not handed to the tenant",
+			"tenant", tenant.Username, "failed", st.Failed, "linked", st.Linked, "first_error", st.FirstError)
 	}
 	return map[string]any{
 		"tenant_username": tenant.Username,
@@ -267,6 +268,8 @@ func ftpReownOrphansHandler(ctx context.Context, params json.RawMessage) (any, e
 		"stopped":         st.Stopped,
 		"failed":          st.Failed,
 		"first_error":     st.FirstError,
+		// Files with a hard link outside the tenant's home: left as they are.
+		"linked": st.Linked,
 	}, nil
 }
 

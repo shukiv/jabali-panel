@@ -174,6 +174,10 @@ func (r *Reconciler) reconcileFtpAccounts(ctx context.Context) {
 		converged = false
 	}
 
+	// Files of deleted isolated accounts, in the background
+	// (ftp_orphan_files.go). Doesn't affect convergence.
+	r.kickFtpOrphanSweep(ctx, rows, tenantByUserID)
+
 	if converged {
 		r.phaseApplied(ctx, PhaseFTPAccounts, "all", fullHash, time.Now(), d)
 	} else {

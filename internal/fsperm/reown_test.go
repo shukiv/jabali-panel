@@ -175,6 +175,59 @@ func TestReownTree_RenameAfterTheOwnerReadChangesNothingElse(t *testing.T) {
 	}
 }
 
+// A file hard-linked twice inside the walk changes, once.
+func TestReownTree_HardLinksInsideTheWalkChange(t *testing.T) {
+	home := t.TempDir()
+	a := filepath.Join(home, "a", "scan.pdf")
+	write(t, a)
+	if err := os.MkdirAll(filepath.Join(home, "b"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(a, filepath.Join(home, "b", "copy.pdf")); err != nil {
+		t.Fatal(err)
+	}
+	inodes := recordChowns(t)
+
+	st, err := ReownTree(home, home, ownedByMe, os.Getuid(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, ino := range *inodes {
+		if ino == inode(t, a) {
+			n++
+		}
+	}
+	if n != 1 || st.Linked != 0 {
+		t.Errorf("the linked file changed %d times, Linked = %d; want once, 0", n, st.Linked)
+	}
+}
+
+// A file with a hard link outside the walk (another tenant's home) is left
+// alone: the walk can't tell whose it is.
+func TestReownTree_HardLinkFromOutsideLeavesTheFileAlone(t *testing.T) {
+	home := t.TempDir()
+	a := filepath.Join(home, "scan.pdf")
+	write(t, a)
+	if err := os.Link(a, filepath.Join(t.TempDir(), "elsewhere.pdf")); err != nil {
+		t.Fatal(err)
+	}
+	inodes := recordChowns(t)
+
+	st, err := ReownTree(home, home, ownedByMe, os.Getuid(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ino := range *inodes {
+		if ino == inode(t, a) {
+			t.Fatal("a file linked from outside the walk was changed")
+		}
+	}
+	if st.Linked != 1 {
+		t.Errorf("Linked = %d, want 1", st.Linked)
+	}
+}
+
 func TestReownTree_StopEndsTheWalk(t *testing.T) {
 	home, inside, _ := reownTree(t)
 	recordChowns(t)

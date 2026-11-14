@@ -19,7 +19,14 @@ type ReownStats struct {
 	// FirstError describes the first of them.
 	Failed     int
 	FirstError string
+	// Linked counts the matched files left alone because not all of their
+	// hard links were in the walk.
+	Linked int
 }
+
+// maxLinkedHeld caps the multiply-linked files whose descriptors a walk holds
+// until it knows whether all their links were inside it.
+const maxLinkedHeld = 4096
 
 func (s *ReownStats) fail(what string, err error) {
 	s.Failed++
@@ -52,6 +59,11 @@ var (
 // is never touched, and a symlink is changed as the link, never followed.
 // Directories are listed through a descriptor reopened from the same one.
 //
+// A matched file with more than one hard link changes only when the walk saw
+// every one of its links, so a link from outside root (another tenant's home)
+// never moves the file to this owner. Its descriptor is held until the walk
+// ends and the change goes through it; otherwise it is counted in Linked.
+//
 // stop is checked before each entry; once it returns true the walk ends with
 // Stopped set. A nil stop never stops. The error is set only when root itself
 // cannot be opened; problems with entries are counted in the stats.
@@ -66,9 +78,10 @@ func ReownTree(anchor, root string, match func(owner uint32) bool, uid int, newG
 	if err := unix.Fstat(fd, &rst); err != nil {
 		return st, fmt.Errorf("fstat %s: %w", root, err)
 	}
-	w := &reowner{dev: rst.Dev, match: match, uid: uid, newGID: newGID, stop: stop, st: &st}
+	w := &reowner{dev: rst.Dev, match: match, uid: uid, newGID: newGID, stop: stop, st: &st, linked: map[uint64]*heldLink{}}
 	w.entry(fd, &rst, root)
 	w.walk(fd)
+	w.settleLinked()
 	return st, nil
 }
 
@@ -79,6 +92,34 @@ type reowner struct {
 	newGID func(uint32) int
 	stop   func() bool
 	st     *ReownStats
+	linked map[uint64]*heldLink // by inode
+}
+
+// heldLink is a matched multiply-linked file: a descriptor to it, its name,
+// and how many of its links the walk has seen.
+type heldLink struct {
+	fd   int
+	name string
+	seen uint64
+}
+
+// settleLinked changes each held file whose links were all seen, through its
+// held descriptor, and counts the rest in Linked.
+func (w *reowner) settleLinked() {
+	for _, h := range w.linked {
+		var st unix.Stat_t
+		switch err := unix.Fstat(h.fd, &st); {
+		case err != nil:
+			w.st.fail("stat "+h.name, err)
+		case !w.match(st.Uid):
+		case uint64(st.Nlink) != h.seen:
+			w.st.Linked++
+		default:
+			w.change(h.fd, &st, h.name)
+		}
+		unix.Close(h.fd)
+	}
+	w.linked = nil
 }
 
 func (w *reowner) stopped() bool {
@@ -92,12 +133,31 @@ func (w *reowner) stopped() bool {
 }
 
 // entry changes the inode behind fd when match accepts its owner. st must be
-// fd's own fstat.
-func (w *reowner) entry(fd int, st *unix.Stat_t, name string) {
+// fd's own fstat. A multiply-linked non-directory is held instead (see
+// ReownTree); held reports that w took fd and the caller must not close it.
+func (w *reowner) entry(fd int, st *unix.Stat_t, name string) (held bool) {
 	w.st.Scanned++
 	if !w.match(st.Uid) {
-		return
+		return false
 	}
+	if st.Nlink > 1 && st.Mode&unix.S_IFMT != unix.S_IFDIR {
+		if h, ok := w.linked[st.Ino]; ok {
+			h.seen++
+			return false
+		}
+		if len(w.linked) >= maxLinkedHeld {
+			w.st.Linked++
+			return false
+		}
+		w.linked[st.Ino] = &heldLink{fd: fd, name: name, seen: 1}
+		return true
+	}
+	w.change(fd, st, name)
+	return false
+}
+
+// change gives the inode behind fd to w.uid (and the group newGID picks).
+func (w *reowner) change(fd int, st *unix.Stat_t, name string) {
 	gid := -1
 	if w.newGID != nil {
 		gid = w.newGID(st.Gid)
@@ -144,7 +204,9 @@ func (w *reowner) walk(dfd int) {
 		if afterOwnerRead != nil {
 			afterOwnerRead(dfd, name)
 		}
-		w.entry(efd, &est, name)
+		if w.entry(efd, &est, name) {
+			continue // held until the walk ends
+		}
 		if est.Mode&unix.S_IFMT != unix.S_IFDIR {
 			unix.Close(efd)
 			continue
