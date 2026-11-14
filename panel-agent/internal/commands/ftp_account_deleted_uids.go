@@ -17,13 +17,12 @@ import (
 
 // Which tenant a deleted isolated account belonged to.
 //
-// Its files can be outside the tenant's home: the tenant's PHP may write to
-// the server's shared temporary folders (the pool's open_basedir lists /tmp
-// and /var/tmp), and a file moved there keeps the account's uid. Once the
-// account is gone nothing else says whose those files are, so
-// ftpaccount.delete notes it here and ftpaccount.reown_orphans looks in
-// those folders for the tenant's noted uids. Only the agent sees every
-// delete (the reconciler also removes accounts that have no panel row).
+// A deleted account's files can also be in the server's shared temporary
+// folders, where nothing says whose they are once the account is gone. So
+// ftpaccount.delete notes the tenant here, and ftpaccount.reown_orphans
+// looks in those folders for the tenant's noted uids. Only the agent sees
+// every delete (the reconciler also removes accounts that have no panel
+// row).
 var (
 	// ftpDeletedUIDDir holds one file per deleted isolated account, named
 	// after its uid, reading "<tenant uid> <tenant name>\n". Root-only.
@@ -31,8 +30,8 @@ var (
 	// ftpDeletedUIDDirOwner is the owner the directory must have (root;
 	// tests change it).
 	ftpDeletedUIDDirOwner uint32 = 0
-	// ftpSharedTmpDirs are the folders outside its home a tenant can write.
-	// Each is looked in only when it is on the home's filesystem.
+	// ftpSharedTmpDirs are the shared temporary folders looked in. Each is
+	// looked in only when it is on the home's filesystem.
 	ftpSharedTmpDirs = []string{"/var/tmp", "/tmp"}
 )
 

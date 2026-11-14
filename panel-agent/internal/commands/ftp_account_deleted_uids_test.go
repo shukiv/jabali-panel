@@ -28,6 +28,13 @@ func recordExists(t *testing.T, dir string, uid int) bool {
 	return err == nil
 }
 
+// TestMain keeps every test in the package off the real notes.
+func TestDeletedAccountUIDDir_TestsNeverUseTheRealOne(t *testing.T) {
+	if strings.HasPrefix(ftpDeletedUIDDir, "/var/lib/") {
+		t.Fatalf("tests use %s", ftpDeletedUIDDir)
+	}
+}
+
 func TestRecordDeletedAccountUID_RoundTrip(t *testing.T) {
 	dir := stubDeletedUIDDir(t)
 	shop := &ftpTenant{Username: "shop", UID: 5000, GID: 5000}
