@@ -6163,7 +6163,9 @@ _svc_subdir() {
   local mode="$1" owner="$2" group="$3" path="$4"
   if [[ ! -e "$path" && ! -L "$path" ]]; then
     mkdir -p "$(dirname "$path")"
-    (umask 0077 && mkdir -m "$mode" "$path") 2>/dev/null || true
+    # umask 0022 clears no bit of these modes, so mkdir(2) makes the folder
+    # with them at once and mkdir(1) has no chmod to do afterwards.
+    (umask 0022 && mkdir -m "$mode" "$path") 2>/dev/null || true
   fi
   if [[ -L "$path" || ! -d "$path" ]]; then
     _warn "$path is not a folder (a symbolic link or a file); left as it is"
