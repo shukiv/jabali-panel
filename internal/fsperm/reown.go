@@ -72,27 +72,89 @@ var (
 // Stopped set. A nil stop never stops. The error is set only when root itself
 // cannot be opened; problems with entries are counted in the stats.
 func ReownTree(anchor, root string, match func(owner uint32) bool, uid int, newGID func(group uint32) int, stop func() bool) (ReownStats, error) {
+	return ReownTrees([]ReownRoot{{Anchor: anchor, Path: root, Match: match}}, uid, newGID, stop)
+}
+
+// ReownRoot is one tree of a ReownTrees walk.
+type ReownRoot struct {
+	// Anchor and Path are ReownTree's anchor and root.
+	Anchor, Path string
+	// Match accepts the owners whose entries change in this tree.
+	Match func(owner uint32) bool
+	// Enter, when set, says from a directory's fstat whether to walk into
+	// it; the root is one of them. Nil walks into every directory.
+	Enter func(dir *unix.Stat_t) bool
+	// ChangeIn, when set, says from a directory's fstat whether its entries
+	// may change. Nil lets every entry change, the root included; with
+	// ChangeIn set the root itself never changes.
+	ChangeIn func(dir *unix.Stat_t) bool
+}
+
+// ReownTrees is ReownTree over several trees in one walk. The hard-link
+// check spans all of them: a file with links in two of the trees changes
+// when every link is in one of them and each tree it is in matches it. A
+// tree other than the first is skipped when it doesn't exist or is on
+// another filesystem. The error is set only when the first root cannot be
+// opened; problems with the others are counted in the stats.
+func ReownTrees(roots []ReownRoot, uid int, newGID func(group uint32) int, stop func() bool) (ReownStats, error) {
 	st := ReownStats{Reowned: map[uint32]int{}}
-	fd, err := openUnder(anchor, root)
-	if err != nil {
-		return st, err
+	if len(roots) == 0 {
+		return st, nil
 	}
-	defer unix.Close(fd)
-	var rst unix.Stat_t
-	if err := unix.Fstat(fd, &rst); err != nil {
-		return st, fmt.Errorf("fstat %s: %w", root, err)
+	var w *reowner
+	defer func() {
+		if w != nil {
+			w.close()
+		}
+	}()
+	for i, r := range roots {
+		fd, err := openUnder(r.Anchor, r.Path)
+		if err != nil {
+			if i == 0 {
+				return st, err
+			}
+			if !errors.Is(err, unix.ENOENT) {
+				st.fail("open "+r.Path, err)
+			}
+			continue
+		}
+		var rst unix.Stat_t
+		if err := unix.Fstat(fd, &rst); err != nil {
+			unix.Close(fd)
+			if i == 0 {
+				return st, fmt.Errorf("fstat %s: %w", r.Path, err)
+			}
+			st.fail("stat "+r.Path, err)
+			continue
+		}
+		if w == nil {
+			w = newReowner(rst.Dev, r.Match, uid, newGID, stop, &st)
+		} else if rst.Dev != w.dev || w.stopped() {
+			unix.Close(fd)
+			continue
+		}
+		w.match, w.enter, w.changeIn = r.Match, r.Enter, r.ChangeIn
+		if w.enter == nil || w.enter(&rst) {
+			if w.changeIn == nil {
+				w.entry(fd, &rst, r.Path, -1, nil)
+			} else {
+				st.Scanned++
+			}
+			w.walk(fd)
+		}
+		unix.Close(fd)
 	}
-	w := newReowner(rst.Dev, match, uid, newGID, stop, &st)
-	defer w.close()
-	w.entry(fd, &rst, root, -1, nil)
-	w.walk(fd)
-	w.settleLinked()
+	if w != nil {
+		w.settleLinked()
+	}
 	return st, nil
 }
 
 type reowner struct {
 	dev       uint64
 	match     func(uint32) bool
+	enter     func(*unix.Stat_t) bool
+	changeIn  func(*unix.Stat_t) bool
 	uid       int
 	newGID    func(uint32) int
 	stop      func() bool
@@ -107,12 +169,13 @@ func newReowner(dev uint64, match func(uint32) bool, uid int, newGID func(uint32
 		linked: map[uint64]*heldLink{}, dirs: map[uint64]*heldDir{}}
 }
 
-// heldLink is a matched multiply-linked file: a descriptor to it and every
-// place the walk saw it.
+// heldLink is a matched multiply-linked file: a descriptor to it, every
+// place the walk saw it, and the matches of the trees it was seen in.
 type heldLink struct {
-	fd    int
-	name  string
-	links []linkSighting
+	fd      int
+	name    string
+	links   []linkSighting
+	matches []func(uint32) bool
 }
 
 type linkSighting struct {
@@ -193,6 +256,7 @@ func (w *reowner) hold(fd int, st *unix.Stat_t, name string, parent int, pst *un
 		held = true
 	}
 	h.links = append(h.links, linkSighting{dir: d, name: name})
+	h.matches = append(h.matches, w.match)
 	return held
 }
 
@@ -205,7 +269,7 @@ func (w *reowner) settleLinked() {
 			w.st.fail("stat "+h.name, err)
 			continue
 		}
-		if !w.match(st.Uid) {
+		if !h.matchesAll(st.Uid) {
 			continue
 		}
 		if w.allLinksSeen(ino, h, &st) {
@@ -214,6 +278,17 @@ func (w *reowner) settleLinked() {
 			w.st.Linked++
 		}
 	}
+}
+
+// matchesAll reports whether the owner is still one that every tree the
+// file was seen in would change.
+func (h *heldLink) matchesAll(owner uint32) bool {
+	for _, m := range h.matches {
+		if !m(owner) {
+			return false
+		}
+	}
+	return len(h.matches) > 0
 }
 
 // allLinksSeen reports whether every sighting of the held file still names
@@ -269,6 +344,7 @@ func (w *reowner) walk(dfd int) {
 		w.st.fail("list directory", err)
 		return
 	}
+	canChange := w.changeIn == nil || w.changeIn(&dst)
 	for _, name := range names {
 		if w.stopped() {
 			return
@@ -296,12 +372,23 @@ func (w *reowner) walk(dfd int) {
 		if afterOwnerRead != nil {
 			afterOwnerRead(dfd, name)
 		}
-		if w.entry(efd, &est, name, dfd, &dst) {
+		if !canChange {
+			w.st.Scanned++
+		} else if w.entry(efd, &est, name, dfd, &dst) {
 			continue // held until the walk ends
 		}
 		if est.Mode&unix.S_IFMT != unix.S_IFDIR {
 			unix.Close(efd)
 			continue
+		}
+		if w.enter != nil {
+			// Decided on the directory as it is now: entry may just have
+			// changed its owner.
+			var cur unix.Stat_t
+			if err := unix.Fstat(efd, &cur); err != nil || !w.enter(&cur) {
+				unix.Close(efd)
+				continue
+			}
 		}
 		// An O_PATH descriptor can't be listed; "." reopens the same inode.
 		sub, err := unix.Openat(efd, ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)

@@ -726,6 +726,14 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	delUID, _ := strconv.Atoi(u.Uid)
 	delGID, _ := strconv.Atoi(u.Gid)
 	isolated := delUID >= ftpSubaccountUIDMin
+	if isolated {
+		// Note whose the uid is before it is freed: its files outside the
+		// home are found by it later (ftp_account_deleted_uids.go).
+		if err := recordDeletedAccountUID(delUID, tenant); err != nil {
+			slog.Warn("ftpaccount.delete: could not note the account's tenant; its files outside the home won't be handed over",
+				"tenant", tenant.Username, "uid", delUID, "err", err)
+		}
+	}
 	_ = setFtpGroupMembership(ctx, p.Username, false)
 	// GH #1146: stop + disable the WebDAV worker and remove its drop-in/group
 	// BEFORE userdel, so nothing references the about-to-be-removed uid.

@@ -37,6 +37,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
@@ -51,6 +53,7 @@ var (
 
 	// Seams for tests.
 	ftpReownTree   = fsperm.ReownTree
+	ftpReownTrees  = fsperm.ReownTrees
 	ftpJailMounted = isPathMounted
 
 	// ftpMaldetPubDir is maldetect's per-user scratch root (LMD userbasedir).
@@ -215,6 +218,15 @@ func ftpOrphanUIDsHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 	found, partial := parseRepquotaOrphans(string(stdout))
+	if !partial {
+		// A deleted account whose uid owns nothing any more needs no record
+		// of its tenant (ftp_account_deleted_uids.go).
+		owning := make(map[uint32]bool, len(found))
+		for _, o := range found {
+			owning[o.UID] = true
+		}
+		pruneDeletedAccountUIDs(owning)
+	}
 	dead := map[uint32]bool{}
 	for _, o := range found {
 		if !ftpUIDHasPasswd(o.UID) {
@@ -341,7 +353,21 @@ func ftpReownOrphansHandler(ctx context.Context, params json.RawMessage) (any, e
 	deadline := ftpReownDeadline(ctx, ftpReownOrphansBudget, 5*time.Second)
 	stop := func() bool { return ctx.Err() != nil || time.Now().After(deadline) }
 
-	st, err := ftpReownTree(tenant.HomeDir, tenant.HomeDir, match, tenant.UID, newGID, stop)
+	roots := []fsperm.ReownRoot{{Anchor: tenant.HomeDir, Path: tenant.HomeDir, Match: match}}
+	// The tenant's own deleted accounts may have files in the shared
+	// temporary folders too. Only their uids change there, only in a folder
+	// the tenant can write, and in one walk with the home, so a file linked
+	// from both is seen whole.
+	if mine := deletedAccountUIDsOf(tenant); len(mine) > 0 {
+		groups := ftpTenantGroups(tenant)
+		outside := func(owner uint32) bool { return mine[owner] && match(owner) }
+		enter := func(d *unix.Stat_t) bool { return ftpTenantMay(tenant, groups, d, 1) }
+		changeIn := func(d *unix.Stat_t) bool { return ftpTenantMay(tenant, groups, d, 3) }
+		for _, dir := range ftpSharedTmpDirs {
+			roots = append(roots, fsperm.ReownRoot{Anchor: "/", Path: dir, Match: outside, Enter: enter, ChangeIn: changeIn})
+		}
+	}
+	st, err := ftpReownTrees(roots, tenant.UID, newGID, stop)
 	if errors.Is(err, fs.ErrNotExist) {
 		// No home on disk: nothing to walk. not_found, like a tenant with no
 		// system account, so the sweep moves on instead of retrying.

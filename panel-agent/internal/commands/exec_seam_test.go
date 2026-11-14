@@ -18,6 +18,11 @@ import (
 // real cure for GH #994; the per-test requireHostMutationAllowed gates remain as
 // belt-and-suspenders and compose with it (they skip before reaching exec).
 func TestMain(m *testing.M) {
+	// ftpaccount.delete notes whose a deleted isolated account was, and
+	// orphan_uids prunes those notes with passwd lookups tests stub. A run as
+	// root on a box must never read, write or prune its real notes, host
+	// mutation allowed or not; tests that need notes make their own.
+	ftpDeletedUIDDir = filepath.Join(os.TempDir(), "jabali-agent-tests-absent-ftp-deleted-uids")
 	if os.Getenv("JABALI_ALLOW_HOST_MUTATION") == "1" {
 		// Integration path: real exec, real host. The per-test gates decide what
 		// actually runs.

@@ -12,30 +12,52 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/fsperm"
 )
 
-// reownCall is one recorded ftpReownTree call.
+// reownCall is one recorded tree of an ftpReownTree or ftpReownTrees call.
 type reownCall struct {
 	anchor, root string
 	match        func(uint32) bool
 	uid          int
 	newGID       func(uint32) int
 	stop         func() bool
+	enter        func(*unix.Stat_t) bool
+	changeIn     func(*unix.Stat_t) bool
 }
 
-// stubReownTree records the walk instead of running it and returns stats.
+// stubReownTree records the walks instead of running them and returns
+// stats: one reownCall per tree.
 func stubReownTree(t *testing.T, stats fsperm.ReownStats, err error) *[]reownCall {
 	t.Helper()
 	var calls []reownCall
-	orig := ftpReownTree
+	orig, origs := ftpReownTree, ftpReownTrees
 	ftpReownTree = func(anchor, root string, match func(uint32) bool, uid int, newGID func(uint32) int, stop func() bool) (fsperm.ReownStats, error) {
-		calls = append(calls, reownCall{anchor, root, match, uid, newGID, stop})
+		calls = append(calls, reownCall{anchor: anchor, root: root, match: match, uid: uid, newGID: newGID, stop: stop})
 		return stats, err
 	}
-	t.Cleanup(func() { ftpReownTree = orig })
+	ftpReownTrees = func(roots []fsperm.ReownRoot, uid int, newGID func(uint32) int, stop func() bool) (fsperm.ReownStats, error) {
+		for _, r := range roots {
+			calls = append(calls, reownCall{anchor: r.Anchor, root: r.Path, match: r.Match, uid: uid, newGID: newGID, stop: stop, enter: r.Enter, changeIn: r.ChangeIn})
+		}
+		return stats, err
+	}
+	t.Cleanup(func() { ftpReownTree, ftpReownTrees = orig, origs })
 	return &calls
+}
+
+// stubDeletedUIDDir points the deleted-account records at a fresh directory
+// the test user owns.
+func stubDeletedUIDDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "deleted")
+	origD, origO := ftpDeletedUIDDir, ftpDeletedUIDDirOwner
+	ftpDeletedUIDDir, ftpDeletedUIDDirOwner = dir, uint32(os.Getuid())
+	t.Cleanup(func() { ftpDeletedUIDDir, ftpDeletedUIDDirOwner = origD, origO })
+	return dir
 }
 
 func stubLookups(t *testing.T, liveUIDs map[uint32]bool, goneGIDs map[uint32]bool) *int {
