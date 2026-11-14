@@ -51,7 +51,19 @@ export const MyProfileBackupCard = () => {
   const [content, setContent] = useState<string>("full");
   const [compression, setCompression] = useState<string>("");
   const [destinationId, setDestinationId] = useState<string>("");
-  const query = useListQuery<MyBackup>({ resource: "me/backups" });
+  // GH #2505: page on the server — the list holds every backup of the
+  // account, not just the first page the browser happened to load.
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const query = useListQuery<MyBackup>({ resource: "me/backups", params: { page, pageSize } });
+
+  // A delete or refetch can empty the current page while earlier pages still
+  // hold rows — step back one page rather than show an empty table.
+  useEffect(() => {
+    if (page > 1 && query.isSuccess && query.total > 0 && query.items.length === 0) {
+      setPage(page - 1);
+    }
+  }, [page, query.isSuccess, query.total, query.items]);
 
   // Destinations this tenant may target (GH #454). The backend returns only
   // the kinds allowed by the hosting package (id/name/kind — no secrets), plus
@@ -199,7 +211,17 @@ export const MyProfileBackupCard = () => {
         rowKey="id"
         loading={query.isLoading}
         dataSource={query.items ?? []}
-        pagination={{ defaultPageSize: 10 }}
+        pagination={{
+          current: page,
+          pageSize,
+          total: query.total,
+          showSizeChanger: true,
+          pageSizeOptions: [10, 25, 50, 100],
+          onChange: (p, s) => {
+            setPage(s !== pageSize ? 1 : p);
+            setPageSize(s);
+          },
+        }}
         scroll={{ x: "max-content" }}
         columns={[
           {

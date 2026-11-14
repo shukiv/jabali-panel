@@ -158,6 +158,10 @@ export const AdminBackupsPage = () => {
   const [activeTab, setActiveTab] = useTabParam<TabKey>("backups");
   const [runs, setRuns] = useState<BackupRun[]>([]);
   const [manual, setManual] = useState<BackupJob[]>([]);
+  // GH #2505: the server's totals, not the loaded rows — the badge and the
+  // "showing newest" line count every backup even when the page holds fewer.
+  const [total, setTotal] = useState(0);
+  const [manualTotal, setManualTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [runJobs, setRunJobs] = useState<Record<string, BackupJob[]>>({});
   // GH #502: control row expansion so the "Expand to manage" cell can toggle it
@@ -214,10 +218,12 @@ export const AdminBackupsPage = () => {
     setLoading(true);
     try {
       const resp = await apiClient.get<RunsEnvelope>(
-        "/admin/backup-runs?page_size=50",
+        "/admin/backup-runs?page_size=1000",
       );
       setRuns(resp.data.data ?? []);
       setManual(resp.data.manual ?? []);
+      setTotal(resp.data.total ?? 0);
+      setManualTotal(resp.data.manual_total ?? 0);
       // Refresh any currently-expanded run's child rows so polling
       // surfaces queued -> running -> succeeded transitions on the
       // child table without needing collapse/expand. Read the LATEST
@@ -542,7 +548,7 @@ export const AdminBackupsPage = () => {
               <Space size={6}>
                 <RotateCcwOutlined />
                 <span>Backups</span>
-                <Badge count={runs.length + manual.length} showZero color="#999" />
+                <Badge count={total + manualTotal} showZero color="#999" />
               </Space>
             ),
           },
@@ -605,6 +611,11 @@ export const AdminBackupsPage = () => {
         onTabChange={(k) => setActiveTab(k as TabKey)}
       >
         {activeTab === "backups" && <UploadedBackupsTable onRestore={setRestoreKept} />}
+        {activeTab === "backups" && (total > runs.length || manualTotal > manual.length) && (
+          <Typography.Text type="secondary" style={{ display: "block", marginBottom: 8 }}>
+            Showing the newest {runs.length + manual.length} of {total + manualTotal} backups.
+          </Typography.Text>
+        )}
         {activeTab === "backups" && (
           <Table<TableRow>
             rowKey="rowKey"

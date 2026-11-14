@@ -202,8 +202,14 @@ func (r *backupJobRepo) Delete(ctx context.Context, id string) error {
 	return translate(r.db.WithContext(ctx).Delete(&models.BackupJob{}, "id = ?", id).Error)
 }
 
+// backupJobsForUserWhere selects every backup job a user owns — all kinds and
+// statuses. ListForUser (the /me/backups list) and countJobsForUser (the tenant
+// sidebar badge) share it so the badge and the list total count the same rows
+// (GH #2505).
+const backupJobsForUserWhere = "user_id = ?"
+
 func (r *backupJobRepo) ListForUser(ctx context.Context, userID string, limit, offset int) ([]models.BackupJob, int64, error) {
-	return r.list(ctx, "user_id = ?", []any{userID}, limit, offset)
+	return r.list(ctx, backupJobsForUserWhere, []any{userID}, limit, offset)
 }
 
 func (r *backupJobRepo) OldestAccountBackupForUser(ctx context.Context, userID string) (*models.BackupJob, error) {
@@ -359,6 +365,18 @@ func countBackupRuns(ctx context.Context, db *gorm.DB) (int64, error) {
 	if err := db.WithContext(ctx).
 		Raw(`SELECT COUNT(DISTINCT run_id) FROM backup_jobs WHERE run_id IS NOT NULL`).
 		Scan(&n).Error; err != nil {
+		return 0, translate(err)
+	}
+	return n, nil
+}
+
+// countJobsForUser counts every backup job a user owns — all kinds and
+// statuses — the exact rows GET /me/backups lists (GH #2505). Shared with the
+// tenant nav-count badge so the two surfaces can't drift.
+func countJobsForUser(ctx context.Context, db *gorm.DB, userID string) (int64, error) {
+	var n int64
+	if err := db.WithContext(ctx).Model(&models.BackupJob{}).
+		Where(backupJobsForUserWhere, userID).Count(&n).Error; err != nil {
 		return 0, translate(err)
 	}
 	return n, nil

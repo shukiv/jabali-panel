@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,10 +39,10 @@ import (
 // backup routes. RestoreStaging is the local path the agent restores
 // stages into; download materializes from there.
 type BackupHandlerConfig struct {
-	Agent          agent.AgentInterface
-	Jobs           repository.BackupJobRepository
-	Destinations   repository.BackupDestinationRepository
-	Users          repository.UserRepository
+	Agent        agent.AgentInterface
+	Jobs         repository.BackupJobRepository
+	Destinations repository.BackupDestinationRepository
+	Users        repository.UserRepository
 	// Packages backs create-from-manifest (GH #1408): when a restore-from-
 	// upload targets a user that doesn't exist yet, the account is created via
 	// userops.Create with the admin-chosen package. Optional: nil disables the
@@ -184,16 +185,40 @@ func RegisterBackupRoutes(rg *gin.RouterGroup, cfg BackupHandlerConfig) {
 	admin.GET("/system/backups/:job_id/logs", h.logs)
 }
 
+// backupsPagination reads the page size and offset for a backups list. The
+// repo convention is ?page_size= (see parseListOptions); every UI caller sends
+// it. Older clients may still send ?limit=, so fall back to it when page_size
+// is absent. A missing/invalid/<1 size falls back to defaultLimit; an over-max
+// size clamps DOWN to maxLimit, never resets to the default (GH #1796). page<1
+// or invalid becomes 1. Returns (limit, offset).
+func backupsPagination(c *gin.Context, defaultLimit, maxLimit int) (int, int) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	if page < 1 {
+		page = 1
+	}
+	sizeParam := c.Query("page_size")
+	if sizeParam == "" {
+		sizeParam = c.Query("limit")
+	}
+	limit, _ := strconv.Atoi(sizeParam)
+	if limit < 1 {
+		limit = defaultLimit
+	}
+	if limit > maxLimit {
+		limit = maxLimit
+	}
+	return limit, (page - 1) * limit
+}
+
 func (h *backupHandler) listRuns(c *gin.Context) {
-	limit, offset := paginationFromQuery(c, 25, 100)
+	limit, offset := backupsPagination(c, 25, 1000)
 	runs, total, err := h.cfg.Jobs.ListRuns(c.Request.Context(), limit, offset)
 	if err != nil {
 		h.cfg.logErr("list backup runs", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
 		return
 	}
-	manualLimit, manualOffset := paginationFromQuery(c, 25, 100)
-	manual, manualTotal, err := h.cfg.Jobs.ListManual(c.Request.Context(), manualLimit, manualOffset)
+	manual, manualTotal, err := h.cfg.Jobs.ListManual(c.Request.Context(), limit, offset)
 	if err != nil {
 		h.cfg.logErr("list manual backups", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list_manual"})
@@ -336,7 +361,7 @@ func (h *backupHandler) systemCreate(c *gin.Context) {
 }
 
 func (h *backupHandler) systemList(c *gin.Context) {
-	limit, offset := paginationFromQuery(c, 25, 100)
+	limit, offset := backupsPagination(c, 25, 100)
 	rows, total, err := h.cfg.Jobs.ListAll(c.Request.Context(), limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
@@ -621,7 +646,7 @@ func (h *backupHandler) createForUser(c *gin.Context) {
 
 func (h *backupHandler) listForUser(c *gin.Context) {
 	userID := c.Param("id")
-	limit, offset := paginationFromQuery(c, 50, 200)
+	limit, offset := backupsPagination(c, 50, 200)
 	rows, total, err := h.cfg.Jobs.ListForUser(c.Request.Context(), userID, limit, offset)
 	if err != nil {
 		h.cfg.logErr("list backups for user", err, "user_id", userID)
@@ -635,7 +660,7 @@ func (h *backupHandler) listForUser(c *gin.Context) {
 }
 
 func (h *backupHandler) listAll(c *gin.Context) {
-	limit, offset := paginationFromQuery(c, 50, 200)
+	limit, offset := backupsPagination(c, 50, 200)
 	ctx := c.Request.Context()
 	var rows []models.BackupJob
 	var total int64
@@ -1612,7 +1637,7 @@ func (cfg BackupHandlerConfig) metadataDeps() backupmetadata.Deps {
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		TrustedSenders: cfg.TrustedSenders,
-		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
+		DNSSECKeys:     cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
 		WebmailBranding:  cfg.WebmailBranding,
@@ -1703,7 +1728,7 @@ func (cfg MeBackupsHandlerConfig) metadataDeps() backupmetadata.Deps {
 		SSLCerts: cfg.SSLCerts, PHPPools: cfg.PHPPools, PHPPoolIni: cfg.PHPPoolIni,
 		Forwarders: cfg.Forwarders, Autoresponders: cfg.Autoresponders, MailboxShares: cfg.MailboxShares,
 		TrustedSenders: cfg.TrustedSenders,
-		DNSSECKeys: cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
+		DNSSECKeys:     cfg.DNSSECKeys, DNSZones: cfg.DNSZones, DNSRecords: cfg.DNSRecords, SSHKeys: cfg.SSHKeys, CronJobs: cfg.CronJobs, FtpAccounts: cfg.FtpAccounts,
 		LimitOverrides: cfg.LimitOverrides, EgressPolicies: cfg.EgressPolicies, EgressRequests: cfg.EgressRequests,
 		WebDomainAliases: cfg.WebDomainAliases,
 		WebmailBranding:  cfg.WebmailBranding,
@@ -2880,7 +2905,7 @@ func (h *meBackupHandler) list(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthenticated"})
 		return
 	}
-	limit, offset := paginationFromQuery(c, 25, 100)
+	limit, offset := backupsPagination(c, 25, 100)
 	rows, total, err := h.cfg.Jobs.ListForUser(c.Request.Context(), claims.UserID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "db_list"})
