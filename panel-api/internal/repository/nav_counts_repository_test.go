@@ -47,19 +47,22 @@ func TestNavCounts_Global_BackupsCountsRunsPlusManual(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-// The tenant (/me) badge is unchanged: the caller's own retained account_backup
-// jobs, which equals their flat /me/backups list.
-func TestNavCounts_ForUser_BackupsCountsAccountJobs(t *testing.T) {
+// GH #2505: the tenant (/me) badge counts every backup job the user owns —
+// all kinds and statuses — exactly the rows GET /me/backups lists. The old
+// kind + status filter counted only retained account_backup jobs, so the
+// badge disagreed with the list total.
+func TestNavCounts_ForUser_BackupsCountsAllUserJobs(t *testing.T) {
 	db, mock, raw := newMockBackupDB(t)
 	defer raw.Close()
 	repo := NewNavCountsRepository(db)
 
 	mockNavCommonSections(mock)
-	mock.ExpectQuery("FROM `backup_jobs` WHERE user_id = .* AND kind = .* AND status IN").
+	mock.ExpectQuery("FROM `backup_jobs` WHERE user_id = \\?$").
+		WithArgs("01J5USER0000000000000000001").
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).AddRow(3))
 
 	out, err := repo.ForUser(context.Background(), "01J5USER0000000000000000001")
 	require.NoError(t, err)
-	require.EqualValues(t, 3, out.Backups, "tenant badge = per-user account_backup jobs")
+	require.EqualValues(t, 3, out.Backups, "tenant badge = all of the user's backup jobs, the /me/backups rows")
 	require.NoError(t, mock.ExpectationsWereMet())
 }

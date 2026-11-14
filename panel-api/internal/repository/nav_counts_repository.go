@@ -12,7 +12,8 @@ import (
 // Web/Mail/DNS follow the GH #1449 service flags: Web = web-enabled domains,
 // Mail = jabali-mail-enabled domains, DNS = domains whose zone the panel hosts
 // (a domain has a managed zone iff dns is enabled, so this doubles as the DNS
-// Zones count without a join). Backups counts retained account backups only.
+// Zones count without a join). Backups is the admin's backup runs + manual
+// jobs, or the tenant's own backup jobs — the rows GET /me/backups lists.
 type NavCounts struct {
 	WebDomains  int64 `json:"web_domains"`
 	MailDomains int64 `json:"mail_domains"`
@@ -84,10 +85,11 @@ func (r *navCountsRepo) compute(ctx context.Context, userID string, global bool)
 	}
 
 	// Backups badge: the tenant and admin surfaces denominate backups
-	// differently, so the count must too (GH #1784).
-	//   - Tenant (/me): the Backups list is a flat per-account list, so the
-	//     badge is the caller's retained account_backup jobs — matches
-	//     CountRetainedForUser and the /me/backups list.
+	// differently, so the count does too (GH #1784, GH #2505).
+	//   - Tenant (/me): the Backups list is a flat per-account list of every
+	//     backup job the user owns (all kinds and statuses), so the badge
+	//     counts exactly those rows — countJobsForUser shares ListForUser's
+	//     where-clause.
 	//   - Admin (global): the Admin Backups page is denominated in RUNS
 	//     (DISTINCT run_id) plus manual jobs (run_id IS NULL) — the same
 	//     total + manual_total that GET /admin/backup-runs returns. A run fans
@@ -106,16 +108,11 @@ func (r *navCountsRepo) compute(ctx context.Context, userID string, global bool)
 		}
 		out.Backups = runs + manual
 	} else {
-		bq := r.db.WithContext(ctx).Model(&models.BackupJob{}).
-			Where("user_id = ? AND kind = ? AND status IN ?", userID,
-				models.BackupJobKindAccountBackup,
-				[]string{
-					models.BackupJobStatusQueued, models.BackupJobStatusRunning,
-					models.BackupJobStatusSucceeded, models.BackupJobStatusPartial,
-				})
-		if err := bq.Count(&out.Backups).Error; err != nil {
-			return out, translate(err)
+		n, err := countJobsForUser(ctx, r.db, userID)
+		if err != nil {
+			return out, err
 		}
+		out.Backups = n
 	}
 
 	return out, nil
