@@ -250,10 +250,12 @@ to a host that shares no restic destination with the source:
 
 - **Account** — upload an account backup and restore selected legs. Tenants can
   do this for their own account (self-service restore-from-upload).
-- **Full server** — `jabali system restore --from-tar <file>` rebuilds the system
-  leg and every account from a Full Server container, **creating missing OS
-  users** and even restoring an account into a user that doesn't yet exist
-  (create-from-manifest).
+- **Full server** — `jabali system restore --from-tar <file> --force` rebuilds
+  the system leg and every account from a Full Server container, **creating
+  missing OS users** and even restoring an account into a user that doesn't yet
+  exist (create-from-manifest). Run it as root. It copies the file into
+  `/var/lib/jabali-backups/restore-staging`, which only root can open, and
+  removes the copy when it ends.
 
 ### Uploaded backups stay on the server
 
