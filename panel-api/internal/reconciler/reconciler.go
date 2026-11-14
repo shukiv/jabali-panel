@@ -111,6 +111,13 @@ type Reconciler struct {
 	// ftpConfigChecking singleflights the per-tick JAB-260 TLS-drift check so a
 	// hung agent socket cannot stack goroutines across ticks.
 	ftpConfigChecking atomic.Bool
+	// Files of deleted isolated FTP accounts (ftp_orphan_files.go): the
+	// quota mount source (nil = pass off), the singleflight, and the uids
+	// earlier rounds left, each with its file count and wait.
+	ftpOrphanQuotaMount func() (string, error)
+	ftpOrphanRunning    atomic.Bool
+	ftpOrphanMu         sync.Mutex
+	ftpOrphanSeen       map[uint32]ftpOrphanMemo
 	// snippetDirsPruned is set once the agent has pruned the snippet dirs of
 	// names with no domain row (pruneSnippetDirs), so it runs once per process.
 	snippetDirsPruned atomic.Bool

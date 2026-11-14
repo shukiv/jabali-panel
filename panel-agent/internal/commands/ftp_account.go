@@ -724,6 +724,7 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	// remember whether to tear it down after userdel. Legacy same-uid aliases
 	// share the tenant uid and have no jail.
 	delUID, _ := strconv.Atoi(u.Uid)
+	delGID, _ := strconv.Atoi(u.Gid)
 	isolated := delUID >= ftpSubaccountUIDMin
 	_ = setFtpGroupMembership(ctx, p.Username, false)
 	// GH #1146: stop + disable the WebDAV worker and remove its drop-in/group
@@ -743,15 +744,23 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 	if out, err := execCommandContext(ctx, "userdel", "-f", p.Username).CombinedOutput(); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("userdel %q: %v: %s", p.Username, err, strings.TrimSpace(string(out)))}
 	}
+	resp := map[string]any{"username": p.Username, "deleted": true}
 	// Isolated account: unmount + remove its jail AFTER the user is gone. The
 	// teardown never touches the bind-mount source (tenant data); it is
 	// idempotent and safe on a legacy path that has no jail.
 	if isolated {
+		// Its files keep the uid userdel just freed: hand them to the tenant
+		// through the jail's mount first (ftp_account_reown.go). Never fails
+		// the delete.
+		resp["reown"] = reownDeletedAccountFiles(ctx, tenant, ftpJailPathFor(tenant, p.Username), delUID, delGID)
+		if r := removeMaldetPubDir(p.Username, delUID); r != "" {
+			resp["maldet_pub"] = r
+		}
 		if terr := teardownIsolatedJail(ctx, ftpJailPathFor(tenant, p.Username)); terr != nil {
 			return nil, terr
 		}
 	}
-	return map[string]any{"username": p.Username, "deleted": true}, nil
+	return resp, nil
 }
 
 // ---- ftpaccount.list ----

@@ -381,6 +381,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		rec.WithSSO(ssoService)
 		rec.WithSSHKeys(sshKeyRepo)
 		rec.WithFtpAccounts(ftpAccountRepo)
+		rec.WithFtpOrphanSweep(func() (string, error) { return limits.QuotaMountFor("/home") })
 		rec.WithCronJobs(cronJobsRepo)
 		rec.WithDockerApps(dockerAppRepo)
 		rec.WithPythonApps(pythonAppRepo)

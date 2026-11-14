@@ -105,6 +105,9 @@ see it:
   is chrooted to the account's home (sshd needs a root-owned chroot) and
   starts in the alias's directory, so it can reach the whole home. Use a
   separate-uid account for a login that must stay in its folder.
+  Deleting a separate-uid account gives the files it uploaded to the
+  account's owner, wherever they are in the owner's home. A file that also
+  has a hard link outside the owner's home is left as it is.
 - **vsftpd module**: plain FTP(S) is an **opt-in, PAM-gated** module that stays
   masked while off. SFTP subaccounts work through the existing `sshd`.
 - **Operator-tunable server limits**: max sessions, per-IP limit, transfer rate.
