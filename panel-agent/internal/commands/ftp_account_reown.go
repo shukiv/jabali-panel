@@ -166,8 +166,10 @@ func removeMaldetPubDir(username string, uid int) string {
 }
 
 // maldetPubCounts counts, for each uid in want, the entries it owns under
-// maldetect's pub directory. Read only; the walk never follows a link.
-func maldetPubCounts(want map[uint32]bool) map[uint32]uint64 {
+// maldetect's pub directory on device dev (the quota mount's: entries on
+// another filesystem are not in its repquota). Read only; the walk never
+// follows a link.
+func maldetPubCounts(want map[uint32]bool, dev uint64) map[uint32]uint64 {
 	counts := map[uint32]uint64{}
 	_ = filepath.WalkDir(ftpMaldetPubDir, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -177,7 +179,7 @@ func maldetPubCounts(want map[uint32]bool) map[uint32]uint64 {
 		if ierr != nil {
 			return nil
 		}
-		if st, ok := info.Sys().(*syscall.Stat_t); ok && want[st.Uid] {
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && uint64(st.Dev) == dev && want[st.Uid] {
 			counts[st.Uid]++
 		}
 		return nil
@@ -220,8 +222,13 @@ func ftpOrphanUIDsHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 	// A deleted account's maldetect scratch folder (left by accounts deleted
-	// before the delete removed it) is no tenant's: those files don't count.
-	inPub := ftpMaldetPubCounts(dead)
+	// before the delete removed it) is no tenant's: those files don't count,
+	// when they are on this mount. If the mount can't be read, all count.
+	inPub := map[uint32]uint64{}
+	var mst syscall.Stat_t
+	if len(dead) > 0 && syscall.Stat(p.Mount, &mst) == nil {
+		inPub = ftpMaldetPubCounts(dead, uint64(mst.Dev))
+	}
 	orphans := make([]ftpOrphanUID, 0, len(dead))
 	for _, o := range found {
 		if !dead[o.UID] {

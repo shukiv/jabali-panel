@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
 
@@ -116,7 +117,7 @@ func TestFtpOrphanUIDs_LeavesOutMaldetScratch(t *testing.T) {
 	runCmd = func(context.Context, string, ...string) ([]byte, []byte, error) {
 		return []byte("#1000000005,ok,ok,16,0,0,,5,0,0,\n#1000000006,ok,ok,40,0,0,,7,0,0,\n"), nil, nil
 	}
-	ftpMaldetPubCounts = func(want map[uint32]bool) map[uint32]uint64 {
+	ftpMaldetPubCounts = func(want map[uint32]bool, _ uint64) map[uint32]uint64 {
 		if !want[1000000005] || !want[1000000006] {
 			t.Errorf("counted for %v", want)
 		}
@@ -150,12 +151,21 @@ func TestMaldetPubCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	me := uint32(os.Getuid())
+	fi, err := os.Stat(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dev := uint64(fi.Sys().(*syscall.Stat_t).Dev)
 	// pub itself + shop_scan, quar, tmp, event_log; the test user owns all.
-	if got := maldetPubCounts(map[uint32]bool{me: true})[me]; got != 5 {
+	if got := maldetPubCounts(map[uint32]bool{me: true}, dev)[me]; got != 5 {
 		t.Errorf("count = %d, want 5", got)
 	}
-	if got := maldetPubCounts(map[uint32]bool{me + 1: true}); len(got) != 0 {
+	if got := maldetPubCounts(map[uint32]bool{me + 1: true}, dev); len(got) != 0 {
 		t.Errorf("counted another uid: %v", got)
+	}
+	// On another filesystem than the quota mount: not in its repquota.
+	if got := maldetPubCounts(map[uint32]bool{me: true}, dev+1); len(got) != 0 {
+		t.Errorf("counted entries on another device: %v", got)
 	}
 }
 
