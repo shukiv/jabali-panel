@@ -74,7 +74,7 @@ The address must be `https`: the editor opens in a frame inside the https webmai
 
 The editor fetches documents from webmail at the address the browser uses (`mail.<domain>`), so that name must resolve and carry a valid certificate.
 
-Installing the catalog's ONLYOFFICE app does not turn WOPI on by itself — webmail only opens documents in an editor once this URL is set.
+The catalog's ONLYOFFICE app keeps WOPI off, so it can't serve as webmail's editor; use EuroOffice Docs.
 
 The reconciler writes the URL to webmail's environment (`webmail.editor.apply`) and restarts webmail only when it changed.
 

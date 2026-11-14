@@ -37,7 +37,7 @@ Newline-delimited JSON over the Unix socket, one request per connection. The env
 - `ssl.panel.mail_served` (checks that IMAPS and SMTPS serve the new mail certificate before a [mail hostname](../admin/mail-hostname.md) change is applied), `ssl.panel.lineage_delete` (removes the certbot lineage of a replaced custom mail hostname)
 
 **Webmail**
-- `webmail.vhost_apply`, `webmail.vhost_remove`, `webmail.branding.apply`, `webmail.editor.apply` (the WOPI document editor URL, GH #2501)
+- `webmail.vhost_apply`, `webmail.vhost_remove`, `webmail.branding.apply`, `webmail.editor.apply` (the WOPI document editor URL)
 - `webmail.jmap_url.apply`, `nginx.webmail_redirect.apply` (move webmail to the applied mail hostname)
 
 **DNS**
