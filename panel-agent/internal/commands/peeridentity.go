@@ -33,6 +33,14 @@ func PeerAdminCapable(ctx context.Context) bool {
 	return ok && id.adminCapable
 }
 
+// PeerIsRoot reports whether the connecting peer runs as root. It fails closed
+// like PeerAdminCapable: no stamped identity, or a UID that could not be
+// resolved, is never root.
+func PeerIsRoot(ctx context.Context) bool {
+	id, ok := ctx.Value(peerIdentityKey{}).(peerIdentity)
+	return ok && id.haveUID && id.uid == 0
+}
+
 // withPeerIdentityFrom copies the connecting peer's identity from src onto dst.
 // The async file jobs (files.extract.start / files.copy.start) detach their
 // work onto a fresh context.Background() so a long extraction is not cancelled

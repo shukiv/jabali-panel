@@ -6154,6 +6154,26 @@ ensure_go_toolchain_current() {
 
 # ---------- step 3: service user + dirs -------------------------------------
 
+# _svc_subdir MODE OWNER GROUP PATH — a folder inside one the service user owns.
+# `install -d` follows a symlink at the last component, so it would chown and
+# chmod wherever a link put there points. mkdir never follows one, and chown -h
+# changes only a link itself. A folder that exists keeps its mode; a link is
+# left alone and reported.
+_svc_subdir() {
+  local mode="$1" owner="$2" group="$3" path="$4"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    mkdir -p "$(dirname "$path")"
+    # umask 0022 clears no bit of these modes, so mkdir(2) makes the folder
+    # with them at once and mkdir(1) has no chmod to do afterwards.
+    (umask 0022 && mkdir -m "$mode" "$path") 2>/dev/null || true
+  fi
+  if [[ -L "$path" || ! -d "$path" ]]; then
+    _warn "$path is not a folder (a symbolic link or a file); left as it is"
+    return 0
+  fi
+  chown -h "$owner:$group" "$path"
+}
+
 ensure_user_and_dirs() {
   if ! id "$SERVICE_USER" >/dev/null 2>&1; then
     _log "creating system user '$SERVICE_USER'"
@@ -6211,17 +6231,23 @@ ensure_user_and_dirs() {
   install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$(dirname "$ENV_FILE")"
   # Working folder root (server_settings.working_folder default).
   # Migration staging + backup repo subdirs live underneath; admin can
-  # retarget via Settings → Storage after install.
-  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali
-  install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/migrations
-  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/backups
-  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
+  # retarget via Settings → Storage after install. The folder itself is
+  # root's: the agent keeps its own state directly in it, and only root may
+  # rename what sits there. The panel writes only inside its own subfolders
+  # (migrations/, restore/), which stay the service user's.
+  install -d -m 0755 -o root -g root /var/lib/jabali
+  _svc_subdir 0750 "$SERVICE_USER" "$SERVICE_USER" /var/lib/jabali/migrations
+  # Backups are root's: the agent stages restores here and applies them as
+  # root. Group jabali lets the panel reach downloads/ and logs/; the agent
+  # keeps the folder at 0750 and restore-staging at root-only 0700.
+  _svc_subdir 0750 root "$SERVICE_USER" /var/lib/jabali/backups
+  _svc_subdir 0700 "$SERVICE_USER" "$SERVICE_USER" /var/lib/jabali/restore
   # M28 — operator-uploaded panel logos. Owned by the service user so
   # the POST /admin/settings/branding/logo handler can mkdir + atomic
   # rename on upload. 0755 so nginx (proxied GET falls back to panel-
   # api anyway, but keep it world-readable for future direct serving).
   install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel
-  install -d -m 0755 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali-panel/branding
+  _svc_subdir 0755 "$SERVICE_USER" "$SERVICE_USER" /var/lib/jabali-panel/branding
   # GH #1145 — parent of every per-subaccount SFTP/FTPS isolation jail. Must be
   # root:root and NOT group/other-writable so it satisfies sshd's root-owned-
   # chroot-chain rule and vsftpd's secure-chroot rule; the agent creates the
@@ -7989,7 +8015,7 @@ EOF
   # ReadWritePaths entry, and systemd refuses to start the unit when a
   # ReadWritePaths entry doesn't exist, so create it BEFORE the reload.
   # Owned by SERVICE_USER 0700: only the panel writes, the agent is root.
-  install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" /var/lib/jabali/restore
+  _svc_subdir 0700 "$SERVICE_USER" "$SERVICE_USER" /var/lib/jabali/restore
 
   install_uploads_reaper
 
@@ -10422,7 +10448,7 @@ install_migration_secrets_reaper() {
 # ---------- M30 backup foundation (ADR-0075) -------------------------------
 #
 # install_backup_foundation lays the restic-backed backup foundation:
-#   1. /var/lib/jabali-backups + /var/lib/jabali-backups/repo/  (root:jabali 0750)
+#   1. /var/lib/jabali-backups (root:jabali 0750) + repo/ (root:root 0700)
 #   2. /etc/jabali-panel/restic-repo.password                   (root:jabali 0640)
 #   3. `restic init` against the repo (idempotent — restic refuses to
 #      re-init an existing repo; that exit code is swallowed).
@@ -10453,8 +10479,9 @@ install_backup_foundation() {
   # 0600 packs that the jabali user could not read after a root-owned
   # backup left files behind). systemd hardening on the retention unit
   # (PrivateTmp, ProtectSystem=strict, ReadWritePaths) limits blast
-  # radius without needing a separate user.
-  install -d -m 0700 -o root -g root /var/lib/jabali-backups
+  # radius without needing a separate user. The folder itself is root's,
+  # group jabali 0750 (ensure_user_and_dirs), so the panel reaches downloads/.
+  [[ -e /var/lib/jabali-backups ]] || install -d -m 0750 -o root -g "$SERVICE_USER" /var/lib/jabali-backups
   install -d -m 0700 -o root -g root /var/lib/jabali-backups/repo
   # Cache dir for the retention timer. ProtectHome=read-only on the
   # unit blocks /root/.cache, so RESTIC_CACHE_DIR points here instead.
@@ -10505,7 +10532,8 @@ install_backup_foundation() {
   # Re-enforce ownership on existing repos that earlier install.sh
   # revisions chowned to jabali — flip back to root:root so retention
   # (which runs as root) and the agent (also root) share one identity.
-  chown -R root:root /var/lib/jabali-backups
+  # Only the repo and its cache: downloads/ and logs/ keep group jabali.
+  chown -R root:root /var/lib/jabali-backups/repo /var/lib/jabali-backups/.cache
 
   # Timer + service drop-ins. Same install pattern as install_sso_reaper_timer.
   local svc_src="${REPO_DIR}/install/systemd/jabali-backup-retention.service"

@@ -326,6 +326,10 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		return nil, bkInvalidArg("target_username must match ^[a-z][a-z0-9_-]{0,31}$")
 	}
 
+	if err := ensureRestoreStaging(); err != nil {
+		return nil, bkInternal("secure restore staging", err)
+	}
+
 	// Single global flock — held for the duration of the restore. Use
 	// LOCK_NB so a busy host returns an error rather than blocking
 	// the agent thread.
@@ -385,7 +389,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 			})
 			continue
 		}
-		target := filepath.Join("/var/lib/jabali-backups/restore-staging",
+		target := filepath.Join(restoreStagingRoot(),
 			req.JobID, st.Name)
 		if err := os.MkdirAll(target, 0o750); err != nil {
 			out.Stages = append(out.Stages, backupRestoreStage{
@@ -411,7 +415,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		apply = *req.ApplyStaged
 	}
 	if apply {
-		stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
+		stagingRoot := filepath.Join(restoreStagingRoot(), req.JobID)
 		applied, warnings, pgDBs := applyAccountRestoreReporting(ctx, stagingRoot, req.TargetUsername, manifest.User, manifest.Stages, out.Stages, restoreEnforcement{})
 		out.RestoredPostgresDBs = pgDBs
 		out.Applied = applied
@@ -452,7 +456,7 @@ func backupRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 	} else {
 		out.Warnings = append(out.Warnings,
 			"apply_staged=false — files materialized to "+
-				filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)+
+				filepath.Join(restoreStagingRoot(), req.JobID)+
 				"; nothing applied to live system")
 		out.StagingCleanup = "kept (recon mode)"
 	}
@@ -1300,7 +1304,7 @@ func backupRestoreStatusHandler(ctx context.Context, raw json.RawMessage) (any, 
 	if !ulidRE.MatchString(req.JobID) {
 		return nil, bkInvalidArg("job_id must be a 26-char ULID")
 	}
-	staging := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
+	staging := filepath.Join(restoreStagingRoot(), req.JobID)
 	entries, err := os.ReadDir(staging)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

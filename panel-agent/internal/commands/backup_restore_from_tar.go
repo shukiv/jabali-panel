@@ -205,7 +205,10 @@ func restoreAccountFromTar(ctx context.Context, jobID, tarPath, targetUsername s
 		}
 	}
 
-	staging := filepath.Join("/var/lib/jabali-backups/restore-staging", jobID+"-upload")
+	if err := ensureRestoreStaging(); err != nil {
+		return nil, bkInternal("secure restore staging", err)
+	}
+	staging := filepath.Join(restoreStagingRoot(), jobID+"-upload")
 	_ = os.RemoveAll(staging)
 	if err := os.MkdirAll(staging, 0o750); err != nil {
 		return nil, bkInternal("mkdir staging", err)

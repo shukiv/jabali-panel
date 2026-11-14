@@ -438,7 +438,10 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 		ApplyWarnings []string             `json:"apply_warnings,omitempty"`
 	}{JobID: req.JobID}
 
-	stagingRoot := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID)
+	if err := ensureRestoreStaging(); err != nil {
+		return nil, bkInternal("secure restore staging", err)
+	}
+	stagingRoot := filepath.Join(restoreStagingRoot(), req.JobID)
 
 	for _, st := range manifest.Stages {
 		if st.SnapshotID == "" {
@@ -447,7 +450,7 @@ func systemRestoreHandler(ctx context.Context, raw json.RawMessage) (any, error)
 			})
 			continue
 		}
-		target := filepath.Join("/var/lib/jabali-backups/restore-staging", req.JobID, st.Name)
+		target := filepath.Join(stagingRoot, st.Name)
 		if err := os.MkdirAll(target, 0o750); err != nil {
 			out.Stages = append(out.Stages, backupRestoreStage{
 				Name: st.Name, Status: backup.StageStatusFailed, Error: err.Error(),

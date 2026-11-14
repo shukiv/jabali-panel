@@ -212,6 +212,11 @@ func main() {
 	// web server's group off .moodledata. Best-effort, a read once healed.
 	commands.LockMoodleDataParents(ctx, log)
 
+	// /var/lib/jabali-backups and its restore-staging are root's; earlier
+	// updates gave the folder to the panel's user. Best-effort; every restore
+	// checks again before it stages.
+	commands.SecureBackupsRoot(log)
+
 	// GH #2056: the website mail relay is PartOf this unit, so an agent stop
 	// took it down; start it again when the smarthost is selected.
 	commands.StartMailRelayIfSelected(ctx, log)

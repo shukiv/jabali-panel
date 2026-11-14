@@ -175,8 +175,8 @@ jabali backup account-restore --user <name> --destination daily-offsite --snapsh
 
 # System restore from a restic repository
 jabali system restore --remote-url sftp:backups@backup.example.com:/srv/restic --snapshot latest --force
-# …or from a Full Server container archive (no shared restic destination needed):
-jabali system restore --from-tar /path/to/full-server-backup.tar
+# …or from a Full Server container archive (no shared restic destination needed; run as root):
+jabali system restore --from-tar /path/to/full-server-backup.tar --force
 ```
 
 See [`platform/cli-reference.md`](./platform/cli-reference.md) for the complete,
