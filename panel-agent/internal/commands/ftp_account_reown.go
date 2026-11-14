@@ -17,17 +17,24 @@ package commands
 // Only the owner always changes. The group changes when it is the deleted
 // account's own group or a group that no longer exists; any other group (a
 // docroot's www-data) stays.
+//
+// maldetect keeps a scratch folder per passwd user (pub/<user>), isolated
+// accounts included. The delete removes the account's; orphan_uids doesn't
+// count the ones accounts deleted earlier left, since they are no tenant's.
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -45,6 +52,16 @@ var (
 	// Seams for tests.
 	ftpReownTree   = fsperm.ReownTree
 	ftpJailMounted = isPathMounted
+
+	// ftpMaldetPubDir is maldetect's per-user scratch root (LMD userbasedir).
+	// With scan_user_access on (install.sh), its cron makes pub/<user> for
+	// every passwd user from uid 1000, isolated accounts included, owned by
+	// that user. It is not the tenant's and outlives the account.
+	ftpMaldetPubDir = "/usr/local/maldetect/pub"
+	// maldetPubRootUID is the owner pub must have (root; tests change it).
+	maldetPubRootUID uint32 = 0
+	// ftpMaldetPubCounts is maldetPubCounts; tests replace it.
+	ftpMaldetPubCounts = maldetPubCounts
 )
 
 // ftpReownKeepMax caps keep_uids: one uid per isolated account on the host.
@@ -122,6 +139,52 @@ func reownDeletedAccountFiles(ctx context.Context, tenant *ftpTenant, jailPath s
 	return sum
 }
 
+// removeMaldetPubDir removes the deleted account's maldetect scratch folder
+// (pub/<username>), which nothing uses once the account is gone; maldetect
+// makes a new one for a new account of the same name. Only a real directory
+// owned by the account's uid, in a root-owned pub directory, is removed.
+// Nothing but root and the deleted uid can write there, so nothing can be
+// swapped in while it is removed. Returns what happened, for the response.
+func removeMaldetPubDir(username string, uid int) string {
+	var pst syscall.Stat_t
+	if err := syscall.Lstat(ftpMaldetPubDir, &pst); err != nil || pst.Mode&syscall.S_IFMT != syscall.S_IFDIR || pst.Uid != maldetPubRootUID {
+		return ""
+	}
+	p := filepath.Join(ftpMaldetPubDir, username)
+	var st syscall.Stat_t
+	if err := syscall.Lstat(p, &st); err != nil {
+		return ""
+	}
+	if st.Mode&syscall.S_IFMT != syscall.S_IFDIR || int64(st.Uid) != int64(uid) {
+		return "kept: not the account's own directory"
+	}
+	if err := os.RemoveAll(p); err != nil {
+		slog.Warn("ftpaccount.delete: remove maldetect scratch folder", "path", p, "err", err)
+		return "remove failed: " + err.Error()
+	}
+	return "removed"
+}
+
+// maldetPubCounts counts, for each uid in want, the entries it owns under
+// maldetect's pub directory. Read only; the walk never follows a link.
+func maldetPubCounts(want map[uint32]bool) map[uint32]uint64 {
+	counts := map[uint32]uint64{}
+	_ = filepath.WalkDir(ftpMaldetPubDir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && want[st.Uid] {
+			counts[st.Uid]++
+		}
+		return nil
+	})
+	return counts
+}
+
 // ---- ftpaccount.orphan_uids ----
 
 type ftpOrphanUIDsParams struct {
@@ -150,11 +213,26 @@ func ftpOrphanUIDsHandler(ctx context.Context, params json.RawMessage) (any, err
 		}
 	}
 	found, partial := parseRepquotaOrphans(string(stdout))
-	orphans := make([]ftpOrphanUID, 0, len(found))
+	dead := map[uint32]bool{}
 	for _, o := range found {
 		if !ftpUIDHasPasswd(o.UID) {
-			orphans = append(orphans, o)
+			dead[o.UID] = true
 		}
+	}
+	// A deleted account's maldetect scratch folder (left by accounts deleted
+	// before the delete removed it) is no tenant's: those files don't count.
+	inPub := ftpMaldetPubCounts(dead)
+	orphans := make([]ftpOrphanUID, 0, len(dead))
+	for _, o := range found {
+		if !dead[o.UID] {
+			continue
+		}
+		n := inPub[o.UID]
+		if n >= o.Files {
+			continue
+		}
+		o.Files -= n
+		orphans = append(orphans, o)
 	}
 	return map[string]any{"mount": p.Mount, "orphans": orphans, "partial": partial}, nil
 }

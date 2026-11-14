@@ -30,8 +30,10 @@ const (
 	ftpOrphanQueryTimeout  = time.Minute
 	ftpOrphanTenantTimeout = 21 * time.Minute // the agent stops its walk at 20
 	ftpOrphanSweepTimeout  = 6 * time.Hour
-	ftpOrphanRetryAfter    = 24 * time.Hour
-	ftpOrphanUserPage      = 500
+	// Leftovers outside every home don't change on their own, so a set a
+	// complete round didn't find is only looked for again weekly.
+	ftpOrphanRetryAfter = 7 * 24 * time.Hour
+	ftpOrphanUserPage   = 500
 )
 
 // WithFtpOrphanSweep turns the pass on. quotaMount returns the quota mount

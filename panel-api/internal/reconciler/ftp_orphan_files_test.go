@@ -108,7 +108,7 @@ func TestFtpOrphanSweep_WalksTenantsWithAccountsFirstUntilAllAreFound(t *testing
 	}
 }
 
-func TestFtpOrphanSweep_LeftoversNotFoundWaitADay(t *testing.T) {
+func TestFtpOrphanSweep_LeftoversNotFoundWaitAWeek(t *testing.T) {
 	left := []ftpOrphanUID{{UID: 1000000005, Files: 3}}
 	a := &orphanAgent{orphans: [][]ftpOrphanUID{left}, reown: map[string]ftpReownResult{}}
 	r := orphanReconciler(a, "alice", "shop")
@@ -124,7 +124,7 @@ func TestFtpOrphanSweep_LeftoversNotFoundWaitADay(t *testing.T) {
 	r.ftpOrphanAt = time.Now().Add(-ftpOrphanRetryAfter - time.Minute)
 	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 	if len(a.walked) != 4 {
-		t.Errorf("not looked for again after a day: %v", a.walked)
+		t.Errorf("not looked for again after the wait: %v", a.walked)
 	}
 }
 

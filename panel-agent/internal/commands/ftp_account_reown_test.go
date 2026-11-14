@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -105,6 +106,100 @@ func TestFtpOrphanUIDs_ReportsUIDsWithoutAnAccount(t *testing.T) {
 	orphans := res.(map[string]any)["orphans"].([]ftpOrphanUID)
 	if len(orphans) != 1 || orphans[0].UID != 1000000005 {
 		t.Errorf("orphans = %+v, want only 1000000005", orphans)
+	}
+}
+
+// A deleted account's maldetect scratch folder is no tenant's: its files
+// don't make the uid an orphan to look for in homes.
+func TestFtpOrphanUIDs_LeavesOutMaldetScratch(t *testing.T) {
+	origR, origC := runCmd, ftpMaldetPubCounts
+	runCmd = func(context.Context, string, ...string) ([]byte, []byte, error) {
+		return []byte("#1000000005,ok,ok,16,0,0,,5,0,0,\n#1000000006,ok,ok,40,0,0,,7,0,0,\n"), nil, nil
+	}
+	ftpMaldetPubCounts = func(want map[uint32]bool) map[uint32]uint64 {
+		if !want[1000000005] || !want[1000000006] {
+			t.Errorf("counted for %v", want)
+		}
+		return map[uint32]uint64{1000000005: 5, 1000000006: 2}
+	}
+	t.Cleanup(func() { runCmd, ftpMaldetPubCounts = origR, origC })
+	stubLookups(t, nil, nil)
+
+	params, _ := json.Marshal(ftpOrphanUIDsParams{Mount: "/"})
+	res, err := ftpOrphanUIDsHandler(context.Background(), params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orphans := res.(map[string]any)["orphans"].([]ftpOrphanUID)
+	if len(orphans) != 1 || orphans[0].UID != 1000000006 || orphans[0].Files != 5 {
+		t.Errorf("orphans = %+v, want only 1000000006 with 5 files", orphans)
+	}
+}
+
+func TestMaldetPubCounts(t *testing.T) {
+	pub := t.TempDir()
+	orig := ftpMaldetPubDir
+	ftpMaldetPubDir = pub
+	t.Cleanup(func() { ftpMaldetPubDir = orig })
+	for _, d := range []string{"shop_scan/quar", "shop_scan/tmp"} {
+		if err := os.MkdirAll(filepath.Join(pub, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(pub, "shop_scan", "event_log"), nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	me := uint32(os.Getuid())
+	// pub itself + shop_scan, quar, tmp, event_log; the test user owns all.
+	if got := maldetPubCounts(map[uint32]bool{me: true})[me]; got != 5 {
+		t.Errorf("count = %d, want 5", got)
+	}
+	if got := maldetPubCounts(map[uint32]bool{me + 1: true}); len(got) != 0 {
+		t.Errorf("counted another uid: %v", got)
+	}
+}
+
+func TestRemoveMaldetPubDir(t *testing.T) {
+	pub := t.TempDir()
+	origD, origU := ftpMaldetPubDir, maldetPubRootUID
+	ftpMaldetPubDir, maldetPubRootUID = pub, uint32(os.Getuid())
+	t.Cleanup(func() { ftpMaldetPubDir, maldetPubRootUID = origD, origU })
+	scan := filepath.Join(pub, "shop_scan")
+	if err := os.MkdirAll(filepath.Join(scan, "quar"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(pub, "shop_link")); err != nil {
+		t.Fatal(err)
+	}
+	me := os.Getuid()
+
+	if got := removeMaldetPubDir("shop_scan", me+1); got == "removed" {
+		t.Error("removed a folder another uid owns")
+	}
+	if got := removeMaldetPubDir("shop_link", me); got == "removed" {
+		t.Error("removed through a symlink")
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Errorf("the link's target is gone: %v", err)
+	}
+	if got := removeMaldetPubDir("shop_none", me); got != "" {
+		t.Errorf("absent folder: %q", got)
+	}
+	if got := removeMaldetPubDir("shop_scan", me); got != "removed" {
+		t.Errorf("own folder: %q", got)
+	}
+	if _, err := os.Lstat(scan); !os.IsNotExist(err) {
+		t.Errorf("folder still there: %v", err)
+	}
+
+	// pub not owned by root: nothing is touched.
+	if err := os.MkdirAll(scan, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	maldetPubRootUID = uint32(me + 1)
+	if got := removeMaldetPubDir("shop_scan", me); got != "" {
+		t.Errorf("pub not root-owned: %q", got)
 	}
 }
 

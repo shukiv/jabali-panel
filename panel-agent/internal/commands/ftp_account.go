@@ -753,6 +753,9 @@ func ftpAccountDeleteHandler(ctx context.Context, params json.RawMessage) (any, 
 		// through the jail's mount first (ftp_account_reown.go). Never fails
 		// the delete.
 		resp["reown"] = reownDeletedAccountFiles(ctx, tenant, ftpJailPathFor(tenant, p.Username), delUID, delGID)
+		if r := removeMaldetPubDir(p.Username, delUID); r != "" {
+			resp["maldet_pub"] = r
+		}
 		if terr := teardownIsolatedJail(ctx, ftpJailPathFor(tenant, p.Username)); terr != nil {
 			return nil, terr
 		}
