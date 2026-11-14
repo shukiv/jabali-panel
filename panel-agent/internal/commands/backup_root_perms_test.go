@@ -102,6 +102,7 @@ func mustVictimUntouched(t *testing.T, v string, calls []fchownCall) {
 }
 
 func TestEnsureRestoreStaging_GivesTheFolderBackToRoot(t *testing.T) {
+	skipAsRoot(t)
 	root, calls := withBackupsRoot(t)
 	victim := victimDir(t)
 
@@ -215,6 +216,7 @@ func TestEnsureRestoreStaging_RefusesAFolderOthersCanReplace(t *testing.T) {
 }
 
 func TestOpenDirRootLinksOnly(t *testing.T) {
+	skipAsRoot(t)
 	_, _ = withBackupsRoot(t)
 	dir := filepath.Join(backupsWalkBase, "d")
 	if err := os.Mkdir(dir, 0o755); err != nil {
@@ -480,4 +482,13 @@ func TestBackupsRoot_AsRoot_ForeignLinkAndForeignStage(t *testing.T) {
 		t.Fatalf("root's stage must stay: %v", err)
 	}
 	mustNotExist(t, foreign)
+}
+
+// skipAsRoot skips a test that plays other owners by not being root: as root,
+// every file it makes is root's. TestBackupsRoot_AsRoot covers those cases.
+func skipAsRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("plays other owners as a non-root user; see TestBackupsRoot_AsRoot")
+	}
 }
