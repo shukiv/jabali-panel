@@ -13372,7 +13372,9 @@ install_per_user_egress() {
   fi
 
   install -d -m 0755 /etc/nftables.d
-  install -d -m 0750 /etc/jabali
+  # 0755 like everywhere else: tenant PHP-FPM masters read the Snuffleupagus
+  # rules under it as the tenant.
+  install -d -m 0755 -o root -g root /etc/jabali
 
   # First-run gate: choose default mode. New install (no /etc/jabali/installed
   # marker yet at this point in the script) → ENFORCED. Existing host
@@ -18203,6 +18205,35 @@ ensure_snuffleupagus_loadable() {
   return 0
 }
 
+ensure_snuffleupagus_rules_readable() {
+  # Tenant PHP-FPM masters run as the tenant and load the Snuffleupagus rules
+  # from /etc/jabali/snuffleupagus/active.rules. A directory on that path the
+  # tenant can't go through, or a rules file it can't read, makes every tenant
+  # master fail to load PHP on its next reload. install.sh makes both
+  # directories root-owned 0755 and the agent writes the rules 0644; heal a
+  # host that drifted, then restart the running masters so they load again.
+  local changed=0 d f=/etc/jabali/snuffleupagus/active.rules
+  # Never through a link: what it points at isn't ours to change.
+  [[ -L /etc/jabali ]] && return 0
+  for d in /etc/jabali /etc/jabali/snuffleupagus; do
+    [[ -d "$d" && ! -L "$d" ]] || continue
+    if [[ "$(stat -c '%U:%G' "$d" 2>/dev/null)" != "root:root" ]]; then
+      chown root:root "$d" && changed=1
+    fi
+    if [[ "$(stat -c '%a' "$d" 2>/dev/null)" != "755" ]]; then
+      chmod 0755 "$d" && changed=1
+    fi
+  done
+  if [[ -f "$f" && ! -L "$f" && "$(stat -c '%a' "$f" 2>/dev/null)" != "644" ]]; then
+    chmod 0644 "$f" && changed=1
+  fi
+  if [[ "$changed" == "1" ]]; then
+    _log "provision: healed the Snuffleupagus rules path (/etc/jabali root:root 0755, rules 0644)"
+    systemctl try-restart 'jabali-fpm@*.service' >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
 ensure_jabali_panel_dir_traversable() {
   [[ -d /etc/jabali-panel ]] || return 0
   local cur
@@ -18399,6 +18430,7 @@ provision_new_software() {
   # anything else in the provision chain touches PHP.
   ensure_jabali_panel_dir_traversable
   ensure_snuffleupagus_loadable
+  ensure_snuffleupagus_rules_readable
   # Upgrade the installed PHP packages now and reload the FPM masters onto
   # the new binary; from then on unattended-upgrades and the apt hook keep
   # PHP and the other vendor packages current (CVE-2026-109618 /
