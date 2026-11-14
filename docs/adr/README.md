@@ -173,6 +173,7 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0178](0178-git-deploy.md) | Deploying a domain from a Git repository (GH #2277) | Accepted |
 | [0179](0179-stalwart-1-0-migration.md) | Moving hosts from Stalwart 0.16 to 1.0 (GH #2338) | Accepted |
 | [0180](0180-root-owned-panel-checkout.md) | The panel checkout is root-owned | Proposed |
+| [0181](0181-scanner-drop-folders.md) | Scanner drop folders for shared Files resources (GH #2503) | Proposed |
 <!-- 0133-0140: numbers reserved during planning, no ADR file was ever written (JAB-161). -->
 <!-- /AUTO-GENERATED -->
 

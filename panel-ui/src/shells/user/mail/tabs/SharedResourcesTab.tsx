@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { Button, Flex, Empty, Form, Input, Modal, Segmented, Select, Skeleton, Space, Tag, Typography } from "antd";
 import { feedback } from "../../../../lib/feedback"; // GH #970: themed toasts
 import { useQueries, useQuery } from "@tanstack/react-query";
-import { DeleteOutlined, PlusOutlined, TeamOutlined } from "@icons";
+import { DeleteOutlined, PlusOutlined, PrinterOutlined, TeamOutlined } from "@icons";
 
 import { apiClient } from "../../../../apiClient";
 import { useListQuery } from "../../../../hooks/useQueries";
@@ -24,6 +24,7 @@ import {
   type SharedResource,
   type SharedResourceKind,
 } from "../../../../hooks/useSharedResources";
+import { ScannerDrawer } from "./ScannerDrawer";
 
 type Row = SharedResource & { domain_name: string };
 
@@ -77,6 +78,7 @@ export const SharedResourcesTab = ({ domainId }: { domainId?: string } = {}) => 
 
   const [createOpen, setCreateOpen] = useState(false);
   const [grantsTarget, setGrantsTarget] = useState<Row | null>(null);
+  const [scannerTarget, setScannerTarget] = useState<Row | null>(null);
   const deleteMut = useDeleteSharedResource();
 
   if (loadingDomains && domains.length === 0) return <Skeleton active paragraph={{ rows: 4 }} />;
@@ -140,6 +142,14 @@ export const SharedResourcesTab = ({ domainId }: { domainId?: string } = {}) => 
               <RowActions
                 actions={[
                   { key: "grants", label: "Grants", icon: <TeamOutlined />, onClick: () => setGrantsTarget(row) },
+                  // GH #2503: a scanner uploads by FTP/SFTP into a Files folder.
+                  {
+                    key: "scanner",
+                    label: "Scanner",
+                    icon: <PrinterOutlined />,
+                    hidden: row.kind !== "files",
+                    onClick: () => setScannerTarget(row),
+                  },
                   {
                     key: "delete",
                     label: "Delete",
@@ -171,6 +181,7 @@ export const SharedResourcesTab = ({ domainId }: { domainId?: string } = {}) => 
       {grantsTarget && (
         <GrantsModal resource={grantsTarget} onClose={() => setGrantsTarget(null)} />
       )}
+      {scannerTarget && <ScannerDrawer resource={scannerTarget} onClose={() => setScannerTarget(null)} />}
     </>
   );
 };
@@ -287,9 +298,11 @@ function GrantsModal({ resource, onClose }: { resource: Row; onClose: () => void
               block
               style={{ display: "block", marginTop: 4 }}
               value={rights}
-              onChange={(v) => setRights(v as "read" | "readwrite" | "admin")}
+              onChange={(v) => setRights(v as GrantLevel)}
               options={[
                 { label: "Read", value: "read" },
+                // GH #2503: members take scans away, nothing else.
+                ...(resource.kind === "files" ? [{ label: "Read + delete", value: "readdelete" }] : []),
                 { label: "Read/Write", value: "readwrite" },
                 { label: "Admin", value: "admin" },
               ]}

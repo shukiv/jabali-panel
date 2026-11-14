@@ -500,3 +500,25 @@ func TestCreate_RefusesPendingOwnership(t *testing.T) {
 		t.Fatalf("no row may be written on a pending domain, got %d", len(repo.created))
 	}
 }
+
+// GH #2503: readdelete is a Files level; calendars and address books have no
+// matching ACL and would quietly read it as read.
+func TestValidRights(t *testing.T) {
+	for _, c := range []struct {
+		kind, rights string
+		want         bool
+	}{
+		{"files", "readdelete", true},
+		{"calendar", "readdelete", false},
+		{"addressbook", "readdelete", false},
+		{"calendar", "read", true},
+		{"files", "readwrite", true},
+		{"addressbook", "admin", true},
+		{"files", "write", false},
+		{"files", "", false},
+	} {
+		if got := ValidRights(c.kind, c.rights); got != c.want {
+			t.Errorf("ValidRights(%q, %q) = %v, want %v", c.kind, c.rights, got, c.want)
+		}
+	}
+}

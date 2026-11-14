@@ -13,6 +13,7 @@
 - [Shared Folders](./shared-folders.md) — IMAP shared folders for team mailboxes.
 - **Distribution lists** — each member gets a copy; a list can also deliver to outside addresses, a Gmail address for example. See [Outside addresses on a distribution list](../mail.md#outside-addresses-on-a-distribution-list).
 - **Groups** — shared workspaces (one shared inbox, calendar, contacts and files). See [Mail groups](../mail.md#mail-groups).
+- **Shared Resources** — a shared calendar, address book or Files folder, granted to mailboxes and groups. A Files folder can take scans from a network scanner by FTP or SFTP; see [Scanner uploads to a shared Files folder](../mail.md#scanner-uploads-to-a-shared-files-folder).
 - [Email Logs](./email-logs.md) — live tail of inbound and outbound mail for your domains.
 
 ## Webmail

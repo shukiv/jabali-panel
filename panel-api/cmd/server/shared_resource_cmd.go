@@ -11,6 +11,7 @@
 //	jabali shared-resource grant  --resource <id> --grantee-kind mailbox --grantee <id> --rights readwrite
 //	jabali shared-resource revoke --resource <id> --grantee <id>
 //	jabali shared-resource remove --resource <id>
+//	jabali shared-resource scanner status|enable|disable --resource <id>   (GH #2503, shared_resource_scanner_cmd.go)
 package main
 
 import (
@@ -32,7 +33,9 @@ func sharedResourceRepoFromDB() repository.SharedResourceRepository {
 	return repository.NewSharedResourceRepository(sharedDB)
 }
 
-var sharedResourceRightSet = map[string]bool{"read": true, "readwrite": true, "admin": true}
+// sharedResourceRightSet is every grant level; whether a resource's kind takes
+// one is sharedresourceops.ValidRights (readdelete is files only).
+var sharedResourceRightSet = map[string]bool{"read": true, "readwrite": true, "admin": true, "readdelete": true}
 
 func newSharedResourceCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -46,6 +49,7 @@ func newSharedResourceCmd() *cobra.Command {
 		newSharedResourceGrantCmd(),
 		newSharedResourceRevokeCmd(),
 		newSharedResourceRemoveCmd(),
+		newSharedResourceScannerCmd(),
 	)
 	return cmd
 }
@@ -165,7 +169,7 @@ func newSharedResourceGrantCmd() *cobra.Command {
 				return errors.New("--grantee-kind must be mailbox|group")
 			}
 			if !sharedResourceRightSet[rights] {
-				return errors.New("--rights must be read|readwrite|admin")
+				return errors.New("--rights must be read|readwrite|admin|readdelete")
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 			defer cancel()
@@ -180,6 +184,9 @@ func newSharedResourceGrantCmd() *cobra.Command {
 					return fmt.Errorf("shared resource not found: %s", resourceID)
 				}
 				return fmt.Errorf("load shared resource: %w", err)
+			}
+			if !sharedresourceops.ValidRights(sr.Kind, rights) {
+				return fmt.Errorf("--rights %s is for files resources only; this one is %s", rights, sr.Kind)
 			}
 			dom, err := domainRepoFromDB().FindByID(ctx, sr.DomainID)
 			if err != nil {
@@ -215,7 +222,7 @@ func newSharedResourceGrantCmd() *cobra.Command {
 	cmd.Flags().StringVar(&resourceID, "resource", "", "shared resource ID")
 	cmd.Flags().StringVar(&granteeKind, "grantee-kind", "mailbox", "mailbox|group")
 	cmd.Flags().StringVar(&granteeID, "grantee", "", "grantee mailbox/group ID")
-	cmd.Flags().StringVar(&rights, "rights", "read", "read|readwrite|admin")
+	cmd.Flags().StringVar(&rights, "rights", "read", "read|readwrite|admin, or readdelete (files only: read and delete)")
 	return cmd
 }
 

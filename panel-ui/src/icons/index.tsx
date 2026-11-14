@@ -85,6 +85,7 @@ import {
   Plug,
   Plus,
   Power,
+  Printer,
   RefreshCw,
   Redo2,
   RotateCcw,
@@ -227,6 +228,7 @@ export const LogoutOutlined = shim(LogOut);
 export const MenuOutlined = shim(Menu);
 export const MoreOutlined = shim(MoreHorizontal);
 export const PoweroffOutlined = shim(Power);
+export const PrinterOutlined = shim(Printer);
 export const SafetyCertificateOutlined = shim(ShieldCheck);
 export const SafetyOutlined = shim(ShieldCheck);
 export const ShieldCheckOutlined = shim(ShieldCheck);

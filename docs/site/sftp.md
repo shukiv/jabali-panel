@@ -101,6 +101,10 @@ see it:
   or **true separate-uid isolation** — a dedicated system user in its own jail
   with its own quota and ACLs. Separate-uid is the default where a
   filesystem quota exists; where quota is absent it falls back to off.
+  A same-uid alias is kept to its directory over FTPS only: its SFTP session
+  is chrooted to the account's home (sshd needs a root-owned chroot) and
+  starts in the alias's directory, so it can reach the whole home. Use a
+  separate-uid account for a login that must stay in its folder.
 - **vsftpd module**: plain FTP(S) is an **opt-in, PAM-gated** module that stays
   masked while off. SFTP subaccounts work through the existing `sshd`.
 - **Operator-tunable server limits**: max sessions, per-IP limit, transfer rate.
@@ -132,7 +136,7 @@ Or with `lftp`, FileZilla, Cyberduck — anything that speaks SFTP.
 
 ## What about FTP?
 
-Not shipped. FTP is plaintext; recommending it would undermine the panel's TLS-everywhere stance. Use SFTP.
+FTP is an opt-in module for FTP/SFTP subaccounts (see above): off until an administrator turns on the FTP server. When on, it serves FTPS (explicit TLS on port 21, with the panel hostname's certificate) and refuses logins and transfers without TLS, unless the administrator explicitly allows plaintext. SFTP needs none of it.
 
 ## What about root SSH?
 

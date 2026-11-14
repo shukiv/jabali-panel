@@ -23,6 +23,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/webmailsso"
@@ -149,6 +150,7 @@ func fullDeps() Deps {
 		NotificationRegistry:    &notifications.Registry{},
 		AuditConsumer:           &audit.Consumer{},
 		SnuffleupagusReconciler: &reconciler.SnuffleupagusReconciler{},
+		Scanners:                &scandrops.Deps{},
 	}
 }
 

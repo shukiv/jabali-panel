@@ -6903,9 +6903,33 @@ paths:
     put:
       tags: [Shared Resources]
       summary: Grants shared resources
+      description: "Replaces the grant set. rights is read, readwrite or admin; a Files resource also takes readdelete (read and delete, nothing else)."
       security: [ { KratosSession: [] } ]
       parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
       responses: { "200": { description: OK } }
+
+  /shared-resources/{rid}/scanner:
+    get:
+      tags: [Shared Resources]
+      summary: Get a Files resource's scanner
+      description: "GH #2503. Off ({enabled: false}), or the scanner's login, drop folder, space and its last pass."
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "422": { description: Not a Files resource } }
+    put:
+      tags: [Shared Resources]
+      summary: Turn a Files resource's scanner on
+      description: "GH #2503. Makes the drop folder /home/<owner>/domains/<domain>/scans/<name> and an FTP/SFTP login homed there (counted against the package's FTP/SFTP accounts). Body: {label, password, max_mb}. Finished files the scanner uploads are moved into the shared folder."
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "403": { description: The package includes no FTP/SFTP accounts }, "409": { description: "Already on, or the account limit is reached" }, "422": { description: Invalid input } }
+    delete:
+      tags: [Shared Resources]
+      summary: Turn a Files resource's scanner off
+      description: "GH #2503. Removes the scanner's login. Files left in the drop folder stay."
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: rid, required: true, schema: { type: string } } ]
+      responses: { "200": { description: OK }, "404": { description: The scanner is off } }
 
 
   # --- Skip Auto San (auto) ---

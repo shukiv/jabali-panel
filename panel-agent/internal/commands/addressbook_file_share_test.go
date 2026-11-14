@@ -39,6 +39,11 @@ func TestFileACLForLevel(t *testing.T) {
 	if r := fileACLForLevel("admin"); !r["mayDelete"] || !r["mayShare"] {
 		t.Errorf("admin = %v", r)
 	}
+	// GH #2503: read and delete, nothing that adds, renames or shares.
+	rd := fileACLForLevel("readdelete")
+	if !rd["mayRead"] || !rd["mayDelete"] || len(rd) != 2 {
+		t.Errorf("readdelete = %v, want exactly mayRead + mayDelete", rd)
+	}
 }
 
 func TestShareSetHandlers_Validation(t *testing.T) {
