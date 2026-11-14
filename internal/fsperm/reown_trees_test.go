@@ -150,7 +150,55 @@ func TestReownTrees_ATreeOnAnotherFilesystemIsSkipped(t *testing.T) {
 	}, os.Getuid(), nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if changedOnce(t, *inodes, x) {
-		t.Error("a file on another filesystem changed")
+	if changedOnce(t, *inodes, x) || changedOnce(t, *inodes, other) {
+		t.Error("an entry on another filesystem changed")
+	}
+}
+
+// A root Enter refuses is left whole, the root included.
+func TestReownTrees_ARootItMayNotEnterIsLeft(t *testing.T) {
+	home, tmp := t.TempDir(), t.TempDir()
+	f := filepath.Join(tmp, "f")
+	write(t, f)
+	inodes := recordChowns(t)
+	if _, err := ReownTrees([]ReownRoot{
+		{Anchor: home, Path: home, Match: never},
+		{Anchor: tmp, Path: tmp, Match: ownedByMe, Enter: func(*unix.Stat_t) bool { return false }},
+	}, os.Getuid(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if changedOnce(t, *inodes, tmp) || changedOnce(t, *inodes, f) {
+		t.Error("changed inside a root the walk may not enter")
+	}
+}
+
+// Before a held file changes its owner is checked again against every tree
+// it was seen in, not only the first.
+func TestReownTrees_AHeldFileIsCheckedAgainstEveryTree(t *testing.T) {
+	home, tmp := t.TempDir(), t.TempDir()
+	a := filepath.Join(home, "scan.pdf")
+	write(t, a)
+	if err := os.Link(a, filepath.Join(tmp, "moved.pdf")); err != nil {
+		t.Fatal(err)
+	}
+	inodes := recordChowns(t)
+	asked := 0
+	// Takes the file when it is seen, not when asked again.
+	firstOnly := func(owner uint32) bool { asked++; return asked == 1 && ownedByMe(owner) }
+
+	st, err := ReownTrees([]ReownRoot{
+		{Anchor: home, Path: home, Match: ownedByMe},
+		{Anchor: tmp, Path: tmp, Match: firstOnly, ChangeIn: func(*unix.Stat_t) bool { return true }},
+	}, os.Getuid(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asked < 2 {
+		t.Fatalf("the second tree's Match was asked %d times, want again before the change", asked)
+	}
+	// No longer one to change: left as it is, and not counted as held back
+	// by a link.
+	if changedOnce(t, *inodes, a) || st.Linked != 0 {
+		t.Errorf("Linked = %d; want the file left as it is", st.Linked)
 	}
 }

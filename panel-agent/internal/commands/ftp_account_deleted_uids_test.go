@@ -142,7 +142,8 @@ func TestDeletedAccountRecords_SkipJunk(t *testing.T) {
 	put("999999999", rec)      // below the reserved range
 	put("99999999999", rec)    // past uint32
 	put("1000000006.tmp", rec) // a write that never finished
-	put("1000000007", []byte(strings.Repeat("5", ftpDeletedUIDRecordMax+1)))
+	// The tenant's line, but past the size cap.
+	put("1000000007", []byte("5000 shop"+strings.Repeat(" ", ftpDeletedUIDRecordMax)+"\n"))
 	put("1000000008", []byte("5000 shop 1\n")) // not the tenant's line
 	if err := os.Mkdir(filepath.Join(dir, "1000000009"), 0o700); err != nil {
 		t.Fatal(err)
