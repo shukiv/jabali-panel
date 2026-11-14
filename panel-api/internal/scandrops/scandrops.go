@@ -41,6 +41,10 @@ var (
 	ErrNotInPackage = errors.New("scandrops: the hosting package includes no FTP/SFTP logins")
 	ErrSpace        = errors.New("scandrops: space out of range")
 	ErrName         = errors.New("scandrops: the resource's address cannot name a folder")
+	// ErrUnconfined: the login could be neither isolated nor kept to FTP. A
+	// login that is not isolated reaches the owner's whole home over SFTP
+	// (its chroot is the home), and a scanner's password lives on a printer.
+	ErrUnconfined = errors.New("scandrops: a scanner login needs isolated logins or the FTP server")
 )
 
 // MaxSpaceMB is the most space a scanner may keep when the package has no
@@ -59,6 +63,11 @@ type DomainLookup interface {
 	FindByID(ctx context.Context, id string) (*models.Domain, error)
 }
 
+// SettingsGetter reads the server settings (whether the FTP server is on).
+type SettingsGetter interface {
+	Get(ctx context.Context) (*models.ServerSettings, error)
+}
+
 // Deps wires the operations. Ftp carries the agent, the FTP account and user
 // repositories, the package lookup and the quota mount the scanner login
 // is made with.
@@ -66,12 +75,13 @@ type Deps struct {
 	Drops     repository.ScanDropRepository
 	Resources ResourceLookup
 	Domains   DomainLookup
+	Settings  SettingsGetter
 	Ftp       ftpops.Deps
 	Log       *slog.Logger
 }
 
 func (d Deps) ok() bool {
-	return d.Drops != nil && d.Resources != nil && d.Domains != nil &&
+	return d.Drops != nil && d.Resources != nil && d.Domains != nil && d.Settings != nil &&
 		d.Ftp.Agent != nil && d.Ftp.Accounts != nil && d.Ftp.Users != nil && d.Ftp.Packages != nil
 }
 
@@ -144,6 +154,20 @@ func Enable(ctx context.Context, d Deps, in EnableInput) (*models.ScanDrop, *mod
 		return nil, nil, ErrName
 	}
 
+	// Isolated: its own uid, jailed in the drop folder, FTP and SFTP alike.
+	// Not isolated: FTP only, which chroots to the drop folder; its SFTP
+	// would reach the whole home.
+	isolated := isolationAvailable(ctx, d)
+	if !isolated {
+		set, err := d.Settings.Get(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("read server settings: %w", err)
+		}
+		if set == nil || !set.FTPEnabled {
+			return nil, nil, ErrUnconfined
+		}
+	}
+
 	prepCtx, cancel := context.WithTimeout(ctx, prepareTimeout)
 	_, err = d.Ftp.Agent.Call(prepCtx, "scandrop.prepare", agentwire.ScanDropPrepareParams{TenantUsername: username, DropPath: drop})
 	cancel()
@@ -151,13 +175,14 @@ func Enable(ctx context.Context, d Deps, in EnableInput) (*models.ScanDrop, *mod
 		return nil, nil, err
 	}
 
-	isolated := isolationAvailable(ctx, d)
+	sftp := isolated
 	req := ftpops.CreateRequest{
-		Label:     in.Label,
-		HomePath:  drop,
-		Password:  in.Password,
-		FTPAccess: true,
-		Isolated:  isolated,
+		Label:      in.Label,
+		HomePath:   drop,
+		Password:   in.Password,
+		FTPAccess:  true,
+		SFTPAccess: &sftp,
+		Isolated:   isolated,
 	}
 	if isolated {
 		req.QuotaMB = in.MaxMB

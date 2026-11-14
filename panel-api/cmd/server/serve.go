@@ -696,6 +696,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 				Drops:     repository.NewScanDropRepository(sharedDB),
 				Resources: repository.NewSharedResourceRepository(sharedDB),
 				Domains:   deps.Domains,
+				Settings:  repository.NewServerSettingsRepository(sharedDB),
 				Ftp: ftpops.Deps{
 					Agent:      sharedAgent,
 					Accounts:   deps.FtpAccounts,

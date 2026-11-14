@@ -39,6 +39,7 @@ func scannerDepsFromDB() scandrops.Deps {
 		Drops:     repository.NewScanDropRepository(sharedDB),
 		Resources: sharedResourceRepoFromDB(),
 		Domains:   domainRepoFromDB(),
+		Settings:  repository.NewServerSettingsRepository(sharedDB),
 		Ftp: ftpops.Deps{
 			Agent:      sharedAgent,
 			Accounts:   repository.NewFtpAccountRepository(sharedDB),

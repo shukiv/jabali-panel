@@ -134,6 +134,12 @@ func (f fakePackages) FindByID(_ context.Context, id string) (*models.HostingPac
 	return nil, repository.ErrNotFound
 }
 
+type fakeSettings struct{ ftp bool }
+
+func (f *fakeSettings) Get(context.Context) (*models.ServerSettings, error) {
+	return &models.ServerSettings{FTPEnabled: f.ftp}, nil
+}
+
 type agentCall struct {
 	command string
 	params  map[string]any
@@ -188,6 +194,7 @@ type world struct {
 	agent    *fakeAgent
 	pkg      *models.HostingPackage
 	owner    *models.User
+	settings *fakeSettings
 }
 
 func strp(s string) *string { return &s }
@@ -202,11 +209,13 @@ func newWorld() *world {
 		agent:    &fakeAgent{errOn: map[string]error{}},
 		pkg:      pkg,
 		owner:    owner,
+		settings: &fakeSettings{ftp: true},
 	}
 	w.d = Deps{
 		Drops:     w.drops,
 		Resources: w.res,
 		Domains:   fakeDomains{"d1": {ID: "d1", Name: "example.com", UserID: "u1"}},
+		Settings:  w.settings,
 		Ftp: ftpops.Deps{
 			Agent:      w.agent,
 			Accounts:   w.accounts,
@@ -234,8 +243,8 @@ func TestEnable_MakesTheFolderThenTheLoginThenTheRow(t *testing.T) {
 	}
 	const drop = "/home/alice/domains/example.com/scans/scans"
 	cmds := strings.Join(w.agent.commands(), " ")
-	if !strings.HasPrefix(cmds, "scandrop.prepare ftpaccount.isolation_status ftpaccount.create") {
-		t.Fatalf("agent calls = %s, want prepare, then the isolation probe, then the login", cmds)
+	if !strings.HasPrefix(cmds, "ftpaccount.isolation_status scandrop.prepare ftpaccount.create") {
+		t.Fatalf("agent calls = %s, want the isolation probe, then prepare, then the login", cmds)
 	}
 	if got := w.agent.find("scandrop.prepare")["drop_path"]; got != drop {
 		t.Fatalf("prepare drop_path = %v, want %s", got, drop)
@@ -246,6 +255,10 @@ func TestEnable_MakesTheFolderThenTheLoginThenTheRow(t *testing.T) {
 	}
 	if _, isolated := create["isolated"]; isolated {
 		t.Fatalf("ftpaccount.create = %v: isolated although the probe said no", create)
+	}
+	// Not isolated: SFTP would reach the whole home, so the login is FTP only.
+	if acct.SFTPAccess {
+		t.Fatalf("login %+v has SFTP although it is not isolated", acct)
 	}
 	if row.FtpAccountID != acct.ID || row.DropPath != drop || row.MaxMB != 1024 {
 		t.Fatalf("row = %+v, want it tied to the login and the drop folder", row)
@@ -261,6 +274,34 @@ func TestEnable_IsolatedLoginGetsTheSpaceAsItsQuota(t *testing.T) {
 	create := w.agent.find("ftpaccount.create")
 	if create["isolated"] != true || create["quota_mb"] != float64(700) {
 		t.Fatalf("ftpaccount.create = %v, want isolated with quota_mb 700", create)
+	}
+}
+
+// With neither isolation nor the FTP server, the only way in would be SFTP to
+// the whole home: refuse, before anything is made.
+func TestEnable_RefusesALoginItCannotConfine(t *testing.T) {
+	w := newWorld()
+	w.settings.ftp = false
+	if _, _, err := w.enable(t, 10); !errors.Is(err, ErrUnconfined) {
+		t.Fatalf("Enable = %v, want ErrUnconfined", err)
+	}
+	if got := strings.Join(w.agent.commands(), " "); got != "ftpaccount.isolation_status" {
+		t.Fatalf("agent calls = %s, want only the isolation probe", got)
+	}
+	if len(w.accounts.rows) != 0 || len(w.drops.rows) != 0 {
+		t.Fatal("made a login or a row")
+	}
+
+	// Isolated logins need no FTP server: SFTP is jailed to the folder.
+	w = newWorld()
+	w.settings.ftp = false
+	w.agent.isolation = true
+	_, acct, err := w.enable(t, 10)
+	if err != nil {
+		t.Fatalf("Enable (isolated): %v", err)
+	}
+	if !acct.SFTPAccess || !acct.Isolated {
+		t.Fatalf("login = %+v, want isolated with SFTP", acct)
 	}
 }
 

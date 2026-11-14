@@ -594,9 +594,10 @@ func stalwartMaxUploadSize(ctx context.Context) int64 {
 	return core.MaxSizeUpload
 }
 
-// scanDropMB formats a byte count for a message the owner reads.
+// scanDropMB formats a byte count for a message the owner reads, in the
+// panel's MB (the space setting is MaxMB<<20).
 func scanDropMB(n int64) string {
-	return strconv.FormatFloat(float64(n)/1_000_000, 'f', 1, 64) + " MB"
+	return strconv.FormatFloat(float64(n)/(1<<20), 'f', 1, 64) + " MB"
 }
 
 func init() {

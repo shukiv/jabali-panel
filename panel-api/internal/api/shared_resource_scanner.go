@@ -143,6 +143,8 @@ func writeScannerErr(c *gin.Context, err error) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "ftp_accounts_not_in_package", "detail": "the hosting package does not include FTP/SFTP accounts"})
 	case errors.Is(err, scandrops.ErrSpace):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid_space", "detail": strings.TrimPrefix(err.Error(), scandrops.ErrSpace.Error()+": ")})
+	case errors.Is(err, scandrops.ErrUnconfined):
+		c.JSON(http.StatusConflict, gin.H{"error": "scanner_unconfined", "detail": "this server can't keep a scanner login to its folder: an administrator turns on the FTP server, or disk quota so logins can be isolated"})
 	case errors.Is(err, scandrops.ErrName):
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "unusable_name", "detail": "this folder's address cannot name a drop folder; make a Files resource whose address starts with a letter or digit"})
 	case errors.Is(err, ftpops.ErrUIDAllocation):
