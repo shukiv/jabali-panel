@@ -24,7 +24,7 @@ const jmapCapFileNode = "urn:ietf:params:jmap:filenode"
 type fileShareSetParams struct {
 	OwnerEmail string            `json:"owner_email"`
 	FolderName string            `json:"folder_name"` // name for the root folder if it must be created
-	Shares     map[string]string `json:"shares"`      // targetEmail → "read"|"readwrite"|"admin"
+	Shares     map[string]string `json:"shares"`      // targetEmail → "read"|"readdelete"|"readwrite"|"admin"
 }
 
 type fileShareSetResponse struct {
@@ -37,6 +37,11 @@ type fileShareSetResponse struct {
 func fileACLForLevel(level string) map[string]bool {
 	acl := map[string]bool{"mayRead": true}
 	switch level {
+	case "readdelete":
+		// GH #2503 scans folders: members take scans away, nothing else.
+		// Verified live: a file in the folder inherits the share, and
+		// creating or renaming is refused.
+		acl["mayDelete"] = true
 	case "readwrite":
 		acl["mayAddChildren"] = true
 		acl["mayModifyContent"] = true
