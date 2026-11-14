@@ -22,6 +22,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ioncube"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/notifications"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ownershipops"
@@ -1843,7 +1844,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		// FTP/SFTP subaccount routes (GH #1053). Agent optional at wire
 		// time: handlers fail closed per-request when it is nil.
 		if deps.FtpAccounts != nil && deps.Users != nil && deps.Packages != nil {
-			api.RegisterFtpAccountRoutes(v1, api.FtpAccountsHandlerConfig{
+			ftpCfg := api.FtpAccountsHandlerConfig{
 				Repo:            deps.FtpAccounts,
 				Users:           deps.Users,
 				Packages:        deps.Packages,
@@ -1852,7 +1853,18 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				StrictRateLimit: rl.Strict(),
 				PatchRateLimit:  rl.StrictPerActor(), // JAB-266: per-user bound on sshd-reload PATCH
 				QuotaMount:      deps.QuotaMount,     // GH #1145 isolated per-uid setquota
-			})
+			}
+			// An isolated account's quota comes out of its tenant's own
+			// limit; without the limit sources isolation stays off.
+			if deps.LimitOverrides != nil && deps.ServerSettings != nil {
+				ftpCfg.Limits = limitsync.Tenant{
+					Users:     deps.Users,
+					Packages:  deps.Packages,
+					Overrides: deps.LimitOverrides,
+					Settings:  deps.ServerSettings,
+				}
+			}
+			api.RegisterFtpAccountRoutes(v1, ftpCfg)
 		}
 
 		// Admin routes

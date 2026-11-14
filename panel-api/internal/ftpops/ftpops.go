@@ -20,6 +20,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpsync"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -41,6 +42,10 @@ type Deps struct {
 	// QuotaMount is the filesystem mount /home lives on, required for GH #1145
 	// isolated accounts (per-uid setquota); empty refuses an isolated create.
 	QuotaMount string
+	// Limits computes the tenant's resource limits, so an isolated account's
+	// quota is set aside from the tenant's own; nil refuses an isolated
+	// create.
+	Limits TenantLimits
 }
 
 // UpdateAccess persists acct's access flags (already applied by the adapter)
@@ -87,6 +92,10 @@ func UpdateAccess(ctx context.Context, d Deps, acct *models.FtpAccount, tenantUs
 // to abort the row delete, leaving a row with no alias — which the reconciler
 // re-provisions with a throwaway password, resurrecting a deleted account.
 //
+// An isolated account's quota then goes back to the tenant's own limit (its
+// files are the tenant's now, GH #2513), best effort: the limits reconciler
+// converges it otherwise.
+//
 // Returns the raw agent error when the host delete fails (row kept, no sync), or
 // an ErrPersist-wrapped error when the row delete fails (no sync).
 func Delete(ctx context.Context, d Deps, acct *models.FtpAccount, tenantUsername string) error {
@@ -94,10 +103,18 @@ func Delete(ctx context.Context, d Deps, acct *models.FtpAccount, tenantUsername
 		return err
 	}
 	afterHost := context.WithoutCancel(ctx)
+	if acct.Isolated {
+		// The tenant's disk share and limit change from here on.
+		unlock := limitsync.LockTenant(acct.UserID)
+		defer unlock()
+	}
 	if err := d.Accounts.Delete(afterHost, acct.ID); err != nil {
 		return fmt.Errorf("%w: %w", ErrPersist, err)
 	}
 	syncHostAccess(afterHost, d, tenantUsername)
+	if acct.Isolated {
+		convergeTenantDisk(afterHost, d, Owner{UserID: acct.UserID, Username: tenantUsername})
+	}
 	return nil
 }
 

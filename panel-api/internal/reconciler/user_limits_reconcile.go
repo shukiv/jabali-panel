@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -103,10 +104,45 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		}
 	}
 
+	// Isolated FTP/SFTP accounts hold shares of their tenant's disk quota
+	// (own uid, own quota), so the tenant's own limit is the rest. Without
+	// the shares a tenant would get its whole quota back: skip the pass.
+	var shares map[string]uint64
+	if r.ftpAccounts != nil {
+		if shares, err = r.ftpAccounts.SumIsolatedQuotaByUser(ctx); err != nil {
+			r.log.Warn("reconcile user-limits: isolated FTP account quotas unavailable; pass skipped", "err", err)
+			return
+		}
+	}
+	// What tenants with shares use on the host now, read once and before any
+	// limit changes: a tenant already above its share keeps what it uses
+	// (limits.TenantDiskQuotaMB).
+	var disks map[string]limits.HostDisk
+	var disksErr error
+	splitOnHost := quotaEnabled && r.quotaMount != ""
+	if len(shares) > 0 && splitOnHost {
+		ctxInv, cancel := context.WithTimeout(ctx, 30*time.Second)
+		disks, disksErr = limits.ReadHostDisks(ctxInv, r.agent, r.quotaMount)
+		cancel()
+	}
+
 	for i := range users {
 		u := &users[i]
 		if u.Username == nil || *u.Username == "" || u.IsAdmin {
 			continue // no Linux account yet — skip, will pick up next pass
+		}
+		share := limits.IsolatedShares{SharesMB: shares[u.ID]}
+		diskUnknown := false
+		if share.SharesMB > 0 && splitOnHost {
+			if d, ok := limits.HostDiskOf(disks, disksErr, *u.Username); ok {
+				share.Host = &d
+			} else {
+				// Its disk limit could cut the tenant off without the
+				// reading: that stays as it is until the host answers.
+				diskUnknown = true
+				r.log.Warn("reconcile user-limits: no host quota reading for a tenant with isolated accounts; its disk limit is left as is this pass",
+					"username", *u.Username, "err", disksErr)
+			}
 		}
 
 		var pkgL *limits.PackageLimits
@@ -128,14 +164,50 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 		// leave stale POSIX quotas + cgroup drop-ins from a previously-assigned
 		// package, so the user keeps hitting the old quota wall. Both agent
 		// handlers are idempotent.
-		plan := limits.PlanFor(pkgL, overridesByUser[u.ID], quotaEnabled, r.quotaMount)
+		plan := limits.PlanFor(pkgL, overridesByUser[u.ID], quotaEnabled, r.quotaMount, share)
+		if diskUnknown && plan.Kind == limits.PlanApply {
+			plan.QuotaMount = "" // the agent skips setquota; the cgroup limits still apply
+		}
+		unlock, ok := r.holdTenantShare(ctx, u.ID, *u.Username, shares[u.ID])
+		if !ok {
+			continue
+		}
 		ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if err := plan.Execute(ctxCall, r.agent, *u.Username); err != nil {
 			r.log.Warn("reconcile user-limits: dispatch failed",
 				"username", *u.Username, "plan", plan.Describe(*u.Username), "err", err)
 		}
 		cancel()
+		unlock()
 	}
+}
+
+// holdTenantShare locks the tenant's limits against an isolated FTP/SFTP
+// account's create or delete, which set the tenant's share and limit
+// themselves (limitsync.LockTenant), and checks the share read at the start of
+// the pass still holds. ok is false, and the tenant is left for the next pass,
+// while such a change is under way or after one changed the share: the plan
+// would put back the limit of the old share.
+func (r *Reconciler) holdTenantShare(ctx context.Context, userID, username string, sharesMB uint64) (unlock func(), ok bool) {
+	unlock, ok = limitsync.TryLockTenant(userID)
+	if !ok {
+		r.log.Debug("reconcile user-limits: an FTP account change is under way; left for the next pass", "username", username)
+		return nil, false
+	}
+	if r.ftpAccounts == nil {
+		return unlock, true
+	}
+	now, err := r.ftpAccounts.SumIsolatedQuotaByUserID(ctx, userID)
+	switch {
+	case err != nil:
+		r.log.Warn("reconcile user-limits: isolated FTP account quotas unavailable; left for the next pass", "username", username, "err", err)
+	case now != sharesMB:
+		r.log.Debug("reconcile user-limits: isolated FTP accounts changed during the pass; left for the next pass", "username", username)
+	default:
+		return unlock, true
+	}
+	unlock()
+	return nil, false
 }
 
 // ReconcileNginxRateLimits renders the shared zone-declaration fragment

@@ -41,6 +41,10 @@ type FtpAccountRepository interface {
 	// subaccounts, for the split-allocation check (Σ subaccounts + tenant ≤
 	// package quota).
 	SumIsolatedQuotaByUserID(ctx context.Context, userID string) (uint64, error)
+	// SumIsolatedQuotaByUser is SumIsolatedQuotaByUserID for every tenant in
+	// one query (user id → MB), for the limits reconciler. Tenants with no
+	// isolated subaccount are absent.
+	SumIsolatedQuotaByUser(ctx context.Context) (map[string]uint64, error)
 }
 
 type ftpAccountRepo struct{ db *gorm.DB }
@@ -204,6 +208,26 @@ func (r *ftpAccountRepo) SumIsolatedQuotaByUserID(ctx context.Context, userID st
 		return 0, err
 	}
 	return sum, nil
+}
+
+func (r *ftpAccountRepo) SumIsolatedQuotaByUser(ctx context.Context) (map[string]uint64, error) {
+	var rows []struct {
+		UserID string
+		Total  uint64
+	}
+	if err := r.db.WithContext(ctx).
+		Model(&models.FtpAccount{}).
+		Select("user_id, COALESCE(SUM(quota_mb), 0) AS total").
+		Where("isolated = 1").
+		Group("user_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make(map[string]uint64, len(rows))
+	for _, row := range rows {
+		out[row.UserID] = row.Total
+	}
+	return out, nil
 }
 
 // translateFtpAccount maps GORM/driver errors to repository conventions.

@@ -48,6 +48,22 @@ type fakeAccounts struct {
 	allocErr    error
 	afterUpdate func()
 	owned       []models.FtpAccount // ListByUserID result
+	// isoShares is the quota of the tenant's other isolated accounts;
+	// reserved holds isolated rows Reserve added and Delete has not removed.
+	isoShares uint64
+	reserved  map[string]uint32
+	sumErr    error
+}
+
+func (f *fakeAccounts) SumIsolatedQuotaByUserID(context.Context, string) (uint64, error) {
+	if f.sumErr != nil {
+		return 0, f.sumErr
+	}
+	sum := f.isoShares
+	for _, mb := range f.reserved {
+		sum += uint64(mb)
+	}
+	return sum, nil
 }
 
 func (f *fakeAccounts) Update(ctx context.Context, _ *models.FtpAccount) error {
@@ -64,13 +80,14 @@ func (f *fakeAccounts) Update(ctx context.Context, _ *models.FtpAccount) error {
 	return nil
 }
 
-func (f *fakeAccounts) Delete(ctx context.Context, _ string) error {
+func (f *fakeAccounts) Delete(ctx context.Context, id string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
+	delete(f.reserved, id)
 	*f.log = append(*f.log, "repo.Delete")
 	return nil
 }
@@ -78,12 +95,18 @@ func (f *fakeAccounts) Delete(ctx context.Context, _ string) error {
 // List backs the sshd re-render; an empty desired set is enough to observe it.
 func (f *fakeAccounts) List(context.Context) ([]models.FtpAccount, error) { return nil, nil }
 
-func (f *fakeAccounts) ReserveWithinCap(ctx context.Context, _ *models.FtpAccount, _ int, _ uint32) error {
+func (f *fakeAccounts) ReserveWithinCap(ctx context.Context, acct *models.FtpAccount, _ int, _ uint32) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if f.reserveErr != nil {
 		return f.reserveErr
+	}
+	if acct.Isolated {
+		if f.reserved == nil {
+			f.reserved = map[string]uint32{}
+		}
+		f.reserved[acct.ID] = acct.QuotaMB
 	}
 	*f.log = append(*f.log, "repo.Reserve")
 	return nil
@@ -110,6 +133,10 @@ type fakeAgent struct {
 	// afterCall runs once a call is recorded (whatever its outcome), so a test
 	// can act at the instant a host call lands (e.g. the client disconnects).
 	afterCall func(command string)
+	// answers are a command's results in call order; the last one repeats.
+	answers map[string][]json.RawMessage
+	// applied is the disk_quota_mb of each user.limits.apply call.
+	applied []uint32
 }
 
 func (a *fakeAgent) Call(ctx context.Context, command string, params any) (json.RawMessage, error) {
@@ -117,11 +144,23 @@ func (a *fakeAgent) Call(ctx context.Context, command string, params any) (json.
 		return nil, err
 	}
 	*a.log = append(*a.log, "agent:"+command+"["+paramKeys(params)+"]")
+	if command == "user.limits.apply" {
+		if m, ok := params.(map[string]any); ok {
+			mb, _ := m["disk_quota_mb"].(uint32)
+			a.applied = append(a.applied, mb)
+		}
+	}
 	if a.afterCall != nil {
 		a.afterCall(command)
 	}
 	if err, ok := a.errOn[command]; ok {
 		return nil, err
+	}
+	if seq := a.answers[command]; len(seq) > 0 {
+		if len(seq) > 1 {
+			a.answers[command] = seq[1:]
+		}
+		return seq[0], nil
 	}
 	return json.RawMessage(`{}`), nil
 }
@@ -146,8 +185,9 @@ const (
 
 func newDeps(log *transcript) (Deps, *fakeAccounts, *fakeAgent) {
 	accts := &fakeAccounts{log: log}
-	ag := &fakeAgent{log: log, errOn: map[string]error{}}
-	return Deps{Agent: ag, Accounts: accts, Users: fakeUsers{}}, accts, ag
+	ag := &fakeAgent{log: log, errOn: map[string]error{}, answers: map[string][]json.RawMessage{}}
+	// No disk quota: an isolated account takes nothing from the tenant.
+	return Deps{Agent: ag, Accounts: accts, Users: fakeUsers{}, Limits: &fakeLimits{}}, accts, ag
 }
 
 func testAccount() *models.FtpAccount {
@@ -381,6 +421,10 @@ func TestCreate_ValidationRejectsBeforeAnySideEffect(t *testing.T) {
 			"home_path must be inside your home directory (/home/alice)"},
 		{"isolated without quota mount", func(r *CreateRequest, _ *Deps) { r.Isolated, r.QuotaMB = true, 100 }, ErrIsolationUnavailable,
 			"per-account disk quota is not configured on this host"},
+		{"isolated without tenant limits", func(r *CreateRequest, d *Deps) {
+			r.Isolated, r.QuotaMB = true, 100
+			d.QuotaMount, d.Limits = "/", nil
+		}, ErrIsolationUnavailable, "per-account disk quota is not configured on this host"},
 		{"isolated without quota", func(r *CreateRequest, d *Deps) { r.Isolated = true; d.QuotaMount = "/" }, ErrQuotaRequired,
 			"an isolated account requires a disk quota (quota_mb, in MB)"},
 	}

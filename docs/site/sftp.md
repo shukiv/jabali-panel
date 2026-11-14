@@ -101,6 +101,9 @@ see it:
   or **true separate-uid isolation** — a dedicated system user in its own jail
   with its own quota and ACLs. Separate-uid is the default where a
   filesystem quota exists; where quota is absent it falls back to off.
+  A separate-uid account's quota comes out of the account's own disk
+  quota: the account's user keeps its quota less its separate-uid
+  accounts' quotas ([Resource limits](resource-limits.md#1-posix-disk-quota)).
   A same-uid alias is kept to its directory over FTPS only: its SFTP session
   is chrooted to the account's home (sshd needs a root-owned chroot) and
   starts in the alias's directory, so it can reach the whole home. Use a

@@ -19,6 +19,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
@@ -46,6 +47,12 @@ func scannerDepsFromDB() scandrops.Deps {
 			Users:      repository.NewUserRepository(sharedDB),
 			Packages:   packageRepoFromDB(),
 			QuotaMount: mount,
+			Limits: limitsync.Tenant{
+				Users:     repository.NewUserRepository(sharedDB),
+				Packages:  packageRepoFromDB(),
+				Overrides: repository.NewUserLimitOverrideRepository(sharedDB),
+				Settings:  repository.NewServerSettingsRepository(sharedDB),
+			},
 		},
 	}
 }
