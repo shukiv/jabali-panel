@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -112,6 +113,23 @@ func (f *fakeAccounts) Delete(_ context.Context, id string) error {
 func (f *fakeAccounts) List(context.Context) ([]models.FtpAccount, error) { return nil, nil }
 
 func (f *fakeAccounts) AllocateUID(context.Context) (uint32, error) { return 1000000007, nil }
+
+func (f *fakeAccounts) SumIsolatedQuotaByUserID(_ context.Context, userID string) (uint64, error) {
+	var sum uint64
+	for _, r := range f.rows {
+		if r.UserID == userID && r.Isolated {
+			sum += uint64(r.QuotaMB)
+		}
+	}
+	return sum, nil
+}
+
+// fakeLimits plans the owner's limits from its package.
+type fakeLimits struct{ pkg *models.HostingPackage }
+
+func (f fakeLimits) PlanFor(_ context.Context, _, quotaMount string, shares limits.IsolatedShares) (limits.LimitsPlan, error) {
+	return limits.PlanFor(&limits.PackageLimits{DiskQuotaMB: f.pkg.DiskQuotaMB}, nil, true, quotaMount, shares), nil
+}
 
 type fakeUsers struct {
 	repository.UserRepository
@@ -222,6 +240,7 @@ func newWorld() *world {
 			Users:      fakeUsers{users: map[string]*models.User{"u1": owner}},
 			Packages:   fakePackages{"pkg1": pkg},
 			QuotaMount: "/",
+			Limits:     fakeLimits{pkg: pkg},
 		},
 	}
 	return w
@@ -274,6 +293,16 @@ func TestEnable_IsolatedLoginGetsTheSpaceAsItsQuota(t *testing.T) {
 	create := w.agent.find("ftpaccount.create")
 	if create["isolated"] != true || create["quota_mb"] != float64(700) {
 		t.Fatalf("ftpaccount.create = %v, want isolated with quota_mb 700", create)
+	}
+	// The login's space comes out of the owner's own disk limit, before the
+	// login exists.
+	apply := w.agent.find("user.limits.apply")
+	if apply["username"] != "alice" || apply["disk_quota_mb"] != float64(5000-700) {
+		t.Fatalf("user.limits.apply = %v, want alice limited to 4300 MB", apply)
+	}
+	cmds := strings.Join(w.agent.commands(), " ")
+	if strings.Index(cmds, "user.limits.apply") > strings.Index(cmds, "ftpaccount.create") {
+		t.Fatalf("agent calls = %s, want the owner's limit lowered before the login", cmds)
 	}
 }
 
@@ -463,5 +492,22 @@ func TestPass_AgentFailureIsShownToTheOwner(t *testing.T) {
 	Pass(context.Background(), w.d)
 	if got := w.drops.rows["r1"].LastError; !strings.Contains(got, "missing") {
 		t.Fatalf("last_error = %q, want the agent's reason", got)
+	}
+}
+
+// Without the owner's limits an isolated login's space couldn't come out of
+// the owner's quota: the login is not isolated, as without disk quota.
+func TestEnable_NoOwnerLimitsNoIsolation(t *testing.T) {
+	w := newWorld()
+	w.agent.isolation = true
+	w.d.Ftp.Limits = nil
+	if _, _, err := w.enable(t, 700); err != nil {
+		t.Fatalf("Enable: %v", err)
+	}
+	if create := w.agent.find("ftpaccount.create"); create == nil || create["isolated"] != nil {
+		t.Fatalf("ftpaccount.create = %v, want a login that is not isolated", create)
+	}
+	if w.agent.find("ftpaccount.isolation_status") != nil {
+		t.Fatal("probed isolation it can't use")
 	}
 }

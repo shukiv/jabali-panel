@@ -8,6 +8,8 @@ Enforced on `/home`. Per-user quota set from the user's package (default + overr
 
 Implementation: `setquota -u <user> <soft> <hard> 0 0`. Reconciler re-applies on every tick; if a user's package quota changes the new limit lands within 60 s.
 
+A separate-uid FTP/SFTP account ([SFTP](sftp.md#ftp--sftp-subaccounts)) has its own quota, and the files it uploads count against that, not against the account's user. So the user's own limit is its quota less the quotas of its separate-uid accounts, and together they never hold more than the quota. Those accounts' quotas together can't exceed the user's quota, its package's or a lower limit override (`409 quota_split_exceeded`). Creating such an account is refused (`409 no_disk_room`) when the user's files already use more than its own limit would then be. A user that was already above that when this rule first applied keeps what it uses plus 64 MB, and that limit only goes down as the user frees space, until it reaches the share. Deleting a separate-uid account gives its quota back to the user.
+
 Per-tick idempotent: the reconciler compares current quota → desired quota and only calls `setquota` on diff (the "per-tick idempotent loops" audit rule — gates side-effects behind a no-change compare).
 
 ## 2. cgroup v2 slice drop-in

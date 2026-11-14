@@ -274,7 +274,7 @@ func (d Deps) removeLogin(ctx context.Context, ftpAccountID string) error {
 // uid, jailed, with a disk quota), as the FTP page does: the login is then
 // confined to the drop folder by the kernel, not just by its chroot.
 func isolationAvailable(ctx context.Context, d Deps) bool {
-	if d.Ftp.QuotaMount == "" {
+	if d.Ftp.QuotaMount == "" || d.Ftp.Limits == nil {
 		return false
 	}
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)

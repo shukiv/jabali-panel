@@ -365,7 +365,23 @@ func applyForUsername(ctx context.Context, username string, quotaEnabled bool) e
 	// with no package and no override is CLEARED (the CLI previously always
 	// applied — leaving a zeros drop-in instead of removing it), and the
 	// disk-quota feature gate is honoured (the CLI previously ignored it).
-	plan := limits.PlanFor(pkgL, ovL, quotaEnabled, quotaMountOrEmpty())
+	// The user's own disk limit leaves room for its isolated FTP/SFTP
+	// accounts' quotas, as the reconciler does; a user already using more
+	// keeps what it uses, so that needs the host's reading first.
+	sharesMB, err := repository.NewFtpAccountRepository(sharedDB).SumIsolatedQuotaByUserID(ctx, user.ID)
+	if err != nil {
+		return fmt.Errorf("isolated FTP account quotas of %s: %w", posixUsername, err)
+	}
+	share := limits.IsolatedShares{SharesMB: sharesMB}
+	if mount := quotaMountOrEmpty(); sharesMB > 0 && quotaEnabled && mount != "" {
+		disks, derr := limits.ReadHostDisks(ctx, sharedAgent, mount)
+		d, ok := limits.HostDiskOf(disks, derr, posixUsername)
+		if !ok {
+			return fmt.Errorf("read %s's disk usage on the host: %v", posixUsername, derr)
+		}
+		share.Host = &d
+	}
+	plan := limits.PlanFor(pkgL, ovL, quotaEnabled, quotaMountOrEmpty(), share)
 	if err := plan.Execute(ctx, sharedAgent, posixUsername); err != nil {
 		return fmt.Errorf("agent: %w", err)
 	}

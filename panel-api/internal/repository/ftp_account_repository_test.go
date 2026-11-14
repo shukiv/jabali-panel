@@ -227,6 +227,21 @@ func TestFtpAccountCountByUserID(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestFtpAccountSumIsolatedQuotaByUser(t *testing.T) {
+	db, mock, raw := newMockFtpDB(t)
+	defer raw.Close()
+
+	repo := NewFtpAccountRepository(db)
+
+	mock.ExpectQuery(regexp.QuoteMeta("SELECT user_id, COALESCE(SUM(quota_mb), 0) AS total FROM `ftp_accounts` WHERE isolated = 1 GROUP BY `user_id`")).
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "total"}).AddRow("userA", 300).AddRow("userB", 50))
+
+	got, err := repo.SumIsolatedQuotaByUser(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, map[string]uint64{"userA": 300, "userB": 50}, got)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
 func TestFtpAccountDelete(t *testing.T) {
 	db, mock, raw := newMockFtpDB(t)
 	defer raw.Close()

@@ -9,7 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -126,9 +128,11 @@ func Create(ctx context.Context, d Deps, owner Owner, pkg *models.HostingPackage
 	var allocUID uint32
 	var jailPath string
 	if req.Isolated {
-		if d.QuotaMount == "" {
+		if d.QuotaMount == "" || d.Limits == nil {
 			// setquota can't run without a mount → an isolated uid would be
-			// unquota'd (disk-fill). Refuse rather than ship an unenforced one.
+			// unquota'd (disk-fill); without the tenant's limits its quota
+			// can't be set aside from the tenant's. Refuse rather than ship
+			// an unenforced one.
 			return nil, invalid(ErrIsolationUnavailable, "per-account disk quota is not configured on this host")
 		}
 		if req.QuotaMB == 0 {
@@ -170,13 +174,40 @@ func Create(ctx context.Context, d Deps, owner Owner, pkg *models.HostingPackage
 		acct.JailPath = jailPath
 	}
 
+	if req.Isolated {
+		// The tenant's disk share and limit change from here on; the limits
+		// reconciler leaves the tenant alone meanwhile.
+		unlock := limitsync.LockTenant(owner.UserID)
+		defer unlock()
+	}
 	if err := d.Accounts.ReserveWithinCap(ctx, acct, int(pkg.MaxFTPAccounts), pkg.DiskQuotaMB); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrPersist, err)
 	}
+	// An isolated account's files don't count against the tenant's uid, so
+	// its quota comes out of the tenant's own limit — lowered before the
+	// account exists, so the two never hold more than the tenant's quota.
+	var pre *limits.HostDisk
+	if req.Isolated {
+		var err error
+		if pre, err = setAsideDiskRoom(ctx, d, owner); err != nil {
+			release(ctx, d, owner, acct, pre)
+			return nil, err
+		}
+	}
 	if err := agentCall(ctx, d.Agent, "ftpaccount.create", createParams); err != nil {
-		_ = d.Accounts.Delete(context.WithoutCancel(ctx), acct.ID)
+		release(ctx, d, owner, acct, pre)
 		return nil, err
 	}
 	syncHostAccess(ctx, d, owner.Username)
 	return acct, nil
+}
+
+// release compensates a reservation whose create did not go through: the row
+// goes, then the tenant's disk limit is put back when it was lowered for it
+// (pre non-nil).
+func release(ctx context.Context, d Deps, owner Owner, acct *models.FtpAccount, pre *limits.HostDisk) {
+	_ = d.Accounts.Delete(context.WithoutCancel(ctx), acct.ID)
+	if pre != nil {
+		restoreTenantDisk(ctx, d, owner, *pre)
+	}
 }

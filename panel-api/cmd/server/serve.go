@@ -35,6 +35,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailcreds"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailscan"
@@ -705,6 +706,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 					Packages:   deps.Packages,
 					Log:        log,
 					QuotaMount: deps.QuotaMount,
+					Limits: limitsync.Tenant{
+						Users:     deps.Users,
+						Packages:  deps.Packages,
+						Overrides: deps.LimitOverrides,
+						Settings:  repository.NewServerSettingsRepository(sharedDB),
+					},
 				},
 				Log: log,
 			}

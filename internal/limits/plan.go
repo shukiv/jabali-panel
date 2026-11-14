@@ -37,12 +37,16 @@ type LimitsPlan struct {
 	// the feature is currently disabled, or a stale quota from a prior package
 	// survives on disk — the exact "old quota wall" a clear exists to remove.
 	QuotaMount string
+	// Shares is what the user's isolated FTP/SFTP accounts hold of its disk
+	// quota; the user's own uid gets the rest (TenantDiskQuotaMB).
+	Shares IsolatedShares
 }
 
 // PlanFor computes the plan from stored state. No package AND no override → the
 // user must be unlimited, so Clear (skipping instead would leave stale quota +
-// cgroup drop-ins on the host). Otherwise Apply the resolved effective limits.
-func PlanFor(pkg *PackageLimits, override *OverrideLimits, quotaEnabled bool, quotaMount string) LimitsPlan {
+// cgroup drop-ins on the host). Otherwise Apply the resolved effective limits,
+// with the user's own disk limit leaving room for shares.
+func PlanFor(pkg *PackageLimits, override *OverrideLimits, quotaEnabled bool, quotaMount string, shares IsolatedShares) LimitsPlan {
 	if pkg == nil && override == nil {
 		return LimitsPlan{Kind: PlanClear, QuotaMount: quotaMount}
 	}
@@ -50,7 +54,7 @@ func PlanFor(pkg *PackageLimits, override *OverrideLimits, quotaEnabled bool, qu
 	if !quotaEnabled {
 		applyMount = ""
 	}
-	return LimitsPlan{Kind: PlanApply, Effective: Resolve(pkg, override), QuotaMount: applyMount}
+	return LimitsPlan{Kind: PlanApply, Effective: Resolve(pkg, override), QuotaMount: applyMount, Shares: shares}
 }
 
 // Execute dispatches the plan to the agent: user.limits.apply with the effective
@@ -65,7 +69,7 @@ func (p LimitsPlan) Execute(ctx context.Context, ag AgentCaller, username string
 	}
 	_, err := ag.Call(ctx, "user.limits.apply", map[string]any{
 		"username":          username,
-		"disk_quota_mb":     p.Effective.DiskQuotaMB,
+		"disk_quota_mb":     p.TenantDiskQuotaMB(),
 		"cpu_quota_percent": p.Effective.CPUQuotaPercent,
 		"memory_limit_mb":   p.Effective.MemoryLimitMB,
 		"io_read_mbps":      p.Effective.IOReadMbps,
@@ -81,7 +85,7 @@ func (p LimitsPlan) Describe(username string) string {
 	if p.Kind == PlanClear {
 		return fmt.Sprintf("clear  %s (no package or override — remove limits)", username)
 	}
-	return fmt.Sprintf("apply  %s (disk=%dMB cpu=%d%% mem=%dMB io_r=%d io_w=%d tasks=%d quota_mount=%q)",
-		username, p.Effective.DiskQuotaMB, p.Effective.CPUQuotaPercent, p.Effective.MemoryLimitMB,
+	return fmt.Sprintf("apply  %s (disk=%dMB of %dMB, %dMB to isolated accounts cpu=%d%% mem=%dMB io_r=%d io_w=%d tasks=%d quota_mount=%q)",
+		username, p.TenantDiskQuotaMB(), p.Effective.DiskQuotaMB, p.Shares.SharesMB, p.Effective.CPUQuotaPercent, p.Effective.MemoryLimitMB,
 		p.Effective.IOReadMbps, p.Effective.IOWriteMbps, p.Effective.MaxTasks, p.QuotaMount)
 }

@@ -15,6 +15,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/auth"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/limitsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -156,7 +157,34 @@ func ftpMockAgent() *agent.MockClient {
 		On("ftpaccount.set_access", map[string]any{}).
 		On("ftpaccount.set_password", map[string]any{"updated": true}).
 		On("ftpaccount.sshd_sync", map[string]any{"changed": true}).
-		On("ssh.user.home_chown", map[string]any{})
+		On("ssh.user.home_chown", map[string]any{}).
+		On("system.quota_inventory", shopUses(0)).
+		On("user.limits.apply", map[string]any{})
+}
+
+// shopUses is a quota listing where the tenant "shop" uses usedMB.
+func shopUses(usedMB uint64) map[string]any {
+	return map[string]any{"mount": "/", "partial": false, "entries": []map[string]any{
+		{"username": "shop", "used_kb": usedMB * 1024, "limit_kb": 0},
+	}}
+}
+
+// appliedDiskLimits lists the disk_quota_mb of each user.limits.apply call.
+func appliedDiskLimits(t *testing.T, mock *agent.MockClient) []float64 {
+	t.Helper()
+	var out []float64
+	for _, c := range mock.Calls() {
+		if c.Command != "user.limits.apply" {
+			continue
+		}
+		var p map[string]any
+		if err := json.Unmarshal(c.Params, &p); err != nil {
+			t.Fatalf("unmarshal user.limits.apply params: %v", err)
+		}
+		mb, _ := p["disk_quota_mb"].(float64)
+		out = append(out, mb)
+	}
+	return out
 }
 
 // ctxAwareAgent is an AgentInterface that RESPECTS context cancellation (the
@@ -410,6 +438,12 @@ func ftpTestRouter(t *testing.T, repo *fakeFtpRepo, mock *agent.MockClient, pkg 
 		Packages:   &fakePkgRepo{pkg: pkg},
 		Agent:      mock,
 		QuotaMount: "/", // GH #1145: enables isolated create in tests
+		Limits: limitsync.Tenant{
+			Users:     users,
+			Packages:  &fakePkgRepo{pkg: pkg},
+			Overrides: &ulOverrideRepo{},
+			Settings:  &fakeSettingsRepo{s: &models.ServerSettings{DiskQuotaEnabled: true}},
+		},
 	}}
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -743,6 +777,68 @@ func TestFtpAPICreate_Isolated(t *testing.T) {
 		params["jail_path"] != "/var/lib/jabali-ftp-jails/shop/shop_printer" ||
 		params["quota_mount"] != "/" {
 		t.Fatalf("agent create params missing isolated fields: %v", params)
+	}
+	// The account's 200 MB came out of the tenant's own 1000 MB.
+	if got := appliedDiskLimits(t, mock); len(got) != 1 || got[0] != 800 {
+		t.Fatalf("tenant disk limits applied = %v, want [800]", got)
+	}
+}
+
+// A tenant whose own files already use the room the account's quota would
+// take is refused, with no row and nothing on the host.
+func TestFtpAPICreate_IsolatedNoDiskRoom(t *testing.T) {
+	repo := newFakeFtpRepo()
+	mock := ftpMockAgent().On("system.quota_inventory", shopUses(900))
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, mock, pkg)
+
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true,"quota_mb":200}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"error":"no_disk_room"`) {
+		t.Fatalf("expected 409 no_disk_room, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(repo.rows) != 0 {
+		t.Fatal("the reserved row must be released")
+	}
+	for _, c := range mock.Calls() {
+		if c.Command == "ftpaccount.create" || c.Command == "user.limits.apply" {
+			t.Fatalf("host touched: %s", c.Command)
+		}
+	}
+}
+
+func TestFtpAPICreate_IsolatedDiskUsageUnknown(t *testing.T) {
+	repo := newFakeFtpRepo()
+	mock := ftpMockAgent().OnError("system.quota_inventory", errors.New("repquota failed"))
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, mock, pkg)
+
+	rec := doReq(t, r, http.MethodPost, "/me/ftp-accounts",
+		`{"label":"printer","home_path":"/home/shop/ftp/printer","password":"longenough-pass1","isolated":true,"quota_mb":200}`)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"error":"disk_usage_unknown"`) {
+		t.Fatalf("expected 503 disk_usage_unknown, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(repo.rows) != 0 {
+		t.Fatal("the reserved row must be released")
+	}
+}
+
+// Deleting the isolated account gives its quota back to the tenant.
+func TestFtpAPIDelete_IsolatedGivesTheRoomBack(t *testing.T) {
+	repo := newFakeFtpRepo()
+	repo.rows["a1"] = &models.FtpAccount{ID: "a1", UserID: "u1", Username: "shop_printer", Isolated: true, QuotaMB: 200}
+	mock := ftpMockAgent()
+	pkg := ftpPkg(3)
+	pkg.DiskQuotaMB = 1000
+	r := ftpTestRouter(t, repo, mock, pkg)
+
+	if rec := doReq(t, r, http.MethodDelete, "/me/ftp-accounts/a1", ""); rec.Code != http.StatusOK {
+		t.Fatalf("delete: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := appliedDiskLimits(t, mock); len(got) != 1 || got[0] != 1000 {
+		t.Fatalf("tenant disk limits applied = %v, want [1000]", got)
 	}
 }
 

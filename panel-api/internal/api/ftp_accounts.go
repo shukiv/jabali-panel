@@ -46,6 +46,10 @@ type FtpAccountsHandlerConfig struct {
 	// Required for GH #1145 isolated accounts (per-uid setquota); empty
 	// disables isolation (the create refuses an isolated request).
 	QuotaMount string
+	// Limits computes a tenant's resource limits (limitsync.Tenant), so an
+	// isolated account's quota is set aside from the tenant's own. nil
+	// disables isolation like an empty QuotaMount.
+	Limits ftpops.TenantLimits
 }
 
 // ftpSubaccountUIDMin is the floor of the GH #1145 isolated-subaccount uid
@@ -248,6 +252,7 @@ func (h *ftpAccountsHandler) ops() ftpops.Deps {
 		Packages:   h.cfg.Packages,
 		Log:        h.cfg.Log,
 		QuotaMount: h.cfg.QuotaMount,
+		Limits:     h.cfg.Limits,
 	}
 }
 
@@ -263,6 +268,8 @@ var ftpValidationResponses = map[error]struct {
 	ftpops.ErrInvalidHomePath:      {http.StatusUnprocessableEntity, "invalid_home_path"},
 	ftpops.ErrQuotaRequired:        {http.StatusUnprocessableEntity, "quota_required"},
 	ftpops.ErrIsolationUnavailable: {http.StatusServiceUnavailable, "isolation_unavailable"},
+	ftpops.ErrNoDiskRoom:           {http.StatusConflict, "no_disk_room"},
+	ftpops.ErrDiskRoomUnknown:      {http.StatusServiceUnavailable, "disk_usage_unknown"},
 }
 
 // writeOpsErr maps a lifecycle-module error to the response: a rejected input
