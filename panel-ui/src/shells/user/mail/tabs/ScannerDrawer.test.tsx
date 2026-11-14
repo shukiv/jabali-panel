@@ -122,6 +122,8 @@ describe("ScannerDrawer", () => {
 
     expect(await screen.findByText(/SFTP: host/)).toBeTruthy();
     expect(screen.queryByText(/FTPS: host/)).toBeNull();
+    // An isolated login starts in /data of its jail.
+    expect(screen.getByText("/data")).toBeTruthy();
   });
 
   it("shows the last pass's problem", async () => {

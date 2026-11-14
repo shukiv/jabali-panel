@@ -262,8 +262,18 @@ function ScannerOn({
               <>
                 {state.ftp_access && ftpServerOn && <div>FTPS: host {host}, port 21 (explicit TLS), passive mode</div>}
                 {state.sftp_access && <div>SFTP: host {host}, port 22</div>}
-                <div>Upload to the login's top folder (/).</div>
               </>
+            ),
+          },
+          {
+            // An isolated login starts in /data of its jail; an alias is
+            // chrooted at the drop folder itself.
+            key: "upload",
+            label: "Upload to",
+            children: (
+              <Typography.Text copyable code>
+                {state.isolated ? "/data" : "/"}
+              </Typography.Text>
             ),
           },
           {

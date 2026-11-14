@@ -78,6 +78,13 @@ func printScanner(row *models.ScanDrop, acct *models.FtpAccount) {
 	fmt.Println("scanner:  on")
 	if acct != nil {
 		fmt.Printf("login:    %s (isolated: %t, FTPS: %t, SFTP: %t)\n", acct.Username, acct.Isolated, acct.FTPAccess, acct.SFTPAccess)
+		// An isolated login starts in /data of its jail; an alias is
+		// chrooted at the drop folder itself.
+		upload := "/"
+		if acct.Isolated {
+			upload = "/data"
+		}
+		fmt.Printf("upload:   %s\n", upload)
 	} else {
 		fmt.Println("login:    deleted — the next pass turns the scanner off")
 	}
