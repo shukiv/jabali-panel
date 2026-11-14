@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -23,6 +24,7 @@ type orphanAgent struct {
 	orphans   [][]ftpOrphanUID
 	queryErr  error
 	reown     map[string]ftpReownResult
+	reownErr  map[string]error
 	queries   int
 	walked    []string
 	keepSeen  [][]uint32
@@ -46,6 +48,9 @@ func (a *orphanAgent) Call(_ context.Context, method string, params any) (json.R
 		t := p["tenant_username"].(string)
 		a.walked = append(a.walked, t)
 		a.keepSeen = append(a.keepSeen, p["keep_uids"].([]uint32))
+		if err := a.reownErr[t]; err != nil {
+			return nil, err
+		}
 		return json.Marshal(a.reown[t])
 	}
 	return nil, errors.New("unexpected " + method)
@@ -128,21 +133,71 @@ func TestFtpOrphanSweep_LeftoversNotFoundWaitAWeek(t *testing.T) {
 	}
 }
 
-func TestFtpOrphanSweep_IncompleteRoundIsRetriedNextPass(t *testing.T) {
-	for name, res := range map[string]ftpReownResult{
-		"stopped": {Stopped: true},
-		"failed":  {Failed: 1, FirstError: "chown x: disk quota exceeded"},
+func TestFtpOrphanSweep_IncompleteRoundIsRetriedAfterAnHour(t *testing.T) {
+	for name, tc := range map[string]struct {
+		res ftpReownResult
+		err error
+	}{
+		"stopped":     {res: ftpReownResult{Stopped: true}},
+		"failed":      {res: ftpReownResult{Failed: 1, FirstError: "chown x: disk quota exceeded"}},
+		"agent error": {err: &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "walk /home/shop: input/output error"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := &orphanAgent{
-				orphans: [][]ftpOrphanUID{{{UID: 1000000005, Files: 3}}},
-				reown:   map[string]ftpReownResult{"shop": res},
+				orphans:  [][]ftpOrphanUID{{{UID: 1000000005, Files: 3}}},
+				reown:    map[string]ftpReownResult{"shop": tc.res},
+				reownErr: map[string]error{"shop": tc.err},
 			}
 			r := orphanReconciler(a, "shop")
 			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+			if len(a.walked) != 1 {
+				t.Errorf("walked %v, want no walk on the next pass", a.walked)
+			}
+			r.ftpOrphanAt = time.Now().Add(-ftpOrphanIncompleteRetry - time.Minute)
+			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 			if len(a.walked) != 2 {
-				t.Errorf("walked %v, want the incomplete round retried", a.walked)
+				t.Errorf("walked %v, want the incomplete round retried after an hour", a.walked)
+			}
+		})
+	}
+}
+
+func TestFtpOrphanSweep_NewLeftoversAreLookedForAtOnce(t *testing.T) {
+	a := &orphanAgent{
+		orphans: [][]ftpOrphanUID{
+			{{UID: 1000000005, Files: 3}},
+			{{UID: 1000000005, Files: 3}},
+			{{UID: 1000000005, Files: 3}, {UID: 1000000006, Files: 1}},
+		},
+		reown: map[string]ftpReownResult{},
+	}
+	r := orphanReconciler(a, "shop")
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	if len(a.walked) != 2 {
+		t.Errorf("walked %v, want a new round for the new uid", a.walked)
+	}
+}
+
+func TestFtpOrphanSweep_UserWithoutAHomeIsSkipped(t *testing.T) {
+	for _, code := range []string{agentwire.CodeNotFound, agentwire.CodePermissionDenied} {
+		t.Run(code, func(t *testing.T) {
+			a := &orphanAgent{
+				orphans:  [][]ftpOrphanUID{{{UID: 1000000005, Files: 3}}},
+				reown:    map[string]ftpReownResult{},
+				reownErr: map[string]error{"admin": &agentwire.AgentError{Code: code, Message: `tenant "admin" not found on host`}},
+			}
+			r := orphanReconciler(a, "admin", "shop")
+			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+			if len(a.walked) != 2 {
+				t.Fatalf("walked %v, want admin and shop", a.walked)
+			}
+			// The round was complete, so the leftovers wait a week.
+			r.ftpOrphanAt = time.Now().Add(-ftpOrphanIncompleteRetry - time.Minute)
+			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+			if len(a.walked) != 2 {
+				t.Errorf("walked %v: a user without a home made the round incomplete", a.walked)
 			}
 		})
 	}

@@ -3,12 +3,14 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -23,8 +25,9 @@ import (
 // (ftpaccount.orphan_uids). When there is, the agent walks tenant homes one
 // at a time, tenants with isolated accounts first, until every uid's file
 // count is found. Leftovers a full round didn't find are not looked for
-// again for ftpOrphanRetryAfter. The pass runs in its own goroutine, one at
-// a time, so a long walk never holds up the tick.
+// again for ftpOrphanRetryAfter, and after an incomplete round for
+// ftpOrphanIncompleteRetry. The pass runs in its own goroutine, one at a
+// time, so a long walk never holds up the tick.
 
 const (
 	ftpOrphanQueryTimeout  = time.Minute
@@ -33,7 +36,11 @@ const (
 	// Leftovers outside every home don't change on their own, so a set a
 	// complete round didn't find is only looked for again weekly.
 	ftpOrphanRetryAfter = 7 * 24 * time.Hour
-	ftpOrphanUserPage   = 500
+	// An incomplete round (a walk at its time limit, a file that couldn't
+	// change, an agent error) is tried again after an hour, not on every
+	// pass, so a home that never finishes doesn't keep the agent walking.
+	ftpOrphanIncompleteRetry = time.Hour
+	ftpOrphanUserPage        = 500
 )
 
 // WithFtpOrphanSweep turns the pass on. quotaMount returns the quota mount
@@ -109,7 +116,7 @@ func (r *Reconciler) sweepFtpOrphanFiles(ctx context.Context, keep []uint32, fir
 	}
 	sig := ftpOrphanSignature(orphans)
 	r.ftpOrphanMu.Lock()
-	if sig == "" || (sig == r.ftpOrphanSig && time.Since(r.ftpOrphanAt) < ftpOrphanRetryAfter) {
+	if sig == "" || (sig == r.ftpOrphanSig && time.Since(r.ftpOrphanAt) < r.ftpOrphanWait) {
 		if sig == "" {
 			r.ftpOrphanSig = ""
 		}
@@ -133,6 +140,12 @@ func (r *Reconciler) sweepFtpOrphanFiles(ctx context.Context, keep []uint32, fir
 			break
 		}
 		res, err := r.reownFtpOrphans(ctx, tenant, keep)
+		if ftpOrphanNoHome(err) {
+			// A panel user with no system account (the admin) or no home on
+			// disk: nothing there to hand over.
+			r.log.Debug("ftp: no home to look in for deleted-account files", "tenant", tenant, "err", err)
+			continue
+		}
 		if err != nil {
 			r.log.Warn("ftp: handing deleted-account files to the tenant failed", "tenant", tenant, "err", err)
 			complete = false
@@ -175,17 +188,27 @@ func (r *Reconciler) sweepFtpOrphanFiles(ctx context.Context, keep []uint32, fir
 		r.log.Warn("ftp: files of deleted FTP accounts not found in any tenant home", "uids", ftpOrphanKeys(remaining))
 	}
 
-	// Remember what is left after a complete round, so the same leftovers
-	// aren't looked for every pass. An incomplete round is retried at once.
-	after := ""
-	if complete {
-		if left, err := r.ftpOrphanUIDs(ctx, mount); err == nil {
-			after = ftpOrphanSignature(left)
-		}
+	// Remember what is left, so the same leftovers aren't looked for on
+	// every pass. New leftovers (another delete) change the set and are
+	// looked for at once.
+	after, wait := sig, ftpOrphanRetryAfter
+	if !complete {
+		wait = ftpOrphanIncompleteRetry
+	}
+	if left, err := r.ftpOrphanUIDs(ctx, mount); err == nil {
+		after = ftpOrphanSignature(left)
 	}
 	r.ftpOrphanMu.Lock()
-	r.ftpOrphanSig, r.ftpOrphanAt = after, time.Now()
+	r.ftpOrphanSig, r.ftpOrphanAt, r.ftpOrphanWait = after, time.Now(), wait
 	r.ftpOrphanMu.Unlock()
+}
+
+// ftpOrphanNoHome: the agent found no tenant home to walk (no system
+// account, a home outside /home, or none on disk). Asking again won't
+// change that, so it doesn't make the round incomplete.
+func ftpOrphanNoHome(err error) bool {
+	var ae *agentwire.AgentError
+	return errors.As(err, &ae) && (ae.Code == agentwire.CodeNotFound || ae.Code == agentwire.CodePermissionDenied)
 }
 
 func (r *Reconciler) ftpOrphanUIDs(ctx context.Context, mount string) ([]ftpOrphanUID, error) {

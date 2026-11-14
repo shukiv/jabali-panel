@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -359,6 +360,14 @@ func TestFtpReownOrphans_WalkErrorIsReturned(t *testing.T) {
 	params, _ := json.Marshal(ftpReownOrphansParams{TenantUsername: tenant.Username})
 	_, err := ftpReownOrphansHandler(context.Background(), params)
 	wantAgentErr(t, err, agentwire.CodeInternal)
+}
+
+func TestFtpReownOrphans_NoHomeIsNotFound(t *testing.T) {
+	tenant := testFtpTenant(t)
+	stubReownTree(t, fsperm.ReownStats{}, fmt.Errorf("open %s: %w", tenant.HomeDir, syscall.ENOENT))
+	params, _ := json.Marshal(ftpReownOrphansParams{TenantUsername: tenant.Username})
+	_, err := ftpReownOrphansHandler(context.Background(), params)
+	wantAgentErr(t, err, agentwire.CodeNotFound)
 }
 
 func TestFtpReownDeadline_KeepsRoomBeforeTheCallersDeadline(t *testing.T) {

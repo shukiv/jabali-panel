@@ -113,12 +113,13 @@ type Reconciler struct {
 	ftpConfigChecking atomic.Bool
 	// Files of deleted isolated FTP accounts (ftp_orphan_files.go): the
 	// quota mount source (nil = pass off), the singleflight, and the
-	// leftovers a complete round didn't find, with when.
+	// leftovers the last round left, with when and how long to leave them.
 	ftpOrphanQuotaMount func() (string, error)
 	ftpOrphanRunning    atomic.Bool
 	ftpOrphanMu         sync.Mutex
 	ftpOrphanSig        string
 	ftpOrphanAt         time.Time
+	ftpOrphanWait       time.Duration
 	// snippetDirsPruned is set once the agent has pruned the snippet dirs of
 	// names with no domain row (pruneSnippetDirs), so it runs once per process.
 	snippetDirsPruned atomic.Bool

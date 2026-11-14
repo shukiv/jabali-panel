@@ -335,6 +335,11 @@ func ftpReownOrphansHandler(ctx context.Context, params json.RawMessage) (any, e
 	stop := func() bool { return ctx.Err() != nil || time.Now().After(deadline) }
 
 	st, err := ftpReownTree(tenant.HomeDir, tenant.HomeDir, match, tenant.UID, newGID, stop)
+	if errors.Is(err, fs.ErrNotExist) {
+		// No home on disk: nothing to walk. not_found, like a tenant with no
+		// system account, so the sweep moves on instead of retrying.
+		return nil, &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: fmt.Sprintf("home %s not found", tenant.HomeDir)}
+	}
 	if err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("walk %s: %v", tenant.HomeDir, err)}
 	}
