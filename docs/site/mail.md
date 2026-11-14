@@ -146,6 +146,18 @@ Stalwart allows 20 redirects per message, so a list with outside addresses holds
 
 Distribution lists are re-applied to Stalwart by the reconciler whenever the list or a member changes (and every 15 minutes), so a failed save heals on its own. On servers set up by an earlier release, a distribution list was stored as a shared inbox that members could not see. The first reconcile after the update converts each one. Any mail already in that inbox is copied into every member's inbox first, and the old inbox is removed only after every copy succeeded.
 
+## Scanner uploads to a shared Files folder
+
+A network scanner or copier that sends scans by FTP or SFTP can drop them into a shared **Files** folder, where the mailboxes and groups granted on it see them in webmail under Files. On the mail domain's **Shared Resources** tab, make a Files resource, pick **Scanner** in its row actions, and turn it on with a login name, a password and a space limit (or `jabali shared-resource scanner enable --resource <id>`).
+
+- **Its own login and folder.** The scanner gets an FTP/SFTP login, `<owner>_<login>`, homed at `~/domains/<domain>/scans/<resource>`. That is in the domain's directory but outside `public_html`, so scans are never on the website. The scanner uploads to the login's top folder (`/`). The login counts as one of the package's FTP/SFTP accounts, so the package must include them.
+- **How it connects.** Where the server has disk quota, the login is isolated (its own system user, kept to its folder, with the space limit as its quota) and connects by SFTP, or by FTPS when the administrator has turned the FTP server on. Without disk quota a login shares the account's system user, and an SFTP session would reach the whole home folder, so the scanner login is FTPS only; turning a scanner on then needs the FTP server on, or it is refused with `409 scanner_unconfined`.
+- **Moving.** Every 30 seconds the panel moves finished files from the drop folder into the shared folder, oldest first and up to 20 per pass. A file is finished when it has not changed for a minute and the FTP server no longer holds it open. Dot files and partial names (`.part`, `.tmp`, `.filepart`, `.crdownload` and the like) wait. A file leaves the drop folder only after it is in the shared folder, so a failed pass is retried without losing or doubling a scan. A name already in the folder gets a number: `scan (1).pdf`.
+- **Space.** The space limit caps what the shared folder holds. When it is full, new scans wait in the drop folder and the drawer says why; members make room by deleting scans. A file larger than webmail accepts also waits, with the reason shown. Scans in the shared folder are stored by the mail server and do not count against the account's disk quota.
+- **Who sees the scans.** Grant mailboxes or groups on the resource. **Read + delete** (Files resources only) lets members open and delete scans but not add, rename or change files. **Read**, **Read/Write** and **Admin** work as on every shared resource.
+- **Turning off** removes the login. Scans already moved stay in the shared folder, and files still in the drop folder stay there. Deleting the resource, or deleting the scanner's login on the FTP accounts page, turns the scanner off on the next pass.
+- **Renaming the domain** is refused while the scanner's login lives in the domain's directory, as for any FTP login there: turn the scanner off first.
+
 ## Per-domain deliverability (admin)
 
 `/jabali-admin/mail/deliverability` — for every domain, shows:
