@@ -1,0 +1,32 @@
+services:
+  eurooffice:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}
+    restart: unless-stopped
+    environment:
+      # Request signing — required for any integrator (Nextcloud, etc.) to
+      # talk to this server. JWT_ENABLED defaults true; pin it explicitly.
+      JWT_ENABLED: "true"
+      JWT_SECRET: {{ q (index .Env "JWT_SECRET") }}
+      JWT_HEADER: "Authorization"
+      # WOPI on: lets the panel's webmail open and edit documents through
+      # this server.
+      WOPI_ENABLED: "true"
+      # ALLOW_PRIVATE_IP_ADDRESS and ALLOW_META_IP_ADDRESS stay unset: their
+      # default (false) keeps the server from fetching files at private or
+      # metadata addresses.
+    volumes:
+      - {{ .DataRoot }}/data:/var/www/euro-office/Data
+      - {{ .DataRoot }}/lib:/var/lib/euro-office/documentserver
+      - {{ .DataRoot }}/db:/var/lib/postgresql
+      - {{ .DataRoot }}/rabbitmq:/var/lib/rabbitmq
+      - {{ .DataRoot }}/logs:/var/log/euro-office/documentserver
+    ports:
+{{- with index .Ports "http" }}
+      - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
+{{- end }}
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ .CPULimit }}"
+          memory: {{ .MemoryLimit }}

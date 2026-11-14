@@ -1,0 +1,62 @@
+slug: eurooffice
+popularity: 40
+name: EuroOffice Docs
+tags: ["Productivity", "File sharing"]
+version: "9.3.8"
+# Release track (GH #1956): new installs get EuroOffice Docs 9. Update and the
+# monthly catalog bump stay on track 9; a newer major is a reviewed change.
+track: "9"
+description: >-
+  EuroOffice Document Server: an AGPL-3.0 fork of ONLYOFFICE Docs with the
+  closed binary parts removed — online editors for documents, spreadsheets
+  and presentations (OOXML-native). WOPI is enabled so the panel's webmail
+  can edit documents in it. Single container; it bundles PostgreSQL, RabbitMQ
+  and Redis and keeps editing state in the database. JWT request-signing uses
+  a generated secret (JWT_SECRET in the install .env) — set the same secret
+  in any app that connects to it.
+icon: icon.svg
+upstream: https://github.com/Euro-Office/DocumentServer
+documentation: https://euro-office.github.io/documentation/
+
+image_channel: ghcr.io/euro-office/documentserver:v9.3.8@sha256:0f19cb676d48f85b826e199ac9e773ea12130f7d32bfc9a45e86aea320441b8a
+update_mode: manual
+
+resources:
+  cpu: "2.0"
+  memory: "2g"
+  pids: 500
+
+# The standalone entrypoint runs as root and chowns its state dirs on start
+# (ds, postgres, rabbitmq) — no volume_owner. Unlike the ONLYOFFICE Community
+# image it starts its bundled PostgreSQL, RabbitMQ and Redis itself, so every
+# state dir gets a volume: Data (secrets, WOPI keypair), the converter's
+# App_Data under lib, the Postgres datadir, RabbitMQ's mnesia and the logs.
+volumes:
+  - name: data
+    container_path: /var/www/euro-office/Data
+  - name: lib
+    container_path: /var/lib/euro-office/documentserver
+  - name: db
+    container_path: /var/lib/postgresql
+  - name: rabbitmq
+    container_path: /var/lib/rabbitmq
+  - name: logs
+    container_path: /var/log/euro-office/documentserver
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
+
+ports:
+  - name: http
+    container_port: 80
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /healthcheck
+
+env:
+  - name: JWT_SECRET
+    secret: true
+    generate: password64
