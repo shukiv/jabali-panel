@@ -129,9 +129,14 @@ func ensureRootFileNode(ctx context.Context, accountID, folderName string) (stri
 	if folderName == "" {
 		folderName = "Shared"
 	}
+	// Stalwart 1.0 refuses a node create without "@type" ("@type is required
+	// on creation"), so a host never got its folder and nothing was shared.
 	var setRes jmapSetResult
 	if err := jmapCallWith(ctx, jmapCapFileNode, "FileNode/set",
-		map[string]any{"accountId": accountID, "create": map[string]any{"n": map[string]any{"name": folderName}}}, &setRes); err != nil {
+		map[string]any{"accountId": accountID, "create": map[string]any{"n": map[string]any{
+			"@type": "Directory",
+			"name":  folderName,
+		}}}, &setRes); err != nil {
 		return "", err
 	}
 	raw, ok := setRes.Created["n"]

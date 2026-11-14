@@ -3,6 +3,8 @@ package commands
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -58,5 +60,63 @@ func TestShareSetHandlers_Registered(t *testing.T) {
 		if _, ok := Default.handlers[cmd]; !ok {
 			t.Errorf("%s not registered", cmd)
 		}
+	}
+}
+
+// Stalwart 1.0 refuses a FileNode create without "@type" (seen live:
+// "@type is required on creation"). A host with no folder yet must get one
+// created as a Directory, or nothing is ever shared.
+func TestEnsureRootFileNode_CreatesDirectory(t *testing.T) {
+	var created map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			MethodCalls [][]json.RawMessage `json:"methodCalls"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.MethodCalls) != 1 {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		var name string
+		_ = json.Unmarshal(req.MethodCalls[0][0], &name)
+		var args struct {
+			Create map[string]map[string]any `json:"create"`
+		}
+		_ = json.Unmarshal(req.MethodCalls[0][1], &args)
+		var result any
+		switch name {
+		case "FileNode/get":
+			result = map[string]any{"list": []any{}}
+		case "FileNode/set":
+			created = args.Create["n"]
+			if created["@type"] != "Directory" {
+				result = map[string]any{"notCreated": map[string]any{"n": map[string]any{
+					"type": "invalidProperties", "description": "@type is required on creation.",
+				}}}
+			} else {
+				result = map[string]any{"created": map[string]any{"n": map[string]any{"id": "b"}}}
+			}
+		default:
+			http.Error(w, "unexpected "+name, http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"methodResponses": []any{[]any{name, result, "c0"}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	prevURL, prevToken := stalwartAdminURLFunc, stalwartAdminTokenFunc
+	stalwartAdminURLFunc = func() string { return srv.URL }
+	stalwartAdminTokenFunc = func() (string, error) { return "test-token", nil }
+	t.Cleanup(func() { stalwartAdminURLFunc, stalwartAdminTokenFunc = prevURL, prevToken })
+
+	id, err := ensureRootFileNode(context.Background(), "rr", "Scans")
+	if err != nil {
+		t.Fatalf("ensureRootFileNode: %v", err)
+	}
+	if id != "b" {
+		t.Fatalf("node id = %q, want b", id)
+	}
+	if created["name"] != "Scans" {
+		t.Fatalf("created name = %v, want Scans", created["name"])
 	}
 }
