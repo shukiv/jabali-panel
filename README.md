@@ -462,7 +462,7 @@ jabali serve             # Start the Jabali Panel HTTP(S) server
 jabali service           action|status
 jabali session           list|revoke|revoke-user
 jabali settings          get|keys|mail-hostname|set
-jabali shared-resource   create|grant|grants|list|remove|revoke
+jabali shared-resource   create|grant|grants|list|remove|revoke|scanner
 jabali ssh-key           add|delete|list
 jabali ssl               disable|enable|list|readiness|renew|retry|set-custom|
                          shared

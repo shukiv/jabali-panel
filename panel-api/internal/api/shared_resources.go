@@ -20,14 +20,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ginctx"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sharedresourceops"
 )
 
 const sharedResourceAgentTimeout = 15 * time.Second
-
-var sharedResourceRights = map[string]bool{
-	"read": true, "readwrite": true, "admin": true,
-}
 
 type SharedResourceHandlerConfig struct {
 	Resources  repository.SharedResourceRepository
@@ -35,6 +32,10 @@ type SharedResourceHandlerConfig struct {
 	Mailboxes  repository.MailboxRepository
 	MailGroups repository.MailGroupRepository
 	Agent      agent.AgentInterface
+	// Scanners wires the GH #2503 scanner routes; nil leaves them off.
+	Scanners *scandrops.Deps
+	// ScannerRateLimit bounds turning a scanner on (it makes a login).
+	ScannerRateLimit gin.HandlerFunc
 }
 
 type sharedResourceHandler struct{ cfg SharedResourceHandlerConfig }
@@ -47,6 +48,7 @@ type sharedResourceHandler struct{ cfg SharedResourceHandlerConfig }
 //   - PATCH  /shared-resources/:rid              update display name
 //   - PUT    /shared-resources/:rid/grants       replace the grant set
 //   - DELETE /shared-resources/:rid              delete (+ agent destroy)
+//   - GET|PUT|DELETE /shared-resources/:rid/scanner  a Files resource's scanner (GH #2503)
 func RegisterSharedResourceRoutes(g *gin.RouterGroup, cfg SharedResourceHandlerConfig) {
 	if cfg.Resources == nil || cfg.Domains == nil {
 		return
@@ -59,6 +61,15 @@ func RegisterSharedResourceRoutes(g *gin.RouterGroup, cfg SharedResourceHandlerC
 	grp.PATCH("/:rid", h.update)
 	grp.PUT("/:rid/grants", h.setGrants)
 	grp.DELETE("/:rid", h.delete)
+	if cfg.Scanners != nil {
+		limit := cfg.ScannerRateLimit
+		if limit == nil {
+			limit = func(c *gin.Context) { c.Next() }
+		}
+		grp.GET("/:rid/scanner", h.getScanner)
+		grp.PUT("/:rid/scanner", limit, h.enableScanner)
+		grp.DELETE("/:rid/scanner", h.disableScanner)
+	}
 }
 
 // ---- request/response ----
@@ -72,7 +83,7 @@ type createSharedResourceRequest struct {
 type grantInput struct {
 	GranteeKind string `json:"grantee_kind"` // mailbox|group
 	GranteeID   string `json:"grantee_id"`
-	Rights      string `json:"rights"` // read|readwrite|admin
+	Rights      string `json:"rights"` // read|readwrite|admin, and readdelete on files
 }
 
 type sharedResourceWithGrants struct {
@@ -212,7 +223,7 @@ func (h *sharedResourceHandler) setGrants(c *gin.Context) {
 	}
 	grants := make([]models.SharedResourceGrant, 0, len(req.Grants))
 	for _, g := range req.Grants {
-		if !sharedResourceRights[g.Rights] {
+		if !sharedresourceops.ValidRights(sr.Kind, g.Rights) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_rights"})
 			return
 		}

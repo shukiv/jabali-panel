@@ -28,6 +28,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/pyframeworks"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ssokey"
@@ -212,7 +213,11 @@ type Deps struct {
 	// SendAs pushes the send-as grants to Stalwart (GH #2267). serve.go
 	// builds it and runs its background check; the Send As routes share it.
 	SendAs *sendasops.Syncer
-	Log    *slog.Logger
+	// Scanners is the GH #2503 scanner lifecycle (shared Files resources fed
+	// by an FTP/SFTP drop folder). serve.go builds it and runs its ingest
+	// loop; the scanner routes share it. Nil leaves the routes off.
+	Scanners *scandrops.Deps
+	Log      *slog.Logger
 	// Redis is the shared *redis.Client for the notification dispatcher
 	// (ADR-0056) and future WordPress object-cache (ADR-0059). Wired in
 	// serve.go against cfg.Redis.URL; nil when Redis is disabled (tests,
@@ -1069,6 +1074,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			SendAs:          deps.SendAs,
 			TrustedSenders:  trustedSendersRepo,
 			Addresses:       deps.MailAddresses,
+
+			Scanners:         deps.Scanners,
+			ScannerRateLimit: rl.Strict(),
 		})
 		// GH #873 round 4 — tenant-scoped mail traffic (own domains only).
 		if deps.DB != nil {

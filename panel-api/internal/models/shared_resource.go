@@ -37,12 +37,13 @@ func (SharedResource) TableName() string { return "shared_resources" }
 // (mailbox|group), so it has no DB foreign key; the reconciler resolves
 // grantee → target principal email(s) (a group expands to its members) and
 // app code prunes grants on grantee delete. The agent maps Rights to the
-// per-resource Stalwart ACL keys.
+// per-resource Stalwart ACL keys. "readdelete" (read and delete, nothing
+// else) is for Files resources only — GH #2503 scans folders.
 type SharedResourceGrant struct {
 	ResourceID  string    `gorm:"column:resource_id;type:char(26);primaryKey" json:"resource_id"`
 	GranteeKind string    `gorm:"column:grantee_kind;type:enum('mailbox','group');primaryKey" json:"grantee_kind"`
 	GranteeID   string    `gorm:"column:grantee_id;type:char(26);primaryKey" json:"grantee_id"`
-	Rights      string    `gorm:"type:enum('read','readwrite','admin');not null;default:'read'" json:"rights"`
+	Rights      string    `gorm:"type:enum('read','readwrite','admin','readdelete');not null;default:'read'" json:"rights"`
 	CreatedAt   time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 }
 

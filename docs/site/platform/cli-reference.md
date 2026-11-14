@@ -5256,7 +5256,7 @@ jabali shared-resource grant [flags]
 - `--grantee` — grantee mailbox/group ID
 - `--grantee-kind` — mailbox|group (default `mailbox`)
 - `--resource` — shared resource ID
-- `--rights` — read|readwrite|admin (default `read`)
+- `--rights` — read|readwrite|admin, or readdelete (files only: read and delete) (default `read`)
 
 #### `jabali shared-resource grants`
 
@@ -5306,6 +5306,53 @@ jabali shared-resource revoke [flags]
 
 - `--grantee` — grantee ID to revoke
 - `--resource` — shared resource ID
+
+#### `jabali shared-resource scanner`
+
+A Files resource's scanner: an FTP/SFTP drop folder moved into the shared folder
+
+```
+jabali shared-resource scanner
+```
+
+##### `jabali shared-resource scanner disable`
+
+Turn a Files resource's scanner off: remove its login (files left in the drop folder stay)
+
+```
+jabali shared-resource scanner disable [flags]
+```
+
+**Flags:**
+
+- `--resource` — shared resource ID (a Files resource)
+
+##### `jabali shared-resource scanner enable`
+
+Turn a Files resource's scanner on: make its drop folder and FTP/SFTP login
+
+```
+jabali shared-resource scanner enable [flags]
+```
+
+**Flags:**
+
+- `--login` — login name; the login is <owner>_<login> (default `scanner`)
+- `--password` — login password (generated and shown once if omitted)
+- `--resource` — shared resource ID (a Files resource)
+- `--space-mb` — space the scans may keep, in MB (the login's disk quota where logins are isolated) (default `1024`)
+
+##### `jabali shared-resource scanner status`
+
+Show a Files resource's scanner
+
+```
+jabali shared-resource scanner status [flags]
+```
+
+**Flags:**
+
+- `--resource` — shared resource ID (a Files resource)
 
 ### `jabali ssh-key`
 

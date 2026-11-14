@@ -77,6 +77,21 @@ type DomainLookup interface {
 // the CLI used to keep two separate inline copies of this check.
 var granteeKinds = map[string]bool{"mailbox": true, "group": true}
 
+// ValidRights reports whether rights is a grant level a resource of kind
+// takes: read, readwrite or admin for every kind, and readdelete (read and
+// delete, nothing else — GH #2503 scans folders) for files only. Calendars and
+// address books have no matching ACL, and their agents would quietly turn an
+// unknown level into read. The REST handler and the CLI both ask here.
+func ValidRights(kind, rights string) bool {
+	switch rights {
+	case "read", "readwrite", "admin":
+		return true
+	case "readdelete":
+		return kind == "files"
+	}
+	return false
+}
+
 // ValidGranteeKind reports whether kind is an allowed grant grantee kind.
 func ValidGranteeKind(kind string) bool { return granteeKinds[kind] }
 

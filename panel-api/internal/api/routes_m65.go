@@ -3,6 +3,7 @@ package api
 import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +25,9 @@ type M65RouteDeps struct {
 	TrustedSenders  repository.MailboxTrustedSenderRepository
 	// Addresses: see MailboxForwarderHandlerConfig.Addresses.
 	Addresses MailAddressReleaser
+	// Scanners / ScannerRateLimit: see SharedResourceHandlerConfig (GH #2503).
+	Scanners         *scandrops.Deps
+	ScannerRateLimit gin.HandlerFunc
 }
 
 // RegisterM65Routes registers all M6.5 email feature routes.
@@ -127,5 +131,8 @@ func registerSharedResourceRoutes(g *gin.RouterGroup, deps M65RouteDeps) {
 		Mailboxes:  deps.Mailboxes,
 		MailGroups: deps.MailGroups,
 		Agent:      deps.Agent,
+
+		Scanners:         deps.Scanners,
+		ScannerRateLimit: deps.ScannerRateLimit,
 	})
 }

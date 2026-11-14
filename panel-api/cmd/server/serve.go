@@ -32,6 +32,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dockerapp"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/drsync"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/eventsources"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ftpops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/gitdeploy"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/mailaddrowner"
@@ -45,6 +46,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler/phases"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/scandrops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sendasops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/services"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/sso"
@@ -687,6 +689,25 @@ func runServe(cmd *cobra.Command, args []string) error {
 			log.Warn("m18: could not resolve /home mount; disk-quota plumbing disabled", "err", err)
 		}
 
+		// GH #2503: scanners feeding shared Files resources. Built after the
+		// quota mount, which decides whether a scanner login can be isolated.
+		if sharedAgent != nil {
+			deps.Scanners = &scandrops.Deps{
+				Drops:     repository.NewScanDropRepository(sharedDB),
+				Resources: repository.NewSharedResourceRepository(sharedDB),
+				Domains:   deps.Domains,
+				Ftp: ftpops.Deps{
+					Agent:      sharedAgent,
+					Accounts:   deps.FtpAccounts,
+					Users:      deps.Users,
+					Packages:   deps.Packages,
+					Log:        log,
+					QuotaMount: deps.QuotaMount,
+				},
+				Log: log,
+			}
+		}
+
 		// Admin bootstrap — atomic panel row + Kratos identity. Wait up to
 		// 60s for Kratos to answer /health/ready first: install.sh starts
 		// jabali-kratos immediately before jabali-panel, and the panel can
@@ -1096,6 +1117,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 	// deleted, a domain renamed) or the last push failed. A fresh install, a
 	// restored DB or a reset Stalwart gets the current set (0 pairs -> "true").
 	go deps.SendAs.Run(ctx, log)
+
+	// GH #2503: move the scans each scanner finished into its shared folder,
+	// and remove the scanners whose folder or login is gone.
+	if deps.Scanners != nil {
+		go scandrops.Run(ctx, *deps.Scanners)
+	}
 
 	// GH #1993: remove kept uploaded backups whose retention ended, and
 	// archive files no row owns.
