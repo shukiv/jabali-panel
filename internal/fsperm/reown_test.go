@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -225,6 +226,99 @@ func TestReownTree_HardLinkFromOutsideLeavesTheFileAlone(t *testing.T) {
 	}
 	if st.Linked != 1 {
 		t.Errorf("Linked = %d, want 1", st.Linked)
+	}
+}
+
+// sight shows w the entry name in dir, as the walk would list it.
+func sight(t *testing.T, w *reowner, dir, name string) {
+	t.Helper()
+	dfd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unix.Close(dfd)
+	var dst, est unix.Stat_t
+	if err := unix.Fstat(dfd, &dst); err != nil {
+		t.Fatal(err)
+	}
+	efd, err := unix.Openat(dfd, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Fstat(efd, &est); err != nil {
+		t.Fatal(err)
+	}
+	w.dev = est.Dev
+	if !w.entry(efd, &est, name, dfd, &dst) {
+		unix.Close(efd)
+	}
+}
+
+// linkedPair makes a file in home/d1 with a second link at other, and an
+// empty home/d2.
+func linkedPair(t *testing.T, other string) (home, file string) {
+	t.Helper()
+	home = t.TempDir()
+	file = filepath.Join(home, "d1", "x")
+	write(t, file)
+	if err := os.MkdirAll(filepath.Join(home, "d2"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(file, other); err != nil {
+		t.Fatal(err)
+	}
+	return home, file
+}
+
+// A tenant moves its one link to another tenant's file from a directory the
+// walk listed into one it hasn't yet. Seen twice, it must not count as two.
+func TestReownTree_ALinkMovedDuringTheWalkIsNotCountedTwice(t *testing.T) {
+	home, file := linkedPair(t, filepath.Join(t.TempDir(), "elsewhere"))
+	ino := inode(t, file)
+	inodes := recordChowns(t)
+	st := ReownStats{Reowned: map[uint32]int{}}
+	w := newReowner(0, ownedByMe, os.Getuid(), nil, nil, &st)
+	defer w.close()
+
+	sight(t, w, filepath.Join(home, "d1"), "x")
+	if err := os.Rename(file, filepath.Join(home, "d2", "x")); err != nil {
+		t.Fatal(err)
+	}
+	sight(t, w, filepath.Join(home, "d2"), "x")
+	w.settleLinked()
+
+	for _, i := range *inodes {
+		if i == ino {
+			t.Fatal("a file with a link outside the walk was changed")
+		}
+	}
+	if st.Linked != 1 {
+		t.Errorf("Linked = %d, want 1", st.Linked)
+	}
+}
+
+// Both links seen, but a directory changed after it was listed: the walk
+// can't be sure of what it saw there, so the file stays.
+func TestReownTree_HeldFileInADirectoryChangedSinceStays(t *testing.T) {
+	home := t.TempDir()
+	x := filepath.Join(home, "d1", "x")
+	write(t, x)
+	if err := os.Link(x, filepath.Join(home, "d1", "y")); err != nil {
+		t.Fatal(err)
+	}
+	inodes := recordChowns(t)
+	st := ReownStats{Reowned: map[uint32]int{}}
+	w := newReowner(0, ownedByMe, os.Getuid(), nil, nil, &st)
+	defer w.close()
+
+	sight(t, w, filepath.Join(home, "d1"), "x")
+	sight(t, w, filepath.Join(home, "d1"), "y")
+	time.Sleep(30 * time.Millisecond) // past the timestamp granularity
+	write(t, filepath.Join(home, "d1", "new"))
+	w.settleLinked()
+
+	if len(*inodes) != 0 || st.Linked != 1 {
+		t.Errorf("changed %d inodes, Linked = %d; want none changed and 1", len(*inodes), st.Linked)
 	}
 }
 

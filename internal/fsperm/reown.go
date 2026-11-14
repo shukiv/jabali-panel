@@ -19,14 +19,14 @@ type ReownStats struct {
 	// FirstError describes the first of them.
 	Failed     int
 	FirstError string
-	// Linked counts the matched files left alone because not all of their
-	// hard links were in the walk.
+	// Linked counts the matched files left alone because the walk could not
+	// confirm that all of their hard links are inside it.
 	Linked int
 }
 
-// maxLinkedHeld caps the multiply-linked files whose descriptors a walk holds
-// until it knows whether all their links were inside it.
-const maxLinkedHeld = 4096
+// maxLinkSightings caps the links of multiply-linked files a walk remembers
+// (each holds a descriptor) until it can tell whether all were inside it.
+const maxLinkSightings = 4096
 
 func (s *ReownStats) fail(what string, err error) {
 	s.Failed++
@@ -59,10 +59,14 @@ var (
 // is never touched, and a symlink is changed as the link, never followed.
 // Directories are listed through a descriptor reopened from the same one.
 //
-// A matched file with more than one hard link changes only when the walk saw
-// every one of its links, so a link from outside root (another tenant's home)
-// never moves the file to this owner. Its descriptor is held until the walk
-// ends and the change goes through it; otherwise it is counted in Linked.
+// A matched file with more than one hard link changes only when all of its
+// links are inside the walk, so a link from elsewhere (another tenant's home)
+// never moves the file to this owner. The file is held, with every place the
+// walk saw it, until the walk ends. It then changes only if each of those
+// names still leads to it, none of their directories changed since it was
+// listed, and the distinct names number its link count. A link moved during
+// the walk changes its old directory, so it can't be counted twice. Files
+// that don't pass are counted in Linked.
 //
 // stop is checked before each entry; once it returns true the walk ends with
 // Stopped set. A nil stop never stops. The error is set only when root itself
@@ -78,48 +82,60 @@ func ReownTree(anchor, root string, match func(owner uint32) bool, uid int, newG
 	if err := unix.Fstat(fd, &rst); err != nil {
 		return st, fmt.Errorf("fstat %s: %w", root, err)
 	}
-	w := &reowner{dev: rst.Dev, match: match, uid: uid, newGID: newGID, stop: stop, st: &st, linked: map[uint64]*heldLink{}}
-	w.entry(fd, &rst, root)
+	w := newReowner(rst.Dev, match, uid, newGID, stop, &st)
+	defer w.close()
+	w.entry(fd, &rst, root, -1, nil)
 	w.walk(fd)
 	w.settleLinked()
 	return st, nil
 }
 
 type reowner struct {
-	dev    uint64
-	match  func(uint32) bool
-	uid    int
-	newGID func(uint32) int
-	stop   func() bool
-	st     *ReownStats
-	linked map[uint64]*heldLink // by inode
+	dev       uint64
+	match     func(uint32) bool
+	uid       int
+	newGID    func(uint32) int
+	stop      func() bool
+	st        *ReownStats
+	linked    map[uint64]*heldLink // by inode
+	dirs      map[uint64]*heldDir  // by inode
+	sightings int
 }
 
-// heldLink is a matched multiply-linked file: a descriptor to it, its name,
-// and how many of its links the walk has seen.
+func newReowner(dev uint64, match func(uint32) bool, uid int, newGID func(uint32) int, stop func() bool, st *ReownStats) *reowner {
+	return &reowner{dev: dev, match: match, uid: uid, newGID: newGID, stop: stop, st: st,
+		linked: map[uint64]*heldLink{}, dirs: map[uint64]*heldDir{}}
+}
+
+// heldLink is a matched multiply-linked file: a descriptor to it and every
+// place the walk saw it.
 type heldLink struct {
-	fd   int
-	name string
-	seen uint64
+	fd    int
+	name  string
+	links []linkSighting
 }
 
-// settleLinked changes each held file whose links were all seen, through its
-// held descriptor, and counts the rest in Linked.
-func (w *reowner) settleLinked() {
+type linkSighting struct {
+	dir  *heldDir
+	name string
+}
+
+// heldDir is a directory a held file was seen in: a descriptor to it and its
+// ctime from just before it was listed.
+type heldDir struct {
+	fd    int
+	ino   uint64
+	ctime unix.Timespec
+}
+
+func (w *reowner) close() {
 	for _, h := range w.linked {
-		var st unix.Stat_t
-		switch err := unix.Fstat(h.fd, &st); {
-		case err != nil:
-			w.st.fail("stat "+h.name, err)
-		case !w.match(st.Uid):
-		case uint64(st.Nlink) != h.seen:
-			w.st.Linked++
-		default:
-			w.change(h.fd, &st, h.name)
-		}
 		unix.Close(h.fd)
 	}
-	w.linked = nil
+	for _, d := range w.dirs {
+		unix.Close(d.fd)
+	}
+	w.linked, w.dirs = nil, nil
 }
 
 func (w *reowner) stopped() bool {
@@ -133,27 +149,96 @@ func (w *reowner) stopped() bool {
 }
 
 // entry changes the inode behind fd when match accepts its owner. st must be
-// fd's own fstat. A multiply-linked non-directory is held instead (see
-// ReownTree); held reports that w took fd and the caller must not close it.
-func (w *reowner) entry(fd int, st *unix.Stat_t, name string) (held bool) {
+// fd's own fstat; parent and pst are the directory it was listed in and that
+// directory's fstat from before the listing. A multiply-linked non-directory
+// is held instead (see ReownTree); held reports that w took fd and the caller
+// must not close it.
+func (w *reowner) entry(fd int, st *unix.Stat_t, name string, parent int, pst *unix.Stat_t) (held bool) {
 	w.st.Scanned++
 	if !w.match(st.Uid) {
 		return false
 	}
 	if st.Nlink > 1 && st.Mode&unix.S_IFMT != unix.S_IFDIR {
-		if h, ok := w.linked[st.Ino]; ok {
-			h.seen++
-			return false
-		}
-		if len(w.linked) >= maxLinkedHeld {
-			w.st.Linked++
-			return false
-		}
-		w.linked[st.Ino] = &heldLink{fd: fd, name: name, seen: 1}
-		return true
+		return w.hold(fd, st, name, parent, pst)
 	}
 	w.change(fd, st, name)
 	return false
+}
+
+// hold records one sighting of a multiply-linked file.
+func (w *reowner) hold(fd int, st *unix.Stat_t, name string, parent int, pst *unix.Stat_t) (held bool) {
+	h := w.linked[st.Ino]
+	if w.sightings >= maxLinkSightings || pst == nil {
+		if h != nil {
+			h.links = nil // can't account for every link any more
+		} else {
+			w.st.Linked++
+		}
+		return false
+	}
+	d := w.dirs[pst.Ino]
+	if d == nil {
+		dup, err := unix.FcntlInt(uintptr(parent), unix.F_DUPFD_CLOEXEC, 0)
+		if err != nil {
+			w.st.fail("hold directory of "+name, err)
+			return false
+		}
+		d = &heldDir{fd: dup, ino: pst.Ino, ctime: pst.Ctim}
+		w.dirs[pst.Ino] = d
+	}
+	w.sightings++
+	if h == nil {
+		h = &heldLink{fd: fd, name: name}
+		w.linked[st.Ino] = h
+		held = true
+	}
+	h.links = append(h.links, linkSighting{dir: d, name: name})
+	return held
+}
+
+// settleLinked changes each held file whose links are confirmed all inside
+// the walk, through its held descriptor, and counts the rest in Linked.
+func (w *reowner) settleLinked() {
+	for ino, h := range w.linked {
+		var st unix.Stat_t
+		if err := unix.Fstat(h.fd, &st); err != nil {
+			w.st.fail("stat "+h.name, err)
+			continue
+		}
+		if !w.match(st.Uid) {
+			continue
+		}
+		if w.allLinksSeen(ino, h, &st) {
+			w.change(h.fd, &st, h.name)
+		} else {
+			w.st.Linked++
+		}
+	}
+}
+
+// allLinksSeen reports whether every sighting of the held file still names
+// it in a directory unchanged since it was listed, and the distinct names
+// number its link count.
+func (w *reowner) allLinksSeen(ino uint64, h *heldLink, st *unix.Stat_t) bool {
+	if len(h.links) == 0 {
+		return false
+	}
+	type place struct {
+		dir  uint64
+		name string
+	}
+	seen := map[place]bool{}
+	for _, l := range h.links {
+		var ds, ls unix.Stat_t
+		if unix.Fstat(l.dir.fd, &ds) != nil || ds.Ctim != l.dir.ctime {
+			return false
+		}
+		if unix.Fstatat(l.dir.fd, l.name, &ls, unix.AT_SYMLINK_NOFOLLOW) != nil || ls.Dev != w.dev || ls.Ino != ino {
+			return false
+		}
+		seen[place{l.dir.ino, l.name}] = true
+	}
+	return uint64(len(seen)) == uint64(st.Nlink)
 }
 
 // change gives the inode behind fd to w.uid (and the group newGID picks).
@@ -172,6 +257,13 @@ func (w *reowner) change(fd int, st *unix.Stat_t, name string) {
 // walk handles every entry of the directory at dfd and, recursively, the
 // directories among them.
 func (w *reowner) walk(dfd int) {
+	// The directory's ctime from before the listing: a held file's sighting
+	// here counts only if the directory is unchanged at the end.
+	var dst unix.Stat_t
+	if err := unix.Fstat(dfd, &dst); err != nil {
+		w.st.fail("stat directory", err)
+		return
+	}
 	names, err := readEntryNames(dfd)
 	if err != nil {
 		w.st.fail("list directory", err)
@@ -204,7 +296,7 @@ func (w *reowner) walk(dfd int) {
 		if afterOwnerRead != nil {
 			afterOwnerRead(dfd, name)
 		}
-		if w.entry(efd, &est, name) {
+		if w.entry(efd, &est, name, dfd, &dst) {
 			continue // held until the walk ends
 		}
 		if est.Mode&unix.S_IFMT != unix.S_IFDIR {
