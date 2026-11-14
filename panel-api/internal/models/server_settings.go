@@ -141,6 +141,8 @@ type ServerSettings struct {
 	ReleaseChannel string `gorm:"column:release_channel;type:varchar(16);not null;default:'stable'" json:"release_channel"`
 	// WebmailEnabled toggles the Bulwark webmail client server-wide (GH #316).
 	WebmailEnabled bool `gorm:"column:webmail_enabled;type:tinyint(1);not null;default:1" json:"webmail_enabled"`
+	// WebmailOfficeEditorURL is the WOPI editor webmail opens office files in (GH #2501); empty = off.
+	WebmailOfficeEditorURL string `gorm:"column:webmail_office_editor_url;type:varchar(255);not null;default:''" json:"webmail_office_editor_url"`
 	// Module enable flags (M353 Phase 1, GH #353): each gates its install +
 	// its panel pages. Default on so upgrades keep every feature; fresh
 	// installs seed these from JABALI_MODULES at first boot.

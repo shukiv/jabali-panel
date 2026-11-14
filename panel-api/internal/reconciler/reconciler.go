@@ -42,13 +42,13 @@ import (
 // Reconciler syncs the database state with the filesystem (nginx configs, php-fpm pools).
 // The database is the source of truth; the reconciler makes the filesystem match.
 type Reconciler struct {
-	domains        repository.DomainRepository
-	users          repository.UserRepository
-	dnsZones       repository.DNSZoneRepository
-	dnsRecords     repository.DNSRecordRepository
+	domains    repository.DomainRepository
+	users      repository.UserRepository
+	dnsZones   repository.DNSZoneRepository
+	dnsRecords repository.DNSRecordRepository
 	// dnsTemplates (GH #1627) seeds a custom template's records into a fresh
 	// zone at bootstrap. nil-safe — an unwired panel just skips the seed.
-	dnsTemplates repository.DNSTemplateRepository
+	dnsTemplates   repository.DNSTemplateRepository
 	sslCerts       repository.SSLCertificateRepository
 	serverSettings repository.ServerSettingsRepository
 	// dnsPreflight resolves a hostname against EXTERNAL resolvers before an
@@ -1191,6 +1191,8 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	r.reconcileCrowdsecLists(ctx)
 	// GH #2502: webmail's branding, server-wide and per domain.
 	r.reconcileWebmailBranding(ctx)
+	// GH #2501: webmail's WOPI document editor URL.
+	r.reconcileWebmailEditor(ctx)
 
 	tt.mark("mail_shared_egress")
 
@@ -1539,6 +1541,7 @@ func (r *Reconciler) ReconcileAllForce(ctx context.Context) error {
 	r.ReconcileNginxBots(ctx)
 	r.reconcileCrowdsecLists(ctx)
 	r.reconcileWebmailBranding(ctx)
+	r.reconcileWebmailEditor(ctx)
 
 	allDomains, _, err := r.domains.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
