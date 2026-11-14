@@ -307,11 +307,20 @@ func scanDropSkipName(name string) bool {
 	return false
 }
 
-// scanFolder is the host folder's current files: name → blob, and the bytes
-// all of them hold.
+// jmapCapBlob is the JMAP Blob extension (RFC 9404): Blob/get gives a blob's
+// content digest.
+const jmapCapBlob = "urn:ietf:params:jmap:blob"
+
+// scanFolder is the host folder's current files by name, and the bytes all
+// of them hold.
 type scanFolder struct {
-	blobs map[string]string
+	nodes map[string]scanNode
 	used  int64
+}
+
+type scanNode struct {
+	blobID string
+	size   int64
 }
 
 // listScanFolder reads every file node in the host's folder. FileNode/get
@@ -339,7 +348,7 @@ func listScanFolder(ctx context.Context, hostID, folderID string) (*scanFolder, 
 			break
 		}
 	}
-	folder := &scanFolder{blobs: make(map[string]string, len(ids))}
+	folder := &scanFolder{nodes: make(map[string]scanNode, len(ids))}
 	for len(ids) > 0 {
 		n := min(len(ids), scanDropPage)
 		var g struct {
@@ -357,7 +366,7 @@ func listScanFolder(ctx context.Context, hostID, folderID string) (*scanFolder, 
 			return nil, fmt.Errorf("read the scans folder: %w", err)
 		}
 		for _, node := range g.List {
-			folder.blobs[node.Name] = node.BlobID
+			folder.nodes[node.Name] = scanNode{blobID: node.BlobID, size: node.Size}
 			folder.used += node.Size
 		}
 		ids = ids[n:]
@@ -400,7 +409,11 @@ func moveScan(ctx context.Context, dir *os.File, f scanDropFile, hostID, folderI
 	}
 
 	name := scanDropNodeName(f.name)
-	if !folder.holds(name, blobID) {
+	held, err := folder.holds(ctx, hostID, name, blobID, st.Size)
+	if err != nil {
+		return false, err
+	}
+	if !held {
 		final := folder.freeName(name)
 		var set jmapSetResult
 		if err := jmapCallWith(ctx, jmapCapFileNode, "FileNode/set", map[string]any{
@@ -418,7 +431,7 @@ func moveScan(ctx context.Context, dir *os.File, f scanDropFile, hostID, folderI
 		if _, ok := set.Created["s"]; !ok {
 			return false, fmt.Errorf("the folder refused it: %s", string(set.NotCreated["s"]))
 		}
-		folder.blobs[final] = blobID
+		folder.nodes[final] = scanNode{blobID: blobID, size: st.Size}
 		folder.used += st.Size
 	}
 
@@ -443,28 +456,60 @@ func scanDropSameFile(a, b *unix.Stat_t) bool {
 		a.Mode&unix.S_IFMT == unix.S_IFREG
 }
 
-// holds reports whether the folder already has this content under name or a
-// numbered copy of it — a pass that filed the scan and stopped before removing
-// the drop copy.
-func (s *scanFolder) holds(name, blobID string) bool {
-	for existing, blob := range s.blobs {
-		if blob == blobID && (existing == name || scanDropNumberedCopy(existing, name)) {
-			return true
+// holds reports whether the folder already has the uploaded content under name
+// or a numbered copy of it — a pass that filed the scan and stopped before
+// removing the drop copy. Stalwart keeps its own blobId for each file, not the
+// upload's, so the same-size candidates are compared by content digest.
+func (s *scanFolder) holds(ctx context.Context, hostID, name, blobID string, size int64) (bool, error) {
+	var candidates []string
+	for existing, n := range s.nodes {
+		if n.size == size && (existing == name || scanDropNumberedCopy(existing, name)) {
+			candidates = append(candidates, n.blobID)
 		}
 	}
-	return false
+	for len(candidates) > 0 {
+		n := min(len(candidates), scanDropPage-1)
+		var g struct {
+			List []struct {
+				ID     string `json:"id"`
+				SHA256 string `json:"digest:sha-256"`
+			} `json:"list"`
+		}
+		if err := jmapCallWith(ctx, jmapCapBlob, "Blob/get", map[string]any{
+			"accountId":  hostID,
+			"ids":        append([]string{blobID}, candidates[:n]...),
+			"properties": []string{"digest:sha-256"},
+		}, &g); err != nil {
+			return false, fmt.Errorf("compare with the folder's files: %w", err)
+		}
+		digests := make(map[string]string, len(g.List))
+		for _, b := range g.List {
+			digests[b.ID] = b.SHA256
+		}
+		want := digests[blobID]
+		if want == "" {
+			return false, errors.New("compare with the folder's files: no digest for the upload")
+		}
+		for _, c := range candidates[:n] {
+			if digests[c] == want {
+				return true, nil
+			}
+		}
+		candidates = candidates[n:]
+	}
+	return false, nil
 }
 
 // freeName is name, or "base (n).ext" for the first n not taken.
 func (s *scanFolder) freeName(name string) string {
-	if _, taken := s.blobs[name]; !taken {
+	if _, taken := s.nodes[name]; !taken {
 		return name
 	}
 	ext := filepath.Ext(name)
 	base := strings.TrimSuffix(name, ext)
 	for n := 1; n < 100000; n++ {
 		c := fmt.Sprintf("%s (%d)%s", base, n, ext)
-		if _, taken := s.blobs[c]; !taken {
+		if _, taken := s.nodes[c]; !taken {
 			return c
 		}
 	}

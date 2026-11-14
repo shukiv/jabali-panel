@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,12 +26,14 @@ import (
 )
 
 // fakeFileStalwart is the slice of Stalwart's JMAP the scanner ingest uses:
-// upload, the session's maxSizeUpload, and FileNode query/get/set on one
-// folder of one account.
+// upload, the session's maxSizeUpload, FileNode query/get/set on one folder
+// of one account, and Blob/get digests. As on Stalwart 1.0.2, an upload's
+// blobId ("e<hash>") is not the blobId a file node keeps ("c<hash>-<node>"),
+// so the same content is found by its digest, not by its id.
 type fakeFileStalwart struct {
 	mu        sync.Mutex
 	maxUpload int64
-	blobs     map[string][]byte // blobId → bytes
+	blobs     map[string][]byte // content hash → bytes
 	nodes     map[string]fakeFileNode
 	nextID    int
 	// onUpload / onCreate run inside the request, to change the drop
@@ -63,16 +67,28 @@ func newFakeFileStalwart(t *testing.T) *fakeFileStalwart {
 func (f *fakeFileStalwart) addFile(name string, content []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	id := f.blob(content)
+	hash := f.store(content)
 	f.nextID++
-	f.nodes[fmt.Sprintf("n%d", f.nextID)] = fakeFileNode{ParentID: fakeFolderID, Name: name, Size: int64(len(content)), BlobID: id}
+	id := fmt.Sprintf("n%d", f.nextID)
+	f.nodes[id] = fakeFileNode{ParentID: fakeFolderID, Name: name, Size: int64(len(content)), BlobID: "c" + hash + "-" + id}
 }
 
-func (f *fakeFileStalwart) blob(content []byte) string {
+// store keeps content under its hash and returns the hash.
+func (f *fakeFileStalwart) store(content []byte) string {
 	sum := sha256.Sum256(content)
-	id := hex.EncodeToString(sum[:8])
-	f.blobs[id] = content
-	return id
+	hash := hex.EncodeToString(sum[:8])
+	f.blobs[hash] = content
+	return hash
+}
+
+// content resolves an upload's or a node's blobId to its bytes.
+func (f *fakeFileStalwart) content(blobID string) ([]byte, bool) {
+	if len(blobID) < 2 || (blobID[0] != 'e' && blobID[0] != 'c') {
+		return nil, false
+	}
+	hash, _, _ := strings.Cut(blobID[1:], "-")
+	b, ok := f.blobs[hash]
+	return b, ok
 }
 
 func (f *fakeFileStalwart) names() map[string]string {
@@ -80,7 +96,8 @@ func (f *fakeFileStalwart) names() map[string]string {
 	defer f.mu.Unlock()
 	out := map[string]string{}
 	for _, n := range f.nodes {
-		out[n.Name] = string(f.blobs[n.BlobID])
+		b, _ := f.content(n.BlobID)
+		out[n.Name] = string(b)
 	}
 	return out
 }
@@ -102,7 +119,7 @@ func (f *fakeFileStalwart) serve(w http.ResponseWriter, r *http.Request) {
 			f.onUpload()
 		}
 		f.mu.Lock()
-		id := f.blob(body)
+		id := "e" + f.store(body)
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"blobId": id, "size": len(body), "type": r.Header.Get("Content-Type")})
 		return
@@ -111,6 +128,7 @@ func (f *fakeFileStalwart) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		Using       []string            `json:"using"`
 		MethodCalls [][]json.RawMessage `json:"methodCalls"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || len(req.MethodCalls) != 1 {
@@ -135,6 +153,23 @@ func (f *fakeFileStalwart) serve(w http.ResponseWriter, r *http.Request) {
 	var result any
 	f.mu.Lock()
 	switch name {
+	case "Blob/get":
+		if !slices.Contains(req.Using, "urn:ietf:params:jmap:blob") {
+			f.mu.Unlock()
+			http.Error(w, "Blob/get without the blob capability", http.StatusBadRequest)
+			return
+		}
+		list, notFound := []any{}, []string{}
+		for _, id := range args.IDs {
+			b, ok := f.content(id)
+			if !ok {
+				notFound = append(notFound, id)
+				continue
+			}
+			sum := sha256.Sum256(b)
+			list = append(list, map[string]any{"id": id, "digest:sha-256": base64.StdEncoding.EncodeToString(sum[:])})
+		}
+		result = map[string]any{"list": list, "notFound": notFound}
 	case "FileNode/query":
 		var ids []string
 		for id, n := range f.nodes {
@@ -173,10 +208,16 @@ func (f *fakeFileStalwart) serve(w http.ResponseWriter, r *http.Request) {
 			result = map[string]any{"notCreated": map[string]any{"s": map[string]any{"type": "alreadyExists"}}}
 		default:
 			blobID, _ := c["blobId"].(string)
+			b, ok := f.content(blobID)
+			if !ok {
+				result = map[string]any{"notCreated": map[string]any{"s": map[string]any{"type": "blobNotFound"}}}
+				break
+			}
 			f.nextID++
 			id := fmt.Sprintf("n%d", f.nextID)
-			f.nodes[id] = fakeFileNode{ParentID: fakeFolderID, Name: c["name"].(string), Size: int64(len(f.blobs[blobID])), BlobID: blobID}
-			result = map[string]any{"created": map[string]any{"s": map[string]any{"id": id}}}
+			hash, _, _ := strings.Cut(blobID[1:], "-")
+			f.nodes[id] = fakeFileNode{ParentID: fakeFolderID, Name: c["name"].(string), Size: int64(len(b)), BlobID: "c" + hash + "-" + id}
+			result = map[string]any{"created": map[string]any{"s": map[string]any{"id": id, "size": len(b)}}}
 		}
 	default:
 		f.mu.Unlock()
@@ -394,6 +435,22 @@ func TestScanDropIngest_ChangedDuringUploadWaits(t *testing.T) {
 	}
 	if !x.exists("scan.pdf") {
 		t.Fatal("the changed file was removed")
+	}
+}
+
+// A scanner that numbers its files from 1 each day reuses yesterday's name,
+// often at the same size: only the same content counts as filed.
+func TestScanDropIngest_SameNameAndSizeIsANewScan(t *testing.T) {
+	f := newFakeFileStalwart(t)
+	f.addFile("scan.pdf", []byte("page A"))
+	x := newScanDropFixture(t)
+	x.write(t, "scan.pdf", "page B")
+
+	if res := x.run(t); res.Moved != 1 {
+		t.Fatalf("result = %+v, want 1 moved", res)
+	}
+	if got := f.names(); got["scan.pdf"] != "page A" || got["scan (1).pdf"] != "page B" {
+		t.Fatalf("folder = %v, want the new scan as scan (1).pdf", got)
 	}
 }
 

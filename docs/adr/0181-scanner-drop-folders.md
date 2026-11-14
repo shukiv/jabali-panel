@@ -23,6 +23,9 @@ Stalwart 1.0.2 facts this design rests on (probed on a test host):
   and gets the ids in chunks.
 - The Group that owns a shared resource has no quota, so what lands in the
   folder is limited only by what the panel allows.
+- An upload's blobId depends only on the content, but each file node keeps a
+  blobId of its own. `Blob/get` (RFC 9404) returns `digest:sha-256` for
+  either kind of id.
 
 ## Decision
 
