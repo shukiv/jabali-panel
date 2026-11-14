@@ -362,6 +362,14 @@ func TestFtpReownOrphans_WalkErrorIsReturned(t *testing.T) {
 	wantAgentErr(t, err, agentwire.CodeInternal)
 }
 
+func TestFtpReownOrphans_SystemUserIsNotFound(t *testing.T) {
+	// root: a uid below the tenant range. resolveFtpTenant says
+	// permission_denied; the sweep must see not_found.
+	params, _ := json.Marshal(ftpReownOrphansParams{TenantUsername: "root"})
+	_, err := ftpReownOrphansHandler(context.Background(), params)
+	wantAgentErr(t, err, agentwire.CodeNotFound)
+}
+
 func TestFtpReownOrphans_NoHomeIsNotFound(t *testing.T) {
 	tenant := testFtpTenant(t)
 	stubReownTree(t, fsperm.ReownStats{}, fmt.Errorf("open %s: %w", tenant.HomeDir, syscall.ENOENT))

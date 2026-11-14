@@ -126,7 +126,7 @@ func TestFtpOrphanSweep_LeftoversNotFoundWaitAWeek(t *testing.T) {
 	if len(a.walked) != 2 {
 		t.Errorf("the same leftovers were looked for again: %v", a.walked)
 	}
-	r.ftpOrphanAt = time.Now().Add(-ftpOrphanRetryAfter - time.Minute)
+	ageFtpOrphanMemo(r, ftpOrphanRetryAfter+time.Minute)
 	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 	if len(a.walked) != 4 {
 		t.Errorf("not looked for again after the wait: %v", a.walked)
@@ -141,6 +141,8 @@ func TestFtpOrphanSweep_IncompleteRoundIsRetriedAfterAnHour(t *testing.T) {
 		"stopped":     {res: ftpReownResult{Stopped: true}},
 		"failed":      {res: ftpReownResult{Failed: 1, FirstError: "chown x: disk quota exceeded"}},
 		"agent error": {err: &agentwire.AgentError{Code: agentwire.CodeInternal, Message: "walk /home/shop: input/output error"}},
+		// The agent's connection gate: not a tenant without a home.
+		"connection refused": {err: &agentwire.AgentError{Code: agentwire.CodePermissionDenied, Message: "UID 1001 is not authorized"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			a := &orphanAgent{
@@ -154,7 +156,7 @@ func TestFtpOrphanSweep_IncompleteRoundIsRetriedAfterAnHour(t *testing.T) {
 			if len(a.walked) != 1 {
 				t.Errorf("walked %v, want no walk on the next pass", a.walked)
 			}
-			r.ftpOrphanAt = time.Now().Add(-ftpOrphanIncompleteRetry - time.Minute)
+			ageFtpOrphanMemo(r, ftpOrphanIncompleteRetry+time.Minute)
 			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 			if len(a.walked) != 2 {
 				t.Errorf("walked %v, want the incomplete round retried after an hour", a.walked)
@@ -163,12 +165,33 @@ func TestFtpOrphanSweep_IncompleteRoundIsRetriedAfterAnHour(t *testing.T) {
 	}
 }
 
-func TestFtpOrphanSweep_NewLeftoversAreLookedForAtOnce(t *testing.T) {
+func TestFtpOrphanSweep_NewLeftoversAreLookedForOnTheirOwn(t *testing.T) {
+	// 1000000005 is in no home. 1000000006 appears later, in alice's.
 	a := &orphanAgent{
 		orphans: [][]ftpOrphanUID{
 			{{UID: 1000000005, Files: 3}},
 			{{UID: 1000000005, Files: 3}},
 			{{UID: 1000000005, Files: 3}, {UID: 1000000006, Files: 1}},
+		},
+		reown: map[string]ftpReownResult{"alice": {Reowned: map[string]int{"1000000006": 1}}},
+	}
+	r := orphanReconciler(a, "alice", "shop")
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	if len(a.walked) != 2 {
+		t.Fatalf("first round walked %v, want both homes", a.walked)
+	}
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	if want := []string{"alice", "shop", "alice"}; len(a.walked) != 3 || a.walked[2] != "alice" {
+		t.Errorf("walked %v, want %v: the new uid looked for at once, and the round over once it was found", a.walked, want)
+	}
+}
+
+func TestFtpOrphanSweep_AChangedCountIsLookedForAgain(t *testing.T) {
+	a := &orphanAgent{
+		orphans: [][]ftpOrphanUID{
+			{{UID: 1000000005, Files: 3}},
+			{{UID: 1000000005, Files: 3}},
+			{{UID: 1000000005, Files: 4}},
 		},
 		reown: map[string]ftpReownResult{},
 	}
@@ -176,30 +199,52 @@ func TestFtpOrphanSweep_NewLeftoversAreLookedForAtOnce(t *testing.T) {
 	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
 	if len(a.walked) != 2 {
-		t.Errorf("walked %v, want a new round for the new uid", a.walked)
+		t.Errorf("walked %v, want a new round when the count changed", a.walked)
+	}
+}
+
+func TestFtpOrphansToLookFor_ForgetsUIDsNoLongerListed(t *testing.T) {
+	r := orphanReconciler(&orphanAgent{})
+	now := time.Now()
+	r.ftpOrphanSeen = map[uint32]ftpOrphanMemo{
+		1000000005: {files: 3, until: now.Add(time.Hour)},
+		1000000006: {files: 1, until: now.Add(time.Hour)},
+	}
+	got := r.ftpOrphansToLookFor([]ftpOrphanUID{{UID: 1000000005, Files: 3}, {UID: 1000000007, Files: 2}}, now)
+	if len(got) != 1 || got[1000000007] != 2 {
+		t.Errorf("look for %v, want only 1000000007", got)
+	}
+	if _, ok := r.ftpOrphanSeen[1000000006]; ok || len(r.ftpOrphanSeen) != 1 {
+		t.Errorf("memo %v, want 1000000006 forgotten", r.ftpOrphanSeen)
 	}
 }
 
 func TestFtpOrphanSweep_UserWithoutAHomeIsSkipped(t *testing.T) {
-	for _, code := range []string{agentwire.CodeNotFound, agentwire.CodePermissionDenied} {
-		t.Run(code, func(t *testing.T) {
-			a := &orphanAgent{
-				orphans:  [][]ftpOrphanUID{{{UID: 1000000005, Files: 3}}},
-				reown:    map[string]ftpReownResult{},
-				reownErr: map[string]error{"admin": &agentwire.AgentError{Code: code, Message: `tenant "admin" not found on host`}},
-			}
-			r := orphanReconciler(a, "admin", "shop")
-			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
-			if len(a.walked) != 2 {
-				t.Fatalf("walked %v, want admin and shop", a.walked)
-			}
-			// The round was complete, so the leftovers wait a week.
-			r.ftpOrphanAt = time.Now().Add(-ftpOrphanIncompleteRetry - time.Minute)
-			r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
-			if len(a.walked) != 2 {
-				t.Errorf("walked %v: a user without a home made the round incomplete", a.walked)
-			}
-		})
+	a := &orphanAgent{
+		orphans:  [][]ftpOrphanUID{{{UID: 1000000005, Files: 3}}},
+		reown:    map[string]ftpReownResult{},
+		reownErr: map[string]error{"admin": &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: `tenant "admin" not found on host`}},
+	}
+	r := orphanReconciler(a, "admin", "shop")
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	if len(a.walked) != 2 {
+		t.Fatalf("walked %v, want admin and shop", a.walked)
+	}
+	// The round was complete, so the leftovers wait a week.
+	ageFtpOrphanMemo(r, ftpOrphanIncompleteRetry+time.Minute)
+	r.sweepFtpOrphanFiles(context.Background(), []uint32{}, nil)
+	if len(a.walked) != 2 {
+		t.Errorf("walked %v: a user without a home made the round incomplete", a.walked)
+	}
+}
+
+// ageFtpOrphanMemo moves every left uid's wait d into the past.
+func ageFtpOrphanMemo(r *Reconciler, d time.Duration) {
+	r.ftpOrphanMu.Lock()
+	defer r.ftpOrphanMu.Unlock()
+	for uid, m := range r.ftpOrphanSeen {
+		m.until = m.until.Add(-d)
+		r.ftpOrphanSeen[uid] = m
 	}
 }
 

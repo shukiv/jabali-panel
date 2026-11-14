@@ -293,6 +293,13 @@ func ftpReownOrphansHandler(ctx context.Context, params json.RawMessage) (any, e
 	}
 	tenant, aerr := resolveFtpTenant(p.TenantUsername)
 	if aerr != nil {
+		if aerr.Code == agentwire.CodePermissionDenied {
+			// A system user that can't hold tenant files (a uid below the
+			// tenant range, a home outside /home): no tenant home to walk.
+			// not_found, which the sweep skips; permission_denied is also
+			// the connection gate's answer, which it must not.
+			aerr = &agentwire.AgentError{Code: agentwire.CodeNotFound, Message: aerr.Message}
+		}
 		return nil, aerr
 	}
 	if len(p.KeepUIDs) > ftpReownKeepMax {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
@@ -24,9 +23,11 @@ import (
 // While there is nothing to do it costs one `repquota`
 // (ftpaccount.orphan_uids). When there is, the agent walks tenant homes one
 // at a time, tenants with isolated accounts first, until every uid's file
-// count is found. Leftovers a full round didn't find are not looked for
-// again for ftpOrphanRetryAfter, and after an incomplete round for
-// ftpOrphanIncompleteRetry. The pass runs in its own goroutine, one at a
+// count is found. A uid a round didn't finish is left alone until its file
+// count changes or its wait is over: ftpOrphanRetryAfter after a complete
+// round, ftpOrphanIncompleteRetry after an incomplete one. So a new uid is
+// looked for on its own, and one that is in no home doesn't make every
+// later round walk every home. The pass runs in its own goroutine, one at a
 // time, so a long walk never holds up the tick.
 
 const (
@@ -114,20 +115,13 @@ func (r *Reconciler) sweepFtpOrphanFiles(ctx context.Context, keep []uint32, fir
 		r.log.Debug("ftp: deleted-account file check unavailable", "err", err)
 		return
 	}
-	sig := ftpOrphanSignature(orphans)
-	r.ftpOrphanMu.Lock()
-	if sig == "" || (sig == r.ftpOrphanSig && time.Since(r.ftpOrphanAt) < r.ftpOrphanWait) {
-		if sig == "" {
-			r.ftpOrphanSig = ""
-		}
-		r.ftpOrphanMu.Unlock()
+	remaining := r.ftpOrphansToLookFor(orphans, time.Now())
+	if len(remaining) == 0 {
 		return
 	}
-	r.ftpOrphanMu.Unlock()
-
-	remaining := map[uint32]int64{}
-	for _, o := range orphans {
-		remaining[o.UID] = max(int64(o.Files), 1)
+	looked := make(map[uint32]bool, len(remaining))
+	for uid := range remaining {
+		looked[uid] = true
 	}
 	tenants, err := r.ftpOrphanTenants(ctx, first)
 	if err != nil {
@@ -188,27 +182,66 @@ func (r *Reconciler) sweepFtpOrphanFiles(ctx context.Context, keep []uint32, fir
 		r.log.Warn("ftp: files of deleted FTP accounts not found in any tenant home", "uids", ftpOrphanKeys(remaining))
 	}
 
-	// Remember what is left, so the same leftovers aren't looked for on
-	// every pass. New leftovers (another delete) change the set and are
-	// looked for at once.
-	after, wait := sig, ftpOrphanRetryAfter
+	// Remember what this round left of the uids it looked for, so they
+	// aren't looked for again on every pass.
+	wait := ftpOrphanRetryAfter
 	if !complete {
 		wait = ftpOrphanIncompleteRetry
 	}
-	if left, err := r.ftpOrphanUIDs(ctx, mount); err == nil {
-		after = ftpOrphanSignature(left)
+	left := orphans
+	if l, err := r.ftpOrphanUIDs(ctx, mount); err == nil {
+		left = l
 	}
+	until := time.Now().Add(wait)
 	r.ftpOrphanMu.Lock()
-	r.ftpOrphanSig, r.ftpOrphanAt, r.ftpOrphanWait = after, time.Now(), wait
+	if r.ftpOrphanSeen == nil {
+		r.ftpOrphanSeen = map[uint32]ftpOrphanMemo{}
+	}
+	for _, o := range left {
+		if looked[o.UID] {
+			r.ftpOrphanSeen[o.UID] = ftpOrphanMemo{files: o.Files, until: until}
+		}
+	}
 	r.ftpOrphanMu.Unlock()
 }
 
+// ftpOrphanMemo: a uid's file count when a round last left it, and until
+// when it is left alone at that count.
+type ftpOrphanMemo struct {
+	files uint64
+	until time.Time
+}
+
+// ftpOrphansToLookFor returns the listed uids to look for, with their file
+// counts: those not left alone at the same count by an earlier round. It
+// forgets uids that are no longer listed.
+func (r *Reconciler) ftpOrphansToLookFor(orphans []ftpOrphanUID, now time.Time) map[uint32]int64 {
+	r.ftpOrphanMu.Lock()
+	defer r.ftpOrphanMu.Unlock()
+	listed := make(map[uint32]bool, len(orphans))
+	out := map[uint32]int64{}
+	for _, o := range orphans {
+		listed[o.UID] = true
+		if m, ok := r.ftpOrphanSeen[o.UID]; ok && m.files == o.Files && now.Before(m.until) {
+			continue
+		}
+		out[o.UID] = max(int64(o.Files), 1)
+	}
+	for uid := range r.ftpOrphanSeen {
+		if !listed[uid] {
+			delete(r.ftpOrphanSeen, uid)
+		}
+	}
+	return out
+}
+
 // ftpOrphanNoHome: the agent found no tenant home to walk (no system
-// account, a home outside /home, or none on disk). Asking again won't
-// change that, so it doesn't make the round incomplete.
+// account, none usable, or none on disk). Asking again won't change that,
+// so it doesn't make the round incomplete. Only the reown handler answers
+// not_found; the agent's connection gate answers permission_denied.
 func ftpOrphanNoHome(err error) bool {
 	var ae *agentwire.AgentError
-	return errors.As(err, &ae) && (ae.Code == agentwire.CodeNotFound || ae.Code == agentwire.CodePermissionDenied)
+	return errors.As(err, &ae) && ae.Code == agentwire.CodeNotFound
 }
 
 func (r *Reconciler) ftpOrphanUIDs(ctx context.Context, mount string) ([]ftpOrphanUID, error) {
@@ -267,17 +300,6 @@ func (r *Reconciler) ftpOrphanTenants(ctx context.Context, first []string) ([]st
 			return out, nil
 		}
 	}
-}
-
-// ftpOrphanSignature identifies a set of leftovers: each uid with its file
-// count, so any progress changes it.
-func ftpOrphanSignature(orphans []ftpOrphanUID) string {
-	parts := make([]string, 0, len(orphans))
-	for _, o := range orphans {
-		parts = append(parts, fmt.Sprintf("%d:%d", o.UID, o.Files))
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, ",")
 }
 
 func ftpOrphanKeys(m map[uint32]int64) []uint32 {
