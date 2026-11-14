@@ -53,8 +53,10 @@ Stalwart 1.0.2 facts this design rests on (probed on a test host):
    open file did not change while uploading, creates the FileNode, and then
    unlinks the drop file only if it is still the same file (device, inode,
    size, mtime). A file already present under its name, or under a numbered
-   copy of it, with the same blob is not filed twice after a crash between
-   create and unlink. A name clash gets ` (n)`.
+   copy of it, with the same content is not filed twice after a crash between
+   create and unlink. The content is compared by `Blob/get`'s
+   `digest:sha-256`, not by blobId: a file node keeps its own blobId, which
+   differs from the id the upload returned. A name clash gets ` (n)`.
 5. **The space setting caps the folder.** The pass stops moving when the
    folder's total would pass the space setting and reports why; members make
    room by deleting. A file larger than Stalwart's `maxSizeUpload` stays and
