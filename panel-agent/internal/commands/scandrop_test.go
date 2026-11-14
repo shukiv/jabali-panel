@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,11 +11,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 )
@@ -391,6 +395,65 @@ func TestScanDropIngest_ChangedDuringUploadWaits(t *testing.T) {
 	if !x.exists("scan.pdf") {
 		t.Fatal("the changed file was removed")
 	}
+}
+
+// vsftpd holds a write lock on a file it is still receiving; a slow upload
+// can sit unchanged past the settle time. The lock is another process's
+// (F_GETLK does not report the caller's own), so a child holds it.
+func TestScanDropIngest_LockedFileWaits(t *testing.T) {
+	f := newFakeFileStalwart(t)
+	x := newScanDropFixture(t)
+	x.write(t, "scan.pdf", "page one")
+
+	child := exec.Command(os.Args[0], "-test.run=^TestScanDropHelperHoldLock$")
+	child.Env = append(os.Environ(), "SCANDROP_LOCK_FILE="+filepath.Join(x.dir, "scan.pdf"))
+	stdin, err := child.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, err := child.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = child.Wait() })
+	if line, _ := bufio.NewReader(stdout).ReadString('\n'); strings.TrimSpace(line) != "locked" {
+		t.Fatalf("helper said %q, want locked", line)
+	}
+
+	res := x.run(t)
+	if res.Moved != 0 || res.Waiting != 1 || len(f.names()) != 0 || !x.exists("scan.pdf") {
+		t.Fatalf("result = %+v, folder = %v, want the locked file left waiting", res, f.names())
+	}
+
+	_ = stdin.Close()
+	_ = child.Wait()
+	if res := x.run(t); res.Moved != 1 {
+		t.Fatalf("after the lock: result = %+v, want 1 moved", res)
+	}
+}
+
+// TestScanDropHelperHoldLock is the child of TestScanDropIngest_LockedFileWaits:
+// it write-locks SCANDROP_LOCK_FILE, prints "locked", and holds the lock
+// until its stdin closes.
+func TestScanDropHelperHoldLock(t *testing.T) {
+	path := os.Getenv("SCANDROP_LOCK_FILE")
+	if path == "" {
+		t.Skip("helper process for TestScanDropIngest_LockedFileWaits")
+	}
+	fh, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lk := unix.Flock_t{Type: unix.F_WRLCK, Whence: io.SeekStart}
+	if err := unix.FcntlFlock(fh.Fd(), unix.F_SETLKW, &lk); err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println("locked")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	_ = fh.Close()
 }
 
 // A new file put in the old one's place after filing is a new scan: the
