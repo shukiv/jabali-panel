@@ -27,21 +27,43 @@ resources:
   pids: 500
 
 # The standalone entrypoint runs as root and chowns its state dirs on start
-# (ds, postgres, rabbitmq) — no volume_owner. Unlike the ONLYOFFICE Community
-# image it starts its bundled PostgreSQL, RabbitMQ and Redis itself, so every
-# state dir gets a volume: Data (secrets, WOPI keypair), the converter's
-# App_Data under lib, the Postgres datadir, RabbitMQ's mnesia and the logs.
+# (ds, rabbitmq) — no volume_owner. Postgres stays inside the container: the
+# image ships its cluster ready-made and a bind mount would hide it. The
+# database holds only editing-session state — the documents themselves live
+# with the WOPI host (webmail) or the integrator — so re-creating the
+# container (an update) starts that state fresh. The remaining state dirs get
+# a volume: Data (secrets, WOPI keypair), the converter's App_Data under lib
+# and RabbitMQ's mnesia. Each of the four log folders gets its own volume: a
+# volume over the parent folder would hide the subfolders the image's
+# supervisord writes to, and logs one folder below a volume would not be
+# rotated.
 volumes:
   - name: data
     container_path: /var/www/euro-office/Data
   - name: lib
     container_path: /var/lib/euro-office/documentserver
-  - name: db
-    container_path: /var/lib/postgresql
   - name: rabbitmq
     container_path: /var/lib/rabbitmq
-  - name: logs
-    container_path: /var/log/euro-office/documentserver
+  - name: logs-adminpanel
+    container_path: /var/log/euro-office/documentserver/adminpanel
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
+  - name: logs-converter
+    container_path: /var/log/euro-office/documentserver/converter
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
+  - name: logs-docservice
+    container_path: /var/log/euro-office/documentserver/docservice
+    rotate:
+      retention_days: 14
+      max_size: 50M
+      mode: copytruncate
+  - name: logs-metrics
+    container_path: /var/log/euro-office/documentserver/metrics
     rotate:
       retention_days: 14
       max_size: 50M

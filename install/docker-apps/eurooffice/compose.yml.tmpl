@@ -18,9 +18,11 @@ services:
     volumes:
       - {{ .DataRoot }}/data:/var/www/euro-office/Data
       - {{ .DataRoot }}/lib:/var/lib/euro-office/documentserver
-      - {{ .DataRoot }}/db:/var/lib/postgresql
       - {{ .DataRoot }}/rabbitmq:/var/lib/rabbitmq
-      - {{ .DataRoot }}/logs:/var/log/euro-office/documentserver
+      - {{ .DataRoot }}/logs-adminpanel:/var/log/euro-office/documentserver/adminpanel
+      - {{ .DataRoot }}/logs-converter:/var/log/euro-office/documentserver/converter
+      - {{ .DataRoot }}/logs-docservice:/var/log/euro-office/documentserver/docservice
+      - {{ .DataRoot }}/logs-metrics:/var/log/euro-office/documentserver/metrics
     ports:
 {{- with index .Ports "http" }}
       - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
