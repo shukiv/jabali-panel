@@ -22,6 +22,8 @@
 
 The **Settings** tab has a per-domain webmail switch. Turning it off removes webmail from `mail.<domain>` for that domain. IMAP, SMTP and mail delivery are unaffected, and mail apps still set themselves up and sync calendars and contacts through `mail.<domain>` (autoconfig/autodiscover, CalDAV/CardDAV, JMAP). Webmail also has to be enabled in your hosting plan, so turning it on here has no effect while your plan has webmail off. The change applies on the next reconcile.
 
+When your administrator has set a document editor, office files in webmail's **Files** view open in it for editing, right in the browser. Ask your administrator if you need it turned on.
+
 ### Webmail branding
 
 When your hosting plan includes webmail branding, the **Settings** tab has a **Webmail branding** card. It sets what webmail shows on `mail.<domain>`:

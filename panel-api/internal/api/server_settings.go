@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/paneltime"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/useragents"
@@ -145,6 +146,8 @@ type updateServerSettingsRequest struct {
 	DNSUserRecordPolicyPreset *string                     `json:"dns_user_record_policy_preset,omitempty"`
 	DiskQuotaEnabled          *bool                       `json:"disk_quota_enabled,omitempty"`
 	WebmailEnabled            *bool                       `json:"webmail_enabled,omitempty"`
+	// GH #2501: webmail's WOPI document editor URL; empty = editing off.
+	WebmailOfficeEditorURL *string `json:"webmail_office_editor_url,omitempty"`
 	// M353 Phase 1 (GH #353): per-module enable flags (admin toggles them from
 	// Server Settings -> Modules; the SPA gates nav + routes on them).
 	DNSEnabled      *bool `json:"dns_enabled,omitempty"`
@@ -577,6 +580,14 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.WebmailEnabled != nil {
 		current.WebmailEnabled = *req.WebmailEnabled
+	}
+	if req.WebmailOfficeEditorURL != nil {
+		v := strings.TrimSpace(*req.WebmailOfficeEditorURL)
+		if !agentwire.ValidWebmailEditorURL(v) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_settings", "detail": "webmail_office_editor_url: must be empty or an https address"})
+			return
+		}
+		current.WebmailOfficeEditorURL = v
 	}
 	if req.DNSEnabled != nil {
 		current.DNSEnabled = *req.DNSEnabled

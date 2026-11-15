@@ -1,7 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useState } from "react";
-import { Card, Switch, Typography } from "antd";
+import { Button, Card, Input, Space, Switch, Typography } from "antd";
 import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
+import { extractApiError } from "../../../apiErrors";
 
 import { apiClient } from "../../../apiClient";
 
@@ -60,6 +61,66 @@ export const WebmailToggleCard = () => {
         checkedChildren="On"
         unCheckedChildren="Off"
       />
+    </Card>
+  );
+};
+
+// WebmailEditorCard — Server Settings → Email: the WOPI document editor
+// webmail opens office files in (GH #2501). One server-wide URL; empty turns
+// editing off. The reconciler writes it to webmail's environment and restarts
+// webmail only when it changed.
+export const WebmailEditorCard = () => {
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<{ webmail_office_editor_url?: string }>("/admin/settings");
+        if (!cancelled) setUrl(resp.data.webmail_office_editor_url ?? "");
+      } catch {
+        if (!cancelled) feedback.message.error("Failed to load the document editor setting");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiClient.patch("/admin/settings", { webmail_office_editor_url: url });
+      feedback.message.success("Document editor saved. Webmail picks it up on the next reconcile.");
+    } catch (e) {
+      feedback.message.error(extractApiError(e, "Failed to save the document editor setting"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card title="Document editor" style={{ marginBottom: 16 }} loading={loading}>
+      <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+        Webmail opens office documents from its Files view in this editor, for every webmail user on the
+        server. Install EuroOffice Docs from Docker apps, give it a domain with HTTPS, and enter that
+        address; leave it empty to turn editing off.
+      </Typography.Paragraph>
+      <Space direction="vertical" size="middle" style={{ width: "100%", maxWidth: 520 }}>
+        <Input
+          aria-label="Editor address"
+          placeholder="https://office.example.com"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+        <Button type="primary" loading={saving} onClick={() => void save()}>
+          Save
+        </Button>
+      </Space>
     </Card>
   );
 };

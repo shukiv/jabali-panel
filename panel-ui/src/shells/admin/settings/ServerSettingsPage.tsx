@@ -63,7 +63,7 @@ import { DNSResolversCard } from "./DNSResolversCard";
 import { DNSPermissionsCard } from "./DNSPermissionsCard";
 import { EmailCard } from "./EmailCard";
 import { FreeHostnameCard } from "./FreeHostnameCard";
-import { WebmailToggleCard } from "./WebmailToggleCard";
+import { WebmailToggleCard, WebmailEditorCard } from "./WebmailToggleCard";
 import { FtpServerCard } from "./FtpServerCard";
 import { Dkim2ToggleCard } from "./Dkim2ToggleCard";
 import { MailListsCard } from "./MailListsCard";
@@ -1130,6 +1130,7 @@ export const ServerSettingsPage = () => {
           <SpamFilterCard />
           <WebsiteMailCard />
           <WebmailToggleCard />
+          <WebmailEditorCard />
           <Dkim2ToggleCard />
           <MailListsCard />
           <StalwartWebadminCard />

@@ -147,6 +147,10 @@ var (
 	// keyed on all of it; the interval puts back a server logo a webmail
 	// upgrade removed.
 	PhaseWebmailBranding = Phase{Name: "webmail.branding", AuditInterval: time.Hour}
+	// PhaseWebmailEditor is webmail's WOPI document editor URL (GH #2501).
+	// One entry for the host, keyed on the URL; the interval puts back an
+	// environment file a webmail upgrade removed.
+	PhaseWebmailEditor = Phase{Name: "webmail.editor", AuditInterval: time.Hour}
 )
 
 // runDependency is one ordering a run keeps for a domain: the Agent call
