@@ -67,7 +67,7 @@ Server Settings → Email → **Document editor** points webmail at a WOPI docum
 To set it up with EuroOffice:
 
 1. Install **EuroOffice Docs** from Docker apps.
-2. Give it a domain with a proxy rule and HTTPS (a [domain](./domains.md) proxy rule pointing at the app, with a certificate).
+2. In the install dialog, pick a domain for it. The panel creates the domain, sends it to the app, and requests a Let's Encrypt certificate (a self-signed placeholder is served for the first minute or so).
 3. Enter `https://<that domain>` in the Document editor field and save.
 
 The address must be `https`: the editor opens in a frame inside the https webmail, so plain `http` is refused. A path is allowed — Bulwark treats a URL with a path as the WOPI discovery URL itself, and a bare origin as `<origin>/hosting/discovery`.
@@ -77,6 +77,8 @@ The editor fetches documents from webmail at the address the browser uses (`mail
 The catalog's ONLYOFFICE app keeps WOPI off, so it can't serve as webmail's editor; use EuroOffice Docs.
 
 The reconciler writes the URL to webmail's environment (`webmail.editor.apply`) and restarts webmail only when it changed.
+
+Webmail picks up a change within about a minute.
 
 ## Security
 

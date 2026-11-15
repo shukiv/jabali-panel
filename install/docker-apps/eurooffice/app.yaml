@@ -27,17 +27,18 @@ resources:
   pids: 500
 
 # The standalone entrypoint runs as root and chowns its state dirs on start
-# (ds, postgres, rabbitmq) — no volume_owner. Unlike the ONLYOFFICE Community
-# image it starts its bundled PostgreSQL, RabbitMQ and Redis itself, so every
-# state dir gets a volume: Data (secrets, WOPI keypair), the converter's
-# App_Data under lib, the Postgres datadir, RabbitMQ's mnesia and the logs.
+# (ds, rabbitmq) — no volume_owner. Postgres stays inside the container: the
+# image ships its cluster ready-made and a bind mount would hide it. The
+# database holds only editing-session state — the documents themselves live
+# with the WOPI host (webmail) or the integrator — so re-creating the
+# container (an update) starts that state fresh. The remaining state dirs get
+# a volume: Data (secrets, WOPI keypair), the converter's App_Data under lib,
+# RabbitMQ's mnesia and the logs.
 volumes:
   - name: data
     container_path: /var/www/euro-office/Data
   - name: lib
     container_path: /var/lib/euro-office/documentserver
-  - name: db
-    container_path: /var/lib/postgresql
   - name: rabbitmq
     container_path: /var/lib/rabbitmq
   - name: logs

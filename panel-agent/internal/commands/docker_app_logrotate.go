@@ -31,7 +31,10 @@ func dockerAppLogrotatePath(slug string) string {
 // buildDockerAppLogrotate renders the logrotate config body covering every log
 // volume of one docker app. dataDir is the app's DataRoot
 // (/var/lib/jabali/docker-apps/<slug>); each volume's file logs live at
-// <dataDir>/<volume>/*.log. Pure (no I/O) so it is unit-testable.
+// <dataDir>/<volume>/*.log or one directory down,
+// <dataDir>/<volume>/*/*.log (GH #2501: EuroOffice's supervisord writes
+// docservice/out.log etc.). Both depths are covered by two patterns on the
+// block's first line. Pure (no I/O) so it is unit-testable.
 //
 // Defaults: 14 days retention, copytruncate (safe while a container holds the
 // file open — no reload needed), daily + compress. A per-volume max_size adds
@@ -53,7 +56,8 @@ func buildDockerAppLogrotate(slug, dataDir string, specs []dockerAppLogRotate) s
 			mode = "copytruncate"
 		}
 		glob := filepath.Join(dataDir, s.Volume, "*.log")
-		fmt.Fprintf(&b, "\n%s {\n", glob)
+		nested := filepath.Join(dataDir, s.Volume, "*", "*.log")
+		fmt.Fprintf(&b, "\n%s %s {\n", glob, nested)
 		b.WriteString("    daily\n")
 		fmt.Fprintf(&b, "    rotate %d\n", days)
 		if s.MaxSize != "" {

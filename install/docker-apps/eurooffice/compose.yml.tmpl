@@ -2,6 +2,9 @@ services:
   eurooffice:
     image: {{ .ImageChannel }}
     container_name: jabali-app-{{ .Slug }}
+    # The logs volume arrives empty and hides the image's log subdirectories,
+    # and supervisord refuses to start without them, so they are created first.
+    entrypoint: ["/bin/sh", "-c", "mkdir -p /var/log/euro-office/documentserver/adminpanel /var/log/euro-office/documentserver/converter /var/log/euro-office/documentserver/docservice /var/log/euro-office/documentserver/metrics && exec /entrypoint.sh"]
     restart: unless-stopped
     environment:
       # Request signing — required for any integrator (Nextcloud, etc.) to
@@ -18,7 +21,6 @@ services:
     volumes:
       - {{ .DataRoot }}/data:/var/www/euro-office/Data
       - {{ .DataRoot }}/lib:/var/lib/euro-office/documentserver
-      - {{ .DataRoot }}/db:/var/lib/postgresql
       - {{ .DataRoot }}/rabbitmq:/var/lib/rabbitmq
       - {{ .DataRoot }}/logs:/var/log/euro-office/documentserver
     ports:

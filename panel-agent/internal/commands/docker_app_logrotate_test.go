@@ -6,16 +6,18 @@ import (
 	"testing"
 )
 
-// JAB-121: the rendered logrotate snippet must target <DataRoot>/<vol>/*.log,
-// honour per-volume overrides, and default to a container-safe policy.
+// JAB-121: the rendered logrotate snippet must target <DataRoot>/<vol>/*.log
+// AND <DataRoot>/<vol>/*/*.log on the same block line (GH #2501: EuroOffice
+// writes its logs one directory down), honour per-volume overrides, and
+// default to a container-safe policy.
 func TestBuildDockerAppLogrotate(t *testing.T) {
 	body := buildDockerAppLogrotate("flarum-abc", "/var/lib/jabali/docker-apps/flarum-abc", []dockerAppLogRotate{
 		{Volume: "storagelogs", RetentionDays: 14, MaxSize: "50M", Mode: "copytruncate"},
 		{Volume: "logs"}, // defaults
 	})
 	for _, want := range []string{
-		"/var/lib/jabali/docker-apps/flarum-abc/storagelogs/*.log {",
-		"/var/lib/jabali/docker-apps/flarum-abc/logs/*.log {",
+		"/var/lib/jabali/docker-apps/flarum-abc/storagelogs/*.log /var/lib/jabali/docker-apps/flarum-abc/storagelogs/*/*.log {",
+		"/var/lib/jabali/docker-apps/flarum-abc/logs/*.log /var/lib/jabali/docker-apps/flarum-abc/logs/*/*.log {",
 		"rotate 14",
 		"maxsize 50M",
 		"copytruncate",
@@ -28,7 +30,12 @@ func TestBuildDockerAppLogrotate(t *testing.T) {
 	}
 	// the defaults-only volume must NOT emit a maxsize line but must still
 	// default to rotate 14 + copytruncate.
-	logsBlock := body[strings.Index(body, "/logs/*.log {"):]
+	logsHeader := "/var/lib/jabali/docker-apps/flarum-abc/logs/*.log /var/lib/jabali/docker-apps/flarum-abc/logs/*/*.log {"
+	idx := strings.Index(body, logsHeader)
+	if idx < 0 {
+		t.Fatalf("logs block header missing:\n%s", body)
+	}
+	logsBlock := body[idx:]
 	if strings.Contains(logsBlock, "maxsize") {
 		t.Errorf("defaults-only volume should have no maxsize:\n%s", logsBlock)
 	}
