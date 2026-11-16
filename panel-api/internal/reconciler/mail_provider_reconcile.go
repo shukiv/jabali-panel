@@ -21,8 +21,12 @@ import (
 //     bootstrap apex if a prior external/none switch removed it.
 //   - m365 / google: publish the per-provider apex (mail-apex scope) +
 //     non-apex (autodiscover, DKIM) rows, and PRUNE the conflicting jabali
-//     rows (bootstrap apex by content-match, the m6 set, mail A/AAAA).
-//   - none: prune all jabali mail rows + any mail-apex/provider rows.
+//     rows the panel wrote (bootstrap apex, the m6 set, mail A/AAAA).
+//   - none: prune the jabali mail rows the panel wrote + any
+//     mail-apex/provider rows.
+//
+// Rows the owner created or edited are never pruned (ADR-0107/0120), and the
+// provider's _dmarc steps aside while the owner has their own (GH #2523).
 //
 // The apex SPF is special-cased to guarantee exactly one v=spf1 TXT at the
 // apex (two = RFC 7208 permerror): for non-jabali we delete every apex SPF
@@ -62,12 +66,18 @@ func (r *Reconciler) reconcileMailProviderRecords(ctx context.Context, zone *mod
 	}
 
 	// provider is none / m365 / google.
-	// 1. Prune conflicting jabali mail rows (bootstrap apex by content,
-	//    m6 set, mail A/AAAA, and — for SPF — any non-mail-apex apex SPF).
-	r.pruneJabaliMailRecords(ctx, zone, srv, existing)
+	// 1. Prune the jabali mail rows the panel wrote (the bootstrap apex, the
+	//    m6 set, the mail A/AAAA) and, on m365/google, any apex SPF other
+	//    than the provider's. Rows the owner created or edited stay.
+	r.pruneJabaliMailRecords(ctx, zone, srv, existing, provider)
 
-	// 2. Reconcile the mail-apex scope to the provider's apex set.
+	// 2. Reconcile the mail-apex scope to the provider's apex set. The
+	//    provider's _dmarc steps aside while the owner has one of their own
+	//    (GH #2523): two DMARC records at _dmarc mean receivers apply none.
 	desiredApex := dnscompile.BuildApexMailRecords(provider, zone.Name, srv, ids.NewULID, now)
+	if hasOwnerDMARC(existing) {
+		desiredApex = withoutDMARC(desiredApex)
+	}
 	stampZone(desiredApex, zone.ID)
 	r.reconcileMailScope(ctx, zone.ID, existing, dnscompile.ApexMailManagedBy, desiredApex)
 
@@ -107,6 +117,36 @@ func managedBy(rec models.DNSRecord) string {
 
 func isApexSPF(rec models.DNSRecord) bool {
 	return rec.Name == "@" && rec.Type == "TXT" && strings.HasPrefix(rec.Content, `"v=spf1`)
+}
+
+// panelAuthored reports whether rec is a row the panel wrote and still owns
+// with no scope marker: the M4 bootstrap set. An owner's create or edit is
+// Managed=false (ADR-0107), the same test isPristineMailBootstrapRecord uses.
+func panelAuthored(rec models.DNSRecord) bool {
+	return rec.Managed && managedBy(rec) == ""
+}
+
+// hasOwnerDMARC reports whether the zone has a _dmarc TXT the owner created or
+// edited (GH #2523).
+func hasOwnerDMARC(existing []models.DNSRecord) bool {
+	for _, e := range existing {
+		if e.Name == "_dmarc" && e.Type == "TXT" && !e.Managed && managedBy(e) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutDMARC returns recs without the _dmarc TXT.
+func withoutDMARC(recs []models.DNSRecord) []models.DNSRecord {
+	out := recs[:0:0]
+	for _, rec := range recs {
+		if rec.Name == "_dmarc" && rec.Type == "TXT" {
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
 }
 
 // reconcileMailScope makes the rows tagged with `marker` exactly equal to
@@ -158,12 +198,21 @@ func (r *Reconciler) deleteMailScope(ctx context.Context, existing []models.DNSR
 	}
 }
 
-// pruneJabaliMailRecords removes the jabali-owned mail rows that must not
-// coexist with an external/none provider: the M4 bootstrap apex MX/SPF/
-// _dmarc (matched by content so operator-authored apex records are NOT
-// touched), the m6 record set, the mail A/AAAA host records, and any apex
-// SPF that isn't the mail-apex one (the double-SPF guard).
-func (r *Reconciler) pruneJabaliMailRecords(ctx context.Context, zone *models.DNSZone, srv *models.ServerSettings, existing []models.DNSRecord) {
+// pruneJabaliMailRecords removes the jabali mail rows that must not coexist
+// with an external/none provider: the M4 bootstrap apex MX/SPF/_dmarc, the m6
+// record set and the mail A/AAAA host records.
+//
+// Only rows the panel wrote go (panelAuthored, or the m6 marker). A row the
+// owner created or edited is Managed=false (ADR-0107) and stays, as ADR-0120
+// says operator-authored records do (GH #2523: an owner's _dmarc, and on a
+// `none` domain such as one whose mail is at Proton, their SPF).
+//
+// The one exception is the apex SPF on m365/google: the provider's SPF in the
+// mail-apex scope must be the only v=spf1 at the apex (two are an RFC 7208
+// permerror), and a switch to the provider has to replace an SPF written for
+// the mail the domain had before. So every other apex SPF goes, the owner's
+// too. `none` publishes no SPF, so there the owner's stays.
+func (r *Reconciler) pruneJabaliMailRecords(ctx context.Context, zone *models.DNSZone, srv *models.ServerSettings, existing []models.DNSRecord, provider string) {
 	bootSPF := dnscompile.BuildSPFString(srv)
 	bootMX := "mail." + zone.Name
 	for _, e := range existing {
@@ -172,17 +221,15 @@ func (r *Reconciler) pruneJabaliMailRecords(ctx context.Context, zone *models.DN
 		case managedBy(e) == dnscompile.EmailRecordsManagedBy: // m6 set
 			del = true
 		case e.Name == "mail" && (e.Type == "A" || e.Type == "AAAA"):
-			del = true
+			del = panelAuthored(e)
 		case e.Name == "@" && e.Type == "MX" && e.Content == bootMX:
-			del = true
+			del = panelAuthored(e)
 		case e.Name == "_dmarc" && e.Type == "TXT" && managedBy(e) == "":
-			del = true
+			del = panelAuthored(e)
 		case isApexSPF(e) && managedBy(e) != dnscompile.ApexMailManagedBy:
-			// any non-mail-apex apex SPF (bootstrap NULL or operator) —
-			// remove so the mail-apex SPF is the only v=spf1 at the apex.
-			del = true
+			del = provider != models.MailProviderNone || panelAuthored(e)
 		case e.Name == "@" && e.Type == "TXT" && e.Content == bootSPF:
-			del = true
+			del = panelAuthored(e)
 		}
 		if del {
 			if err := r.dnsRecords.Delete(ctx, e.ID); err != nil {
