@@ -8,7 +8,7 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 - Authentication: per-mailbox password, bcrypt-hashed in the panel's database. Stalwart reads it through a read-only SQL directory, so the password is changed in the panel: **Rotate password** on the mailbox (Mail → a domain → Mailboxes), by the account owner or an admin. Webmail's password change is refused.
 - Quota: per-mailbox MiB, enforced by Stalwart.
-- Webmail: **Bulwark** at `https://mail.<domain>/`. One-click SSO from a mailbox (Mail Domains → a domain → Accounts) uses the self-deleting `jabali-sso-*.php` file (not the earlier magic-link/mu-plugin approach, which failed).
+- Webmail: **Bulwark** at `https://mail.<domain>/`. Its sign-in page asks for the address and password only: it always signs in to this server, so it has no JMAP server field. One-click SSO from a mailbox (Mail Domains → a domain → Accounts) uses the self-deleting `jabali-sso-*.php` file (not the earlier magic-link/mu-plugin approach, which failed).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
 - Autoconfig / autodiscover: Apple `mobileconfig`, Thunderbird `autoconfig.xml`, Outlook `autodiscover.xml` (see [platform/mail-autoconfig.md](./platform/mail-autoconfig.md)).
 - Calendars + contacts: the mail vhost serves CalDAV / CardDAV and `/.well-known/caldav|carddav`, and the `_caldavs._tcp` / `_carddavs._tcp` SRV records point clients at it, so mail apps find a mailbox's calendars and contacts on their own. The panel no longer shows per-mailbox DAV URLs; an external-DNS domain gets the two SRV records in its mail DNS record list.
