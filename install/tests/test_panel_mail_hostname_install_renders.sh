@@ -135,6 +135,15 @@ if [[ "$(render_env '')" != "$want_derived" ]]; then
   render_env '' | sed 's/^/    /'
   fail=1
 fi
+# GH #2518: the one-entry sign-in server list (no "JMAP Server" field on the
+# login page) carries the same URL, quoted for systemd's EnvironmentFile.
+render_env 'mx.example.net\n' >/dev/null
+want_servers='JMAP_SERVERS="[{\"id\":\"jabali\",\"label\":\"Mail\",\"url\":\"https://mx.example.net\"}]"'
+if [[ "$(grep '^JMAP_SERVERS=' "$tmp/bulwark.env")" != "$want_servers" ]]; then
+  echo "FAIL: bulwark.env JMAP_SERVERS with an applied mail hostname:"
+  grep '^JMAP_SERVERS=' "$tmp/bulwark.env" | sed 's/^/    /'
+  fail=1
+fi
 if grep -q '\${JABALI_' "$tmp/bulwark.env"; then
   echo "FAIL: bulwark.env keeps an unrendered template variable: $(grep -o '\${JABALI_[A-Z_]*}' "$tmp/bulwark.env" | head -1)"
   fail=1

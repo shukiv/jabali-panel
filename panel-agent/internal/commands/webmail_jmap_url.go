@@ -21,9 +21,12 @@ import (
 // DB (`jabali settings mail-hostname --applied`), so a later `jabali update`
 // keeps it.
 //
-// Only the JMAP_SERVER_URL line changes, in place; every other line —
-// including the SSO secrets and branding keys other writers append — is
-// kept byte-for-byte. Idempotent: an unchanged file is not rewritten and
+// The JMAP_SERVERS line (GH #2518), one sign-in server at the same URL,
+// follows it.
+//
+// Only those two lines change, in place (a missing one is appended); every
+// other line — including the SSO secrets and branding keys other writers
+// append — is kept byte-for-byte. Idempotent: an unchanged file is not rewritten and
 // the service is not restarted.
 
 // webmailJMAPEnvFile is bulwark.env; a var so tests can point it elsewhere.
@@ -39,7 +42,19 @@ type webmailJMAPURLApplyResponse struct {
 	Changed bool `json:"changed"`
 }
 
-const jmapServerURLKey = "JMAP_SERVER_URL="
+const (
+	jmapServerURLKey = "JMAP_SERVER_URL="
+	// jmapServersKey is Bulwark's sign-in server list (GH #2518): one entry
+	// at the same URL, so the login page has no "JMAP Server" field.
+	jmapServersKey = "JMAP_SERVERS="
+)
+
+// jmapServersLine is the JMAP_SERVERS line for the panel mail hostname host,
+// byte for byte what install/bulwark/bulwark.env.tmpl renders.
+func jmapServersLine(host string) string {
+	js := `[{"id":"jabali","label":"Mail","url":"https://` + host + `"}]`
+	return jmapServersKey + systemdEnvQuote(js)
+}
 
 func webmailJMAPURLApplyHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p webmailJMAPURLApplyParams
@@ -63,18 +78,25 @@ func webmailJMAPURLApplyHandler(ctx context.Context, params json.RawMessage) (an
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: fmt.Sprintf("read bulwark.env: %v", err)}
 	}
 
-	want := jmapServerURLKey + "https://" + host
+	want := map[string]string{
+		jmapServerURLKey: jmapServerURLKey + "https://" + host,
+		jmapServersKey:   jmapServersLine(host),
+	}
+	found := map[string]bool{}
 	lines := strings.Split(string(orig), "\n")
-	found := false
 	for i, line := range lines {
-		if strings.HasPrefix(line, jmapServerURLKey) {
-			lines[i] = want
-			found = true
+		for key, w := range want {
+			if strings.HasPrefix(line, key) {
+				lines[i] = w
+				found[key] = true
+			}
 		}
 	}
 	body := strings.Join(lines, "\n")
-	if !found {
-		body = strings.TrimRight(body, "\n") + "\n" + want + "\n"
+	for _, key := range []string{jmapServerURLKey, jmapServersKey} {
+		if !found[key] {
+			body = strings.TrimRight(body, "\n") + "\n" + want[key] + "\n"
+		}
 	}
 	if body == string(orig) {
 		return webmailJMAPURLApplyResponse{Ok: true}, nil
