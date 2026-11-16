@@ -106,3 +106,21 @@ switch.
   only when the operator actively re-picks the provider. A domain with
   hand-configured external mail reads as `none` until re-selected; its
   hand-authored (unmanaged) records survive.
+
+## Amendment — owner-authored DMARC and SPF (GH #2523, 2026-11-16)
+
+The prune that runs for `none` / `m365` / `google` removed every unscoped
+`_dmarc` TXT and every apex SPF outside `mail-apex`, owner rows included. So an
+owner's DMARC, and on `none` their SPF, disappeared on the next pass, against
+"operator records untouched" above and ADR-0107.
+
+- **Who owns a row.** The prune removes only rows the panel wrote: `Managed`
+  with no `managed_by` (the bootstrap set) or the `m6` marker. A row the owner
+  created or edited is `Managed=false` (ADR-0107) and stays. That covers the
+  `_dmarc`, the bootstrap-shaped MX, the `mail` A/AAAA and, on `none`, the SPF.
+- **DMARC.** The `mail-apex` `_dmarc` steps aside while the zone has an
+  owner `_dmarc`, so there is never more than one DMARC record. It is
+  published again once the owner's is deleted.
+- **SPF on Microsoft 365 / Google is unchanged.** The provider's SPF is the
+  only `v=spf1` at the apex, and an owner's is still replaced. A switch to a
+  provider must replace an SPF written for the mail the domain had before.

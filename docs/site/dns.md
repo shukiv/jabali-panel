@@ -73,9 +73,16 @@ Switching providers is reconciled like any other DNS change: the panel
 publishes the new set, prunes the previous one (scoped by `managed_by` —
 `mail-apex` for the apex MX/SPF/DMARC, `mail-provider-<p>` for the rest, `m6`
 for the Jabali set), and re-issues the certificate without the mail SANs for
-external/none. There is always exactly one `v=spf1` TXT at the apex.
-Operator-authored apex mail records are replaced when a provider is selected
-(pick a preset, or pick **No mail** and hand-manage the records yourself).
+external/none. There is always exactly one `v=spf1` TXT at the apex: with
+Microsoft 365 or Google Workspace it is the provider's, so an SPF you add or
+edit is replaced. Other mail records you add or edit yourself stay with every
+provider:
+- **DMARC.** Your `_dmarc` record takes the place of the provider's default
+  one, which comes back if you delete yours.
+- **No mail.** The panel publishes no mail records, and the MX, SPF, DMARC and
+  DKIM records you add stay. Use it for a provider that isn't in the list,
+  such as Proton Mail.
+
 DKIM for Microsoft 365 / Google is published only when you supply the token;
 MX / SPF / autodiscover are automatic.
 
