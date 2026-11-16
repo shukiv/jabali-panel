@@ -170,24 +170,29 @@ func TestMailProvider_ExternalReplacesOwnerSPF(t *testing.T) {
 }
 
 // A switch away from Jabali mail still removes the rows the panel wrote, and
-// leaves exactly the provider's apex set.
+// leaves exactly the provider's apex set after every pass: each pass pushes the
+// zone, so a pass without the provider's _dmarc would publish none.
 func TestMailProvider_SwitchPrunesPanelRows(t *testing.T) {
 	for _, p := range externalProviders {
 		t.Run(p, func(t *testing.T) {
 			r, repo := newMailReconciler(bootstrapMailRows(ownerSrv())...)
-			twoPasses(r, p)
-			for _, id := range []string{"b-mx", "b-spf", "b-dmarc", "b-mail"} {
-				if _, ok := repo.records[id]; ok {
-					t.Errorf("panel row %s survived the switch to %s", id, p)
-				}
-			}
-			dmarc, spf := recsNamed(repo, "_dmarc", "TXT"), apexSPFRecs(repo)
+			zone := &models.DNSZone{ID: "z1", Name: "example.com"}
+			dom := &models.Domain{ID: "d1", MailProvider: p}
 			wantN := 1
 			if p == models.MailProviderNone {
 				wantN = 0
 			}
-			if len(dmarc) != wantN || len(spf) != wantN {
-				t.Errorf("%s: _dmarc %q, SPF %q, want %d of each", p, contents(dmarc), contents(spf), wantN)
+			for pass := 1; pass <= 2; pass++ {
+				r.reconcileMailProviderRecords(context.Background(), zone, dom, ownerSrv())
+				for _, id := range []string{"b-mx", "b-spf", "b-dmarc", "b-mail"} {
+					if _, ok := repo.records[id]; ok {
+						t.Errorf("pass %d: panel row %s survived the switch to %s", pass, id, p)
+					}
+				}
+				dmarc, spf := recsNamed(repo, "_dmarc", "TXT"), apexSPFRecs(repo)
+				if len(dmarc) != wantN || len(spf) != wantN {
+					t.Errorf("pass %d, %s: _dmarc %q, SPF %q, want %d of each", pass, p, contents(dmarc), contents(spf), wantN)
+				}
 			}
 		})
 	}
