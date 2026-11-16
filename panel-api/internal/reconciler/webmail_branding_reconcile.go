@@ -30,7 +30,8 @@ func (r *Reconciler) WithWebmailBranding(repo repository.DomainWebmailBrandingRe
 //
 // It is the only sender: every call carries the whole branding, so many
 // saves cost one webmail restart. It sends at most once in
-// webmailBrandingMinInterval, so a save shows within about five minutes.
+// webmailBrandingMinInterval. A save runs it at once (WebmailBrandingSoon);
+// a change it holds back for the interval goes out when the interval ends.
 // A domain's branding can drop out while its row stays
 // (its owner's package lost webmail branding); the pictures of a domain with
 // no row any more (it was deleted) are removed here.
@@ -71,25 +72,69 @@ func (r *Reconciler) reconcileWebmailBranding(ctx context.Context) {
 	if err := webmailbranding.Prune(dir, keep); err != nil {
 		r.log.Warn("reconcile webmail branding: remove a deleted domain's pictures", "err", err)
 	}
-	r.webmailBrandingMu.Lock()
-	defer r.webmailBrandingMu.Unlock()
-	if time.Since(r.webmailBrandingSent) < webmailBrandingMinInterval {
-		return // a later pass sends what changed meanwhile
-	}
 	params := map[string]any{
 		"brand_text": brandText,
 		"domains":    webmailbranding.AgentDomains(rows),
 	}
-	key := map[string]any{"params": params, "logos": logos}
-	_, _ = r.project(ctx, PhaseWebmailBranding, "jabali-webmail", fingerprint(key), false, func() error {
+	key := fingerprint(map[string]any{"params": params, "logos": logos})
+	r.webmailBrandingMu.Lock()
+	defer r.webmailBrandingMu.Unlock()
+	if due := r.webmailBrandingDue(time.Now()); due.After(time.Now()) {
+		// A change waits for the interval to pass, then goes out at once
+		// rather than on the first pass after it.
+		if key != r.webmailBrandingSentKey {
+			r.retryWebmailBrandingAt(due)
+		}
+		return
+	}
+	_, _ = r.project(ctx, PhaseWebmailBranding, "jabali-webmail", key, false, func() error {
 		callCtx, cancel := context.WithTimeout(ctx, webmailAgentTimeout)
 		defer cancel()
 		if _, err := r.agent.Call(callCtx, "webmail.branding.apply", params); err != nil {
 			r.log.Warn("reconcile webmail branding: apply failed", "err", err)
 			return err
 		}
-		r.webmailBrandingSent = time.Now()
+		r.webmailBrandingSent.Store(time.Now().UnixNano())
+		r.webmailBrandingSentKey = key
 		return nil
+	})
+}
+
+// WebmailBrandingSoon has the branding sent to webmail now, out of band,
+// instead of on the next pass (GH #2502: a save shows at once). It returns
+// about when webmail shows it: now, or when webmailBrandingMinInterval has
+// passed since the last send, which is when a change held back goes out. Safe
+// to call from request handlers: it never waits for a send under way.
+func (r *Reconciler) WebmailBrandingSoon() time.Time {
+	r.ScheduleResource(ResourceKey{Kind: KindWebmailBranding})
+	return r.webmailBrandingDue(time.Now())
+}
+
+// webmailBrandingDue is the earliest time the branding may be sent again: now,
+// or webmailBrandingMinInterval after the last send.
+func (r *Reconciler) webmailBrandingDue(now time.Time) time.Time {
+	if sent := r.webmailBrandingSent.Load(); sent != 0 {
+		if due := time.Unix(0, sent).Add(webmailBrandingMinInterval); due.After(now) {
+			return due
+		}
+	}
+	return now
+}
+
+// retryWebmailBrandingAt schedules the phase out of band at due, unless that
+// is already scheduled. Called with webmailBrandingMu held.
+func (r *Reconciler) retryWebmailBrandingAt(due time.Time) {
+	if !r.webmailBrandingRetryAt.Before(due) {
+		return
+	}
+	r.webmailBrandingRetryAt = due
+	after := r.webmailBrandingAfterFunc
+	if after == nil {
+		after = func(d time.Duration, f func()) { time.AfterFunc(d, f) }
+	}
+	// A moment past due, so the pass is not still inside the interval.
+	after(time.Until(due)+time.Second, func() {
+		r.ScheduleResource(ResourceKey{Kind: KindWebmailBranding})
 	})
 }
 

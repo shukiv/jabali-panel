@@ -1035,6 +1035,7 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 					Packages:        deps.Packages,
 					Branding:        repository.NewDomainWebmailBrandingRepository(deps.DB),
 					StrictRateLimit: rl.StrictPerActor(),
+					Webmail:         webmailBrandingSender(deps.Reconciler),
 				})
 			}
 			// GH #1387: mail-only domain delete (destructive teardown that keeps
@@ -1221,10 +1222,11 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		}
 		if deps.ServerSettings != nil {
 			api.RegisterServerSettingsRoutes(v1, api.ServerSettingsHandlerConfig{
-				Repo:   deps.ServerSettings,
-				Agent:  deps.Agent,
-				Log:    deps.Log,
-				SSOKey: deps.SSOKey,
+				Repo:    deps.ServerSettings,
+				Agent:   deps.Agent,
+				Log:     deps.Log,
+				SSOKey:  deps.SSOKey,
+				Webmail: webmailBrandingSender(deps.Reconciler),
 			})
 			// GH #2056: website mail through the local mail server or a smarthost.
 			api.RegisterWebsiteMailRoutes(v1, api.WebsiteMailHandlerConfig{
@@ -1241,8 +1243,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 			// M28 — admin logo upload/delete. Public GET lives on the
 			// root router above so it's reachable pre-auth.
 			api.RegisterBrandingRoutes(v1, api.BrandingHandlerConfig{
-				Repo: deps.ServerSettings,
-				Log:  deps.Log,
+				Repo:    deps.ServerSettings,
+				Log:     deps.Log,
+				Webmail: webmailBrandingSender(deps.Reconciler),
 			})
 		}
 		// M37 Phase 4: Postgres lifecycle admin endpoints (status +
@@ -2025,6 +2028,15 @@ func cacheHMACSecret() string {
 // reconciler to the narrow userops interfaces WITHOUT boxing a typed nil
 // into the interface (the != nil guard would pass, then SIGSEGV — HANDOFF §9).
 func automationLimitsReconciler(r *reconciler.Reconciler) userops.LimitsReconciler {
+	if r == nil {
+		return nil
+	}
+	return r
+}
+
+// webmailBrandingSender is the reconciler as the branding handlers' sender,
+// or a nil interface (not one holding a nil pointer) when there is none.
+func webmailBrandingSender(r *reconciler.Reconciler) api.WebmailBrandingSender {
 	if r == nil {
 		return nil
 	}

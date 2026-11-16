@@ -33,7 +33,7 @@ When your hosting plan includes webmail branding, the **Settings** tab has a **W
 - **Website**, **privacy policy** and **imprint** links — on the login page; `https://` or `http://` links only.
 - **Logo**, **logo for the dark theme** and **favicon** — PNG or JPEG, at most 512 KB and 1024 × 1024 pixels. The panel converts them to PNG. Without a dark-theme logo, webmail uses the logo in both themes.
 
-Empty fields keep the server-wide branding. A change reaches webmail within about five minutes, and webmail restarts for a few seconds when it does; signed-in users stay signed in. **Remove branding** deletes it all and goes back to the server-wide branding.
+Empty fields keep the server-wide branding. A change reaches webmail at once, and webmail restarts for a few seconds when it does; signed-in users stay signed in. Webmail restarts for its branding at most every five minutes, so a change made within five minutes of the last one shows when those five minutes are up; the message after saving says when. **Remove branding** deletes it all and goes back to the server-wide branding.
 
 Without the switch in your plan, the card says so; ask your administrator. An administrator can also brand your domain's webmail, and you then see that your provider set it.
 
