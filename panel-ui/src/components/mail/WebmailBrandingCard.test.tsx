@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WebmailBrandingCard } from "./WebmailBrandingCard";
 import type { WebmailBranding } from "../../hooks/useWebmailBranding";
+import { shortTime } from "../../utils/datetime";
 
 vi.mock("../../apiClient", () => ({
   apiClient: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
@@ -84,6 +85,38 @@ describe("WebmailBrandingCard (GH #2502)", () => {
         imprint_url: "",
       }),
     );
+  });
+
+  // GH #2502: the save says when webmail shows it.
+  it("says webmail shows a save in a few seconds", async () => {
+    renderCard({});
+    mocked.put.mockResolvedValue({
+      data: { ...EMPTY, app_name: "Acme Mail", applies: true, webmail_at: new Date().toISOString() },
+    });
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Acme Mail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Webmail branding saved. Webmail shows it in a few seconds.")).toBeInTheDocument();
+  });
+
+  it("says when webmail shows a save it holds back", async () => {
+    renderCard({});
+    const at = new Date(Date.now() + 4 * 60_000).toISOString();
+    mocked.put.mockResolvedValue({ data: { ...EMPTY, app_name: "Acme Mail", applies: true, webmail_at: at } });
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Acme Mail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByText(
+        `Webmail branding saved. Webmail shows it at ${shortTime(at)}: it restarts for its branding at most every five minutes.`,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says only that it saved when the API gives no time", async () => {
+    renderCard({});
+    mocked.put.mockResolvedValue({ data: { ...EMPTY, app_name: "Acme Mail", applies: true } });
+    fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Acme Mail" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Webmail branding saved.")).toBeInTheDocument();
   });
 
   it("refuses a link that isn't http(s)", async () => {

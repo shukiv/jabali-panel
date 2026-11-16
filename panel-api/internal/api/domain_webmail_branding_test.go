@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -90,11 +91,32 @@ type wbFixture struct {
 	router   *gin.Engine
 	branding *wbBranding
 	dir      string
+	webmail  *wbSender
+}
+
+// wbSender records the changes sent to webmail; webmail shows them at at.
+type wbSender struct {
+	calls int
+	at    time.Time
+}
+
+func (s *wbSender) WebmailBrandingSoon() time.Time {
+	s.calls++
+	return s.at
 }
 
 // wbSetup serves the routes to claims, for a domain of user "owner" whose
 // package has webmail branding when allows; noPackage leaves them none.
 func wbSetup(t *testing.T, claims *auth.AccessClaims, allows, noPackage bool) *wbFixture {
+	t.Helper()
+	s := &wbSender{at: time.Date(2026, 11, 16, 9, 5, 0, 0, time.UTC)}
+	f := wbSetupWith(t, claims, allows, noPackage, s)
+	f.webmail = s
+	return f
+}
+
+// wbSetupWith is wbSetup with sender as the handler's Webmail (nil: none).
+func wbSetupWith(t *testing.T, claims *auth.AccessClaims, allows, noPackage bool, sender WebmailBrandingSender) *wbFixture {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	pkgID := "pkg"
@@ -113,10 +135,55 @@ func wbSetup(t *testing.T, claims *auth.AccessClaims, allows, noPackage bool) *w
 		Users:    &wbUsers{u: user},
 		Packages: &wbPackages{pkg: &models.HostingPackage{ID: pkgID, WebmailBrandingEnabled: allows}},
 		Branding: f.branding,
+		Webmail:  sender,
 		Dir:      f.dir,
 	})
 	f.router = r
 	return f
+}
+
+// GH #2502: every change goes to webmail at once, and its answer says when
+// webmail shows it. Reading the branding, or a refused change, sends nothing.
+func TestWebmailBranding_ChangesGoToWebmailAtOnce(t *testing.T) {
+	f := wbSetup(t, wbOwner, true, false)
+	want := f.webmail.at.Format(time.RFC3339)
+
+	if w, body := f.do(t, http.MethodGet, "", nil); w.Code != http.StatusOK || body["webmail_at"] != nil || f.webmail.calls != 0 {
+		t.Fatalf("GET = %d %v, sent %d", w.Code, body, f.webmail.calls)
+	}
+	if w, body := f.do(t, http.MethodPut, "", map[string]string{"website_url": "ftp://x"}); w.Code != http.StatusUnprocessableEntity || f.webmail.calls != 0 {
+		t.Fatalf("refused PUT = %d %v, sent %d", w.Code, body, f.webmail.calls)
+	}
+	changes := []func() (*httptest.ResponseRecorder, map[string]any){
+		func() (*httptest.ResponseRecorder, map[string]any) { return f.do(t, http.MethodPut, "", wbFields) },
+		func() (*httptest.ResponseRecorder, map[string]any) { return f.upload(t, "logo-light", wbPNG(t)) },
+		func() (*httptest.ResponseRecorder, map[string]any) {
+			return f.do(t, http.MethodDelete, "/logo-light", nil)
+		},
+		func() (*httptest.ResponseRecorder, map[string]any) { return f.do(t, http.MethodDelete, "", nil) },
+	}
+	for i, change := range changes {
+		w, body := change()
+		if w.Code != http.StatusOK || body["webmail_at"] != want {
+			t.Fatalf("change %d = %d, webmail_at %v, want %s", i, w.Code, body["webmail_at"], want)
+		}
+		if f.webmail.calls != i+1 {
+			t.Fatalf("change %d: sent %d times, want %d", i, f.webmail.calls, i+1)
+		}
+	}
+}
+
+// Without a sender (no reconciler) a change still saves; the answer has no
+// webmail_at, and the next pass sends it.
+func TestWebmailBranding_NoSenderNoWebmailAt(t *testing.T) {
+	f := wbSetupWith(t, wbOwner, true, false, nil)
+	w, body := f.do(t, http.MethodPut, "", wbFields)
+	if w.Code != http.StatusOK || body["applies"] != true {
+		t.Fatalf("PUT = %d %v", w.Code, body)
+	}
+	if _, ok := body["webmail_at"]; ok {
+		t.Fatalf("webmail_at = %v without a sender", body["webmail_at"])
+	}
 }
 
 var (

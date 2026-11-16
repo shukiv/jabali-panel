@@ -300,10 +300,18 @@ type Reconciler struct {
 	// phase. webmailBrandingDir overrides webmailbranding.Dir (tests).
 	webmailBranding    repository.DomainWebmailBrandingRepository
 	webmailBrandingDir string
-	// webmailBrandingMu serializes the phase; webmailBrandingSent is when
-	// it last sent the branding (each send that changes it restarts webmail).
-	webmailBrandingMu   sync.Mutex
-	webmailBrandingSent time.Time
+	// webmailBrandingMu serializes the phase. webmailBrandingSent is when it
+	// last sent the branding, in Unix nanoseconds (0: not yet); each send that
+	// changes it restarts webmail. Atomic so a save can tell when webmail
+	// shows it without waiting for a send under way. Under the mutex:
+	// webmailBrandingSentKey is what that send carried, webmailBrandingRetryAt
+	// when a change held back by the interval is sent, and
+	// webmailBrandingAfterFunc (tests) replaces time.AfterFunc.
+	webmailBrandingMu        sync.Mutex
+	webmailBrandingSent      atomic.Int64
+	webmailBrandingSentKey   string
+	webmailBrandingRetryAt   time.Time
+	webmailBrandingAfterFunc func(time.Duration, func())
 	// M18 — hosting packages + per-user overrides + /home mount path.
 	packages       repository.PackageRepository
 	limitOverrides repository.UserLimitOverrideRepository
@@ -949,6 +957,9 @@ type ResourceKind string
 const (
 	// KindDomain addresses a domain by its ID.
 	KindDomain ResourceKind = "domain"
+	// KindWebmailBranding is webmail's branding, server-wide and per domain
+	// (GH #2502); it has no ID.
+	KindWebmailBranding ResourceKind = "webmail_branding"
 )
 
 // ResourceKey is a typed, comparable handle to a reconcilable resource. As the
@@ -1030,6 +1041,11 @@ func (r *Reconciler) drainOne(ctx context.Context) bool {
 	case KindDomain:
 		if err := r.ReconcileOne(ctx, key.ID); err != nil {
 			r.log.Error("reconcile one failed", "domain_id", key.ID, "err", err)
+		}
+	case KindWebmailBranding:
+		// A DR standby serves nothing, as in ReconcileAll.
+		if !r.isStandby(ctx) {
+			r.reconcileWebmailBranding(ctx)
 		}
 	default:
 		// No silent drop: an unhandled kind means a future ResourceKind was

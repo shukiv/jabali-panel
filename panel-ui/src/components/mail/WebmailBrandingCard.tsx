@@ -17,6 +17,7 @@ import {
   useUploadWebmailBrandingPicture,
   useWebmailBranding,
   webmailBrandingPictureURL,
+  webmailWhen,
   type WebmailBranding,
   type WebmailBrandingPicture,
   type WebmailBrandingText,
@@ -45,6 +46,12 @@ function errorMessage(err: unknown, fallback: string): string {
   return data?.detail ?? data?.error ?? fallback;
 }
 
+// withWhen adds when webmail shows the change to a toast.
+function withWhen(done: string, at: string | undefined): string {
+  const when = webmailWhen(at);
+  return when ? `${done} ${when}` : done;
+}
+
 function hasBranding(b: WebmailBranding): boolean {
   return [b.app_name, b.company_name, b.website_url, b.privacy_url, b.imprint_url, b.logo_light, b.logo_dark, b.favicon].some(
     (v) => v !== "",
@@ -61,14 +68,14 @@ const TextForm = ({ domainId, saved }: { domainId: string; saved: WebmailBrandin
 
   const onFinish = async (vals: WebmailBrandingText) => {
     try {
-      await save.mutateAsync({
+      const res = await save.mutateAsync({
         app_name: vals.app_name ?? "",
         company_name: vals.company_name ?? "",
         website_url: vals.website_url ?? "",
         privacy_url: vals.privacy_url ?? "",
         imprint_url: vals.imprint_url ?? "",
       });
-      feedback.message.success("Webmail branding saved");
+      feedback.message.success(withWhen("Webmail branding saved.", res.webmail_at));
     } catch (err) {
       feedback.message.error(errorMessage(err, "Failed to save the webmail branding"));
     }
@@ -129,8 +136,8 @@ const PictureRow = ({ domainId, saved, row }: { domainId: string; saved: Webmail
     },
     customRequest: async ({ file, onSuccess, onError }) => {
       try {
-        await upload.mutateAsync({ picture: row.picture, file: file as Blob });
-        feedback.message.success(`${row.label} uploaded`);
+        const res = await upload.mutateAsync({ picture: row.picture, file: file as Blob });
+        feedback.message.success(withWhen(`${row.label} uploaded.`, res.webmail_at));
         onSuccess?.({} as unknown);
       } catch (err) {
         feedback.message.error(errorMessage(err, "Upload failed"));
@@ -141,8 +148,8 @@ const PictureRow = ({ domainId, saved, row }: { domainId: string; saved: Webmail
 
   const onRemove = async () => {
     try {
-      await remove.mutateAsync(row.picture);
-      feedback.message.success(`${row.label} removed`);
+      const res = await remove.mutateAsync(row.picture);
+      feedback.message.success(withWhen(`${row.label} removed.`, res.webmail_at));
     } catch (err) {
       feedback.message.error(errorMessage(err, "Failed to remove the picture"));
     }
@@ -200,8 +207,8 @@ const Editor = ({ domainId, saved }: { domainId: string; saved: WebmailBranding 
   const reset = useResetWebmailBranding(domainId);
   const onReset = async () => {
     try {
-      await reset.mutateAsync();
-      feedback.message.success("Webmail branding removed");
+      const res = await reset.mutateAsync();
+      feedback.message.success(withWhen("Webmail branding removed.", res.webmail_at));
     } catch (err) {
       feedback.message.error(errorMessage(err, "Failed to remove the webmail branding"));
     }
@@ -212,8 +219,8 @@ const Editor = ({ domainId, saved }: { domainId: string; saved: WebmailBranding 
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
         What webmail shows on <Typography.Text code>{saved.host}</Typography.Text>. Empty fields keep the
-        server-wide branding. A change reaches webmail within about five minutes; webmail restarts for a few
-        seconds when it does.
+        server-wide branding. A change reaches webmail at once, or up to five minutes later if webmail restarted
+        for its branding in the last five minutes; webmail restarts for a few seconds each time.
       </Typography.Text>
       {hasBranding(saved) && !saved.applies && (
         <Alert

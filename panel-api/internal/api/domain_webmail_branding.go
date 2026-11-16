@@ -26,8 +26,18 @@ type DomainWebmailBrandingHandlerConfig struct {
 	Log      *slog.Logger
 	// StrictRateLimit (optional) limits the changes.
 	StrictRateLimit gin.HandlerFunc
+	// Webmail (optional) sends a change to webmail at once and says when it
+	// shows; without it the reconciler's next pass sends it.
+	Webmail WebmailBrandingSender
 	// Dir overrides webmailbranding.Dir (tests).
 	Dir string
+}
+
+// WebmailBrandingSender has webmail's branding sent soon after a change (GH
+// #2502) and returns about when webmail shows it: the reconciler sends it at
+// once, or when the least time between two webmail restarts has passed.
+type WebmailBrandingSender interface {
+	WebmailBrandingSoon() time.Time
 }
 
 // RegisterDomainWebmailBrandingRoutes mounts, for the domain's owner and
@@ -41,8 +51,9 @@ type DomainWebmailBrandingHandlerConfig struct {
 //   - DELETE /domains/:id/webmail-branding/:asset   remove a picture
 //
 // :asset is logo-light, logo-dark or favicon. The owner may change it while
-// their package has webmail branding; an administrator always. The reconciler
-// sends it to webmail within about five minutes (webmailBrandingMinInterval).
+// their package has webmail branding; an administrator always. A change goes
+// to webmail at once, or when five minutes have passed since webmail last
+// restarted for its branding; its answer says when (webmail_at).
 func RegisterDomainWebmailBrandingRoutes(g *gin.RouterGroup, cfg DomainWebmailBrandingHandlerConfig) {
 	if cfg.Domains == nil || cfg.Users == nil || cfg.Branding == nil {
 		panic("api.RegisterDomainWebmailBrandingRoutes: Domains, Users and Branding are required")
@@ -90,6 +101,8 @@ type webmailBrandingResponse struct {
 	LogoLight   string `json:"logo_light"`
 	LogoDark    string `json:"logo_dark"`
 	Favicon     string `json:"favicon"`
+	// WebmailAt, in the answer to a change, is about when webmail shows it.
+	WebmailAt *time.Time `json:"webmail_at,omitempty"`
 }
 
 // brandingAccess is who asks about which domain.
@@ -178,7 +191,23 @@ func (h *domainWebmailBrandingHandler) load(ctx context.Context, domainID string
 }
 
 func (h *domainWebmailBrandingHandler) respond(c *gin.Context, a *brandingAccess, row *models.DomainWebmailBranding) {
+	h.respondAt(c, a, row, nil)
+}
+
+// changed answers a change: the branding, and about when webmail shows it,
+// once the change is sent on its way.
+func (h *domainWebmailBrandingHandler) changed(c *gin.Context, a *brandingAccess, row *models.DomainWebmailBranding) {
+	var at *time.Time
+	if h.cfg.Webmail != nil {
+		t := h.cfg.Webmail.WebmailBrandingSoon().UTC()
+		at = &t
+	}
+	h.respondAt(c, a, row, at)
+}
+
+func (h *domainWebmailBrandingHandler) respondAt(c *gin.Context, a *brandingAccess, row *models.DomainWebmailBranding, webmailAt *time.Time) {
 	c.JSON(http.StatusOK, webmailBrandingResponse{
+		WebmailAt:   webmailAt,
 		Host:        "mail." + a.dom.Name,
 		CanEdit:     a.canEdit(),
 		Applies:     !row.Empty() && (row.SetByAdmin || a.packageAllows),
@@ -285,7 +314,7 @@ func (h *domainWebmailBrandingHandler) put(c *gin.Context) {
 		return
 	}
 	h.audit("webmail_branding_saved", a)
-	h.respond(c, a, row)
+	h.changed(c, a, row)
 }
 
 func (h *domainWebmailBrandingHandler) reset(c *gin.Context) {
@@ -302,7 +331,7 @@ func (h *domainWebmailBrandingHandler) reset(c *gin.Context) {
 		h.cfg.Log.Warn("webmail branding: remove pictures", "domain_id", a.dom.ID, "err", err)
 	}
 	h.audit("webmail_branding_reset", a)
-	h.respond(c, a, &models.DomainWebmailBranding{DomainID: a.dom.ID})
+	h.changed(c, a, &models.DomainWebmailBranding{DomainID: a.dom.ID})
 }
 
 // asset parses :asset, answering an unknown one.
@@ -410,7 +439,7 @@ func (h *domainWebmailBrandingHandler) upload(c *gin.Context) {
 		return
 	}
 	h.audit("webmail_branding_picture_uploaded", a, "picture", string(as))
-	h.respond(c, a, row)
+	h.changed(c, a, row)
 }
 
 func (h *domainWebmailBrandingHandler) removePicture(c *gin.Context) {
@@ -438,5 +467,5 @@ func (h *domainWebmailBrandingHandler) removePicture(c *gin.Context) {
 		h.cfg.Log.Warn("webmail branding: remove picture", "domain_id", a.dom.ID, "picture", as, "err", err)
 	}
 	h.audit("webmail_branding_picture_removed", a, "picture", string(as))
-	h.respond(c, a, row)
+	h.changed(c, a, row)
 }

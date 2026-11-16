@@ -41,6 +41,9 @@ var allowedLogoExts = map[string]string{
 type BrandingHandlerConfig struct {
 	Repo repository.ServerSettingsRepository
 	Log  *slog.Logger
+	// Webmail (optional) sends a new or removed logo to webmail at once
+	// (GH #2502); without it the reconciler's next pass sends it.
+	Webmail WebmailBrandingSender
 }
 
 // RegisterBrandingRoutes mounts admin-only logo upload/delete under
@@ -268,7 +271,11 @@ func (h *brandingHandler) upload(c *gin.Context) {
 	// Webmail picks up the logo from the reconciler's webmail.branding phase
 	// (GH #200, GH #2502), which sends every domain's branding with it.
 	h.cfg.Log.Info("event=audit kind=branding_logo_uploaded actor_id=" + claims.UserID + " variant=" + variant + " ext=" + ext)
-	c.JSON(http.StatusOK, gin.H{"variant": variant, "ext": ext})
+	resp := gin.H{"variant": variant, "ext": ext}
+	if h.cfg.Webmail != nil {
+		resp["webmail_at"] = h.cfg.Webmail.WebmailBrandingSoon().UTC()
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 func (h *brandingHandler) clear(c *gin.Context) {
@@ -307,6 +314,9 @@ func (h *brandingHandler) clear(c *gin.Context) {
 		return
 	}
 	h.cfg.Log.Info("event=audit kind=branding_logo_cleared actor_id=" + claims.UserID + " variant=" + variant)
+	if h.cfg.Webmail != nil {
+		h.cfg.Webmail.WebmailBrandingSoon()
+	}
 	c.Status(http.StatusNoContent)
 }
 

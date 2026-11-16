@@ -39,6 +39,9 @@ type ServerSettingsHandlerConfig struct {
 	// CFVerify overrides the Cloudflare token-verification call in tests.
 	// Nil = verify against the real Cloudflare API.
 	CFVerify func(ctx context.Context, token string) (zones int, err error)
+	// Webmail (optional) sends a changed brand text to webmail at once
+	// (GH #2502); without it the reconciler's next pass sends it.
+	Webmail WebmailBrandingSender
 }
 
 // RegisterServerSettingsRoutes mounts server settings endpoints under the
@@ -922,6 +925,10 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	if err := h.cfg.Repo.Upsert(ctx, current); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+	// GH #2502: webmail shows the panel's brand text; send a change at once.
+	if h.cfg.Webmail != nil && current.PanelBrandText != before.PanelBrandText {
+		h.cfg.Webmail.WebmailBrandingSoon()
 	}
 	// GH #2164: the panel clock follows the saved zone at once (GET /me hands
 	// it to every SPA); the backup scheduler re-times stored next-runs on its

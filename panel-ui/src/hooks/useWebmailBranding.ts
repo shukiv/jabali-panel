@@ -4,6 +4,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiClient } from "../apiClient";
+import { shortTime } from "../utils/datetime";
 
 export interface WebmailBranding {
   host: string;
@@ -21,6 +22,19 @@ export interface WebmailBranding {
   logo_light: string;
   logo_dark: string;
   favicon: string;
+  // In the answer to a change: about when webmail shows it (UTC).
+  webmail_at?: string;
+}
+
+// webmailWhen says when webmail shows a change (GH #2502): at once, or at the
+// time the API gives when webmail restarted for its branding in the last five
+// minutes. Empty when the API gave no time.
+export function webmailWhen(at: string | undefined, now: number = Date.now()): string {
+  if (!at) return "";
+  const t = Date.parse(at);
+  if (Number.isNaN(t)) return "";
+  if (t - now < 30_000) return "Webmail shows it in a few seconds.";
+  return `Webmail shows it at ${shortTime(at)}: it restarts for its branding at most every five minutes.`;
 }
 
 export type WebmailBrandingText = Pick<
