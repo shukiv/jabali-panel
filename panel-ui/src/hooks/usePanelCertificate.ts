@@ -8,6 +8,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiClient } from "../apiClient";
+import { isPanelRestartError } from "../apiErrors";
 
 export type PanelCertKind = "hostname" | "mail";
 
@@ -73,6 +74,13 @@ interface PanelCertListResponse {
 
 const QK = ["admin", "panel-certificate"] as const;
 
+// Issuing the panel's certificate, or regenerating its self-signed one,
+// restarts jabali-panel to serve it, and the refetch that follows lands in
+// that restart. nginx answers 502 for its few seconds, so those are retried
+// every 2 seconds for up to 30. Any other error gets the usual single retry.
+const PANEL_RESTART_RETRIES = 15;
+const PANEL_RESTART_RETRY_MS = 2000;
+
 export function usePanelCertificate() {
   return useQuery<PanelCertificate[]>({
     queryKey: QK,
@@ -84,6 +92,10 @@ export function usePanelCertificate() {
     },
     refetchInterval: 30_000,
     refetchIntervalInBackground: false,
+    retry: (failureCount, err) =>
+      isPanelRestartError(err) ? failureCount < PANEL_RESTART_RETRIES : failureCount < 1,
+    retryDelay: (failureCount, err) =>
+      isPanelRestartError(err) ? PANEL_RESTART_RETRY_MS : Math.min(1000 * 2 ** failureCount, 30_000),
   });
 }
 

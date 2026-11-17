@@ -28,6 +28,21 @@ interface ApiErrorBody {
  * @param err   the value caught in a try/catch
  * @param fallback  used when err carries no useful info
  */
+/**
+ * isPanelRestartError: the panel isn't answering for a moment, rather than
+ * refusing the request. nginx in front of it answers 502 while jabali-panel
+ * restarts (it does after its own certificate is issued or regenerated), 504
+ * when the panel is slow to come back, and a connection can drop while nginx
+ * reloads. A query that runs across such a restart retries these for longer
+ * than an ordinary error.
+ */
+export function isPanelRestartError(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  const status = err.response?.status;
+  if (status === 502 || status === 504) return true;
+  return !err.response && err.code === "ERR_NETWORK";
+}
+
 export function extractApiError(err: unknown, fallback = "request failed"): string {
   if (axios.isAxiosError(err)) {
     const ax = err as AxiosError<ApiErrorBody>;

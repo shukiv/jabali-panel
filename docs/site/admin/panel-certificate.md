@@ -19,7 +19,7 @@ The panel hostname certificate differs from a tenant domain's certificate in thr
 
 1. **One per host** — the `panel_certificate` table is a singleton; the hostname change replaces the existing row.
 2. **Self-signed fallback** — on the very first boot, or after an issuance failure, the panel serves a self-signed certificate so the operator can reach the UI to diagnose. With Let's Encrypt on, **Issue / retry** on the Panel SSL tab triggers a fresh attempt. With it off, the button is **Regenerate self-signed**; see [Self-signed mode](#self-signed-mode-lets-encrypt-off).
-3. **Three-service deploy hook** — after a successful issuance or renewal, the agent reloads, in order: nginx → panel API → Bulwark. This sequencing avoids a window in which one component is using the new certificate and another is still using the old, which would surface as TLS handshake failures on the SPA.
+3. **Three-service deploy hook** — after a successful issuance or renewal, the agent reloads, in order: nginx → panel API → Bulwark. This sequencing avoids a window in which one component is using the new certificate and another is still using the old, which would surface as TLS handshake failures on the SPA. While the panel API restarts it doesn't answer for a few seconds; the Panel SSL tab waits for it (up to 30 seconds) instead of reporting "Failed to load panel SSL state". The open page keeps the old certificate until you reload it.
 
 ## Issuance path
 

@@ -34,6 +34,7 @@ import {
   panelCertActionConfirm,
   panelCertActionLabel,
   panelCertIssueMessage,
+  panelCertRefreshWarning,
   panelCertStatusTag,
   panelCertTypeLabel,
   panelCertValidity,
@@ -171,7 +172,9 @@ export function PanelSSLTab() {
   if (q.isPending) {
     return <Skeleton active />;
   }
-  if (q.isError || !q.data) {
+  // Only a first load with nothing to show is an error. A refresh that fails
+  // afterwards keeps the loaded cards, with a warning above them.
+  if (!q.data) {
     return (
       <Alert
         type="error"
@@ -192,12 +195,16 @@ export function PanelSSLTab() {
   const doIssue = (kind: PanelCertKind) =>
     issue.mutate(kind, {
       onSuccess: (r) =>
-        feedback.message.success(panelCertIssueMessage(kind, r), isPanelSelfSignResult(r) ? 10 : undefined),
+        feedback.message.success(
+          panelCertIssueMessage(kind, r),
+          isPanelSelfSignResult(r) || kind === "hostname" ? 10 : undefined,
+        ),
       onError: (e) => feedback.message.error(`${kind} cert: issue failed: ${String((e as Error).message)}`),
     });
 
   return (
     <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+      {q.isError && <Alert type="warning" showIcon title={panelCertRefreshWarning(q.error)} />}
       <Space wrap style={{ width: "100%", justifyContent: "space-between" }}>
         <Space wrap>
           <Switch
