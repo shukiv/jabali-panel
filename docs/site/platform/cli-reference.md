@@ -3819,6 +3819,7 @@ jabali migrate restore [flags]
 **Flags:**
 
 - `--cpanel` — source is a cPanel cpmove / WHM pkgacct tarball
+- `--directadmin` — source is a DirectAdmin user backup (user.<reseller>.<user>.tar.zst / .tar.gz / .tar)
 - `--file` — path to the cpmove tarball (cpmove-<user>.tar.gz) — required
 - `--fresh` — alias of --retry-from-scratch
 - `--hestiacp` — source is a HestiaCP v-backup-user tarball (<user>.<YYYY-MM-DD_HH-MM-SS>.tar[.gz])
