@@ -5955,6 +5955,13 @@ paths:
         `lets_encrypt_staging` or `ca`. When the file is missing or holds no
         certificate, `served` is absent and `served_error` says why.
         With the mail module off, the list has no mail row.
+
+        On a new install the hostname row carries `le_auto_until` (ADR-0066):
+        until then the panel turns `use_le` on by itself once public DNS shows
+        the hostname at this server, and back off if that first certificate
+        fails. It is absent once the window closes: issued, passed, or ended
+        by the admin (the toggle's `use_le`, or an issue with Let's Encrypt
+        on).
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
