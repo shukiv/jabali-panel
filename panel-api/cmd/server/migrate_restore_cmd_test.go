@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
 )
 
 func TestCpmoveSourceUser(t *testing.T) {
@@ -104,5 +106,20 @@ func TestDANativeSourceUser(t *testing.T) {
 	bad := write("bad.tar", map[string]string{"backup/user.conf": "username=../root\n"}, []string{"backup/user.conf"})
 	if _, err := daNativeSourceUser(bad, ""); err == nil {
 		t.Error("an invalid account name accepted")
+	}
+}
+
+// A WordPress in a subdirectory of a docroot (DirectAdmin's shop at
+// public_html/<dir>/) is repointed and its index.html shadow checked, like a
+// docroot's own.
+func TestAppConfigRoots(t *testing.T) {
+	docroots := []string{"/home/u/domains/a.example/public_html"}
+	got := appConfigRoots(docroots, &cpanel.ParsedTarball{ExtraAppRoots: []string{"/home/u/domains/a.example/public_html/shop"}})
+	want := []string{"/home/u/domains/a.example/public_html", "/home/u/domains/a.example/public_html/shop"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v", got)
+	}
+	if len(docroots) != 1 {
+		t.Error("the docroot list was changed")
 	}
 }

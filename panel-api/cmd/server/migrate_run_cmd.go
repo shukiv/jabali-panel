@@ -44,6 +44,15 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
+// appConfigRoots is where ImportAppConfigs and the index.html quarantine
+// look for an application: every docroot, plus the application roots an
+// adapter found inside one (a second WordPress at public_html/<dir>/). The
+// setgid repair takes the docroots alone: it already walks each recursively.
+func appConfigRoots(docroots []string, parsed *cpanel.ParsedTarball) []string {
+	roots := append(make([]string, 0, len(docroots)+len(parsed.ExtraAppRoots)), docroots...)
+	return append(roots, parsed.ExtraAppRoots...)
+}
+
 // daNativeParseKind routes the parse step for a DirectAdmin user backup
 // restored offline (`jabali migrate restore --directadmin`). It is not a
 // migration_jobs.source_kind: the job's kind stays "directadmin".
@@ -1832,13 +1841,13 @@ func cpanelRestoreCallback(
 		// JAB-32: pass the resolved per-domain docroots so the scanner finds
 		// Hestia's web/<dom>/public_html (and any non-default cPanel layout),
 		// not just the hardcoded /home/<user>/domains tree.
-		appDocroots := make([]string, 0, len(p.parsed.DocRoots)+len(p.parsed.ExtraAppRoots))
+		appDocroots := make([]string, 0, len(p.parsed.DocRoots))
 		for _, dr := range p.parsed.DocRoots {
 			appDocroots = append(appDocroots, dr)
 		}
-		appDocroots = append(appDocroots, p.parsed.ExtraAppRoots...)
+		appRoots := appConfigRoots(appDocroots, p.parsed)
 		if plan.Websites {
-			appRes, aerr := cpanel.ImportAppConfigs(ctx, restoreAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials, appDocroots)
+			appRes, aerr := cpanel.ImportAppConfigs(ctx, restoreAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials, appRoots)
 			if aerr != nil {
 				warnings = append(warnings, fmt.Sprintf("appconfigs: %v", aerr))
 			} else {
@@ -1857,7 +1866,7 @@ func cpanelRestoreCallback(
 		// skipped for want of credentials — the shadow does not care whether
 		// the database was re-credentialed.
 		if plan.Websites {
-			shadowRes := cpanel.QuarantineShadowingIndexHTML(ctx, restoreAgent, p.targetUserID, p.targetUsername, appDocroots)
+			shadowRes := cpanel.QuarantineShadowingIndexHTML(ctx, restoreAgent, p.targetUserID, p.targetUsername, appRoots)
 			warnings = append(warnings, fmt.Sprintf(
 				"index_shadow: quarantined=%d flagged=%d",
 				len(shadowRes.Quarantined), len(shadowRes.Flagged)))
