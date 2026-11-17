@@ -149,3 +149,18 @@ export function panelCertIssueMessage(kind: string, r: PanelCertIssueResult | un
   }
   return r.expires_at ? `${r.detail} Valid until ${shortDate(r.expires_at)}.` : r.detail;
 }
+
+// panelLEAutoNote: on a new install the panel turns Let's Encrypt on by itself
+// once its hostname resolves publicly to this server, until le_auto_until,
+// and back off if that first certificate fails (ADR-0066). null when the
+// window is closed: it passed, the certificate was issued, or the admin chose.
+export function panelLEAutoNote(host: PanelCertificate, now: number = Date.now()): string | null {
+  if (!host.le_auto_until) return null;
+  const name = host.hostname || "the panel hostname";
+  if (host.use_le) {
+    return `Let's Encrypt was turned on by itself because ${name} resolves to this server. If this first certificate can't be issued, Let's Encrypt turns back off and the panel keeps its self-signed certificate.`;
+  }
+  const until = Date.parse(host.le_auto_until);
+  if (!Number.isFinite(until) || until <= now) return null;
+  return `New server: once ${name} resolves publicly to this server, the panel turns Let's Encrypt on by itself and issues the certificate (until ${shortDate(host.le_auto_until)}). Turning the switch on or off yourself ends this.`;
+}

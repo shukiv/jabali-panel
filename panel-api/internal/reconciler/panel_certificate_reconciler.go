@@ -39,6 +39,12 @@ func (r *Reconciler) reconcilePanelCertificate(ctx context.Context) {
 		r.log.Warn("panel-cert reconcile failed to load hostname row", "error", err)
 		return
 	}
+	// A new install turns Let's Encrypt on by itself, and off again if that
+	// first issue fails (ADR-0066 amendment). A pass that changed use_le
+	// here ends; the next one works from it.
+	if hostRow.LEAutoUntil != nil && r.reconcilePanelLEAuto(ctx, hostRow, settings) {
+		return
+	}
 	// Single admin intent: the hostname row's use_le toggle governs
 	// both certs.
 	if !hostRow.UseLE {

@@ -167,7 +167,19 @@ type PanelCertificate struct {
 	Staging       bool       `gorm:"type:tinyint(1);not null;default:0"                json:"staging"`
 	UseLE         bool       `gorm:"type:tinyint(1);not null;default:0"                json:"use_le"`
 	UpdatedAt     time.Time  `gorm:"autoUpdateTime"                                    json:"updated_at"`
+
+	// LEAutoUntil is set on the hostname row of a new install only: until
+	// then the panel turns Let's Encrypt on by itself once public DNS shows
+	// the panel hostname at this server (ADR-0066 amendment). While use_le
+	// is still off it is the window; with use_le on it marks the first,
+	// automatic issue, which turns Let's Encrypt back off if it fails. Nil
+	// on existing servers and after any admin action on the certificate.
+	LEAutoUntil *time.Time `gorm:"column:le_auto_until" json:"le_auto_until,omitempty"`
 }
+
+// PanelLEAutoWindow is how long a new install watches for its panel hostname
+// to resolve to it before Let's Encrypt is left to the admin.
+const PanelLEAutoWindow = 7 * 24 * time.Hour
 
 // TableName pins the GORM table name to the migration's spelling.
 // Without this GORM would pluralise PanelCertificate to

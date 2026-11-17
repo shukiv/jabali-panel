@@ -398,6 +398,10 @@ type Reconciler struct {
 	// service it drives ssl.panel.issue from ReconcileAll.
 	panelCerts           repository.PanelCertificateRepository
 	panelCertRoutability *services.PanelCertRoutability
+	// A new install's Let's Encrypt window (panel_le_auto_reconciler.go):
+	// public DNS is asked at most every panelLEAutoCheckEvery.
+	panelLEAutoMu        sync.Mutex
+	panelLEAutoLastCheck time.Time
 
 	// M53 Updates Center: update_history repo. When nil the run reconciler
 	// is a no-op (test fixtures / installs without the M53 wiring).

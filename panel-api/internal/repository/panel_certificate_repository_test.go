@@ -2,6 +2,7 @@ package repository_test
 
 import (
 	"context"
+	"database/sql/driver"
 	"testing"
 	"time"
 
@@ -56,7 +57,9 @@ func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	// hostname kind: not found -> create
 	mock.ExpectQuery(pcSelect).WithArgs("hostname", 1).WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectBegin()
-	mock.ExpectExec(`INSERT INTO .panel_certificate.`).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO .panel_certificate.`).
+		WithArgs("hostname", 1, "panel.example.com", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), false, sqlmock.AnyArg(), leAutoWindowArg{}). // a new install's hostname row opens the window, Let's Encrypt still off
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	// mail kind: not found -> seeded from the effective mail hostname; no
 	// settings row yet (fresh install) -> the derived mail.<hostname>
@@ -64,7 +67,7 @@ func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	mock.ExpectQuery(ssMailHostnameSelect).WillReturnError(gorm.ErrRecordNotFound)
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO .panel_certificate.`).
-		WithArgs("mail", 1, "mail.panel.example.com", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs("mail", 1, "mail.panel.example.com", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), nil). // le_auto_until: a mail row never gets the window
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -74,7 +77,22 @@ func TestPanelCert_EnsureDefault_CreatesBothKinds(t *testing.T) {
 	assert.Equal(t, "panel.example.com", host.Hostname)
 	assert.Equal(t, "/etc/jabali/tls/panel.crt", host.CertPEMPath)
 	assert.Equal(t, models.PanelCertStatusSelfSigned, host.Status)
+	assert.False(t, host.UseLE)
+	require.NotNil(t, host.LEAutoUntil)
+	assert.WithinDuration(t, time.Now().Add(models.PanelLEAutoWindow), *host.LEAutoUntil, time.Minute)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// leAutoWindowArg matches a le_auto_until about PanelLEAutoWindow from now.
+type leAutoWindowArg struct{}
+
+func (leAutoWindowArg) Match(v driver.Value) bool {
+	at, ok := v.(time.Time)
+	if !ok {
+		return false
+	}
+	d := time.Until(at) - models.PanelLEAutoWindow
+	return d > -time.Minute && d < time.Minute
 }
 
 // TestPanelCert_EnsureDefault_DoesNotRenameMailRow is the JAB-389 guard:
@@ -137,7 +155,7 @@ func TestPanelCert_EnsureDefault_SeedsMailRowFromAppliedName(t *testing.T) {
 		sqlmock.NewRows([]string{"mail_hostname"}).AddRow("MX.Example.NET"))
 	mock.ExpectBegin()
 	mock.ExpectExec(`INSERT INTO .panel_certificate.`).
-		WithArgs("mail", 1, "mx.example.net", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs("mail", 1, "mx.example.net", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), nil). // le_auto_until: a mail row never gets the window
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -258,5 +276,71 @@ func TestPanelCert_SetSelfSignedState_LEOnWritesNothing(t *testing.T) {
 		mock.ExpectCommit()
 		require.NoError(t, repo.SetSelfSignedState(context.Background(), kind, models.PanelCertStatusSelfSigned, nil))
 	}
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// The new-install Let's Encrypt window (ADR-0066 amendment). Each write is
+// guarded in SQL, so an admin's choice made in between always wins.
+
+func TestPanelCert_AutoEnableLE_OnlyWhileOffAndInsideTheWindow(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+
+	for _, rows := range []int64{1, 0} {
+		mock.ExpectBegin()
+		mock.ExpectExec(`UPDATE .panel_certificate. SET .use_le.=\?,.updated_at.=\? WHERE kind = \? AND use_le = \? AND le_auto_until IS NOT NULL AND le_auto_until > \?$`).
+			WithArgs(true, sqlmock.AnyArg(), "hostname", false, now).
+			WillReturnResult(sqlmock.NewResult(0, rows))
+		mock.ExpectCommit()
+	}
+
+	changed, err := repo.AutoEnableLE(context.Background(), now)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	changed, err = repo.AutoEnableLE(context.Background(), now)
+	require.NoError(t, err)
+	assert.False(t, changed, "nothing matched: an admin turned it off, or the window is gone")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPanelCert_RevertLEAuto_OnlyTheAutomaticFirstIssue(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	for _, rows := range []int64{1, 0} {
+		mock.ExpectBegin()
+		mock.ExpectExec(`UPDATE .panel_certificate. SET .le_auto_until.=\?,.next_retry_at.=\?,.status.=\?,.use_le.=\?,.updated_at.=\? WHERE kind = \? AND use_le = \? AND le_auto_until IS NOT NULL$`).
+			WithArgs(nil, nil, models.PanelCertStatusSelfSigned, false, sqlmock.AnyArg(), "hostname", true).
+			WillReturnResult(sqlmock.NewResult(0, rows))
+		mock.ExpectCommit()
+	}
+
+	changed, err := repo.RevertLEAuto(context.Background())
+	require.NoError(t, err)
+	assert.True(t, changed)
+	changed, err = repo.RevertLEAuto(context.Background())
+	require.NoError(t, err)
+	assert.False(t, changed, "nothing matched: the admin took over")
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPanelCert_EndLEAuto_ClearsTheWindowOnly(t *testing.T) {
+	t.Parallel()
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewPanelCertificateRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`UPDATE .panel_certificate. SET .le_auto_until.=\?,.updated_at.=\? WHERE kind = \? AND le_auto_until IS NOT NULL$`).
+		WithArgs(nil, sqlmock.AnyArg(), "hostname").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.EndLEAuto(context.Background()))
 	require.NoError(t, mock.ExpectationsWereMet())
 }

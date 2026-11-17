@@ -310,3 +310,57 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// TestPanelCertRoutability_ConfirmedPublic: the new-install Let's Encrypt
+// auto-on asks only public DNS, and only a clear yes counts.
+func TestPanelCertRoutability_ConfirmedPublic(t *testing.T) {
+	t.Parallel()
+	const ip = "203.0.113.5"
+	cases := []struct {
+		name      string
+		host      string
+		publicIP  string
+		addrs     []string
+		unreached bool
+		want      bool
+		wantAsked bool
+	}{
+		{name: "public DNS shows this server", host: "panel.example.com", publicIP: ip, addrs: []string{ip}, want: true, wantAsked: true},
+		{name: "an AAAA record next to it", host: "panel.example.com", publicIP: ip, addrs: []string{"2001:db8::1", ip}, want: true, wantAsked: true},
+		{name: "hostname in caps, address padded", host: " Panel.Example.COM ", publicIP: " " + ip + " ", addrs: []string{ip}, want: true, wantAsked: true},
+		{name: "points elsewhere", host: "panel.example.com", publicIP: ip, addrs: []string{"198.51.100.7"}, wantAsked: true},
+		{name: "a second A record elsewhere", host: "panel.example.com", publicIP: ip, addrs: []string{ip, "198.51.100.7"}, wantAsked: true},
+		{name: "only an AAAA record", host: "panel.example.com", publicIP: ip, addrs: []string{"2001:db8::1"}, wantAsked: true},
+		{name: "no public record", host: "panel.example.com", publicIP: ip, wantAsked: true},
+		{name: "public DNS unreachable", host: "panel.example.com", publicIP: ip, unreached: true, wantAsked: true},
+		{name: "no hostname", publicIP: ip, addrs: []string{ip}},
+		{name: "no public address", host: "panel.example.com", addrs: []string{ip}},
+		{name: "public address not IPv4", host: "panel.example.com", publicIP: "2001:db8::1", addrs: []string{"2001:db8::1"}},
+		{name: ".local name", host: "panel.local", publicIP: ip, addrs: []string{ip}},
+		{name: "localhost", host: "localhost", publicIP: ip, addrs: []string{ip}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var asked atomic.Int32
+			p := &PanelCertRoutability{
+				// The box's own resolver agrees every time: it must not count.
+				Resolver: stubResolver{addrs: []string{ip}},
+				PublicLookup: func(_ context.Context, host string) ([]string, bool) {
+					asked.Add(1)
+					if host != strings.TrimSpace(strings.ToLower(tc.host)) {
+						t.Errorf("asked about %q", host)
+					}
+					return tc.addrs, !tc.unreached
+				},
+			}
+			if got := p.ConfirmedPublic(context.Background(), tc.host, tc.publicIP); got != tc.want {
+				t.Fatalf("ConfirmedPublic = %v, want %v", got, tc.want)
+			}
+			if (asked.Load() > 0) != tc.wantAsked {
+				t.Fatalf("public DNS asked %d times, want asked=%v", asked.Load(), tc.wantAsked)
+			}
+		})
+	}
+}

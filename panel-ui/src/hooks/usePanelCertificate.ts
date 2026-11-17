@@ -31,6 +31,10 @@ export interface PanelCertificate {
   staging: boolean;
   use_le: boolean;
   updated_at: string;
+  // Hostname row of a new install only: until then the panel turns Let's
+  // Encrypt on by itself once the panel hostname resolves publicly to this
+  // server, and back off if that first certificate fails (ADR-0066).
+  le_auto_until?: string | null;
   // Live fields layered on by the GET handler — not stored.
   routable: boolean;
   routable_reason?: string;

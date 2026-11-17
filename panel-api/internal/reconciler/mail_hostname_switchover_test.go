@@ -756,3 +756,28 @@ func TestMailHostnamePin_LaterPassesInTheTickSeeIt(t *testing.T) {
 	require.NotNil(t, s.MailHostname)
 	assert.Equal(t, "mail.old.example.com", *s.MailHostname)
 }
+
+// The LE auto methods mirror the repository's guarded UPDATEs of the
+// hostname row (ADR-0066 amendment).
+func (f *fakePanelCertRepo) AutoEnableLE(_ context.Context, now time.Time) (bool, error) {
+	row, ok := f.rows[models.PanelCertKindHostname]
+	if !ok || row.UseLE || row.LEAutoUntil == nil || !row.LEAutoUntil.After(now) {
+		return false, nil
+	}
+	row.UseLE = true
+	return true, nil
+}
+func (f *fakePanelCertRepo) RevertLEAuto(context.Context) (bool, error) {
+	row, ok := f.rows[models.PanelCertKindHostname]
+	if !ok || !row.UseLE || row.LEAutoUntil == nil {
+		return false, nil
+	}
+	row.UseLE, row.Status, row.NextRetryAt, row.LEAutoUntil = false, models.PanelCertStatusSelfSigned, nil, nil
+	return true, nil
+}
+func (f *fakePanelCertRepo) EndLEAuto(context.Context) error {
+	if row, ok := f.rows[models.PanelCertKindHostname]; ok {
+		row.LEAutoUntil = nil
+	}
+	return nil
+}
