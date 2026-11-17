@@ -44,6 +44,20 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
+// appConfigRoots is where ImportAppConfigs and the index.html quarantine
+// look for an application: every docroot, plus the application roots an
+// adapter found inside one (a second WordPress at public_html/<dir>/). The
+// setgid repair takes the docroots alone: it already walks each recursively.
+func appConfigRoots(docroots []string, parsed *cpanel.ParsedTarball) []string {
+	roots := append(make([]string, 0, len(docroots)+len(parsed.ExtraAppRoots)), docroots...)
+	return append(roots, parsed.ExtraAppRoots...)
+}
+
+// daNativeParseKind routes the parse step for a DirectAdmin user backup
+// restored offline (`jabali migrate restore --directadmin`). It is not a
+// migration_jobs.source_kind: the job's kind stays "directadmin".
+const daNativeParseKind = "directadmin-native"
+
 func newMigrateImportCmd() *cobra.Command {
 	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
 	var keepStaging bool
@@ -172,6 +186,18 @@ failed stage. Already-done stages are skipped.`,
 			// can verify the hash style before sending a reset link.
 			extractDir := filepath.Join("/var/lib/jabali-migrations", jobID, "extracted")
 			meta, _ := cpanel.PeekAccountMeta(extractDir, job.SourceUser)
+			if job.SourceKind == models.MigrationSourceDirectAdmin && meta == nil {
+				// A DirectAdmin user backup restored offline: its contact email,
+				// primary domain and shadow hash are in backup/user.conf and
+				// backup/.shadow, read off the staged archive before extraction.
+				if p := directadmin.NativeStagedPath(filepath.Join("/var/lib/jabali-migrations", jobID), job.SourceUser); p != "" {
+					if nm, nerr := directadmin.PeekNativeMeta(p); nerr == nil {
+						meta = &cpanel.AccountMeta{Email: nm.Email, PasswordHash: nm.ShadowHash, PrimaryDomain: nm.PrimaryDomain}
+					} else {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: read DirectAdmin backup/user.conf: %v\n", nerr)
+					}
+				}
+			}
 			if targetUser == "" {
 				targetUser = job.SourceUser
 				fmt.Printf("  → target-user defaulted from source: %s\n", targetUser)
@@ -357,7 +383,32 @@ failed stage. Already-done stages are skipped.`,
 			// extractDir is already resolved earlier (above the user
 			// resolution block) — re-use the same value here.
 			var parsed *cpanel.ParsedTarball
-			switch job.SourceKind {
+			// A DirectAdmin user backup restored offline (`jabali migrate
+			// restore --directadmin`) is DA's own archive, not the cpmove the
+			// SSH pull synthesizes: it has its own parser.
+			parseKind := job.SourceKind
+			daNativePath := ""
+			var parseNotes []string
+			if job.SourceKind == models.MigrationSourceDirectAdmin {
+				daNativePath = directadmin.NativeStagedPath(filepath.Join("/var/lib/jabali-migrations", job.ID), job.SourceUser)
+				if daNativePath != "" {
+					parseKind = daNativeParseKind
+				}
+			}
+			switch parseKind {
+			case daNativeParseKind:
+				nb, nerr := directadmin.ParseNativeBackup(daNativePath, extractDir)
+				if nerr != nil {
+					return failJob(fmt.Errorf("directadmin backup %s: %w", filepath.Base(daNativePath), nerr))
+				}
+				if nb.SourceUser != job.SourceUser {
+					return failJob(fmt.Errorf("security: the backup's account %q (backup/user.conf) does not match the job's source account %q", nb.SourceUser, job.SourceUser))
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"directadmin import: %d domain(s), %d subdomain(s), %d DNS zone(s), %d database dump(s), owner mailbox=%v\n",
+					len(nb.Domains), len(nb.Subdomains), len(nb.ZoneFiles), len(nb.MySQLDumps), nb.OwnerMaildir)
+				parsed = nb.ToCpanelParsed(*user.Username)
+				parseNotes = nb.Skipped
 			case models.MigrationSourceDirectAdmin:
 				// DA pull-stage runs jabali's BackupUser script on the
 				// source, which synthesises a cpmove-shaped tarball
@@ -673,6 +724,8 @@ failed stage. Already-done stages are skipped.`,
 				parsed:         parsed,
 				targetUserID:   user.ID,
 				targetUsername: *user.Username,
+				notes:          parseNotes,
+				nativeHome:     parseKind == daNativeParseKind,
 			}
 
 			runner := &migrate.Runner{
@@ -1000,6 +1053,13 @@ type cpanelRunPayload struct {
 	// The run command reads it after the runner finishes and, when non-empty,
 	// downgrades the job from done to degraded + exits non-zero.
 	criticals []string
+	// notes are the parse step's lines for the restore summary: what an
+	// adapter read but does not carry (DirectAdmin's FTP accounts, pointers,
+	// local-name forwarders, ...), so the report lists them.
+	notes []string
+	// nativeHome: parsed.HomeDir is already the jabali home layout (a
+	// DirectAdmin user backup), copied docroot by docroot, then the rest.
+	nativeHome bool
 }
 
 // Core-area failure thresholds (JAB-31). Each returns true when an area ran but
@@ -1163,6 +1223,7 @@ func cpanelRestoreCallback(
 		}
 		var warnings []string
 		var bytes int64
+		warnings = append(warnings, p.notes...)
 
 		// The migration imports (home rsync, mailbox maildirs, big DB
 		// loads) routinely run far longer than the shared agent client's
@@ -1477,7 +1538,18 @@ func cpanelRestoreCallback(
 			// rest of the homedir (mail/ etc/ application_backups/) minus
 			// public_html. Falls back to the legacy whole-homedir rsync
 			// when no userdata YAML is present.
-			if !daHomeHandled && job.SourceKind == models.MigrationSourceHestia {
+			if !daHomeHandled && p.nativeHome {
+				// A DirectAdmin user backup: each docroot without --delete (a
+				// resumed job keeps what the site wrote since), then the rest of
+				// the home, like the cPanel split below.
+				nhRes, err := directadmin.ImportNativeHome(ctx, restoreAgent, p.parsed, job.ID, p.targetUsername)
+				if err != nil {
+					return bytes, warnings, fmt.Errorf("home: %w", err)
+				}
+				bytes += nhRes.BytesCopied
+				warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d domains=%d (per-domain docroots, then the rest of the home)", nhRes.BytesCopied, nhRes.Files, nhRes.DomainsCopied))
+				warnings = append(warnings, nhRes.Skipped...)
+			} else if !daHomeHandled && job.SourceKind == models.MigrationSourceHestia {
 				// JAB-26: Hestia web content must land in the configured docroot
 				// /home/<user>/web/<dom>/public_html, not /home/<user>/<dom> via the
 				// legacy full-homedir rsync. Per-domain copy into DocRoots.
@@ -1796,8 +1868,9 @@ func cpanelRestoreCallback(
 		for _, dr := range p.parsed.DocRoots {
 			appDocroots = append(appDocroots, dr)
 		}
+		appRoots := appConfigRoots(appDocroots, p.parsed)
 		if plan.Websites {
-			appRes, aerr := cpanel.ImportAppConfigs(ctx, restoreAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials, appDocroots)
+			appRes, aerr := cpanel.ImportAppConfigs(ctx, restoreAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials, appRoots)
 			if aerr != nil {
 				warnings = append(warnings, fmt.Sprintf("appconfigs: %v", aerr))
 			} else {
@@ -1816,7 +1889,7 @@ func cpanelRestoreCallback(
 		// skipped for want of credentials — the shadow does not care whether
 		// the database was re-credentialed.
 		if plan.Websites {
-			shadowRes := cpanel.QuarantineShadowingIndexHTML(ctx, restoreAgent, p.targetUserID, p.targetUsername, appDocroots)
+			shadowRes := cpanel.QuarantineShadowingIndexHTML(ctx, restoreAgent, p.targetUserID, p.targetUsername, appRoots)
 			warnings = append(warnings, fmt.Sprintf(
 				"index_shadow: quarantined=%d flagged=%d",
 				len(shadowRes.Quarantined), len(shadowRes.Flagged)))

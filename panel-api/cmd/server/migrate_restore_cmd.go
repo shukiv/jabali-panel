@@ -12,6 +12,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/directadmin"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -45,6 +46,20 @@ func hestiaSourceUser(path string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// daNativeSourceUser returns the account a DirectAdmin user backup names in
+// backup/user.conf. The archive names its account, so a --source-user that
+// disagrees is a mistake, not an override.
+func daNativeSourceUser(path, flagUser string) (string, error) {
+	nm, err := directadmin.PeekNativeMeta(path)
+	if err != nil {
+		return "", fmt.Errorf("--file %s: %w", filepath.Base(path), err)
+	}
+	if flagUser != "" && flagUser != nm.Username {
+		return "", fmt.Errorf("--source-user %q does not match the backup's account %q (backup/user.conf)", flagUser, nm.Username)
+	}
+	return nm.Username, nil
 }
 
 // stageTarball places src at dst (the path `jabali migrate import`
@@ -83,6 +98,7 @@ func stageTarball(src, dst string) error {
 func newMigrateRestoreCmd() *cobra.Command {
 	var cpanel bool
 	var hestia bool
+	var daNative bool
 	var file, restoreFile, sourceUser, sourceHost string
 	var targetUser, targetEmail, targetPassword, targetPackageID string
 	var keepStaging bool
@@ -92,11 +108,12 @@ func newMigrateRestoreCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "One-shot offline restore from a cpmove tarball (create job + stage + import)",
-		Long: `Restore a cPanel cpmove / WHM pkgacct or HestiaCP v-backup-user
-tarball you already have on this server, in one command:
+		Long: `Restore a cPanel cpmove / WHM pkgacct, HestiaCP v-backup-user or
+DirectAdmin user backup you already have on this server, in one command:
 
-  jabali migrate restore --cpanel   --file /path/cpmove-<user>.tar.gz
-  jabali migrate restore --hestiacp --file /path/<user>.<ts>.tar --source-user <user>
+  jabali migrate restore --cpanel      --file /path/cpmove-<user>.tar.gz
+  jabali migrate restore --hestiacp    --file /path/<user>.<ts>.tar --source-user <user>
+  jabali migrate restore --directadmin --file /path/user.<reseller>.<user>.tar.zst
 
 It creates the migration_jobs row, copies the tarball to the path the
 importer expects, and runs the full analyze → fix_perms → validate →
@@ -105,7 +122,9 @@ restore pipeline (home, MySQL, mail, DNS/domains).
 Source account is read from the filename — cpmove-<user>.tar.gz for
 cPanel, <user>.<YYYY-MM-DD_HH-MM-SS>.tar[.gz] for HestiaCP. When the
 filename has no recognizable user (e.g. a renamed hestia-sample.tar),
-pass --source-user explicitly. Destination jabali user defaults to the
+pass --source-user explicitly. A DirectAdmin backup (.tar.zst, .tar.gz or
+.tar) names its account in backup/user.conf, whatever the file is called.
+Destination jabali user defaults to the
 source account; pass --target-email + --target-password to auto-create
 it (else pre-create via the admin UI / jabali user CLI). Re-run the
 same command to resume a failed job.`,
@@ -115,12 +134,21 @@ same command to resume a failed job.`,
 
 			// JAB-25: offline restore supports HestiaCP as a first-class source
 			// kind alongside cPanel. Exactly one source kind must be selected.
-			if cpanel == hestia {
-				return errors.New("exactly one source kind is required: pass --cpanel OR --hestiacp")
+			nKinds := 0
+			for _, k := range []bool{cpanel, hestia, daNative} {
+				if k {
+					nKinds++
+				}
+			}
+			if nKinds != 1 {
+				return errors.New("exactly one source kind is required: pass --cpanel, --hestiacp or --directadmin")
 			}
 			kind := models.MigrationSourceCpanel
-			if hestia {
+			switch {
+			case hestia:
 				kind = models.MigrationSourceHestia
+			case daNative:
+				kind = models.MigrationSourceDirectAdmin
 			}
 
 			if file == "" {
@@ -147,6 +175,11 @@ same command to resume a failed job.`,
 			_ = os.MkdirAll("/var/lib/jabali-migrations", 0o750)
 
 			su := sourceUser
+			if daNative {
+				if su, err = daNativeSourceUser(abs, su); err != nil {
+					return err
+				}
+			}
 			if su == "" {
 				if hestia {
 					su = hestiaSourceUser(abs)
@@ -235,7 +268,12 @@ same command to resume a failed job.`,
 				fmt.Printf("  ! %s\n", mwarn)
 			}
 
-			if derr := migrate.CheckExtractDiskSpace(abs, "/var/lib/jabali-migrations"); derr != nil {
+			checkDisk := migrate.CheckExtractDiskSpace
+			if daNative {
+				// The shared check can't read inside a zstd archive.
+				checkDisk = directadmin.CheckNativeDiskSpace
+			}
+			if derr := checkDisk(abs, "/var/lib/jabali-migrations"); derr != nil {
 				msg := derr.Error()
 				if uerr := jobsRepo.UpdateState(ctx, jobID, models.MigrationStateFailed, &msg); uerr != nil {
 					fmt.Printf("  ! could not record the failure on job %s: %v\n", jobID, uerr)
@@ -255,6 +293,11 @@ same command to resume a failed job.`,
 				// gzip by magic bytes, so this canonical name works for both plain
 				// and gzipped Hestia archives regardless of the source extension.
 				dst = filepath.Join(staging, fmt.Sprintf("user.%s.tar.gz", su))
+			}
+			if daNative {
+				// The import tells this apart from a pull's cpmove by its name,
+				// and the archive's compression by its magic bytes.
+				dst = filepath.Join(staging, directadmin.NativeStagedName(su))
 			}
 			if err := stageTarball(abs, dst); err != nil {
 				return fmt.Errorf("stage tarball: %w", err)
@@ -294,6 +337,7 @@ same command to resume a failed job.`,
 
 	cmd.Flags().BoolVar(&cpanel, "cpanel", false, "source is a cPanel cpmove / WHM pkgacct tarball")
 	cmd.Flags().BoolVar(&hestia, "hestiacp", false, "source is a HestiaCP v-backup-user tarball (<user>.<YYYY-MM-DD_HH-MM-SS>.tar[.gz])")
+	cmd.Flags().BoolVar(&daNative, "directadmin", false, "source is a DirectAdmin user backup (user.<reseller>.<user>.tar.zst / .tar.gz / .tar)")
 	cmd.Flags().StringVar(&file, "file", "", "path to the cpmove tarball (cpmove-<user>.tar.gz) — required")
 	cmd.Flags().StringVar(&restoreFile, "restore-file", "", "alias of --file")
 	cmd.Flags().StringVar(&sourceUser, "source-user", "", "cPanel account (default: derived from the cpmove filename)")

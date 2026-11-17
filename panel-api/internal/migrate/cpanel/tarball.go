@@ -96,6 +96,11 @@ type ParsedTarball struct {
 	// adapter pre-populates this from the backup's per-DB db.conf MD5= hashes
 	// (GH #633).
 	CompatUsers []CompatUser
+	// ExtraAppRoots are destination directories, besides the DocRoots, that
+	// hold an application ImportAppConfigs repoints to its new database user:
+	// a second WordPress in a subdirectory of a docroot. Set by an adapter that
+	// found one in the archive (DirectAdmin).
+	ExtraAppRoots []string
 }
 
 // Limits parser behaviour. Tarballs from a malicious source could
