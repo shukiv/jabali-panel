@@ -90,8 +90,7 @@ jabali migrate restore --directadmin --file /path/user.<reseller>.<user>.tar.zst
   - the Redis dump and WP-CLI's download cache.
   Recreate the ones you need in the panel.
 - **PHP version:** each domain gets the server's default; set the version the
-  site ran on (`domain.conf` names it only by DirectAdmin's own index) in the
-  panel.
+  site ran on in the panel.
 - Cron jobs keep their command lines. The source's `PATH` and jailed `SHELL`
   are dropped, so a job that ran a source-specific PHP binary
   (`/usr/local/php81/bin/php`) needs its path updated.
