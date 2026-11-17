@@ -41,7 +41,9 @@ Common failure causes are the same as tenant-domain failures: the panel hostname
 
 ## New servers: Let's Encrypt turns on by itself
 
-On a new server the panel turns Let's Encrypt on for itself once the panel hostname points at the server. For seven days after installation it checks public DNS, every 10 minutes at most. When the hostname's A record shows the server's public IP, it turns **Use Let's Encrypt for the panel** on and issues the certificate. The panel then restarts to serve it.
+On a new server the panel turns Let's Encrypt on for itself once the panel hostname points at the server. From 15 minutes after installation until seven days after, it checks public DNS every 10 minutes at most. When the hostname's A record shows the server's public IP, it turns **Use Let's Encrypt for the panel** on and issues the certificate. The panel then restarts to serve it.
+
+When the panel hostname handles mail, the mail certificate follows, as when you turn the switch on yourself: it is requested once `mail.<hostname>` resolves publicly to the server. Until then the mail card shows the reason and checks again every three hours, without asking Let's Encrypt. It doesn't affect the hostname's certificate.
 
 If that first certificate can't be issued, the panel turns Let's Encrypt back off and keeps its self-signed certificate. It writes the reason to the panel log (`journalctl -u jabali-panel`). It doesn't retry by itself: fix the cause, then turn the switch on.
 

@@ -15,13 +15,20 @@ const panelLEAutoCheckEvery = 10 * time.Minute
 // panelLEAutoCheckTimeout bounds one public DNS check.
 const panelLEAutoCheckTimeout = 10 * time.Second
 
+// panelLEAutoGrace is how long after the window opens the first check waits.
+// The row is created on the panel's first pass, possibly while install.sh is
+// still setting up nginx, certbot and the agent, and a first attempt that
+// fails for that turns Let's Encrypt back off for good.
+const panelLEAutoGrace = 15 * time.Minute
+
 // reconcilePanelLEAuto runs while a new install's Let's Encrypt window is
 // open (models.PanelCertificate.LEAutoUntil, ADR-0066 amendment). It reports
 // whether it changed use_le, which ends the pass: the next one works from it.
 //
-// With Let's Encrypt still off it waits for the panel hostname. Once public
-// DNS shows it at this server, it turns Let's Encrypt on, and the next pass
-// issues. It doesn't for a free <label>.jabalihosted.com name, whose
+// With Let's Encrypt still off it waits for the panel hostname, from
+// panelLEAutoGrace after the window opens. Once public DNS shows it at this
+// server, and so does the routability check the issue runs, it turns Let's
+// Encrypt on, and the next pass issues. It doesn't for a free <label>.jabalihosted.com name, whose
 // certificates come out of one Let's Encrypt allowance shared by every such
 // server, or without an admin email to register with. When the window
 // passes, Let's Encrypt is left to the admin.
@@ -64,6 +71,9 @@ func (r *Reconciler) reconcilePanelLEAuto(ctx context.Context, row *models.Panel
 			"hostname", settings.Hostname)
 		return false
 	}
+	if now.Sub(row.LEAutoUntil.Add(-models.PanelLEAutoWindow)) < panelLEAutoGrace {
+		return false
+	}
 	host := settings.Hostname
 	if host == "" || settings.AdminEmail == "" || models.IsFreeHostnameBase(host) {
 		return false
@@ -83,6 +93,14 @@ func (r *Reconciler) reconcilePanelLEAuto(ctx context.Context, row *models.Panel
 	if !r.panelCertRoutability.ConfirmedPublic(checkCtx, host, settings.PublicIPv4) {
 		r.log.Debug("panel Let's Encrypt (new install): the hostname doesn't resolve to this server in public DNS yet",
 			"hostname", host, "until", row.LEAutoUntil)
+		return false
+	}
+	// The issue runs the usual routability check, which asks this server's
+	// own resolver first. Where that disagrees, the attempt would be parked
+	// as not routable, and that turns Let's Encrypt back off: wait instead.
+	if gate, err := r.panelCertRoutability.Check(checkCtx, host, settings.PublicIPv4, false); err != nil || !gate.Routable {
+		r.log.Debug("panel Let's Encrypt (new install): public DNS shows the hostname here, but this server's resolver doesn't yet",
+			"hostname", host, "reason", gate.Reason)
 		return false
 	}
 

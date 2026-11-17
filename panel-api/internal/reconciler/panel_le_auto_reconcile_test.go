@@ -55,6 +55,9 @@ type leAutoCase struct {
 	public     []string // what public resolvers answer
 	unreached  bool     // public DNS couldn't be asked
 	issueErr   error
+	local      []string // what this server's own resolver answers; default the server's IP
+	mail       bool     // the panel hostname serves mail
+	mailPublic []string // what public resolvers answer for mail.<host>
 }
 
 type leAutoRig struct {
@@ -70,7 +73,11 @@ func newLEAutoRig(t *testing.T, tc leAutoCase) leAutoRig {
 		tc.host = "panel.example.com"
 	}
 	if tc.until.IsZero() {
-		tc.until = time.Now().Add(models.PanelLEAutoWindow)
+		// Opened past the grace: the install is done.
+		tc.until = time.Now().Add(models.PanelLEAutoWindow - panelLEAutoGrace - time.Minute)
+	}
+	if tc.local == nil {
+		tc.local = []string{leAutoIP}
 	}
 	host := &models.PanelCertificate{Kind: models.PanelCertKindHostname, Hostname: tc.host,
 		CertPEMPath: "/etc/jabali/tls/panel.crt", Status: models.PanelCertStatusSelfSigned}
@@ -102,17 +109,20 @@ func newLEAutoRig(t *testing.T, tc leAutoCase) leAutoRig {
 		panelCertRoutability: &services.PanelCertRoutability{
 			// The box's own resolver always says yes: it may answer from
 			// this server's own zones, so it alone must never be enough.
-			Resolver: leAutoResolver{addrs: []string{leAutoIP}},
-			PublicLookup: func(context.Context, string) ([]string, bool) {
+			Resolver: leAutoResolver{addrs: tc.local},
+			PublicLookup: func(_ context.Context, name string) ([]string, bool) {
+				if name == "mail."+tc.host {
+					return tc.mailPublic, true
+				}
 				lookups.Add(1)
 				return tc.public, !tc.unreached
 			},
 		},
 		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{
-			Hostname: tc.host, PublicIPv4: leAutoIP, AdminEmail: tc.adminEmail,
+			Hostname: tc.host, PublicIPv4: leAutoIP, AdminEmail: tc.adminEmail, MailEnabled: tc.mail,
 		}},
 		domains: &fakeDomainRepo{domains: map[string]*models.Domain{
-			"d1": {ID: "d1", Name: tc.host, IsPanelPrimary: true},
+			"d1": {ID: "d1", Name: tc.host, IsPanelPrimary: true, EmailEnabled: tc.mail},
 		}},
 		readCertFile: func(path string) ([]byte, error) {
 			if path == "/etc/jabali/tls/panel.crt" {
@@ -134,6 +144,19 @@ func (g leAutoRig) host() *models.PanelCertificate {
 
 func (g leAutoRig) issues() int {
 	n, _ := countCalls(g.agent, "ssl.panel.issue")
+	return n
+}
+
+// issuesOf counts the Let's Encrypt requests for one kind.
+func (g leAutoRig) issuesOf(kind string) int {
+	g.agent.mu.Lock()
+	defer g.agent.mu.Unlock()
+	n := 0
+	for _, c := range g.agent.calls {
+		if m, ok := c.params.(map[string]any); ok && c.method == "ssl.panel.issue" && m["kind"] == kind {
+			n++
+		}
+	}
 	return n
 }
 
@@ -240,4 +263,68 @@ func TestPanelLEAuto_WindowPassedLeavesItToTheAdmin(t *testing.T) {
 
 	g.pass()
 	assert.False(t, g.host().UseLE)
+}
+
+func TestPanelLEAuto_WaitsForTheInstallToFinish(t *testing.T) {
+	// The row was created on the panel's first pass, moments ago: install.sh
+	// may still be setting up nginx, certbot and the agent.
+	g := newLEAutoRig(t, leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP},
+		until: time.Now().Add(models.PanelLEAutoWindow)})
+	g.pass()
+	assert.False(t, g.host().UseLE)
+	assert.Zero(t, g.lookups.Load(), "public DNS isn't asked yet")
+	require.NotNil(t, g.host().LEAutoUntil)
+
+	// Past the grace it goes ahead.
+	opened := time.Now().Add(-panelLEAutoGrace - time.Second)
+	until := opened.Add(models.PanelLEAutoWindow)
+	g.host().LEAutoUntil = &until
+	g.pass()
+	assert.True(t, g.host().UseLE)
+}
+
+func TestPanelLEAuto_WaitsWhileThisServersResolverDisagrees(t *testing.T) {
+	// Public DNS shows the server, but its own resolver answers elsewhere
+	// (say, a stale record in a zone it hosts): the issue's routability
+	// check would park it as not routable, and that would turn it back off.
+	g := newLEAutoRig(t, leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP},
+		local: []string{"198.51.100.9"}})
+	g.pass()
+	g.pass()
+	assert.False(t, g.host().UseLE)
+	assert.NotNil(t, g.host().LEAutoUntil, "the window stays open")
+	assert.Zero(t, g.issues())
+}
+
+// With the panel hostname serving mail, the mail certificate follows Let's
+// Encrypt as it does when the admin turns it on: requested once mail.<host>
+// resolves publicly, parked with the reason (no Let's Encrypt request) until
+// then. It never decides the hostname's automatic attempt.
+func TestPanelLEAuto_PanelHostnameServesMail(t *testing.T) {
+	t.Run("mail name resolves too", func(t *testing.T) {
+		g := newLEAutoRig(t, leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP},
+			mail: true, mailPublic: []string{leAutoIP}})
+		g.pass()
+		g.pass()
+		g.pass()
+		assert.True(t, g.host().UseLE)
+		assert.Nil(t, g.host().LEAutoUntil)
+		assert.Equal(t, 1, g.issuesOf(models.PanelCertKindHostname))
+		assert.Equal(t, 1, g.issuesOf(models.PanelCertKindMail))
+		assert.Equal(t, models.PanelCertStatusIssued, g.repo.rows[models.PanelCertKindMail].Status)
+	})
+	t.Run("mail name doesn't resolve", func(t *testing.T) {
+		g := newLEAutoRig(t, leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP}, mail: true})
+		g.pass()
+		g.pass()
+		g.pass()
+		assert.True(t, g.host().UseLE, "the hostname certificate keeps Let's Encrypt on")
+		assert.Nil(t, g.host().LEAutoUntil)
+		assert.Equal(t, models.PanelCertStatusIssued, g.host().Status)
+		assert.Equal(t, 1, g.issuesOf(models.PanelCertKindHostname))
+		assert.Zero(t, g.issuesOf(models.PanelCertKindMail), "no Let's Encrypt request for a name that doesn't resolve")
+		mail := g.repo.rows[models.PanelCertKindMail]
+		assert.Equal(t, models.PanelCertStatusPendingACMERetry, mail.Status)
+		assert.Contains(t, mail.LastError, "mail DNS not pointed at this server")
+	})
 }
