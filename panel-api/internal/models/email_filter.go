@@ -14,7 +14,11 @@ type EmailFilter struct {
 	SieveText  *string   `gorm:"type:mediumtext" json:"sieve_text,omitempty"`
 	CpanelRaw  *string   `gorm:"type:mediumtext" json:"cpanel_raw,omitempty"`
 	Priority   int       `gorm:"type:int;not null;default:0" json:"priority"`
-	Enabled    bool      `gorm:"type:tinyint(1);not null;default:1" json:"enabled"`
+	// Enabled has no gorm `default` tag (the column's own DEFAULT 1 stays):
+	// GORM writes a defaulted field's default in place of a false, so an
+	// import that creates it disabled (inert unless --preserve-source-state)
+	// got an active row. Every caller sets it. Same as CronJob.Enabled.
+	Enabled    bool      `gorm:"type:tinyint(1);not null" json:"enabled"`
 	ManagedBy  string    `gorm:"type:varchar(16);not null;default:'m6.5'" json:"managed_by"`
 	CreatedAt  time.Time `gorm:"type:datetime(6);not null" json:"created_at"`
 	UpdatedAt  time.Time `gorm:"type:datetime(6);not null" json:"updated_at"`
