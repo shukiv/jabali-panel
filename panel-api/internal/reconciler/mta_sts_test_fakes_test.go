@@ -46,6 +46,10 @@ func (f *fakeSSLCertRepo) FindByDomainIDs(context.Context, []string) ([]models.S
 	return nil, nil
 }
 func (f *fakeSSLCertRepo) UpdateStatus(context.Context, string, string, *string) error { return nil }
+func (f *fakeSSLCertRepo) UpdateInstalled(context.Context, *models.SSLCertificate) error {
+	return nil
+}
+
 func (f *fakeSSLCertRepo) SetIssueMethod(_ context.Context, id, method string) error {
 	if f.issueMethods != nil {
 		f.issueMethods[id] = method

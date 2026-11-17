@@ -10,6 +10,7 @@ import (
 	"time"
 
 	internalbackup "git.jabali-panel.com/shukivaknin/jabali2/internal/backup"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/agent"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -55,6 +56,12 @@ func setRestoredSSLMode(row *models.Domain, dm internalbackup.MetadataDomain) []
 // from this server's own backup may be the owner's own CA's, as the custom
 // certificate page allows.
 func checkRestoredCert(certPEM, keyPEM, domain string, verifyChain bool, now time.Time) (*x509.Certificate, error) {
+	return checkCertificate(certPEM, keyPEM, domain, verifyChain, restoredCertRoots, now)
+}
+
+// checkCertificate is checkRestoredCert with the authorities a verified chain
+// must end in; nil is the system's.
+func checkCertificate(certPEM, keyPEM, domain string, verifyChain bool, roots *x509.CertPool, now time.Time) (*x509.Certificate, error) {
 	pair, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
 	if err != nil {
 		return nil, fmt.Errorf("the certificate and key don't pair (%v)", err)
@@ -82,7 +89,7 @@ func checkRestoredCert(certPEM, keyPEM, domain string, verifyChain bool, now tim
 			intermediates.AddCert(c)
 		}
 		if _, err := leaf.Verify(x509.VerifyOptions{
-			DNSName: domain, Intermediates: intermediates, Roots: restoredCertRoots, CurrentTime: now,
+			DNSName: domain, Intermediates: intermediates, Roots: roots, CurrentTime: now,
 		}); err != nil {
 			return nil, fmt.Errorf("it isn't signed by a certificate authority this server trusts (%v)", err)
 		}
@@ -118,28 +125,66 @@ func installRestoredCert(ctx context.Context, d Deps, row *models.Domain, cert *
 	if err != nil {
 		return false, "the backup's certificate is not used: " + err.Error() + reissue
 	}
-	raw, err := d.Agent.Call(ctx, "ssl.install_custom", map[string]any{
-		"domain": row.Name, "cert_pem": mc.CertPEM, "key_pem": mc.KeyPEM,
+	if err := placeCertificate(ctx, d.Agent, row, cert, mc.CertPEM, mc.KeyPEM, leaf); err != nil {
+		return false, fmt.Sprintf("installing the backup's certificate failed (%s)", err) + reissue
+	}
+	return true, ""
+}
+
+// InstallSourceCertificate installs certPEM and keyPEM, the certificate a
+// migration's source server served for row, the way a restore installs a
+// backup's: only on a domain whose ownership is proven, and only when they
+// pair, cover row's name, stay valid for a while yet and chain to an
+// authority in roots (nil: this server's). It points cert at the installed
+// files in the state the reconciler hands to Let's Encrypt once the name
+// points here (handBackRestoredCert), and returns whether it installed and,
+// when it didn't, why. It never returns key material.
+func InstallSourceCertificate(ctx context.Context, ag agent.AgentInterface, row *models.Domain, cert *models.SSLCertificate, certPEM, keyPEM string, roots *x509.CertPool, now time.Time) (bool, string) {
+	switch {
+	case row == nil || cert == nil:
+		return false, "no domain row"
+	case row.SSLMode == models.SSLModeSelf || row.SSLMode == models.SSLModeNone:
+		return false, "the domain is set to serve no certificate authority's certificate"
+	case row.SSLMode != models.SSLModeCustom && !row.OwnershipState.Verified():
+		return false, "the domain's ownership isn't verified"
+	case ag == nil:
+		return false, "the agent is not wired"
+	}
+	leaf, err := checkCertificate(certPEM, keyPEM, row.Name, true, roots, now)
+	if err != nil {
+		return false, "the source's certificate is not used: " + err.Error()
+	}
+	if err := placeCertificate(ctx, ag, row, cert, certPEM, keyPEM, leaf); err != nil {
+		return false, fmt.Sprintf("installing the source's certificate failed (%s)", err)
+	}
+	return true, ""
+}
+
+// placeCertificate has the agent install certPEM and keyPEM, checked against
+// leaf, as row's certificate and points cert at the files.
+func placeCertificate(ctx context.Context, ag agent.AgentInterface, row *models.Domain, cert *models.SSLCertificate, certPEM, keyPEM string, leaf *x509.Certificate) error {
+	raw, err := ag.Call(ctx, "ssl.install_custom", map[string]any{
+		"domain": row.Name, "cert_pem": certPEM, "key_pem": keyPEM,
 	})
 	if err != nil {
-		return false, fmt.Sprintf("installing the backup's certificate failed (%s)", firstLineOf(err)) + reissue
+		return fmt.Errorf("%s", firstLineOf(err))
 	}
 	var res struct {
 		CertPath string `json:"cert_path"`
 		KeyPath  string `json:"key_path"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil || !ownCertFiles(row.Name, &res.CertPath, &res.KeyPath) {
-		return false, "installing the backup's certificate failed (the agent named no certificate files of this domain)" + reissue
+		return fmt.Errorf("the agent named no certificate files of this domain")
 	}
 	issued, expires := leaf.NotBefore.UTC(), leaf.NotAfter.UTC()
 	cert.CertPath, cert.KeyPath = &res.CertPath, &res.KeyPath
 	cert.IssuedAt, cert.ExpiresAt = &issued, &expires
 	if row.SSLMode == models.SSLModeCustom {
 		cert.Status, cert.IssueMethod = models.SSLStatusCustom, ""
-		return true, ""
+		return nil
 	}
 	cert.Status, cert.IssueMethod = models.SSLStatusIssued, models.SSLIssueMethodRestored
-	return true, ""
+	return nil
 }
 
 // firstLineOf is err's first line: an agent error can carry command output.

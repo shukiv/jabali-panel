@@ -195,6 +195,13 @@ func (m cpanelMailShadow) summary(domain string) string {
 // resolved by openat2 strictly beneath it with no symlink in any component.
 // Only a regular file within mailShadowMaxBytes is read.
 func openShadowBeneath(base, rel string) ([]byte, error) {
+	return readRegularBeneath(base, rel, mailShadowMaxBytes)
+}
+
+// readRegularBeneath reads base/rel the way openShadowBeneath does (base
+// opened O_NOFOLLOW, rel resolved strictly beneath it with no symlink in any
+// component), when it is a regular file of at most max bytes.
+func readRegularBeneath(base, rel string, max int64) ([]byte, error) {
 	bfd, err := unix.Open(base, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, err
@@ -216,8 +223,8 @@ func openShadowBeneath(base, rel string) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	if fi.Size() > mailShadowMaxBytes {
-		return nil, fmt.Errorf("larger than %d bytes", mailShadowMaxBytes)
+	if fi.Size() > max {
+		return nil, fmt.Errorf("larger than %d bytes", max)
 	}
-	return io.ReadAll(io.LimitReader(f, mailShadowMaxBytes+1))
+	return io.ReadAll(io.LimitReader(f, max+1))
 }
