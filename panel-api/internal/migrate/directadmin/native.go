@@ -561,6 +561,12 @@ func (nb *NativeBackup) stageMailAccounts(dom, ddir string) int {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
+		if eq, colon := strings.IndexByte(line, '='), strings.IndexByte(line, ':'); eq > 0 && (colon < 0 || eq < colon) {
+			// <local>=passwd=<crypt>&...: the shape DA writes ftp.passwd and
+			// <db>.conf in. Not seen for mail yet, so read either.
+			q, _ := url.ParseQuery(line[eq+1:])
+			line = line[:eq] + ":" + q.Get("passwd")
+		}
 		local, _, _ := strings.Cut(line, ":")
 		if !nativeLocalRe.MatchString(local) {
 			nb.Skipped = append(nb.Skipped, fmt.Sprintf("mail_account_name:%s:%q", dom, local))
@@ -658,11 +664,19 @@ func directive(v string) bool {
 // noteUncarried reports per-domain settings the import does not recreate.
 func (nb *NativeBackup) noteUncarried(dom, ddir string) {
 	if raw, err := os.ReadFile(filepath.Join(ddir, "ftp.passwd")); err == nil {
+		// <login>=passwd=<crypt>&path=<dir>&type=system|virtual; the system
+		// login is the account itself, which comes across with the account.
 		n := 0
 		for _, line := range strings.Split(string(raw), "\n") {
-			if u, _, _ := strings.Cut(strings.TrimSpace(line), ":"); u != "" && u != nb.SourceUser && !strings.HasPrefix(u, "#") {
-				n++
+			line = strings.TrimSpace(line)
+			u, rest, ok := strings.Cut(line, "=")
+			if !ok || u == "" || strings.HasPrefix(u, "#") {
+				continue
 			}
+			if q, err := url.ParseQuery(rest); u == nb.SourceUser || (err == nil && q.Get("type") == "system") {
+				continue
+			}
+			n++
 		}
 		if n > 0 {
 			nb.Skipped = append(nb.Skipped, fmt.Sprintf("ftp_accounts:%s: %d FTP account(s) not carried; recreate them in the panel", dom, n))

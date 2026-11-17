@@ -140,7 +140,8 @@ func daEntries(t *testing.T) []entry {
 		file("backup/197.co.il/email/majordomo/list.info", "x"),
 		file("backup/197.co.il/domain.usage", "bandwidth=1\n"),
 		file("backup/other.example/email/email.conf", "catchall=postmaster@other.example\n"),
-		file("backup/197.co.il/ftp.passwd", "coil197:$6$x:1001:1001::/home/coil197:/bin/false\nuploads@197.co.il:$6$y:1001:1001::/home/coil197/domains/197.co.il/public_ftp:/bin/false\n"),
+		// DA 1.714's real shape (the 197 archive): <login>=<url-query>.
+		file("backup/197.co.il/ftp.passwd", "coil197=passwd=$6$x$y&path=/home/coil197/&type=system\nuploads@197.co.il=passwd=$6$z$w&path=/home/coil197/domains/197.co.il/public_ftp/&type=virtual\n"),
 		file("backup/197.co.il/subdomain.list", "shop\n\nBad_Label!\n"),
 		file("backup/197.co.il/domain.conf", "domain=197.co.il\nusername=coil197\n"),
 		file("backup/197.co.il/domain.cacert", caPEM),
@@ -150,7 +151,7 @@ func daEntries(t *testing.T) []entry {
 		dir("backup/other.example/"),
 		file("backup/other.example/domain.conf", "domain=other.example\n"),
 		file("backup/other.example/other.example.db", "$TTL 3600\nother.example. IN A 192.0.2.10\n"),
-		file("backup/other.example/ftp.passwd", "coil197:$6$x:1001:1001::/home/coil197:/bin/false\n"),
+		file("backup/other.example/ftp.passwd", "coil197=passwd=$6$x$y&path=/home/coil197/&type=system\n"),
 		dir("backup/email_data/"),
 		file("backup/user_limit", "0"),
 		file("backup/coil197_spare.conf", "accesshosts=0=localhost\ncoil197_spare=accesshosts=localhost&alter_priv=Y&passwd="+strings.ToLower(spareHash)+"&plugin=mysql_native_password&select_priv=Y\ndb_collation=DEFAULT_CHARACTER_SET_NAME=latin1&SCHEMA_NAME=coil197_spare\n"),
@@ -618,5 +619,71 @@ func TestParseNativeBackup_BrokenHomeArchive(t *testing.T) {
 	path := writeArchive(t, tarBytes(t, entries))
 	if _, err := ParseNativeBackup(path, filepath.Join(t.TempDir(), "x")); err == nil || !strings.Contains(err.Error(), "home.tar.zst") {
 		t.Errorf("a truncated home archive parsed: %v", err)
+	}
+}
+
+// The shapes of the real 197.co.il archive (DA 1.714): no mail account
+// (email/passwd empty), only DA's own "<user>: <user>" alias, no subdomain,
+// and ftp.passwd holding the system login alone.
+func TestParseNativeBackup_197Shape(t *testing.T) {
+	home := zstdBytes(t, tarBytes(t, []entry{
+		dir("Maildir/"), dir("Maildir/new/"),
+		file("Maildir/new/1.M1.uscp", "Subject: notice\n\nx\n"),
+	}))
+	raw := tarBytes(t, []entry{
+		dir("backup/"), dir("backup/197.co.il/"), dir("backup/197.co.il/email/"),
+		file("backup/197.co.il/email/passwd", ""),
+		file("backup/197.co.il/email/aliases", "coil197: coil197\n"),
+		file("backup/197.co.il/email/email.conf", "catchall=:fail:\n"),
+		file("backup/197.co.il/subdomain.list", ""),
+		file("backup/197.co.il/ftp.passwd", "coil197=passwd=$6$REDACTED$REDACTED&path=/home/coil197/&type=system\n"),
+		file("backup/197.co.il/domain.conf", "domain=197.co.il\n"),
+		file("backup/user.conf", "username=coil197\ndomain=197.co.il\nemail=owner@example.net\n"),
+		file("backup/home.tar.zst", string(home)),
+		dir("domains/"), dir("domains/197.co.il/"), dir("domains/197.co.il/public_html/"),
+		file("domains/197.co.il/public_html/index.php", "<?php"),
+		dir("imap/"), dir("imap/197.co.il/"),
+	})
+	x := filepath.Join(t.TempDir(), "x")
+	nb, err := ParseNativeBackup(writeArchive(t, zstdBytes(t, raw)), x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nb.MailDomains) != 0 || len(nb.Subdomains) != 0 || nb.OwnerMaildir || nb.MailShadowDir != "" {
+		t.Errorf("mail=%v subs=%v owner=%v shadow=%q", nb.MailDomains, nb.Subdomains, nb.OwnerMaildir, nb.MailShadowDir)
+	}
+	if exists(filepath.Join(x, "etc", "197.co.il", "aliases")) || exists(filepath.Join(x, "imap", "197.co.il")) {
+		t.Error("a forwarder or mail directory was staged for a domain with no mail")
+	}
+	joined := strings.Join(nb.Skipped, "\n")
+	if strings.Contains(joined, "ftp_accounts") || strings.Contains(joined, "alias_") {
+		t.Errorf("the system FTP login or DA's own alias reported:\n%s", joined)
+	}
+	if !strings.Contains(joined, "owner_mailbox: coil197@197.co.il (1 file(s)) not carried") {
+		t.Errorf("owner mailbox not reported:\n%s", joined)
+	}
+}
+
+// email/passwd in the name=<url-query> shape DA uses for ftp.passwd is read too.
+func TestStageMailAccounts_QueryShape(t *testing.T) {
+	x := t.TempDir()
+	ddir := filepath.Join(x, "backup", "a.example")
+	if err := os.MkdirAll(filepath.Join(ddir, "email"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ddir, "email", "passwd"), []byte("info=passwd=$6$s$h&quota=0\nsales:{SHA512-CRYPT}$6$a$b=:1:1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nb := &NativeBackup{ExtractDir: x, MailRoot: filepath.Join(x, "imap")}
+	if n := nb.stageMailAccounts("a.example", ddir); n != 2 {
+		t.Fatalf("accounts %d", n)
+	}
+	sh, _ := os.ReadFile(filepath.Join(x, "mailshadow", "a.example", "shadow"))
+	if string(sh) != "info:$6$s$h\nsales:{SHA512-CRYPT}$6$a$b=:1:1\n" {
+		t.Errorf("shadow %q", sh)
+	}
+	list, _ := os.ReadFile(filepath.Join(x, "imap", "a.example", "conf", "passwd"))
+	if string(list) != "info\nsales\n" {
+		t.Errorf("account list %q", list)
 	}
 }

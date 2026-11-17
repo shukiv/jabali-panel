@@ -388,6 +388,7 @@ failed stage. Already-done stages are skipped.`,
 			// SSH pull synthesizes: it has its own parser.
 			parseKind := job.SourceKind
 			daNativePath := ""
+			var parseNotes []string
 			if job.SourceKind == models.MigrationSourceDirectAdmin {
 				daNativePath = directadmin.NativeStagedPath(filepath.Join("/var/lib/jabali-migrations", job.ID), job.SourceUser)
 				if daNativePath != "" {
@@ -407,6 +408,7 @@ failed stage. Already-done stages are skipped.`,
 					"directadmin import: %d domain(s), %d subdomain(s), %d DNS zone(s), %d database dump(s), owner mailbox=%v\n",
 					len(nb.Domains), len(nb.Subdomains), len(nb.ZoneFiles), len(nb.MySQLDumps), nb.OwnerMaildir)
 				parsed = nb.ToCpanelParsed(*user.Username)
+				parseNotes = nb.Skipped
 			case models.MigrationSourceDirectAdmin:
 				// DA pull-stage runs jabali's BackupUser script on the
 				// source, which synthesises a cpmove-shaped tarball
@@ -722,6 +724,8 @@ failed stage. Already-done stages are skipped.`,
 				parsed:         parsed,
 				targetUserID:   user.ID,
 				targetUsername: *user.Username,
+				notes:          parseNotes,
+				nativeHome:     parseKind == daNativeParseKind,
 			}
 
 			runner := &migrate.Runner{
@@ -1049,6 +1053,13 @@ type cpanelRunPayload struct {
 	// The run command reads it after the runner finishes and, when non-empty,
 	// downgrades the job from done to degraded + exits non-zero.
 	criticals []string
+	// notes are the parse step's lines for the restore summary: what an
+	// adapter read but does not carry (DirectAdmin's FTP accounts, pointers,
+	// local-name forwarders, ...), so the report lists them.
+	notes []string
+	// nativeHome: parsed.HomeDir is already the jabali home layout (a
+	// DirectAdmin user backup), copied docroot by docroot, then the rest.
+	nativeHome bool
 }
 
 // Core-area failure thresholds (JAB-31). Each returns true when an area ran but
@@ -1212,6 +1223,7 @@ func cpanelRestoreCallback(
 		}
 		var warnings []string
 		var bytes int64
+		warnings = append(warnings, p.notes...)
 
 		// The migration imports (home rsync, mailbox maildirs, big DB
 		// loads) routinely run far longer than the shared agent client's
@@ -1526,7 +1538,18 @@ func cpanelRestoreCallback(
 			// rest of the homedir (mail/ etc/ application_backups/) minus
 			// public_html. Falls back to the legacy whole-homedir rsync
 			// when no userdata YAML is present.
-			if !daHomeHandled && job.SourceKind == models.MigrationSourceHestia {
+			if !daHomeHandled && p.nativeHome {
+				// A DirectAdmin user backup: each docroot without --delete (a
+				// resumed job keeps what the site wrote since), then the rest of
+				// the home, like the cPanel split below.
+				nhRes, err := directadmin.ImportNativeHome(ctx, restoreAgent, p.parsed, job.ID, p.targetUsername)
+				if err != nil {
+					return bytes, warnings, fmt.Errorf("home: %w", err)
+				}
+				bytes += nhRes.BytesCopied
+				warnings = append(warnings, fmt.Sprintf("home: bytes=%d files=%d domains=%d (per-domain docroots, then the rest of the home)", nhRes.BytesCopied, nhRes.Files, nhRes.DomainsCopied))
+				warnings = append(warnings, nhRes.Skipped...)
+			} else if !daHomeHandled && job.SourceKind == models.MigrationSourceHestia {
 				// JAB-26: Hestia web content must land in the configured docroot
 				// /home/<user>/web/<dom>/public_html, not /home/<user>/<dom> via the
 				// legacy full-homedir rsync. Per-domain copy into DocRoots.
