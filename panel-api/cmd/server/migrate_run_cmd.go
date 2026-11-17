@@ -58,6 +58,22 @@ func appConfigRoots(docroots []string, parsed *cpanel.ParsedTarball) []string {
 // migration_jobs.source_kind: the job's kind stays "directadmin".
 const daNativeParseKind = "directadmin-native"
 
+// defaultOwnerEmail sets the owner's default mailbox, <source user>@<primary
+// domain>, when the parser left it empty. The agent's ImportMailboxes uses it
+// to import the mail/{cur,new,tmp,.Drafts,...} root tree a cPanel owner reads
+// as their default mailbox.
+//
+// A DirectAdmin backup restored offline is left as parsed: its parser already
+// decided, and an empty address there means the owner's mailbox is not
+// carried because the domain had no mail on the source. Filling it in would
+// create that mailbox, and turn mail on for the domain, anyway.
+func defaultOwnerEmail(parsed *cpanel.ParsedTarball, parseKind, sourceUser, primaryDomain string) {
+	if parsed == nil || parsed.OwnerEmail != "" || primaryDomain == "" || parseKind == daNativeParseKind {
+		return
+	}
+	parsed.OwnerEmail = sourceUser + "@" + primaryDomain
+}
+
 func newMigrateImportCmd() *cobra.Command {
 	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
 	var keepStaging bool
@@ -710,15 +726,11 @@ failed stage. Already-done stages are skipped.`,
 				parsed = p
 			}
 
-			// Owner default mailbox: cpanel-side <user> @ primary domain.
-			// Agent's ImportMailboxes uses this to import the
-			// mail/{cur,new,tmp,.Drafts,...} root tree the cpanel owner
-			// reads as their default mailbox.
-			if parsed != nil && parsed.OwnerEmail == "" {
-				if meta != nil && meta.PrimaryDomain != "" {
-					parsed.OwnerEmail = job.SourceUser + "@" + meta.PrimaryDomain
-				}
+			primaryDomain := ""
+			if meta != nil {
+				primaryDomain = meta.PrimaryDomain
 			}
+			defaultOwnerEmail(parsed, parseKind, job.SourceUser, primaryDomain)
 
 			payload := &cpanelRunPayload{
 				parsed:         parsed,

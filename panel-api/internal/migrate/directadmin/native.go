@@ -371,6 +371,9 @@ func ParseNativeBackup(path, extractDir string) (*NativeBackup, error) {
 		_ = os.Remove(homeArchive)
 	}
 	nb.indexDomains()
+	if err := nb.placeOwnerMaildir(); err != nil {
+		return nil, fmt.Errorf("owner Maildir: %w", err)
+	}
 	nb.relocateSubdomains()
 	nb.indexDatabases()
 	nb.convertCron()
@@ -411,8 +414,14 @@ func (nb *NativeBackup) routeBackup(parts []string, dir bool) []string {
 	return parts
 }
 
+// ownerMailStage holds the account's own Maildir from home.tar.zst until
+// indexDomains decides whether it is carried. Only then does placeOwnerMaildir
+// move it to the top of MailRoot, where the mail import reads the owner's
+// INBOX; a Maildir that is not carried never reaches MailRoot.
+const ownerMailStage = "ownermail"
+
 // extractHome unpacks the nested home archive into HomeDir, and the account's
-// own Maildir to the top of MailRoot.
+// own Maildir into ownerMailStage.
 func (nb *NativeBackup) extractHome(archive string) error {
 	r, closeFn, err := openArchive(archive)
 	if err != nil {
@@ -452,7 +461,7 @@ func (nb *NativeBackup) extractHome(archive string) error {
 		var dest []string
 		switch parts[0] {
 		case "Maildir":
-			dest = append([]string{"imap"}, parts[1:]...)
+			dest = append([]string{ownerMailStage}, parts[1:]...)
 			nb.OwnerMaildir = true
 			if hdr.Typeflag != tar.TypeDir {
 				nb.ownerFiles++
@@ -477,6 +486,44 @@ func (nb *NativeBackup) extractHome(archive string) error {
 		nb.Skipped = append(nb.Skipped, fmt.Sprintf("home_cache: %d file(s) not carried (%s)", skipped, strings.Join(homeSkip, ", ")))
 	}
 	return nil
+}
+
+// placeOwnerMaildir moves the staged owner Maildir to the top of MailRoot when
+// indexDomains kept it, and removes the staged copy when it did not. Files
+// merge the way the extractor writes them: one already there (a re-run into
+// the same extract dir) is replaced. Only directories and regular files are
+// moved; the extractor creates nothing else.
+func (nb *NativeBackup) placeOwnerMaildir() error {
+	stage := filepath.Join(nb.ExtractDir, ownerMailStage)
+	if _, err := os.Lstat(stage); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if nb.OwnerMaildir {
+		err := filepath.WalkDir(stage, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			rel, err := filepath.Rel(stage, p)
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(nb.MailRoot, rel)
+			switch {
+			case d.IsDir():
+				return os.MkdirAll(dst, 0o750)
+			case d.Type().IsRegular():
+				return os.Rename(p, dst)
+			default:
+				return fmt.Errorf("%s: not a regular file", rel)
+			}
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(stage)
 }
 
 func homeSkipped(rel string) bool {
