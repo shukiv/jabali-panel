@@ -94,6 +94,7 @@ failed stage. Already-done stages are skipped.`,
 			arRepo := repository.NewEmailAutoresponderRepository(sharedDB)
 			filtersRepo := repository.NewEmailFilterRepository(sharedDB)
 			phpPoolsRepo := repository.NewPHPPoolRepository(sharedDB)
+			sslCertsRepo := repository.NewSSLCertificateRepository(sharedDB)
 			kc := kratosclient.NewClient(sharedCfg.Auth.Kratos.PublicURL, sharedCfg.Auth.Kratos.AdminURL)
 
 			job, err := jobsRepo.FindByID(ctx, jobID)
@@ -681,7 +682,7 @@ failed stage. Already-done stages are skipped.`,
 					migrate.StageAnalyze:  cpanelAnalyzeCallback(jobsRepo),
 					migrate.StageValidate: validateStageCallback(usersRepo, domainsRepo, *user.Username),
 					migrate.StageRestore: cpanelRestoreCallback(
-						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, dnsZonesRepo, dnsRecordsRepo, usersRepo, kc, preserveSourceState,
+						sshRepo, cronsRepo, dbsRepo, dbUsersRepo, dbGrantsRepo, domainsRepo, mbRepo, fwdRepo, arRepo, filtersRepo, phpPoolsRepo, dnsZonesRepo, dnsRecordsRepo, usersRepo, sslCertsRepo, kc, preserveSourceState,
 					),
 				},
 			}
@@ -1141,6 +1142,7 @@ func cpanelRestoreCallback(
 	dnsZonesRepo repository.DNSZoneRepository,
 	dnsRecordsRepo repository.DNSRecordRepository,
 	usersRepo repository.UserRepository,
+	sslCertsRepo repository.SSLCertificateRepository,
 	kc *kratosclient.Client,
 	preserveSourceState bool,
 ) migrate.StageCallback {
@@ -1763,7 +1765,14 @@ func cpanelRestoreCallback(
 
 		// M35.8 P3: per-domain custom SSL certs from apache_tls/.
 		if plan.SSL {
-			sslRes, err := cpanel.ImportSSL(ctx, restoreAgent, p.parsed, preserve.SSL)
+			sslRes, err := cpanel.ImportSSL(ctx, cpanel.SSLImport{
+				Agent:    restoreAgent,
+				Domains:  domainsRepo,
+				Certs:    sslCertsRepo,
+				UserID:   p.targetUserID,
+				Preserve: preserve.SSL,
+				Now:      time.Now,
+			}, p.parsed)
 			if err != nil {
 				return bytes, warnings, fmt.Errorf("ssl: %w", err)
 			}

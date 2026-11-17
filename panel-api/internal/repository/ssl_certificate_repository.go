@@ -63,6 +63,10 @@ type SSLCertificateRepository interface {
 	UpdateStatus(ctx context.Context, id string, status string, lastError *string) error
 	UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
 	SetIssueMethod(ctx context.Context, id, method string) error
+	// UpdateInstalled stores, in one write, a certificate installed outside
+	// ACME (a migration's source certificate): its status, issue method,
+	// files and validity, and clears any retry state.
+	UpdateInstalled(ctx context.Context, cert *models.SSLCertificate) error
 	UpdateAfterRenewal(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error
 	MarkRevoked(ctx context.Context, id string) error
 	DeleteByDomainID(ctx context.Context, domainID string) error
@@ -158,6 +162,25 @@ func (r *sslCertificateRepo) UpdateAfterIssuance(ctx context.Context, id string,
 func (r *sslCertificateRepo) SetIssueMethod(ctx context.Context, id, method string) error {
 	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", id).
 		Update("issue_method", method).Error
+}
+
+func (r *sslCertificateRepo) UpdateInstalled(ctx context.Context, cert *models.SSLCertificate) error {
+	if cert == nil || cert.ID == "" {
+		return errors.New("UpdateInstalled: certificate row without an id")
+	}
+	return r.db.WithContext(ctx).Model(&models.SSLCertificate{}).Where("id = ?", cert.ID).
+		Updates(map[string]interface{}{
+			"status":        cert.Status,
+			"issue_method":  cert.IssueMethod,
+			"cert_path":     cert.CertPath,
+			"key_path":      cert.KeyPath,
+			"issued_at":     cert.IssuedAt,
+			"expires_at":    cert.ExpiresAt,
+			"last_error":    nil,
+			"next_retry_at": nil,
+			"retry_count":   0,
+			"updated_at":    time.Now(),
+		}).Error
 }
 
 // UpdateAfterRenewal does what UpdateAfterIssuance does plus bumps the

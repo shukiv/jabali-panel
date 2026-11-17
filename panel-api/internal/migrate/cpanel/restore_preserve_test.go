@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -73,9 +74,11 @@ func TestImportSSL_NotInstalledByDefault(t *testing.T) {
 	if err := os.MkdirAll(dom, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A combined cert+key file so ImportSSL would otherwise install it.
-	if err := os.WriteFile(filepath.Join(dom, "combined"),
-		[]byte("-----BEGIN CERTIFICATE-----\naGVsbG8=\n-----END CERTIFICATE-----\n-----BEGIN PRIVATE KEY-----\naGVsbG8=\n-----END PRIVATE KEY-----\n"), 0o600); err != nil {
+	// A valid combined cert+key file for a domain of the account, so ImportSSL
+	// would otherwise install it.
+	ca := newSSLTestCA(t)
+	certPEM, keyPEM := ca.validFor(t, "example.com")
+	if err := os.WriteFile(filepath.Join(dom, "combined"), []byte(certPEM+ca.pem+keyPEM), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -90,7 +93,16 @@ func TestImportSSL_NotInstalledByDefault(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ag := &countingAgent{}
 			parsed := &ParsedTarball{ExtractDir: extract, SourceUser: "alice"}
-			if _, err := ImportSSL(context.Background(), ag, parsed, tc.preserve); err != nil {
+			in := SSLImport{
+				Agent:    ag,
+				Domains:  &fakeSSLDomains{rows: map[string]*models.Domain{"example.com": newDomainRow("01DOMEXAMPLE00000000000000", "example.com", importUser)}},
+				Certs:    &fakeSSLCerts{rows: map[string]*models.SSLCertificate{}},
+				UserID:   importUser,
+				Preserve: tc.preserve,
+				Roots:    ca.pool(),
+				Now:      time.Now,
+			}
+			if _, err := ImportSSL(context.Background(), in, parsed); err != nil {
 				t.Fatalf("ImportSSL: %v", err)
 			}
 			installed := false

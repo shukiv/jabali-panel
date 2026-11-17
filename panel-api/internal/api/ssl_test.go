@@ -53,6 +53,10 @@ func (m *MockSSLCertificateRepository) SetIssueMethod(ctx context.Context, id, m
 	return nil
 }
 
+func (m *MockSSLCertificateRepository) UpdateInstalled(ctx context.Context, cert *models.SSLCertificate) error {
+	return nil
+}
+
 func (m *MockSSLCertificateRepository) UpdateAfterIssuance(ctx context.Context, id string, issuedAt, expiresAt time.Time, certPath, keyPath string) error {
 	args := m.Called(ctx, id, issuedAt, expiresAt, certPath, keyPath)
 	return args.Error(0)
