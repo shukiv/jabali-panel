@@ -416,6 +416,29 @@ func TestImportSSL_Refusals(t *testing.T) {
 	}
 }
 
+// Without the account being imported, no certificate is installed: the owner
+// check is what keeps one account's archive away from other domains, and an
+// empty ID must not match a row whose owner is empty too.
+func TestImportSSL_NoTargetAccount_NothingInstalled(t *testing.T) {
+	f := newImportFixture(t)
+	f.domains.rows["site.example"] = newDomainRow("01DOMSITE00000000000000000", "site.example", "")
+	certPEM, keyPEM := f.ca.validFor(t, "site.example")
+	f.pkgacctEntry(t, "site.example", certPEM, keyPEM)
+	in := f.in(f.ca.pool())
+	in.UserID = ""
+
+	res, err := ImportSSL(context.Background(), in, f.parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Installed != 0 || len(f.agent.installs) != 0 || f.certs.created+f.certs.updated != 0 {
+		t.Fatalf("installed=%d calls=%d rows=%d, want nothing", res.Installed, len(f.agent.installs), f.certs.created+f.certs.updated)
+	}
+	if !strings.Contains(strings.Join(res.Skipped, "\n"), "no target account") {
+		t.Errorf("summary = %v, want it to say there is no target account", res.Skipped)
+	}
+}
+
 // An archive without installed certificates says so in the summary.
 func TestImportSSL_NoApacheTLS_Reported(t *testing.T) {
 	extract := t.TempDir()

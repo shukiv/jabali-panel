@@ -105,6 +105,13 @@ func ImportSSL(ctx context.Context, in SSLImport, parsed *ParsedTarball) (*SSLRe
 		res.Skipped = append(res.Skipped, "ssl_skip:repositories_unwired")
 		return res, nil
 	}
+	// The owner check below is what limits an archive to its own account's
+	// domains; without an account it would match only ownerless rows, so
+	// install nothing.
+	if strings.TrimSpace(in.UserID) == "" {
+		res.Skipped = append(res.Skipped, "ssl_skip:no target account; source certificates not installed"+sslReissue)
+		return res, nil
+	}
 	if in.Now == nil {
 		in.Now = time.Now
 	}
