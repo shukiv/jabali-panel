@@ -1080,6 +1080,7 @@ type zstdReader struct {
 	stderr *bytes.Buffer
 	once   sync.Once
 	err    error
+	final  error // what every Read returns once zstd's output ended
 }
 
 func (z *zstdReader) wait() error {
@@ -1088,11 +1089,15 @@ func (z *zstdReader) wait() error {
 }
 
 func (z *zstdReader) Read(p []byte) (int, error) {
+	if z.final != nil {
+		return 0, z.final
+	}
 	n, err := z.r.Read(p)
 	if err == io.EOF {
 		if werr := z.wait(); werr != nil {
-			return n, fmt.Errorf("zstd: %w: %s", werr, strings.TrimSpace(z.stderr.String()))
+			err = fmt.Errorf("zstd: %w: %s", werr, strings.TrimSpace(z.stderr.String()))
 		}
+		z.final = err
 	}
 	return n, err
 }
