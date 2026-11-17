@@ -56,7 +56,8 @@ jabali migrate restore --directadmin --file /path/user.<reseller>.<user>.tar.zst
   the file can have any name. `--source-user` is optional; one that names
   another account is refused.
 - Resume, `--retry-from-scratch`, the disk preflight and the `degraded` result
-  work as for Hestia below.
+  work as for Hestia below. A resumed restore copies each docroot again
+  without deleting what the site wrote there since.
 - **Carried:**
   - the home directory;
   - every domain's `public_html` and `public_ftp`;
