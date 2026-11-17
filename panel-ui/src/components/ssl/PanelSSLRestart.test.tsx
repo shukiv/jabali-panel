@@ -102,12 +102,16 @@ describe("SSL Manager → Panel SSL during a panel restart", () => {
     expect(screen.queryByText(/Couldn't refresh/)).toBeNull();
   });
 
-  it("retries a connection dropped while nginx reloads", async () => {
-    get.mockRejectedValueOnce(networkError()).mockResolvedValue(OK);
+  it("retries connections dropped while nginx reloads", async () => {
+    // Two in a row: the ordinary single retry would give up on the second.
+    get.mockRejectedValueOnce(networkError()).mockRejectedValueOnce(networkError()).mockResolvedValue(OK);
     renderWith(<PanelSSLTab />);
+    await advance(2000);
+    expect(screen.queryByText(LOAD_FAILED)).toBeNull();
     await advance(2000);
     expect(await screen.findByText("panel.example.com", { selector: ".ant-card-head code" })).toBeTruthy();
     expect(screen.queryByText(LOAD_FAILED)).toBeNull();
+    expect(get).toHaveBeenCalledTimes(3);
   });
 
   it("still says it failed when the panel doesn't come back within 30 seconds", async () => {
