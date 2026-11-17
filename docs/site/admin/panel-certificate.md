@@ -39,6 +39,22 @@ If issuance fails, the panel:
 
 Common failure causes are the same as tenant-domain failures: the panel hostname does not resolve to one of the server's IPs, the firewall blocks inbound `:80`, or the Let's Encrypt rate limit has been hit. See [SSL Manager](./ssl-manager.md) for the diagnostic mapping.
 
+## New servers: Let's Encrypt turns on by itself
+
+On a new server the panel turns Let's Encrypt on for itself once the panel hostname points at the server. From 15 minutes after installation until seven days after, it checks public DNS every 10 minutes at most. When the hostname's A record shows the server's public IP, it turns **Use Let's Encrypt for the panel** on and issues the certificate. The panel then restarts to serve it.
+
+When the panel hostname handles mail, the mail certificate follows, as when you turn the switch on yourself: it is requested once `mail.<hostname>` resolves publicly to the server. Until then the mail card shows the reason and checks again every three hours, without asking Let's Encrypt. It doesn't affect the hostname's certificate.
+
+If that first certificate can't be issued, the panel turns Let's Encrypt back off and keeps its self-signed certificate. It writes the reason to the panel log (`journalctl -u jabali-panel`). It doesn't retry by itself: fix the cause, then turn the switch on.
+
+While this applies, the Panel SSL tab says so, and until when. It ends when:
+
+- the certificate is issued;
+- the seven days pass without the hostname pointing at the server;
+- you turn the switch on or off, or click **Issue / retry** yourself. A failure after that is retried every three hours, as for any Let's Encrypt certificate.
+
+It doesn't apply to a free `<label>.jabalihosted.com` hostname, to a server without an admin email (Server Settings → General), or to servers installed before this release: those keep their setting.
+
 ## Self-signed mode (Let's Encrypt off)
 
 With **Use Let's Encrypt for the panel** off, the panel serves its own self-signed certificate for the panel hostname. It keeps that certificate matched to the hostname: after a hostname change, or when the certificate expires, it writes a new one.

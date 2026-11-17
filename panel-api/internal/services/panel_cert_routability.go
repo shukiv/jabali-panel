@@ -256,3 +256,40 @@ func onlyLoopback(addrs []string) bool {
 	}
 	return true
 }
+
+// ConfirmedPublic reports whether public DNS resolvers answer hostname with
+// publicIPv4. It is stricter than Check: the box's own resolver isn't asked
+// (it may answer from this server's own zones), and public DNS that can't be
+// reached is a no, not a pass. The panel turns Let's Encrypt on by itself on
+// a new install only when it holds (ADR-0066 amendment), so an admin who
+// asked for nothing never gets a failed certificate.
+func (p *PanelCertRoutability) ConfirmedPublic(ctx context.Context, hostname, publicIPv4 string) bool {
+	host := strings.TrimSpace(strings.ToLower(hostname))
+	want := net.ParseIP(strings.TrimSpace(publicIPv4)).To4()
+	if host == "" || want == nil {
+		return false
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".localdomain") {
+		return false
+	}
+	addrs, queried := p.publicLookup()(ctx, host)
+	if !queried {
+		return false
+	}
+	// Every IPv4 address must be this server's: with a second A record the
+	// validator may well ask the other host. An AAAA record isn't held
+	// against it, since the validator falls back to IPv4 when IPv6 doesn't
+	// connect, and a failed first issue turns Let's Encrypt back off anyway.
+	matched := false
+	for _, a := range addrs {
+		ip := net.ParseIP(a).To4()
+		if ip == nil {
+			continue
+		}
+		if !ip.Equal(want) {
+			return false
+		}
+		matched = true
+	}
+	return matched
+}

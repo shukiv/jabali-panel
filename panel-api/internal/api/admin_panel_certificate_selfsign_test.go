@@ -519,3 +519,34 @@ func TestPanelCertIssue_LEOnStillChecksRoutability(t *testing.T) {
 		t.Errorf("agent called (%s) for an unroutable Let's Encrypt issue", m)
 	}
 }
+
+// The LE auto methods mirror the repository's guarded UPDATEs of the
+// hostname row (ADR-0066 amendment).
+func (m *memPanelCerts) AutoEnableLE(_ context.Context, now time.Time) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row := m.rows[models.PanelCertKindHostname]
+	if row == nil || row.UseLE || row.LEAutoUntil == nil || !row.LEAutoUntil.After(now) {
+		return false, nil
+	}
+	row.UseLE = true
+	return true, nil
+}
+func (m *memPanelCerts) RevertLEAuto(context.Context) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row := m.rows[models.PanelCertKindHostname]
+	if row == nil || !row.UseLE || row.LEAutoUntil == nil {
+		return false, nil
+	}
+	row.UseLE, row.Status, row.NextRetryAt, row.LEAutoUntil = false, models.PanelCertStatusSelfSigned, nil, nil
+	return true, nil
+}
+func (m *memPanelCerts) EndLEAuto(context.Context) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if row := m.rows[models.PanelCertKindHostname]; row != nil {
+		row.LEAutoUntil = nil
+	}
+	return nil
+}

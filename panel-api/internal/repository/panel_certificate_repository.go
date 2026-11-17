@@ -32,6 +32,23 @@ type PanelCertificateRepository interface {
 	// no Let's Encrypt retry state. It changes the row only while Let's
 	// Encrypt is off for the panel, so it can't undo an admin turning it on.
 	SetSelfSignedState(ctx context.Context, kind, status string, expiresAt *time.Time) error
+
+	// A new install turns the panel's Let's Encrypt certificate on by itself
+	// (ADR-0066 amendment, models.PanelCertificate.LEAutoUntil). Each is one
+	// guarded UPDATE of the hostname row, so a caller holding an older copy
+	// of the row can't undo an admin's toggle.
+	//
+	// AutoEnableLE turns use_le on while the window is open and Let's
+	// Encrypt is still off. le_auto_until stays: it now marks the first,
+	// automatic issue. It reports whether the row changed.
+	AutoEnableLE(ctx context.Context, now time.Time) (bool, error)
+	// RevertLEAuto turns Let's Encrypt back off after the automatic issue
+	// failed: use_le off, self_signed, no retry, and the window ends. It
+	// reports whether the row changed.
+	RevertLEAuto(ctx context.Context) (bool, error)
+	// EndLEAuto ends the window or the automatic attempt: the admin acted
+	// on the certificate, the window passed, or the issue succeeded.
+	EndLEAuto(ctx context.Context) error
 }
 
 type panelCertRepo struct{ db *gorm.DB }
@@ -103,6 +120,12 @@ func (r *panelCertRepo) ensureOne(ctx context.Context, kind, hostname string, re
 }
 
 // createRow inserts a fresh self-signed row for kind.
+//
+// The hostname row is created once in a server's life, on a fresh install's
+// first pass: no migration seeds it, a hostname change updates it in place
+// (ensureOne) and nothing deletes it. So that is where a new install opens
+// its Let's Encrypt window (ADR-0066 amendment); existing servers already
+// have the row and never get one.
 func (r *panelCertRepo) createRow(ctx context.Context, kind, hostname string) (*models.PanelCertificate, error) {
 	row := &models.PanelCertificate{
 		Kind:        kind,
@@ -110,6 +133,10 @@ func (r *panelCertRepo) createRow(ctx context.Context, kind, hostname string) (*
 		Hostname:    hostname,
 		Status:      models.PanelCertStatusSelfSigned,
 		CertPEMPath: panelCertPathForKind(kind),
+	}
+	if kind == models.PanelCertKindHostname {
+		until := time.Now().UTC().Add(models.PanelLEAutoWindow)
+		row.LEAutoUntil = &until
 	}
 	if err := r.db.WithContext(ctx).Create(row).Error; err != nil {
 		return nil, err
@@ -261,4 +288,30 @@ func (r *panelCertRepo) SetSelfSignedState(ctx context.Context, kind, status str
 			Where("kind = ?", kindOrHostname(kind)).
 			Updates(updates).Error
 	})
+}
+
+func (r *panelCertRepo) AutoEnableLE(ctx context.Context, now time.Time) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&models.PanelCertificate{}).
+		Where("kind = ? AND use_le = ? AND le_auto_until IS NOT NULL AND le_auto_until > ?",
+			models.PanelCertKindHostname, false, now.UTC()).
+		Updates(map[string]any{"use_le": true})
+	return res.RowsAffected > 0, res.Error
+}
+
+func (r *panelCertRepo) RevertLEAuto(ctx context.Context) (bool, error) {
+	res := r.db.WithContext(ctx).Model(&models.PanelCertificate{}).
+		Where("kind = ? AND use_le = ? AND le_auto_until IS NOT NULL", models.PanelCertKindHostname, true).
+		Updates(map[string]any{
+			"use_le":        false,
+			"status":        models.PanelCertStatusSelfSigned,
+			"next_retry_at": nil,
+			"le_auto_until": nil,
+		})
+	return res.RowsAffected > 0, res.Error
+}
+
+func (r *panelCertRepo) EndLEAuto(ctx context.Context) error {
+	return r.db.WithContext(ctx).Model(&models.PanelCertificate{}).
+		Where("kind = ? AND le_auto_until IS NOT NULL", models.PanelCertKindHostname).
+		Update("le_auto_until", nil).Error
 }

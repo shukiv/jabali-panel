@@ -260,3 +260,40 @@ describe("SSL Manager → Panel SSL details (GH #2166)", () => {
     }
   });
 });
+
+// ADR-0066: a new install turns Let's Encrypt on by itself once the panel
+// hostname resolves publicly to it. The tab says so while the window is open.
+describe("PanelSSLTab: a new install's automatic Let's Encrypt", () => {
+  const until = new Date(Date.now() + 6 * DAY).toISOString();
+
+  it("says Let's Encrypt turns on by itself, and until when", async () => {
+    renderTab([cert("hostname", { le_auto_until: until, routable: false }), cert("mail")]);
+    const note = await screen.findByText(/the panel turns Let's Encrypt on by itself/);
+    expect(note.textContent).toContain("once panel.example.com resolves publicly to this server");
+    expect(note.textContent).toMatch(/\(until \S*\d\d\/\d\d\/\d\d\S*\)/);
+  });
+
+  it("says it was turned on by itself and turns back off on a failure", async () => {
+    renderTab([cert("hostname", { le_auto_until: until, use_le: true, status: "pending_acme" }), cert("mail")]);
+    expect(await screen.findByText(/Let's Encrypt was turned on by itself/)).toBeTruthy();
+  });
+
+  it("says nothing for a name it can never apply to", async () => {
+    for (const name of ["panel.local", "203-0-113-10.jabalihosted.com"]) {
+      renderTab([cert("hostname", { hostname: name, le_auto_until: until })]);
+      await certCard(name);
+      expect(screen.queryByText(/by itself/)).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("says nothing on a server without the window, or once it passed", async () => {
+    const past = new Date(Date.now() - DAY).toISOString();
+    for (const host of [cert("hostname"), cert("hostname", { le_auto_until: past })]) {
+      renderTab([host, cert("mail")]);
+      await certCard("panel.example.com");
+      expect(screen.queryByText(/by itself/)).toBeNull();
+      cleanup();
+    }
+  });
+});

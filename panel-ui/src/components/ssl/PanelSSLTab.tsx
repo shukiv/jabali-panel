@@ -38,6 +38,7 @@ import {
   panelCertStatusTag,
   panelCertTypeLabel,
   panelCertValidity,
+  panelLEAutoNote,
 } from "./panelCertStatus";
 
 // leOn is the hostname row's use_le. Routability and the next retry are Let's
@@ -191,6 +192,7 @@ export function PanelSSLTab() {
   }
   const hostName = host.hostname || "<hostname>";
   const mailName = mail?.hostname || `mail.${hostName}`;
+  const leAutoNote = panelLEAutoNote(host);
 
   const doIssue = (kind: PanelCertKind) =>
     issue.mutate(kind, {
@@ -268,6 +270,8 @@ export function PanelSSLTab() {
           </>
         )}
       </Typography.Paragraph>
+
+      {leAutoNote && <Alert type="info" showIcon title={leAutoNote} />}
 
       {/* GH #2166: with Let's Encrypt off, an unroutable hostname only keeps
           the switch off; the self-signed certificates don't need it. */}

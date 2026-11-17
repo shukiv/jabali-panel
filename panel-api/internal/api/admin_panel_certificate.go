@@ -182,6 +182,9 @@ func (h *adminPanelCertHandler) toggle(c *gin.Context) {
 	}
 	if req.UseLE != nil {
 		row.UseLE = *req.UseLE
+		// The admin decided: a new install's automatic Let's Encrypt
+		// (ADR-0066 amendment) no longer applies.
+		row.LEAutoUntil = nil
 		// Turning off use_le doesn't tear down the existing LE cert
 		// — we leave it in place until expiry, then the reconciler
 		// replaces it with a self-signed one (panelcert.Check, GH
@@ -267,6 +270,15 @@ func (h *adminPanelCertHandler) issue(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "missing_admin_email", "details": "set Server Settings → General → Admin email first (required for Let's Encrypt registration)"})
 		return
 	}
+	// The admin took the Let's Encrypt attempt over: a failure now parks it
+	// for a retry as usual instead of turning a new install's automatic
+	// Let's Encrypt back off (ADR-0066 amendment). The row is written below
+	// with every column, so it must not carry the window back either.
+	if err := h.cfg.PanelCerts.EndLEAuto(ctx); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "panel_cert_save_failed"})
+		return
+	}
+	row.LEAutoUntil = nil
 	// Per-kind routability: mail checks mail.<hostname>. A failure
 	// here parks ONLY this kind — the other cert is untouched.
 	rr, _ := h.cfg.Routability.Check(ctx, row.Hostname, settings.PublicIPv4, kind == models.PanelCertKindMail)

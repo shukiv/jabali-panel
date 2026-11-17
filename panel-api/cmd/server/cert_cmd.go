@@ -131,6 +131,13 @@ func newPanelCertToggleCmd() *cobra.Command {
 					return fmt.Errorf("--le: %w", perr)
 				}
 				row.UseLE = v
+				// The admin decided: a new install's automatic Let's
+				// Encrypt (ADR-0066 amendment) no longer applies. The
+				// window is on the hostname row, whichever kind this is.
+				if err := repo.EndLEAuto(ctx); err != nil {
+					return fmt.Errorf("end the automatic Let's Encrypt window: %w", err)
+				}
+				row.LEAutoUntil = nil
 				// Turning LE off while a retry is parked → drop back to
 				// self-signed, mirroring the REST toggle handler.
 				if !v && row.Status == models.PanelCertStatusPendingACMERetry {
@@ -193,6 +200,13 @@ func newPanelCertIssueCmd() *cobra.Command {
 			if !hostRow.UseLE {
 				return fmt.Errorf("the panel has Let's Encrypt disabled — run `jabali panel-cert toggle --le=true` first")
 			}
+			// The admin took the attempt over: a failure now parks it for a
+			// retry instead of turning a new install's automatic Let's
+			// Encrypt back off (ADR-0066 amendment).
+			if err := repo.EndLEAuto(ctx); err != nil {
+				return fmt.Errorf("end the automatic Let's Encrypt window: %w", err)
+			}
+			row.LEAutoUntil = nil
 			row.QueueIssue(time.Now())
 			if err := repo.Upsert(ctx, row); err != nil {
 				cliAuditErr(ctx, "panel_cert.issue", "panel_certificate", kind, nil)
