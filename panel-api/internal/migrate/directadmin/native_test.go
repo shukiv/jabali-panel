@@ -334,7 +334,7 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 			t.Errorf("skipped lacks %q:\n%s", want, joined)
 		}
 	}
-	for _, unwanted := range []string{"domain_dir_name", "ftp_accounts:other.example", "mail_vacation", "coil197@197.co.il→coil197", "owner_mailbox"} {
+	for _, unwanted := range []string{"domain_dir_name", "cron_line:PATH", "cron_line:SHELL", "cron_line:MAILTO", "ftp_accounts:other.example", "mail_vacation", "coil197@197.co.il→coil197", "owner_mailbox"} {
 		if strings.Contains(joined, unwanted) {
 			t.Errorf("skipped has %q:\n%s", unwanted, joined)
 		}
