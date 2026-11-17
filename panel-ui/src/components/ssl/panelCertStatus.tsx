@@ -155,7 +155,7 @@ export function panelCertIssueMessage(kind: string, r: PanelCertIssueResult | un
 // and back off if that first certificate fails (ADR-0066). null when the
 // window is closed: it passed, the certificate was issued, or the admin chose.
 export function panelLEAutoNote(host: PanelCertificate, now: number = Date.now()): string | null {
-  if (!host.le_auto_until) return null;
+  if (!host.le_auto_until || !panelLEAutoCanApply(host.hostname)) return null;
   const name = host.hostname || "the panel hostname";
   if (host.use_le) {
     return `Let's Encrypt was turned on by itself because ${name} resolves to this server. If this first certificate can't be issued, Let's Encrypt turns back off and the panel keeps its self-signed certificate.`;
@@ -163,4 +163,14 @@ export function panelLEAutoNote(host: PanelCertificate, now: number = Date.now()
   const until = Date.parse(host.le_auto_until);
   if (!Number.isFinite(until) || until <= now) return null;
   return `New server: once ${name} resolves publicly to this server, the panel turns Let's Encrypt on by itself and issues the certificate (until ${shortDate(host.le_auto_until)}). Turning the switch on or off yourself ends this.`;
+}
+
+// panelLEAutoCanApply mirrors the names the panel never turns Let's Encrypt
+// on for by itself: a local name no public DNS can show, and a free
+// <label>.jabalihosted.com name (models.IsFreeHostnameBase), whose
+// certificates come out of one allowance shared by every such server.
+export function panelLEAutoCanApply(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase();
+  if (!h || h === "localhost" || h.endsWith(".local") || h.endsWith(".localdomain")) return false;
+  return !/^[^.]+\.jabalihosted\.com$/.test(h);
 }
