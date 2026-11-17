@@ -76,15 +76,22 @@ jabali migrate restore --directadmin --file /path/user.<reseller>.<user>.tar.zst
   `domains/<sub>.<domain>/public_html`, and is created as a **Web Domain
   only**. Its DNS records stay in the parent domain's zone.
 - **Mail stays off for a domain** with no mail account, forwarder or mailbox on
-  the source. The account's own mailbox is then not carried either, since it
-  only holds DirectAdmin's notices.
+  the source, so this server doesn't start accepting mail its MX sends
+  elsewhere. When that is the main domain, the account's own mailbox
+  (`<user>@<domain>`) is not carried either. The report gives its file count;
+  turn mail on for the domain and move the messages yourself if you need them.
 - **Not carried, and listed in the migration report:**
   - FTP accounts other than the main one;
-  - autoresponders and vacation messages;
+  - autoresponders, vacation messages, a catch-all address and mailing lists;
   - forwarders to a local name, and pipe or `:fail:` rules;
+  - domain pointers (alias domains): add them again as domains;
+  - anything else in the backup's per-domain folder, by name and file count;
   - DirectAdmin's access logs and statistics;
   - the Redis dump and WP-CLI's download cache.
   Recreate the ones you need in the panel.
+- **PHP version:** each domain gets the server's default; set the version the
+  site ran on (`domain.conf` names it only by DirectAdmin's own index) in the
+  panel.
 - Cron jobs keep their command lines. The source's `PATH` and jailed `SHELL`
   are dropped, so a job that ran a source-specific PHP binary
   (`/usr/local/php81/bin/php`) needs its path updated.
