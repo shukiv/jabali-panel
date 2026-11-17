@@ -45,6 +45,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"syscall"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/migrate/cpanel"
@@ -76,10 +77,12 @@ type NativeBackup struct {
 	// public_html itself, that hold an application's config file (a second
 	// WordPress in a subdirectory). Relative to public_html.
 	AppRoots map[string][]string
-	// MailDomains are the domains that keep mail service: mail accounts,
-	// forwarders or mailboxes on the source.
+	// MailDomains are the domains that keep mail service: mail accounts
+	// (email/passwd), forwarders, or mailboxes under imap/<dom>/ on the source.
 	MailDomains []string
 	Skipped     []string
+
+	ownerFiles int // files in the account's own Maildir
 }
 
 // nativeMaxMetaBytes bounds a backup/ metadata file other than a database
@@ -211,7 +214,7 @@ func MeasureNative(path string) (uint64, error) {
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
-			return total, nil
+			return total, drain(r)
 		}
 		if err != nil {
 			return 0, err
@@ -338,6 +341,9 @@ func ParseNativeBackup(path, extractDir string) (*NativeBackup, error) {
 			return nil, err
 		}
 	}
+	if err := drain(r); err != nil {
+		return nil, fmt.Errorf("read archive: %w", err)
+	}
 	if skippedLogs > 0 {
 		nb.Skipped = append(nb.Skipped, fmt.Sprintf("da_generated: %d file(s) under domains/<domain>/logs and stats not carried", skippedLogs))
 	}
@@ -448,6 +454,9 @@ func (nb *NativeBackup) extractHome(archive string) error {
 		case "Maildir":
 			dest = append([]string{"imap"}, parts[1:]...)
 			nb.OwnerMaildir = true
+			if hdr.Typeflag != tar.TypeDir {
+				nb.ownerFiles++
+			}
 		case "domains", "imap":
 			// Carried from the top-level domains/ and imap/.
 			continue
@@ -460,6 +469,9 @@ func (nb *NativeBackup) extractHome(archive string) error {
 		if err := x.write(dest, hdr, tr); err != nil {
 			return err
 		}
+	}
+	if err := drain(r); err != nil {
+		return err
 	}
 	if skipped > 0 {
 		nb.Skipped = append(nb.Skipped, fmt.Sprintf("home_cache: %d file(s) not carried (%s)", skipped, strings.Join(homeSkip, ", ")))
@@ -511,6 +523,7 @@ func (nb *NativeBackup) indexDomains() {
 		accounts := nb.stageMailAccounts(dom, ddir)
 		forwarders := nb.stageAliases(dom, ddir)
 		nb.noteUncarried(dom, ddir)
+		nb.noteUnread(dom, ddir)
 		nb.settleMailDomain(dom, accounts > 0 || forwarders > 0)
 	}
 	sort.Slice(nb.Domains, func(i, j int) bool {
@@ -522,24 +535,26 @@ func (nb *NativeBackup) indexDomains() {
 	})
 	sort.Strings(nb.MailDomains)
 	if nb.OwnerMaildir && !nb.isMailDomain(nb.PrimaryDomain) {
-		// The account's own mailbox only receives DA's notices when the domain
-		// has no mail accounts; carrying it would turn mail on for the domain.
+		// Carrying the account's own mailbox would turn mail on for a domain
+		// whose mail the source didn't serve: this server would then accept
+		// mail for it (the site's own messages included) instead of the server
+		// its MX names.
 		nb.OwnerMaildir = false
-		nb.Skipped = append(nb.Skipped, fmt.Sprintf("owner_mailbox: %s@%s not carried: the domain has no mail accounts or forwarders on the source", nb.SourceUser, nb.PrimaryDomain))
+		nb.Skipped = append(nb.Skipped, fmt.Sprintf("owner_mailbox: %s@%s (%d file(s)) not carried: the domain has no mail accounts, forwarders or mailboxes on the source, so mail stays off for it", nb.SourceUser, nb.PrimaryDomain, nb.ownerFiles))
 	}
 }
 
 // stageMailAccounts copies backup/<dom>/email/passwd (local:hash:...) to
 // where the mail import reads it: mailshadow/<dom>/shadow for the hashes
-// (MailShadowDir) and imap/<dom>/conf/passwd for the account list, so an
-// account that never received mail still gets its mailbox. It returns the
-// number of accounts.
+// (MailShadowDir) and the local parts to imap/<dom>/conf/passwd, the account
+// list, so an account that never received mail still gets its mailbox. It
+// returns the number of accounts.
 func (nb *NativeBackup) stageMailAccounts(dom, ddir string) int {
 	raw, err := os.ReadFile(filepath.Join(ddir, "email", "passwd"))
 	if err != nil {
 		return 0
 	}
-	var b strings.Builder
+	var b, locals strings.Builder
 	n := 0
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
@@ -552,6 +567,7 @@ func (nb *NativeBackup) stageMailAccounts(dom, ddir string) int {
 			continue
 		}
 		b.WriteString(line + "\n")
+		locals.WriteString(local + "\n")
 		n++
 	}
 	if n == 0 {
@@ -563,7 +579,8 @@ func (nb *NativeBackup) stageMailAccounts(dom, ddir string) int {
 		return 0
 	}
 	nb.MailShadowDir = shadowDir
-	if err := writeFileMode(filepath.Join(nb.MailRoot, dom, "conf", "passwd"), []byte(b.String()), 0o600); err != nil {
+	// The account list only: the hashes are read from MailShadowDir.
+	if err := writeFileMode(filepath.Join(nb.MailRoot, dom, "conf", "passwd"), []byte(locals.String()), 0o600); err != nil {
 		nb.Skipped = append(nb.Skipped, fmt.Sprintf("mail_passwd:%s:%v", dom, err))
 	}
 	return n
@@ -654,6 +671,52 @@ func (nb *NativeBackup) noteUncarried(dom, ddir string) {
 	for _, f := range []string{"autoresponder.conf", "vacation.conf"} {
 		if b, err := os.ReadFile(filepath.Join(ddir, "email", f)); err == nil && len(bytes.TrimSpace(b)) > 0 {
 			nb.Skipped = append(nb.Skipped, fmt.Sprintf("mail_%s:%s: not carried; set it up again in the panel", strings.TrimSuffix(f, ".conf"), dom))
+		}
+	}
+}
+
+// domainFilesRead are the backup/<dom>/ entries the import reads or reports
+// on its own (noteUncarried); domain.usage and domain.ip_list are the source's
+// bandwidth tally and IP assignment, and ftp.conf its FTP settings.
+var domainFilesRead = map[string]bool{
+	"domain.conf": true, "subdomain.list": true, "domain.cert": true, "domain.key": true,
+	"domain.cacert": true, "ftp.passwd": true, "ftp.conf": true, "domain.usage": true,
+	"domain.ip_list": true, "email/passwd": true, "email/aliases": true, "email/email.conf": true,
+	"email/autoresponder.conf": true, "email/vacation.conf": true, "email/reply": true,
+}
+
+// noteUnread reports what else backup/<dom>/ holds (domain pointers, mailing
+// lists, a catch-all), grouped by item, so nothing in it goes unmentioned.
+func (nb *NativeBackup) noteUnread(dom, ddir string) {
+	counts := map[string]int{}
+	_ = filepath.WalkDir(ddir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(ddir, p)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		key := parts[0]
+		if key == "email" && len(parts) > 1 {
+			key += "/" + parts[1]
+		}
+		if !domainFilesRead[key] && key != dom+".db" {
+			counts[key]++
+		}
+		return nil
+	})
+	keys := make([]string, 0, len(counts))
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		nb.Skipped = append(nb.Skipped, fmt.Sprintf("da_not_carried:%s: %s (%d file(s))", dom, k, counts[k]))
+	}
+	if kv, err := readKVFile(filepath.Join(ddir, "email", "email.conf")); err == nil {
+		switch c := kv["catchall"]; c {
+		case "", ":fail:", ":blackhole:":
+		default:
+			nb.Skipped = append(nb.Skipped, fmt.Sprintf("mail_catchall:%s: %q not carried; set it again in the panel", dom, c))
 		}
 	}
 }
@@ -990,10 +1053,10 @@ func openArchive(path string) (io.Reader, func() error, error) {
 			cancel()
 			return nil, nil, fmt.Errorf("zstd: %w", err)
 		}
-		br := bufio.NewReaderSize(out, 1<<20)
-		return br, func() error {
+		zr := &zstdReader{r: out, cmd: cmd, stderr: &stderr}
+		return bufio.NewReaderSize(zr, 1<<20), func() error {
 			cancel() // stops zstd when the caller didn't read to the end
-			_ = cmd.Wait()
+			_ = zr.wait()
 			return nil
 		}, nil
 	case n >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
@@ -1006,6 +1069,40 @@ func openArchive(path string) (io.Reader, func() error, error) {
 	default:
 		return bufio.NewReaderSize(f, 1<<20), f.Close, nil
 	}
+}
+
+// zstdReader reads zstd's output and, at its end, its exit status: a zstd
+// that failed part way (a truncated or corrupt archive) is an error, not the
+// clean end of a shorter archive.
+type zstdReader struct {
+	r      io.Reader
+	cmd    *exec.Cmd
+	stderr *bytes.Buffer
+	once   sync.Once
+	err    error
+}
+
+func (z *zstdReader) wait() error {
+	z.once.Do(func() { z.err = z.cmd.Wait() })
+	return z.err
+}
+
+func (z *zstdReader) Read(p []byte) (int, error) {
+	n, err := z.r.Read(p)
+	if err == io.EOF {
+		if werr := z.wait(); werr != nil {
+			return n, fmt.Errorf("zstd: %w: %s", werr, strings.TrimSpace(z.stderr.String()))
+		}
+	}
+	return n, err
+}
+
+// drain reads the stream past the tar end-of-archive marker, so a
+// decompressor that failed after it still fails the parse (zstd's exit
+// status, gzip's checksum).
+func drain(r io.Reader) error {
+	_, err := io.Copy(io.Discard, r)
+	return err
 }
 
 // cleanParts splits an archive path, refusing an absolute or escaping one.

@@ -134,6 +134,12 @@ func daEntries(t *testing.T) []entry {
 		file("backup/197.co.il/email/autoresponder.conf", "info=1\n"),
 		file("backup/197.co.il/email/vacation.conf", ""),
 		file("backup/197.co.il/email/email.conf", "catchall=:fail:\n"),
+		file("backup/197.co.il/domain.pointers", "197.example=type=alias\n"),
+		dir("backup/197.co.il/email/majordomo/"),
+		file("backup/197.co.il/email/majordomo/list", "x"),
+		file("backup/197.co.il/email/majordomo/list.info", "x"),
+		file("backup/197.co.il/domain.usage", "bandwidth=1\n"),
+		file("backup/other.example/email/email.conf", "catchall=postmaster@other.example\n"),
 		file("backup/197.co.il/ftp.passwd", "coil197:$6$x:1001:1001::/home/coil197:/bin/false\nuploads@197.co.il:$6$y:1001:1001::/home/coil197/domains/197.co.il/public_ftp:/bin/false\n"),
 		file("backup/197.co.il/subdomain.list", "shop\n\nBad_Label!\n"),
 		file("backup/197.co.il/domain.conf", "domain=197.co.il\nusername=coil197\n"),
@@ -329,12 +335,15 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 		`alias_malformed:197.co.il:"bad line"`,
 		"ftp_accounts:197.co.il: 1 FTP account(s)",
 		"mail_autoresponder:197.co.il",
+		"da_not_carried:197.co.il: domain.pointers (1 file(s))",
+		"da_not_carried:197.co.il: email/majordomo (2 file(s))",
+		`mail_catchall:other.example: "postmaster@other.example" not carried`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skipped lacks %q:\n%s", want, joined)
 		}
 	}
-	for _, unwanted := range []string{"domain_dir_name", "cron_line:PATH", "cron_line:SHELL", "cron_line:MAILTO", "ftp_accounts:other.example", "mail_vacation", "coil197@197.co.il→coil197", "owner_mailbox"} {
+	for _, unwanted := range []string{"domain_dir_name", "cron_line:PATH", "cron_line:SHELL", "cron_line:MAILTO", "ftp_accounts:other.example", "domain.usage", "email.conf (", "email/reply", "197.co.il.db (", "mail_vacation", "coil197@197.co.il→coil197", "owner_mailbox"} {
 		if strings.Contains(joined, unwanted) {
 			t.Errorf("skipped has %q:\n%s", unwanted, joined)
 		}
@@ -377,13 +386,16 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 		t.Errorf("aliases %q", b)
 	}
 	accounts := filepath.Join(x, "imap", "197.co.il", "conf", "passwd")
-	if b, _ := os.ReadFile(accounts); !strings.HasPrefix(string(b), "info:$6$salt$hash:") {
-		t.Errorf("account list %q", b)
+	if b, _ := os.ReadFile(accounts); string(b) != "info\n" {
+		t.Errorf("account list %q (local parts only: the hashes come from the mail shadow)", b)
 	}
 	if fi, err := os.Stat(accounts); err != nil || fi.Mode().Perm()&0o077 != 0 {
 		t.Errorf("account list mode: %v %v", fi, err)
 	}
 	sh := filepath.Join(x, "mailshadow", "197.co.il", "shadow")
+	if b, _ := os.ReadFile(sh); !strings.HasPrefix(string(b), "info:$6$salt$hash:") {
+		t.Errorf("mail shadow %q", b)
+	}
 	if fi, err := os.Stat(sh); err != nil || fi.Mode().Perm()&0o077 != 0 {
 		t.Errorf("mail shadow: %v %v", fi, err)
 	}
@@ -480,7 +492,7 @@ func TestParseNativeBackup_NoMailAccounts(t *testing.T) {
 	if p := nb.ToCpanelParsed("newuser"); p.OwnerEmail != "" || p.MailShadowDir != "" {
 		t.Errorf("owner email %q, shadow %q", p.OwnerEmail, p.MailShadowDir)
 	}
-	if !strings.Contains(strings.Join(nb.Skipped, "\n"), "owner_mailbox: coil197@197.co.il not carried") {
+	if !strings.Contains(strings.Join(nb.Skipped, "\n"), "owner_mailbox: coil197@197.co.il (2 file(s)) not carried") {
 		t.Errorf("the dropped owner mailbox is not reported: %v", nb.Skipped)
 	}
 }
@@ -570,5 +582,41 @@ func TestCheckNativeDiskSpace(t *testing.T) {
 	}
 	if err := CheckNativeDiskSpace(path, t.TempDir()); err != nil {
 		t.Errorf("a tiny archive refused: %v", err)
+	}
+}
+
+// A zstd archive that fails part way is an error, not a shorter import:
+// zstd's exit status is read at the end of its output.
+func TestParseNativeBackup_BrokenZstd(t *testing.T) {
+	good := zstdBytes(t, daArchive(t))
+	for name, raw := range map[string][]byte{
+		"truncated":         good[:len(good)/2],
+		"garbage after end": append(append([]byte(nil), good...), []byte("not a zstd frame, just bytes")...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeArchive(t, raw)
+			if _, err := ParseNativeBackup(path, filepath.Join(t.TempDir(), "x")); err == nil || !strings.Contains(err.Error(), "zstd") {
+				t.Errorf("parsed without a zstd error: %v", err)
+			}
+			if _, err := MeasureNative(path); err == nil {
+				t.Error("measured without an error")
+			}
+		})
+	}
+}
+
+// The same for the nested home archive.
+func TestParseNativeBackup_BrokenHomeArchive(t *testing.T) {
+	home := homeArchive(t)
+	var entries []entry
+	for _, e := range daEntries(t) {
+		if e.name == "backup/home.tar.zst" {
+			e.body = string(home[:len(home)/2])
+		}
+		entries = append(entries, e)
+	}
+	path := writeArchive(t, tarBytes(t, entries))
+	if _, err := ParseNativeBackup(path, filepath.Join(t.TempDir(), "x")); err == nil || !strings.Contains(err.Error(), "home.tar.zst") {
+		t.Errorf("a truncated home archive parsed: %v", err)
 	}
 }
