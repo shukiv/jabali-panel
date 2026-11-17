@@ -12,8 +12,8 @@ import (
 	"testing"
 )
 
-// The fixture follows a real DirectAdmin 1.714 user backup (the 197.co.il
-// archive): backup/ first, then domains/, then imap/; DB dumps flat in
+// The fixture follows the layout of a real DirectAdmin 1.714 user backup:
+// backup/ first, then domains/, then imap/; DB dumps flat in
 // backup/; the home directory as a nested backup/home.tar.zst whose paths
 // are relative to the home; the account's own Maildir inside it.
 
@@ -83,12 +83,12 @@ func gzipBytes(t *testing.T, raw []byte) []byte {
 }
 
 const (
-	wpHash    = "*ABCDEF0123456789ABCDEF0123456789ABCDEF01"
-	spareHash = "*FEDCBA9876543210FEDCBA9876543210FEDCBA98"
-	certPEM   = "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----"
-	caPEM     = "-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----"
-	keyPEM    = "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----"
-	shopDir   = "spare_parts_for_electrical_appliances"
+	wpHash   = "*ABCDEF0123456789ABCDEF0123456789ABCDEF01"
+	shopHash = "*FEDCBA9876543210FEDCBA9876543210FEDCBA98"
+	certPEM  = "-----BEGIN CERTIFICATE-----\nLEAF\n-----END CERTIFICATE-----"
+	caPEM    = "-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----"
+	keyPEM   = "-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----"
+	shopDir  = "parts_shop"
 )
 
 func homeArchive(t *testing.T) []byte {
@@ -103,7 +103,7 @@ func homeArchive(t *testing.T) []byte {
 		dir(".ssh/"),
 		file(".ssh/authorized_keys", "ssh-ed25519 AAAA test\n"),
 		dir("Maildir/"), dir("Maildir/new/"), dir("Maildir/.INBOX.spam/"), dir("Maildir/.INBOX.spam/cur/"),
-		file("Maildir/new/1794769494.M676395P435978.uscp", "Subject: owner\n\nhi\n"),
+		file("Maildir/new/1794769494.M676395P435978.srchost", "Subject: owner\n\nhi\n"),
 		file("Maildir/.INBOX.spam/cur/2:2,S", "Subject: spam\n\nx\n"),
 		dir("domains/"),
 		file("domains/stray.txt", "not carried from the home archive"),
@@ -127,40 +127,40 @@ func daArchiveWithout(t *testing.T, drop func(string) bool) []byte {
 func daEntries(t *testing.T) []entry {
 	return []entry{
 		dir("backup/"),
-		dir("backup/197.co.il/"),
-		dir("backup/197.co.il/email/"),
-		file("backup/197.co.il/email/passwd", "info:$6$salt$hash:1001:1001::/home/coil197/imap/197.co.il/info:/bin/false\n"),
-		file("backup/197.co.il/email/aliases", "coil197: coil197\nsales: x@example.com\nsupport: info, y@example.org\nbounce: :fail: no such user\npipe: |/usr/local/bin/x\nbad line\n"),
-		file("backup/197.co.il/email/autoresponder.conf", "info=1\n"),
-		file("backup/197.co.il/email/vacation.conf", ""),
-		file("backup/197.co.il/email/email.conf", "catchall=:fail:\n"),
-		file("backup/197.co.il/domain.pointers", "197.example=type=alias\n"),
-		dir("backup/197.co.il/email/majordomo/"),
-		file("backup/197.co.il/email/majordomo/list", "x"),
-		file("backup/197.co.il/email/majordomo/list.info", "x"),
-		file("backup/197.co.il/domain.usage", "bandwidth=1\n"),
+		dir("backup/main.example/"),
+		dir("backup/main.example/email/"),
+		file("backup/main.example/email/passwd", "info:$6$salt$hash:1001:1001::/home/acct/imap/main.example/info:/bin/false\n"),
+		file("backup/main.example/email/aliases", "acct: acct\nsales: x@example.com\nsupport: info, y@example.org\nbounce: :fail: no such user\npipe: |/usr/local/bin/x\nbad line\n"),
+		file("backup/main.example/email/autoresponder.conf", "info=1\n"),
+		file("backup/main.example/email/vacation.conf", ""),
+		file("backup/main.example/email/email.conf", "catchall=:fail:\n"),
+		file("backup/main.example/domain.pointers", "alias.example=type=alias\n"),
+		dir("backup/main.example/email/majordomo/"),
+		file("backup/main.example/email/majordomo/list", "x"),
+		file("backup/main.example/email/majordomo/list.info", "x"),
+		file("backup/main.example/domain.usage", "bandwidth=1\n"),
 		file("backup/other.example/email/email.conf", "catchall=postmaster@other.example\n"),
-		// DA 1.714's real shape (the 197 archive): <login>=<url-query>.
-		file("backup/197.co.il/ftp.passwd", "coil197=passwd=$6$x$y&path=/home/coil197/&type=system\nuploads@197.co.il=passwd=$6$z$w&path=/home/coil197/domains/197.co.il/public_ftp/&type=virtual\n"),
-		file("backup/197.co.il/subdomain.list", "shop\n\nBad_Label!\n"),
-		file("backup/197.co.il/domain.conf", "domain=197.co.il\nusername=coil197\n"),
-		file("backup/197.co.il/domain.cacert", caPEM),
-		file("backup/197.co.il/domain.cert", certPEM),
-		file("backup/197.co.il/domain.key", keyPEM),
-		file("backup/197.co.il/197.co.il.db", "$TTL 3600\n197.co.il. IN A 192.0.2.10\n"),
+		// DA 1.714's real shape (from a real archive): <login>=<url-query>.
+		file("backup/main.example/ftp.passwd", "acct=passwd=$6$x$y&path=/home/acct/&type=system\nuploads@main.example=passwd=$6$z$w&path=/home/acct/domains/main.example/public_ftp/&type=virtual\n"),
+		file("backup/main.example/subdomain.list", "shop\n\nBad_Label!\n"),
+		file("backup/main.example/domain.conf", "domain=main.example\nusername=acct\n"),
+		file("backup/main.example/domain.cacert", caPEM),
+		file("backup/main.example/domain.cert", certPEM),
+		file("backup/main.example/domain.key", keyPEM),
+		file("backup/main.example/main.example.db", "$TTL 3600\nmain.example. IN A 192.0.2.10\n"),
 		dir("backup/other.example/"),
 		file("backup/other.example/domain.conf", "domain=other.example\n"),
 		file("backup/other.example/other.example.db", "$TTL 3600\nother.example. IN A 192.0.2.10\n"),
-		file("backup/other.example/ftp.passwd", "coil197=passwd=$6$x$y&path=/home/coil197/&type=system\n"),
+		file("backup/other.example/ftp.passwd", "acct=passwd=$6$x$y&path=/home/acct/&type=system\n"),
 		dir("backup/email_data/"),
 		file("backup/user_limit", "0"),
-		file("backup/coil197_spare.conf", "accesshosts=0=localhost\ncoil197_spare=accesshosts=localhost&alter_priv=Y&passwd="+strings.ToLower(spareHash)+"&plugin=mysql_native_password&select_priv=Y\ndb_collation=DEFAULT_CHARACTER_SET_NAME=latin1&SCHEMA_NAME=coil197_spare\n"),
-		file("backup/coil197_spare.sql", "-- spare dump\n"),
-		file("backup/coil197_wp.conf", "accesshosts=0=localhost\ncoil197_wp=accesshosts=localhost&passwd="+wpHash+"&plugin=mysql_native_password\ncoil197_ro=accesshosts=localhost&passwd=$A$005$x&plugin=caching_sha2_password\ncoil197_ed=accesshosts=localhost&passwd="+wpHash+"&plugin=ed25519\ndb_collation=DEFAULT_CHARACTER_SET_NAME=latin1&SCHEMA_NAME=coil197_wp\n"),
-		file("backup/coil197_wp.sql", "/*M!999999\\- enable the sandbox mode */\n-- wp dump\n"),
+		file("backup/acct_shop.conf", "accesshosts=0=localhost\nacct_shop=accesshosts=localhost&alter_priv=Y&passwd="+strings.ToLower(shopHash)+"&plugin=mysql_native_password&select_priv=Y\ndb_collation=DEFAULT_CHARACTER_SET_NAME=latin1&SCHEMA_NAME=acct_shop\n"),
+		file("backup/acct_shop.sql", "-- shop dump\n"),
+		file("backup/acct_wp.conf", "accesshosts=0=localhost\nacct_wp=accesshosts=localhost&passwd="+wpHash+"&plugin=mysql_native_password\nacct_ro=accesshosts=localhost&passwd=$A$005$x&plugin=caching_sha2_password\nacct_ed=accesshosts=localhost&passwd="+wpHash+"&plugin=ed25519\ndb_collation=DEFAULT_CHARACTER_SET_NAME=latin1&SCHEMA_NAME=acct_wp\n"),
+		file("backup/acct_wp.sql", "/*M!999999\\- enable the sandbox mode */\n-- wp dump\n"),
 		dir("backup/php/"),
-		file("backup/user.conf", "account=ON\ndomain=197.co.il\nemail=owner@example.net\nname=coil197\nusername=coil197\nusertype=user\n"),
-		file("backup/crontab.conf", "MAILTO=\nPATH=/usr/local/php81/bin:/usr/bin\nSHELL=/usr/bin/jailshell\n1=*/5 * * * * /usr/local/bin/php /home/coil197/domains/197.co.il/public_html/wp-cron.php\n2=broken\n"),
+		file("backup/user.conf", "account=ON\ndomain=main.example\nemail=owner@example.net\nname=acct\nusername=acct\nusertype=user\n"),
+		file("backup/crontab.conf", "MAILTO=\nPATH=/usr/local/php81/bin:/usr/bin\nSHELL=/usr/bin/jailshell\n1=*/5 * * * * /usr/local/bin/php /home/acct/domains/main.example/public_html/wp-cron.php\n2=broken\n"),
 		file("backup/.shadow", "$6$sourcesalt$sourcehash\n"),
 		dir("backup/login_keys/"), dir("backup/login_keys/rootauth/"),
 		file("backup/login_keys/rootauth/key.conf", "SECRET"),
@@ -168,35 +168,35 @@ func daEntries(t *testing.T) []entry {
 		file("backup/backup_options.list", "database\n"),
 		file("backup/home.tar.zst", string(homeArchive(t))),
 		dir("domains/"),
-		dir("domains/197.co.il/"),
-		dir("domains/197.co.il/public_html/"),
-		file("domains/197.co.il/public_html/index.php", "<?php // main"),
-		file("domains/197.co.il/public_html/wp-config.php", "define('DB_NAME', 'coil197_wp');"),
-		dir("domains/197.co.il/public_html/" + shopDir + "/"),
-		file("domains/197.co.il/public_html/"+shopDir+"/wp-config.php", "define('DB_NAME', 'coil197_spare');"),
-		dir("domains/197.co.il/public_html/" + shopDir + "/wp-content/"),
-		dir("domains/197.co.il/public_html/" + shopDir + "/wp-content/x/"),
-		file("domains/197.co.il/public_html/"+shopDir+"/wp-content/x/wp-config.php", "decoy"),
-		dir("domains/197.co.il/public_html/shop/"),
-		file("domains/197.co.il/public_html/shop/index.html", "shop"),
-		dir("domains/197.co.il/public_ftp/"),
+		dir("domains/main.example/"),
+		dir("domains/main.example/public_html/"),
+		file("domains/main.example/public_html/index.php", "<?php // main"),
+		file("domains/main.example/public_html/wp-config.php", "define('DB_NAME', 'acct_wp');"),
+		dir("domains/main.example/public_html/" + shopDir + "/"),
+		file("domains/main.example/public_html/"+shopDir+"/wp-config.php", "define('DB_NAME', 'acct_shop');"),
+		dir("domains/main.example/public_html/" + shopDir + "/wp-content/"),
+		dir("domains/main.example/public_html/" + shopDir + "/wp-content/x/"),
+		file("domains/main.example/public_html/"+shopDir+"/wp-content/x/wp-config.php", "decoy"),
+		dir("domains/main.example/public_html/shop/"),
+		file("domains/main.example/public_html/shop/index.html", "shop"),
+		dir("domains/main.example/public_ftp/"),
 		dir("domains/other.example/"),
 		dir("domains/other.example/public_html/"),
 		file("domains/other.example/public_html/index.html", "other"),
-		dir("domains/197.co.il/logs/"),
-		file("domains/197.co.il/logs/197.co.il.log", "GET /"),
-		dir("domains/197.co.il/stats/"),
-		file("domains/197.co.il/stats/index.html", "stats"),
-		{name: "domains/197.co.il/public_html/link", body: "/etc/passwd", typ: tar.TypeSymlink},
+		dir("domains/main.example/logs/"),
+		file("domains/main.example/logs/main.example.log", "GET /"),
+		dir("domains/main.example/stats/"),
+		file("domains/main.example/stats/index.html", "stats"),
+		{name: "domains/main.example/public_html/link", body: "/etc/passwd", typ: tar.TypeSymlink},
 		file("../../escape", "x"),
 		file("/abs-escape", "x"),
 		dir("imap/"),
-		dir("imap/197.co.il/"),
-		dir("imap/197.co.il/info/"),
-		dir("imap/197.co.il/info/Maildir/"),
-		dir("imap/197.co.il/info/Maildir/new/"),
-		file("imap/197.co.il/info/Maildir/new/3", "Subject: info\n\nx\n"),
-		file("imap/197.co.il/bad name!/x", "x"),
+		dir("imap/main.example/"),
+		dir("imap/main.example/info/"),
+		dir("imap/main.example/info/Maildir/"),
+		dir("imap/main.example/info/Maildir/new/"),
+		file("imap/main.example/info/Maildir/new/3", "Subject: info\n\nx\n"),
+		file("imap/main.example/bad name!/x", "x"),
 		dir("imap/other.example/"),
 	}
 }
@@ -205,7 +205,7 @@ func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
 
 func writeArchive(t *testing.T, raw []byte) string {
 	t.Helper()
-	p := filepath.Join(t.TempDir(), "user.admin.coil197.tar.zst")
+	p := filepath.Join(t.TempDir(), "user.admin.acct.tar.zst")
 	if err := os.WriteFile(p, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,16 +249,16 @@ func TestParseNativeBackup_RealLayout(t *testing.T) {
 
 func checkNative(t *testing.T, x string, nb *NativeBackup) {
 	t.Helper()
-	if nb.SourceUser != "coil197" || nb.Email != "owner@example.net" || nb.PrimaryDomain != "197.co.il" {
+	if nb.SourceUser != "acct" || nb.Email != "owner@example.net" || nb.PrimaryDomain != "main.example" {
 		t.Errorf("account: user=%q email=%q domain=%q", nb.SourceUser, nb.Email, nb.PrimaryDomain)
 	}
 	if nb.ShadowHash != "$6$sourcesalt$sourcehash" {
 		t.Errorf("shadow hash %q", nb.ShadowHash)
 	}
-	if !reflect.DeepEqual(nb.Domains, []string{"197.co.il", "other.example"}) {
+	if !reflect.DeepEqual(nb.Domains, []string{"main.example", "other.example"}) {
 		t.Errorf("domains %v", nb.Domains)
 	}
-	if !reflect.DeepEqual(nb.Subdomains, map[string]string{"shop.197.co.il": "197.co.il"}) {
+	if !reflect.DeepEqual(nb.Subdomains, map[string]string{"shop.main.example": "main.example"}) {
 		t.Errorf("subdomains %v", nb.Subdomains)
 	}
 	if len(nb.ZoneFiles) != 2 {
@@ -266,37 +266,37 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 	}
 	// Mail stays on only where the source had accounts or forwarders; DA's
 	// empty imap/other.example/ is removed so the import doesn't turn mail on.
-	if !reflect.DeepEqual(nb.MailDomains, []string{"197.co.il"}) {
+	if !reflect.DeepEqual(nb.MailDomains, []string{"main.example"}) {
 		t.Errorf("mail domains %v", nb.MailDomains)
 	}
 
 	// Site files land in the jabali home layout; DA's logs and stats don't.
 	for _, p := range []string{
-		"home/domains/197.co.il/public_html/index.php",
-		"home/domains/197.co.il/public_html/" + shopDir + "/wp-config.php",
-		"home/domains/197.co.il/public_ftp",
-		"home/domains/shop.197.co.il/public_html/index.html",
+		"home/domains/main.example/public_html/index.php",
+		"home/domains/main.example/public_html/" + shopDir + "/wp-config.php",
+		"home/domains/main.example/public_ftp",
+		"home/domains/shop.main.example/public_html/index.html",
 		"home/.bashrc",
 		"home/.wp-cli/config.yml",
 		"home/.ssh/authorized_keys",
-		"imap/new/1794769494.M676395P435978.uscp",
+		"imap/new/1794769494.M676395P435978.srchost",
 		"imap/.INBOX.spam/cur/2:2,S",
-		"imap/197.co.il/info/Maildir/new/3",
-		"mysql/coil197_wp.sql",
-		"mysql/coil197_spare.sql",
-		"backup/197.co.il/ftp.passwd",
+		"imap/main.example/info/Maildir/new/3",
+		"mysql/acct_wp.sql",
+		"mysql/acct_shop.sql",
+		"backup/main.example/ftp.passwd",
 		"home/domains/other.example/public_html/index.html",
-		"imap/197.co.il/conf/passwd",
+		"imap/main.example/conf/passwd",
 	} {
 		if !exists(filepath.Join(x, p)) {
 			t.Errorf("missing %s", p)
 		}
 	}
 	for _, p := range []string{
-		"home/domains/197.co.il/public_html/shop", // moved to the subdomain's own docroot
-		"home/domains/197.co.il/logs",
-		"home/domains/197.co.il/stats",
-		"home/domains/197.co.il/public_html/link",
+		"home/domains/main.example/public_html/shop", // moved to the subdomain's own docroot
+		"home/domains/main.example/logs",
+		"home/domains/main.example/stats",
+		"home/domains/main.example/public_html/link",
 		"home/domains/stray.txt",
 		"home/.redis",
 		"home/.wp-cli/cache",
@@ -305,7 +305,7 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 		"backup/login_keys",
 		"backup/user.db",
 		"backup/home.tar.zst",
-		"backup/coil197_wp.sql",
+		"backup/acct_wp.sql",
 		"abs-escape",
 		"imap/other.example",
 		"etc/other.example",
@@ -321,30 +321,30 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 	for _, want := range []string{
 		"path_escape:../../escape",
 		"path_escape:/abs-escape",
-		"entry_type:2:domains/197.co.il/public_html/link",
+		"entry_type:2:domains/main.example/public_html/link",
 		"home_path_escape:../escape-home",
 		"da_generated: 2 file(s)",
 		"home_cache: 3 file(s)",
-		`subdomain_name:197.co.il:"bad_label!"`,
-		"db_user coil197_ro: no mysql_native_password hash",
-		"db_user coil197_ed: no mysql_native_password hash",
-		"imap_local_name:imap/197.co.il/bad name!/x",
+		`subdomain_name:main.example:"bad_label!"`,
+		"db_user acct_ro: no mysql_native_password hash",
+		"db_user acct_ed: no mysql_native_password hash",
+		"imap_local_name:imap/main.example/bad name!/x",
 		"cron_line:2",
-		"alias_local_target:support@197.co.il→info",
-		"alias_directive:bounce@197.co.il::fail:",
-		"alias_directive:pipe@197.co.il:|/usr/local/bin/x",
-		`alias_malformed:197.co.il:"bad line"`,
-		"ftp_accounts:197.co.il: 1 FTP account(s)",
-		"mail_autoresponder:197.co.il",
-		"da_not_carried:197.co.il: domain.pointers (1 file(s))",
-		"da_not_carried:197.co.il: email/majordomo (2 file(s))",
+		"alias_local_target:support@main.example→info",
+		"alias_directive:bounce@main.example::fail:",
+		"alias_directive:pipe@main.example:|/usr/local/bin/x",
+		`alias_malformed:main.example:"bad line"`,
+		"ftp_accounts:main.example: 1 FTP account(s)",
+		"mail_autoresponder:main.example",
+		"da_not_carried:main.example: domain.pointers (1 file(s))",
+		"da_not_carried:main.example: email/majordomo (2 file(s))",
 		`mail_catchall:other.example: "postmaster@other.example" not carried`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("skipped lacks %q:\n%s", want, joined)
 		}
 	}
-	for _, unwanted := range []string{"domain_dir_name", "cron_line:PATH", "cron_line:SHELL", "cron_line:MAILTO", "ftp_accounts:other.example", "domain.usage", "email.conf (", "email/reply", "197.co.il.db (", "mail_vacation", "coil197@197.co.il→coil197", "owner_mailbox"} {
+	for _, unwanted := range []string{"domain_dir_name", "cron_line:PATH", "cron_line:SHELL", "cron_line:MAILTO", "ftp_accounts:other.example", "domain.usage", "email.conf (", "email/reply", "main.example.db (", "mail_vacation", "acct@main.example→acct", "owner_mailbox"} {
 		if strings.Contains(joined, unwanted) {
 			t.Errorf("skipped has %q:\n%s", unwanted, joined)
 		}
@@ -361,7 +361,7 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 			t.Errorf("compat user %+v", u)
 		}
 	}
-	if !reflect.DeepEqual(users, map[string]string{"coil197_wp": wpHash, "coil197_spare": spareHash}) {
+	if !reflect.DeepEqual(users, map[string]string{"acct_wp": wpHash, "acct_shop": shopHash}) {
 		t.Errorf("compat users %v", users)
 	}
 
@@ -370,30 +370,30 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 	if err != nil {
 		t.Fatalf("cron file: %v", err)
 	}
-	if string(cron) != "*/5 * * * * /usr/local/bin/php /home/coil197/domains/197.co.il/public_html/wp-cron.php\n" {
+	if string(cron) != "*/5 * * * * /usr/local/bin/php /home/acct/domains/main.example/public_html/wp-cron.php\n" {
 		t.Errorf("cron %q", cron)
 	}
 
 	// Certificate, forwarders and mailbox hashes, staged where the writers read.
-	certs, _ := os.ReadFile(filepath.Join(x, "apache_tls", "197.co.il", "certificates"))
-	key, _ := os.ReadFile(filepath.Join(x, "apache_tls", "197.co.il", "key"))
+	certs, _ := os.ReadFile(filepath.Join(x, "apache_tls", "main.example", "certificates"))
+	key, _ := os.ReadFile(filepath.Join(x, "apache_tls", "main.example", "key"))
 	if string(certs) != certPEM+"\n"+caPEM+"\n" || string(key) != keyPEM+"\n" {
 		t.Errorf("certificate staged as %q / %q", certs, key)
 	}
-	if fi, err := os.Stat(filepath.Join(x, "apache_tls", "197.co.il", "key")); err != nil || fi.Mode().Perm()&0o077 != 0 {
+	if fi, err := os.Stat(filepath.Join(x, "apache_tls", "main.example", "key")); err != nil || fi.Mode().Perm()&0o077 != 0 {
 		t.Errorf("key file mode: %v %v", fi, err)
 	}
-	if b, _ := os.ReadFile(filepath.Join(x, "etc", "197.co.il", "aliases")); string(b) != "sales: x@example.com\nsupport: y@example.org\n" {
+	if b, _ := os.ReadFile(filepath.Join(x, "etc", "main.example", "aliases")); string(b) != "sales: x@example.com\nsupport: y@example.org\n" {
 		t.Errorf("aliases %q", b)
 	}
-	accounts := filepath.Join(x, "imap", "197.co.il", "conf", "passwd")
+	accounts := filepath.Join(x, "imap", "main.example", "conf", "passwd")
 	if b, _ := os.ReadFile(accounts); string(b) != "info\n" {
 		t.Errorf("account list %q (local parts only: the hashes come from the mail shadow)", b)
 	}
 	if fi, err := os.Stat(accounts); err != nil || fi.Mode().Perm()&0o077 != 0 {
 		t.Errorf("account list mode: %v %v", fi, err)
 	}
-	sh := filepath.Join(x, "mailshadow", "197.co.il", "shadow")
+	sh := filepath.Join(x, "mailshadow", "main.example", "shadow")
 	if b, _ := os.ReadFile(sh); !strings.HasPrefix(string(b), "info:$6$salt$hash:") {
 		t.Errorf("mail shadow %q", b)
 	}
@@ -401,7 +401,7 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 		t.Errorf("mail shadow: %v %v", fi, err)
 	}
 
-	if !reflect.DeepEqual(nb.AppRoots, map[string][]string{"197.co.il": {shopDir}}) {
+	if !reflect.DeepEqual(nb.AppRoots, map[string][]string{"main.example": {shopDir}}) {
 		t.Errorf("app roots %v", nb.AppRoots)
 	}
 	if nb.SSHKeys == "" || !nb.OwnerMaildir {
@@ -412,24 +412,24 @@ func checkNative(t *testing.T, x string, nb *NativeBackup) {
 func TestNativeBackup_ToCpanelParsed(t *testing.T) {
 	x, nb := parseFixture(t, zstdBytes)
 	p := nb.ToCpanelParsed("newuser")
-	if p.SourceUser != "coil197" || p.HomeDir != filepath.Join(x, "home") || p.MailRoot != filepath.Join(x, "imap") {
+	if p.SourceUser != "acct" || p.HomeDir != filepath.Join(x, "home") || p.MailRoot != filepath.Join(x, "imap") {
 		t.Errorf("roots: user=%q home=%q mail=%q", p.SourceUser, p.HomeDir, p.MailRoot)
 	}
-	if !reflect.DeepEqual(p.DomainNames, []string{"197.co.il", "other.example", "shop.197.co.il"}) {
+	if !reflect.DeepEqual(p.DomainNames, []string{"main.example", "other.example", "shop.main.example"}) {
 		t.Errorf("domain names %v", p.DomainNames)
 	}
 	want := map[string]string{
-		"197.co.il":      "/home/newuser/domains/197.co.il/public_html",
-		"other.example":  "/home/newuser/domains/other.example/public_html",
-		"shop.197.co.il": "/home/newuser/domains/shop.197.co.il/public_html",
+		"main.example":      "/home/newuser/domains/main.example/public_html",
+		"other.example":     "/home/newuser/domains/other.example/public_html",
+		"shop.main.example": "/home/newuser/domains/shop.main.example/public_html",
 	}
 	if !reflect.DeepEqual(p.DocRoots, want) {
 		t.Errorf("docroots %v", p.DocRoots)
 	}
-	if !reflect.DeepEqual(p.ExtraAppRoots, []string{"/home/newuser/domains/197.co.il/public_html/" + shopDir}) {
+	if !reflect.DeepEqual(p.ExtraAppRoots, []string{"/home/newuser/domains/main.example/public_html/" + shopDir}) {
 		t.Errorf("extra app roots %v", p.ExtraAppRoots)
 	}
-	if p.OwnerEmail != "coil197@197.co.il" {
+	if p.OwnerEmail != "acct@main.example" {
 		t.Errorf("owner email %q", p.OwnerEmail)
 	}
 	if p.MailShadowDir != filepath.Join(x, "mailshadow") || len(p.CronFiles) != 1 || len(p.SSHAuthorized) != 1 ||
@@ -459,9 +459,9 @@ func TestNativeBackup_SubdomainIsWebOnly(t *testing.T) {
 // so the import doesn't turn mail on for the domain.
 func TestParseNativeBackup_NoMailAccounts(t *testing.T) {
 	raw := daArchiveWithout(t, func(name string) bool {
-		return strings.HasSuffix(name, "/email/passwd") || strings.HasPrefix(name, "imap/197.co.il/info")
+		return strings.HasSuffix(name, "/email/passwd") || strings.HasPrefix(name, "imap/main.example/info")
 	})
-	// The aliases left: only DA's own "coil197: coil197" route, plus lines
+	// The aliases left: only DA's own "acct: acct" route, plus lines
 	// that are not forwarders.
 	path := writeArchive(t, zstdBytes(t, raw))
 	x := filepath.Join(t.TempDir(), "extract")
@@ -469,14 +469,14 @@ func TestParseNativeBackup_NoMailAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nb.MailDomains) != 1 || nb.MailDomains[0] != "197.co.il" {
-		// sales/support forwarders still make 197.co.il a mail domain.
+	if len(nb.MailDomains) != 1 || nb.MailDomains[0] != "main.example" {
+		// sales/support forwarders still make main.example a mail domain.
 		t.Fatalf("mail domains %v", nb.MailDomains)
 	}
 
 	raw = daArchiveWithout(t, func(name string) bool {
 		return strings.HasSuffix(name, "/email/passwd") || strings.HasSuffix(name, "/email/aliases") ||
-			strings.HasPrefix(name, "imap/197.co.il/info")
+			strings.HasPrefix(name, "imap/main.example/info")
 	})
 	path = writeArchive(t, zstdBytes(t, raw))
 	x = filepath.Join(t.TempDir(), "extract")
@@ -487,13 +487,13 @@ func TestParseNativeBackup_NoMailAccounts(t *testing.T) {
 	if len(nb.MailDomains) != 0 || nb.OwnerMaildir {
 		t.Errorf("mail domains %v, owner maildir %v", nb.MailDomains, nb.OwnerMaildir)
 	}
-	if exists(filepath.Join(x, "imap", "197.co.il")) {
-		t.Error("the empty imap/197.co.il was left: the import would turn mail on")
+	if exists(filepath.Join(x, "imap", "main.example")) {
+		t.Error("the empty imap/main.example was left: the import would turn mail on")
 	}
 	if p := nb.ToCpanelParsed("newuser"); p.OwnerEmail != "" || p.MailShadowDir != "" {
 		t.Errorf("owner email %q, shadow %q", p.OwnerEmail, p.MailShadowDir)
 	}
-	if !strings.Contains(strings.Join(nb.Skipped, "\n"), "owner_mailbox: coil197@197.co.il (2 file(s)) not carried") {
+	if !strings.Contains(strings.Join(nb.Skipped, "\n"), "owner_mailbox: acct@main.example (2 file(s)) not carried") {
 		t.Errorf("the dropped owner mailbox is not reported: %v", nb.Skipped)
 	}
 }
@@ -524,7 +524,7 @@ func TestPeekNativeMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := NativeMeta{Username: "coil197", Email: "owner@example.net", PrimaryDomain: "197.co.il", ShadowHash: "$6$sourcesalt$sourcehash"}
+	want := NativeMeta{Username: "acct", Email: "owner@example.net", PrimaryDomain: "main.example", ShadowHash: "$6$sourcesalt$sourcehash"}
 	if *m != want {
 		t.Errorf("meta %+v", *m)
 	}
@@ -553,17 +553,17 @@ func TestPeekNativeMeta_RefusesWhatIsNotADABackup(t *testing.T) {
 
 func TestNativeStagedPath(t *testing.T) {
 	stage := t.TempDir()
-	if NativeStagedPath(stage, "coil197") != "" {
+	if NativeStagedPath(stage, "acct") != "" {
 		t.Fatal("found a backup that isn't staged")
 	}
-	p := filepath.Join(stage, NativeStagedName("coil197"))
+	p := filepath.Join(stage, NativeStagedName("acct"))
 	if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := NativeStagedPath(stage, "coil197"); got != p {
+	if got := NativeStagedPath(stage, "acct"); got != p {
 		t.Errorf("got %q", got)
 	}
-	if NativeStagedPath(stage, "../coil197") != "" {
+	if NativeStagedPath(stage, "../acct") != "" {
 		t.Error("an invalid account name resolved")
 	}
 	link := filepath.Join(stage, NativeStagedName("linked"))
@@ -622,27 +622,27 @@ func TestParseNativeBackup_BrokenHomeArchive(t *testing.T) {
 	}
 }
 
-// The shapes of the real 197.co.il archive (DA 1.714): no mail account
+// The shapes of the real main.example archive (DA 1.714): no mail account
 // (email/passwd empty), only DA's own "<user>: <user>" alias, no subdomain,
 // and ftp.passwd holding the system login alone.
-func TestParseNativeBackup_197Shape(t *testing.T) {
+func TestParseNativeBackup_RealShape(t *testing.T) {
 	home := zstdBytes(t, tarBytes(t, []entry{
 		dir("Maildir/"), dir("Maildir/new/"),
-		file("Maildir/new/1.M1.uscp", "Subject: notice\n\nx\n"),
+		file("Maildir/new/1.M1.srchost", "Subject: notice\n\nx\n"),
 	}))
 	raw := tarBytes(t, []entry{
-		dir("backup/"), dir("backup/197.co.il/"), dir("backup/197.co.il/email/"),
-		file("backup/197.co.il/email/passwd", ""),
-		file("backup/197.co.il/email/aliases", "coil197: coil197\n"),
-		file("backup/197.co.il/email/email.conf", "catchall=:fail:\n"),
-		file("backup/197.co.il/subdomain.list", ""),
-		file("backup/197.co.il/ftp.passwd", "coil197=passwd=$6$REDACTED$REDACTED&path=/home/coil197/&type=system\n"),
-		file("backup/197.co.il/domain.conf", "domain=197.co.il\n"),
-		file("backup/user.conf", "username=coil197\ndomain=197.co.il\nemail=owner@example.net\n"),
+		dir("backup/"), dir("backup/main.example/"), dir("backup/main.example/email/"),
+		file("backup/main.example/email/passwd", ""),
+		file("backup/main.example/email/aliases", "acct: acct\n"),
+		file("backup/main.example/email/email.conf", "catchall=:fail:\n"),
+		file("backup/main.example/subdomain.list", ""),
+		file("backup/main.example/ftp.passwd", "acct=passwd=$6$REDACTED$REDACTED&path=/home/acct/&type=system\n"),
+		file("backup/main.example/domain.conf", "domain=main.example\n"),
+		file("backup/user.conf", "username=acct\ndomain=main.example\nemail=owner@example.net\n"),
 		file("backup/home.tar.zst", string(home)),
-		dir("domains/"), dir("domains/197.co.il/"), dir("domains/197.co.il/public_html/"),
-		file("domains/197.co.il/public_html/index.php", "<?php"),
-		dir("imap/"), dir("imap/197.co.il/"),
+		dir("domains/"), dir("domains/main.example/"), dir("domains/main.example/public_html/"),
+		file("domains/main.example/public_html/index.php", "<?php"),
+		dir("imap/"), dir("imap/main.example/"),
 	})
 	x := filepath.Join(t.TempDir(), "x")
 	nb, err := ParseNativeBackup(writeArchive(t, zstdBytes(t, raw)), x)
@@ -652,14 +652,14 @@ func TestParseNativeBackup_197Shape(t *testing.T) {
 	if len(nb.MailDomains) != 0 || len(nb.Subdomains) != 0 || nb.OwnerMaildir || nb.MailShadowDir != "" {
 		t.Errorf("mail=%v subs=%v owner=%v shadow=%q", nb.MailDomains, nb.Subdomains, nb.OwnerMaildir, nb.MailShadowDir)
 	}
-	if exists(filepath.Join(x, "etc", "197.co.il", "aliases")) || exists(filepath.Join(x, "imap", "197.co.il")) {
+	if exists(filepath.Join(x, "etc", "main.example", "aliases")) || exists(filepath.Join(x, "imap", "main.example")) {
 		t.Error("a forwarder or mail directory was staged for a domain with no mail")
 	}
 	joined := strings.Join(nb.Skipped, "\n")
 	if strings.Contains(joined, "ftp_accounts") || strings.Contains(joined, "alias_") {
 		t.Errorf("the system FTP login or DA's own alias reported:\n%s", joined)
 	}
-	if !strings.Contains(joined, "owner_mailbox: coil197@197.co.il (1 file(s)) not carried") {
+	if !strings.Contains(joined, "owner_mailbox: acct@main.example (1 file(s)) not carried") {
 		t.Errorf("owner mailbox not reported:\n%s", joined)
 	}
 }

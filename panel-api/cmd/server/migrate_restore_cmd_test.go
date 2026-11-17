@@ -85,14 +85,14 @@ func TestDANativeSourceUser(t *testing.T) {
 		return p
 	}
 	good := write("renamed.tar", map[string]string{
-		"backup/user.conf": "username=coil197\ndomain=197.co.il\n",
+		"backup/user.conf": "username=acct\ndomain=main.example\n",
 		"backup/.shadow":   "$6$x$y\n",
 	}, []string{"backup/user.conf", "backup/.shadow"})
 
-	if got, err := daNativeSourceUser(good, ""); err != nil || got != "coil197" {
+	if got, err := daNativeSourceUser(good, ""); err != nil || got != "acct" {
 		t.Errorf("no --source-user: got %q, %v", got, err)
 	}
-	if got, err := daNativeSourceUser(good, "coil197"); err != nil || got != "coil197" {
+	if got, err := daNativeSourceUser(good, "acct"); err != nil || got != "acct" {
 		t.Errorf("matching --source-user: got %q, %v", got, err)
 	}
 	if _, err := daNativeSourceUser(good, "someoneelse"); err == nil || !strings.Contains(err.Error(), "does not match") {
