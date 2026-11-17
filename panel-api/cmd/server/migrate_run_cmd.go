@@ -44,6 +44,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
+// daNativeParseKind routes the parse step for a DirectAdmin user backup
+// restored offline (`jabali migrate restore --directadmin`). It is not a
+// migration_jobs.source_kind: the job's kind stays "directadmin".
+const daNativeParseKind = "directadmin-native"
+
 func newMigrateImportCmd() *cobra.Command {
 	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
 	var keepStaging bool
@@ -172,6 +177,18 @@ failed stage. Already-done stages are skipped.`,
 			// can verify the hash style before sending a reset link.
 			extractDir := filepath.Join("/var/lib/jabali-migrations", jobID, "extracted")
 			meta, _ := cpanel.PeekAccountMeta(extractDir, job.SourceUser)
+			if job.SourceKind == models.MigrationSourceDirectAdmin && meta == nil {
+				// A DirectAdmin user backup restored offline: its contact email,
+				// primary domain and shadow hash are in backup/user.conf and
+				// backup/.shadow, read off the staged archive before extraction.
+				if p := directadmin.NativeStagedPath(filepath.Join("/var/lib/jabali-migrations", jobID), job.SourceUser); p != "" {
+					if nm, nerr := directadmin.PeekNativeMeta(p); nerr == nil {
+						meta = &cpanel.AccountMeta{Email: nm.Email, PasswordHash: nm.ShadowHash, PrimaryDomain: nm.PrimaryDomain}
+					} else {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: read DirectAdmin backup/user.conf: %v\n", nerr)
+					}
+				}
+			}
 			if targetUser == "" {
 				targetUser = job.SourceUser
 				fmt.Printf("  → target-user defaulted from source: %s\n", targetUser)
@@ -357,7 +374,30 @@ failed stage. Already-done stages are skipped.`,
 			// extractDir is already resolved earlier (above the user
 			// resolution block) — re-use the same value here.
 			var parsed *cpanel.ParsedTarball
-			switch job.SourceKind {
+			// A DirectAdmin user backup restored offline (`jabali migrate
+			// restore --directadmin`) is DA's own archive, not the cpmove the
+			// SSH pull synthesizes: it has its own parser.
+			parseKind := job.SourceKind
+			daNativePath := ""
+			if job.SourceKind == models.MigrationSourceDirectAdmin {
+				daNativePath = directadmin.NativeStagedPath(filepath.Join("/var/lib/jabali-migrations", job.ID), job.SourceUser)
+				if daNativePath != "" {
+					parseKind = daNativeParseKind
+				}
+			}
+			switch parseKind {
+			case daNativeParseKind:
+				nb, nerr := directadmin.ParseNativeBackup(daNativePath, extractDir)
+				if nerr != nil {
+					return failJob(fmt.Errorf("directadmin backup %s: %w", filepath.Base(daNativePath), nerr))
+				}
+				if nb.SourceUser != job.SourceUser {
+					return failJob(fmt.Errorf("security: the backup's account %q (backup/user.conf) does not match the job's source account %q", nb.SourceUser, job.SourceUser))
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"directadmin import: %d domain(s), %d subdomain(s), %d DNS zone(s), %d database dump(s), owner mailbox=%v\n",
+					len(nb.Domains), len(nb.Subdomains), len(nb.ZoneFiles), len(nb.MySQLDumps), nb.OwnerMaildir)
+				parsed = nb.ToCpanelParsed(*user.Username)
 			case models.MigrationSourceDirectAdmin:
 				// DA pull-stage runs jabali's BackupUser script on the
 				// source, which synthesises a cpmove-shaped tarball
@@ -1792,10 +1832,11 @@ func cpanelRestoreCallback(
 		// JAB-32: pass the resolved per-domain docroots so the scanner finds
 		// Hestia's web/<dom>/public_html (and any non-default cPanel layout),
 		// not just the hardcoded /home/<user>/domains tree.
-		appDocroots := make([]string, 0, len(p.parsed.DocRoots))
+		appDocroots := make([]string, 0, len(p.parsed.DocRoots)+len(p.parsed.ExtraAppRoots))
 		for _, dr := range p.parsed.DocRoots {
 			appDocroots = append(appDocroots, dr)
 		}
+		appDocroots = append(appDocroots, p.parsed.ExtraAppRoots...)
 		if plan.Websites {
 			appRes, aerr := cpanel.ImportAppConfigs(ctx, restoreAgent, p.targetUserID, p.targetUsername, dbsRes.Credentials, appDocroots)
 			if aerr != nil {
