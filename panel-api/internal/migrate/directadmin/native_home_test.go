@@ -59,7 +59,7 @@ func TestImportNativeHome(t *testing.T) {
 	want := []map[string]any{
 		{"job_id": "JOB", "src_dir": filepath.Join(parsed.HomeDir, "domains/a.example/public_html"), "dest_user": "u", "dest_subpath": "domains/a.example/public_html"},
 		{"job_id": "JOB", "src_dir": filepath.Join(parsed.HomeDir, "domains/shop.a.example/public_html"), "dest_user": "u", "dest_subpath": "domains/shop.a.example/public_html"},
-		{"job_id": "JOB", "src_dir": parsed.HomeDir, "dest_user": "u", "extra_excludes": []string{"public_html", "public_html/", "public_html/**"}},
+		{"job_id": "JOB", "src_dir": parsed.HomeDir, "dest_user": "u", "extra_excludes": []string{"public_html", "public_html/", "public_html/**", "/.jabali/", "/logs/"}},
 	}
 	if !reflect.DeepEqual(a.calls, want) {
 		t.Errorf("calls:\n got %v\nwant %v", a.calls, want)

@@ -21,8 +21,12 @@ type NativeHomeResult struct {
 	Skipped       []string
 }
 
-// publicHTMLExcludes leaves every docroot out of the final pass, at any depth.
-var publicHTMLExcludes = []string{"public_html", "public_html/", "public_html/**"}
+// restOfHomeExcludes leaves every docroot out of the final pass, at any depth,
+// and keeps that pass (it runs with --delete-after) off what the panel itself
+// writes in the home: the PHP shims in .jabali/ and the PHP-FPM error log in
+// logs/. A DirectAdmin home has neither; its logs are under domains/<dom>/logs,
+// which the parser drops.
+var restOfHomeExcludes = []string{"public_html", "public_html/", "public_html/**", "/.jabali/", "/logs/"}
 
 // ImportNativeHome copies a parsed DirectAdmin backup's home (ParseNativeBackup
 // lays it out as the jabali home) into /home/<destUser>/, as the cPanel split
@@ -64,7 +68,7 @@ func ImportNativeHome(ctx context.Context, call agent.AgentInterface, parsed *cp
 		"job_id":         jobID,
 		"src_dir":        parsed.HomeDir,
 		"dest_user":      destUser,
-		"extra_excludes": publicHTMLExcludes,
+		"extra_excludes": restOfHomeExcludes,
 	}); err != nil {
 		return res, fmt.Errorf("rest of the home: %w", err)
 	}
