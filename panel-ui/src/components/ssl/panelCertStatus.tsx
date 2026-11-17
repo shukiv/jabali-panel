@@ -128,10 +128,24 @@ export function panelCertActionConfirm(
   };
 }
 
+// panelCertRefreshWarning: a refresh failed after the certs had loaded. The
+// views keep showing what they loaded, under this line, instead of trading
+// it for an error.
+export function panelCertRefreshWarning(err: unknown): string {
+  const msg = err instanceof Error && err.message ? `: ${err.message}` : "";
+  return `Couldn't refresh the panel SSL state${msg}. Showing what was loaded last.`;
+}
+
 // panelCertIssueMessage: the toast after an Issue. A self-signed answer is
 // the server's own words, plus the current cert's expiry in the admin's
-// date format.
+// date format. A Let's Encrypt hostname cert restarts the panel to serve it
+// (jabali-panel-cert.sh), and the open page keeps the old certificate until
+// it is reloaded.
 export function panelCertIssueMessage(kind: string, r: PanelCertIssueResult | undefined): string {
-  if (!isPanelSelfSignResult(r)) return `${kind} cert: issued`;
+  if (!isPanelSelfSignResult(r)) {
+    return kind === "hostname"
+      ? "Panel certificate issued. The panel restarts in a few seconds to serve it: reload the page, and your browser shows the new certificate."
+      : `${kind} cert: issued`;
+  }
   return r.expires_at ? `${r.detail} Valid until ${shortDate(r.expires_at)}.` : r.detail;
 }

@@ -10,6 +10,7 @@ import { type PanelCertificate, usePanelCertificate } from "../../../hooks/usePa
 import {
   PANEL_SSL_TAB,
   panelCertExpiryHint,
+  panelCertRefreshWarning,
   panelCertStatusTag,
 } from "../../../components/ssl/panelCertStatus";
 
@@ -47,18 +48,22 @@ export function PanelSSLCard() {
       style={{ marginBottom: 16 }}
     >
       <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-        {q.isError ? (
+        {/* Only a first load with nothing to show is an error. A refresh that
+            fails afterwards (the panel restarts after issuing its own cert)
+            keeps the loaded lines, with a warning. */}
+        {host ? (
+          <>
+            {q.isError && <Alert type="warning" showIcon title={panelCertRefreshWarning(q.error)} />}
+            <CertLine label={t("panelsslcard.hostname")} cert={host} leOn={host.use_le} />
+            {mail && <CertLine label={t("panelsslcard.mail")} cert={mail} leOn={host.use_le} />}
+          </>
+        ) : q.isError ? (
           <Alert
             type="error"
             showIcon
             title={t("panelsslcard.failed_to_load_panel_ssl_state")}
             description={String((q.error as Error)?.message ?? "")}
           />
-        ) : host ? (
-          <>
-            <CertLine label={t("panelsslcard.hostname")} cert={host} leOn={host.use_le} />
-            {mail && <CertLine label={t("panelsslcard.mail")} cert={mail} leOn={host.use_le} />}
-          </>
         ) : (
           <Alert type="info" showIcon title={t("panelsslcard.panel_certificate_not_initialised_yet")} />
         )}
