@@ -15,7 +15,11 @@ type EmailForwarder struct {
 	Type      string    `gorm:"type:enum('alias','external');not null" json:"type"`
 	LocalPart *string   `gorm:"type:varchar(64)" json:"local_part"` // NULL for type='external'
 	Target    string    `gorm:"type:varchar(255);not null" json:"target"`
-	Enabled   bool      `gorm:"type:tinyint(1);not null;default:1" json:"enabled"`
+	// Enabled has no gorm `default` tag (the column's own DEFAULT 1 stays):
+	// GORM writes a defaulted field's default in place of a false, so an
+	// import that creates it disabled (inert unless --preserve-source-state)
+	// got an active row. Every caller sets it. Same as CronJob.Enabled.
+	Enabled   bool      `gorm:"type:tinyint(1);not null" json:"enabled"`
 	// KeepCopy (GH #237, migration 000177) applies to type='external':
 	// when true the agent emits Sieve `redirect :copy` so a copy is kept
 	// in the mailbox; when false it's a plain forward. No gorm `default`
