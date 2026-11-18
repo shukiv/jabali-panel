@@ -3,7 +3,7 @@
  * Plugin Name:       Jabali Cache
  * Plugin URI:        https://jabali-panel.com/
  * Description:        Redis-backed object cache (and optional full-page cache) tuned for the Jabali hosting panel. Uses the shared panel Redis over a unix socket with per-site key isolation. Works with or without the phpredis extension.
- * Version:           1.2.1
+ * Version:           1.3.0
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            Jabali Panel
@@ -17,7 +17,7 @@
 defined( 'ABSPATH' ) || exit;
 
 if ( ! defined( 'JABALI_CACHE_VERSION' ) ) {
-	define( 'JABALI_CACHE_VERSION', '1.2.1' );
+	define( 'JABALI_CACHE_VERSION', '1.3.0' );
 }
 if ( ! defined( 'JABALI_CACHE_PLUGIN_FILE' ) ) {
 	define( 'JABALI_CACHE_PLUGIN_FILE', __FILE__ );
@@ -33,6 +33,11 @@ require_once __DIR__ . '/includes/lib.php';
 require_once __DIR__ . '/includes/class-settings.php';
 require_once __DIR__ . '/includes/class-dropin-manager.php';
 require_once __DIR__ . '/includes/class-page-cache.php';
+require_once __DIR__ . '/includes/class-vary.php';
+
+// Jetpack's `Vary: accept, content-type` keeps every page out of the Jabali
+// page cache; drop it from browser responses on Jabali servers (class-vary.php).
+Jabali_Cache_Vary::hooks();
 
 /**
  * Activation: seed settings, write the runtime config file, and install the
