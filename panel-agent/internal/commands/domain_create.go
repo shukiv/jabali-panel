@@ -87,6 +87,10 @@ type domainCreateParams struct {
 	// allowlist was intentionally NOT added — it would re-open the #416/#419
 	// fail-open class on the shared microcache.
 	CacheBypassPaths []string `json:"cache_bypass_paths,omitempty"`
+	// WPSubdirs: the domain's subfolder WordPress installs ("/shop"), resolved
+	// by the panel. Each gets its own permalink fallback in the vhost
+	// (wp_subdir_routes.go), re-sanitized here. Empty renders nothing.
+	WPSubdirs []string `json:"wp_subdirs,omitempty"`
 	// CacheTTLSeconds (Gitea #596) — per-domain page-cache validity. 0 = use
 	// the default. Drives fastcgi_cache_valid; background_update keeps it fresh.
 	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
@@ -293,6 +297,15 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         try_files $uri $uri/ =404;
 {{ end }}
     }
+{{- if .HasPHP }}{{ range .WPSubdirRoutes }}
+
+    # WordPress in the {{.}}/ folder: its permalinks go to its own index.php,
+    # not the site root's. Plain prefix on purpose: .php still reaches the
+    # regex PHP location below (page cache included).
+    location {{.}}/ {
+        try_files $uri $uri/ {{.}}/index.php?$query_string;
+    }
+{{- end }}{{ end }}
 
     # Branded error pages (M28 page templates). error_page fires ONLY on
     # NATIVE nginx errors: a missing static file (try_files =404), a denied
@@ -870,6 +883,10 @@ type vhostData struct {
 	// PHPFallback is the panel-supplied front controller fallback (GH #1999),
 	// unvalidated. The template renders it through TryFilesFallback only.
 	PHPFallback string
+	// WPSubdirRoutes: sanitized subfolder WordPress paths ("/shop") that get a
+	// `location /shop/ { try_files ... /shop/index.php?$query_string; }`
+	// (wp_subdir_routes.go). Rendered only with PHP and the default `location /`.
+	WPSubdirRoutes []string
 
 	// DefaultPage (GH #2422) is the domain's file in defaultPagesDir that the
 	// index directive's last entry serves; empty renders no location for it.
@@ -1238,7 +1255,7 @@ func limitDirectives(p domainCreateParams) (string, error) {
 	return out + bots, nil
 }
 
-func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate, phpFallback string) (string, error) {
+func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, indexPriority string, isEnabled, hasPHP bool, sslCertPath, sslKeyPath, phpMemLimit, phpUploadMax, phpPostMax string, phpMaxInputVars, phpMaxExecTime, phpMaxInputTime int, phpDisplayErrors bool, phpErrorReporting *int, phpTimezone string, envVars []domainEnvVarParam, listenIPv4, listenIPv6 string, cacheEnabled bool, cachePath string, cachePaths []string, cacheBypassPaths []string, cacheTTLSeconds int, cacheQueryAllowlist []string, fpmSocket string, previewHost, previewCertPath, previewKeyPath string, interceptErrors, pathInfo, redirectHTTPS, serveHTTPS bool, aliases []string, phpFlags phpFlagPins, ownershipGate, phpFallback string, wpSubdirs []string) (string, error) {
 	// GH #1625: re-sanitize the panel-supplied aliases HERE (trust
 	// boundary) into the server_name suffix — never render them raw.
 	aliasServerNames := sanitizeAliasServerNames(domain, aliases)
@@ -1404,6 +1421,7 @@ func writeVhost(ctx context.Context, username, domain, docRoot, phpVersion, redi
 		// 2026-06-04 on vpsjournal.com/yacht.vpsjournal.com.
 		RootOverridden: directivesOverrideRoot(customDirectives, ruleDirectives),
 		PHPFallback:    phpFallback,
+		WPSubdirRoutes: wpSubdirRoutes(domain, wpSubdirs, redirectDirectives, ruleDirectives, customDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives),
 	}
 	if _, err := sanitizePHPFallback(phpFallback); err != nil {
 		log.Printf("domain.create %s: ignoring invalid php_fallback: %v", domain, err)
@@ -1762,7 +1780,7 @@ func domainCreateHandler(ctx context.Context, params json.RawMessage) (any, erro
 	// cert file turns out to be missing on disk (#213).
 	redirectHTTPS, serveHTTPS := resolveHTTPSFlags(&p)
 	phpFlags := phpFlagPinsForParams(ctx, &p)
-	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags, p.OwnershipGate, p.PHPFallback)
+	configPath, err := writeVhost(ctx, p.Username, p.Domain, p.DocRoot, p.PHPVersion, p.RedirectDirectives, p.RuleDirectives, p.CustomDirectives, rateLimitDirectives, ipACLDirectives, dirPrivacyDirectives, p.IndexPriority, isEnabled, p.HasPHP, p.SSLCertPath, p.SSLKeyPath, p.PHPMemoryLimit, p.PHPUploadMaxFilesize, p.PHPPostMaxSize, p.PHPMaxInputVars, p.PHPMaxExecutionTime, p.PHPMaxInputTime, p.PHPDisplayErrors, p.PHPErrorReporting, p.PHPTimezone, p.EnvVars, p.ListenIPv4, p.ListenIPv6, p.CacheEnabled, p.CachePath, p.CachePaths, p.CacheBypassPaths, p.CacheTTLSeconds, p.CacheQueryAllowlist, p.FPMSocket, p.PreviewHost, p.PreviewCertPath, p.PreviewKeyPath, p.InterceptErrors, p.PathInfo, redirectHTTPS, serveHTTPS, p.Aliases, phpFlags, p.OwnershipGate, p.PHPFallback, p.WPSubdirs)
 	if err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
