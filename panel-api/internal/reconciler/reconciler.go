@@ -2337,6 +2337,26 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		}
 	}
 
+	// A WordPress in a subfolder serves its permalinks through its own
+	// index.php; the vhost's `location /` falls back to the root's, so each
+	// folder needs its own fallback (agent: wp_subdir_routes.go). Omitted when
+	// none, so the payload and vhost stay byte-identical. A failed lookup skips
+	// this render: dispatching without the routes would 404 every permalink
+	// under the folder until the next tick.
+	if r.wordPressInstalls != nil {
+		wpCtx, wpCancel := context.WithTimeout(ctx, 5*time.Second)
+		all, wpErr := r.wordPressInstalls.ListByDomainIDs(wpCtx, []string{domain.ID})
+		wpCancel()
+		if wpErr != nil {
+			r.log.Warn("reconcile: app installs lookup failed; vhost render skipped this tick",
+				"domain_id", domain.ID, "domain", domain.Name, "err", wpErr)
+			return
+		}
+		if subs := wordPressSubdirsFromInstalls(all); len(subs) > 0 {
+			params["wp_subdirs"] = subs
+		}
+	}
+
 	// M36 per-domain IP ACLs. Fetch + thread to agent so nginx renders
 	// allow/deny directives inside the server block. Empty / unwired
 	// repo → no rules → agent renders no directives (zero overhead).
@@ -4333,6 +4353,30 @@ func cachePathsFromInstalls(insts []models.ApplicationInstall) []string {
 		}
 	}
 	return paths
+}
+
+// wordPressSubdirsFromInstalls returns the domain's subfolder WordPress paths
+// ("/shop"), deduplicated and sorted so the dispatch hash is stable whatever
+// the row order. Root installs and other app types are left out: Drupal,
+// Joomla and ITFlow write their own `location ^~ /<sub>/` snippet, which a
+// second location for the same folder would duplicate. The agent re-sanitizes
+// every entry before rendering it.
+func wordPressSubdirsFromInstalls(insts []models.ApplicationInstall) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, in := range insts {
+		if in.AppType != "wordpress" {
+			continue
+		}
+		s := strings.Trim(strings.TrimSpace(in.Subdirectory), "/")
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, "/"+s)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // cacheBypassPathsFromInstalls collects the union of every cache-enabled
