@@ -8,6 +8,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.3.0] — 2026-11-18
+
+### Fixed
+- Pages of a site running Jetpack with its Subscriptions module are cached again on Jabali servers. Jetpack's `Request::is_frontend()` sends `Vary: accept, content-type` on every front-end response, and the Jabali nginx page cache never stores a response that varies on anything but `Accept-Encoding`, so no page of such a site was ever cached. On a server with the Jabali page cache (the purge spool directory exists), for a request that asks for neither JSON nor XML, the plugin now removes exactly that pair from the response's `Vary`, last on `init` and `template_redirect` and first on `wp_head`. JSON and XML requests keep it, so nginx never stores their variant; every other `Vary` token stays; a lone `Vary: Accept` is left alone. New filter `jabali_cache_strip_jetpack_vary` (default true) turns it off.
+
 ## [1.2.1] — 2026-10-09
 
 ### Fixed
