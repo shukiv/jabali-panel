@@ -225,6 +225,14 @@ func ImportExtras(
 				keepCopyLocal[f.Local] = true
 			}
 		}
+		// cPanel's own valiases (va/<dom>): a forwarder on an address that
+		// has a mailbox delivers each message to that mailbox AND to the
+		// targets — no self-target needed. Checked on a WHM 11.138 server:
+		// every message to two forwarded addresses was logged both as a
+		// local dovecot delivery and a remote one. Without KeepCopy the
+		// mailbox would stop receiving once the account moved. Only va/ has
+		// that meaning; the homedir layout keeps the self-target rule above.
+		fromValiases := filepath.Base(filepath.Dir(aliasFile)) == "va"
 		for _, f := range fwds {
 			if mailboxesRepo == nil || forwardersRepo == nil {
 				res.Skipped = append(res.Skipped, "forwarders_skip:repos_unwired")
@@ -264,7 +272,7 @@ func ImportExtras(
 				// for aliases: two external forwards off the same source local
 				// (or a later same-local alias) then collide and get dropped.
 				Target:    target,
-				KeepCopy:  keepCopyLocal[local],
+				KeepCopy:  keepCopyLocal[local] || fromValiases,
 				Enabled:   preserveMailRouting, // JAB-46: inert unless opted in
 				ManagedBy: "m35",
 			}

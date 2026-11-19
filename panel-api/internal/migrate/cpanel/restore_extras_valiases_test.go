@@ -86,6 +86,11 @@ func TestImportExtras_ReadsPkgacctValiases(t *testing.T) {
 	if len(fwdRepo.rows) != 1 || fwdRepo.rows[0].Target != "fwd@out.org" {
 		t.Fatalf("forwarders = %+v, want one to fwd@out.org (read from va/example.com)", fwdRepo.rows)
 	}
+	// cPanel delivers a forwarded address that has a mailbox to the mailbox
+	// too; without keep_copy the mailbox stops receiving after the move.
+	if !fwdRepo.rows[0].KeepCopy {
+		t.Errorf("keep_copy = false, want true for a va/ forwarder on an address with a mailbox")
+	}
 	if res.ForwardersCreated != 1 {
 		t.Errorf("ForwardersCreated = %d, want 1", res.ForwardersCreated)
 	}
