@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -1477,7 +1479,12 @@ func cpanelRestoreCallback(
 				if job.SourceKind == models.MigrationSourcePlesk {
 					srcRootOverride = "/var/www/vhosts"
 				}
-				for _, r := range rsyncRows {
+				srcPaths := make([]string, len(rsyncRows))
+				for i, r := range rsyncRows {
+					srcPaths[i] = r.SrcPath
+				}
+				nested := nestedDocrootExcludes(srcPaths)
+				for i, r := range rsyncRows {
 					destPath := filepath.Join("/home", p.targetUsername, "domains", r.Dom, "public_html")
 					rawResp, rerr := restoreAgent.Call(ctx, "migration.rsync_remote_home", map[string]any{
 						"port":   srcSSHPort(job),
@@ -1499,6 +1506,10 @@ func cpanelRestoreCallback(
 						"src_root":          srcRootOverride,
 						"dest_path":         destPath,
 						"dest_user":         p.targetUsername,
+						// A docroot nested in this one (a cPanel addon domain
+						// in public_html/<addon>) is copied to its own
+						// docroot, so not a second time inside this one.
+						"excludes": nested[i],
 					})
 					if rerr != nil {
 						warnings = append(warnings, fmt.Sprintf("home_rsync_remote: %s: %v", r.Dom, rerr))
@@ -2596,6 +2607,35 @@ var pleskSystemExcludes = []string{
 	// it would land /bin, /lib64 etc. into ~/plesk-files. User data lives
 	// in private/ and custom-named dirs, which still copy.
 	"/bin", "/dev", "/etc", "/lib", "/lib64", "/sbin", "/usr", "/var", "/tmp",
+}
+
+// nestedDocrootExcludes returns, for each source docroot in srcPaths, the
+// rsync excludes of the other docroots nested inside it, anchored to its
+// transfer root ("/<rel>/"). cPanel puts an addon domain's docroot inside the
+// main one (public_html/<addon>), and each site is copied to its own docroot:
+// without these the main site's copy carried every addon a second time, a
+// stale copy served under the main domain's path. The tarball restore
+// (cpanel.ImportHomeSplit) already leaves nested docroots out.
+func nestedDocrootExcludes(srcPaths []string) [][]string {
+	out := make([][]string, len(srcPaths))
+	for i, outer := range srcPaths {
+		outer = filepath.Clean(outer)
+		for j, inner := range srcPaths {
+			if i == j {
+				continue
+			}
+			rel, err := filepath.Rel(outer, filepath.Clean(inner))
+			if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
+				continue
+			}
+			ex := "/" + rel + "/"
+			if !slices.Contains(out[i], ex) {
+				out[i] = append(out[i], ex)
+			}
+		}
+		sort.Strings(out[i])
+	}
+	return out
 }
 
 // pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
