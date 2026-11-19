@@ -117,7 +117,7 @@ export const DomainCreate = () => {
             { required: true, message: "Domain name is required" },
             { max: 253, message: "Domain name cannot exceed 253 characters" },
             {
-              pattern: /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/,
+              pattern: /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/,
               message: "Enter a valid domain name (e.g. example.com)",
             },
           ]}

@@ -77,3 +77,22 @@ func TestVisibleFields_NSHiddenWhenDNSOff(t *testing.T) {
 		t.Errorf("visible fields with dns on = %d, want %d", got, want)
 	}
 }
+
+// A panel hostname under an IDN TLD (punycode, e.g. .рф = xn--p1ai) was
+// refused by a letters-only TLD rule; install.sh itself accepts it.
+func TestHostnameRe_IDNTLD(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"panel.example.com", true},
+		{"panel.example.xn--p1ai", true},
+		{"panel.xn----7sbbhn.xn--4dbrk0ce", true},
+		{"panel.example.xn--", false},
+		{"panel.example.123", false},
+	} {
+		if got := hostnameRe.MatchString(tc.in); got != tc.want {
+			t.Errorf("hostnameRe(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}

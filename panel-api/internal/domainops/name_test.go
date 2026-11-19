@@ -107,6 +107,14 @@ func TestValidateDomainName(t *testing.T) {
 		{"single letter tld", "example.c", ErrDomainNameNotFQDN},
 		{"trailing dot", "example.com.", ErrDomainNameNotFQDN},
 		{"underscore", "ex_ample.com", ErrDomainNameNotFQDN},
+		// IDN TLDs travel in punycode (.рф = xn--p1ai, .ישראל = xn--4dbrk0ce).
+		// A letters-only TLD rule refused every domain under them.
+		{"idn tld", "example.xn--p1ai", nil},
+		{"idn label and tld", "xn--bcher-kva.xn--p1ai", nil},
+		{"idn tld with hyphens in label", "xn----7sbbhn.xn--4dbrk0ce", nil},
+		{"idn tld upper-case prefix", "example.XN--P1AI", nil},
+		{"bare ace prefix", "example.xn--", ErrDomainNameNotFQDN},
+		{"single-hyphen pseudo prefix", "example.xn-p1ai", ErrDomainNameNotFQDN},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -22,12 +22,13 @@ var (
 )
 
 var (
-	// nameFQDNRe is the RFC 1035 shape: at least two labels and a 2+ letter TLD,
+	// nameFQDNRe is the RFC 1035 shape: at least two labels and a 2+ letter TLD
+	// or an IDN TLD in its punycode form (xn--4dbrk0ce = .ישראל, xn--p1ai = .рф),
 	// letters/digits/hyphens only. It alone rejects HTML tags, path separators,
 	// consecutive dots, and whitespace; the explicit checks below run first only
 	// to give each reason its own sentinel (and message) instead of a blanket
 	// "not a valid FQDN".
-	nameFQDNRe    = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+	nameFQDNRe    = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,63}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
 	nameHTMLTagRe = regexp.MustCompile(`<[^>]*>`)
 )
 

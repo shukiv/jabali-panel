@@ -31,7 +31,7 @@ interface RenameDomainDialogProps {
 // A light client-side FQDN shape check to disable the button early; the server
 // runs the authoritative validateDomainName.
 const looksLikeFQDN = (s: string): boolean =>
-  /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/.test(s);
+  /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,63}|[xX][nN]--[a-zA-Z0-9-]{1,59})$/.test(s);
 
 export function RenameDomainDialog({ domain, open, onClose, onRenamed }: RenameDomainDialogProps) {
   const [newName, setNewName] = useState("");

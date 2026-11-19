@@ -1430,7 +1430,7 @@ func truncateError(msg string, maxLen int) string {
 }
 
 func isValidEmail(email string) bool {
-	const emailRegex = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+	const emailRegex = `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:[a-zA-Z]{2,}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`
 	re := regexp.MustCompile(emailRegex)
 	return re.MatchString(email)
 }
