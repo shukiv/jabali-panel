@@ -46,7 +46,7 @@ func writeVa(t *testing.T, parsed *ParsedTarball, domain, body string) {
 
 func runExtrasWithForwarders(t *testing.T, parsed *ParsedTarball, dom *catchallDomainRepo, fwdRepo *fwdForwarderRepo, preserve bool) *ExtrasResult {
 	t.Helper()
-	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
 	res, err := ImportExtras(
 		context.Background(),
 		dom,
@@ -157,6 +157,57 @@ func TestCpanelAliasFiles_OnlyRegularDomainFiles(t *testing.T) {
 	got := cpanelAliasFiles(parsed)
 	if len(got) != 1 || got["example.com"] == "" {
 		t.Fatalf("alias files = %v, want only example.com", got)
+	}
+}
+
+// otherOwnerDomainRepo: every domain belongs to another tenant.
+type otherOwnerDomainRepo struct{ catchallDomainRepo }
+
+func (r *otherOwnerDomainRepo) FindByName(_ context.Context, name string) (*models.Domain, error) {
+	return &models.Domain{ID: "dom-" + name, Name: name, UserID: "someone-else"}, nil
+}
+
+// The domain names and lines in va/ come from the source. A tampered file
+// naming another tenant's domain must not set its catch-all or add forwarders
+// on its mailboxes — that would hand the source that tenant's mail.
+func TestImportExtras_ValiasesRefuseAnotherTenantsDomain(t *testing.T) {
+	parsed := writeUserdata(t, map[string]string{"example.com": ""})
+	writeVa(t, parsed, "example.com", "sales: fwd@out.org\n*: box@out.org\n")
+
+	dom := &otherOwnerDomainRepo{}
+	fwdRepo := &fwdForwarderRepo{}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
+	res, err := ImportExtras(context.Background(), dom, &fwdMailboxRepo{mb: mb}, fwdRepo,
+		nil, nil, nil, &fwdConvergeAgent{}, parsed, "user-123", "someuser", true)
+	if err != nil {
+		t.Fatalf("ImportExtras: %v", err)
+	}
+	if len(dom.catchalls) != 0 || len(fwdRepo.rows) != 0 {
+		t.Fatalf("catch-alls=%v forwarders=%+v, want none on another tenant's domain", dom.catchalls, fwdRepo.rows)
+	}
+	if !hasSkip(res, "aliases_refused:example.com") {
+		t.Errorf("skipped = %v, want an aliases_refused line", res.Skipped)
+	}
+}
+
+// A forwarder line whose address resolves to a mailbox on some other domain
+// row is refused, even when the alias domain itself is the account's.
+func TestImportExtras_ValiasesForwarderMailboxMustBeOnTheDomain(t *testing.T) {
+	parsed := writeUserdata(t, map[string]string{"example.com": ""})
+	writeVa(t, parsed, "example.com", "sales: fwd@out.org\n")
+
+	fwdRepo := &fwdForwarderRepo{}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-of-someone-else"}
+	res, err := ImportExtras(context.Background(), &catchallDomainRepo{}, &fwdMailboxRepo{mb: mb}, fwdRepo,
+		nil, nil, nil, &fwdConvergeAgent{}, parsed, "user-123", "someuser", true)
+	if err != nil {
+		t.Fatalf("ImportExtras: %v", err)
+	}
+	if len(fwdRepo.rows) != 0 {
+		t.Fatalf("forwarders = %+v, want none", fwdRepo.rows)
+	}
+	if !hasSkip(res, "forwarder_refused:sales@example.com") {
+		t.Errorf("skipped = %v, want a forwarder_refused line", res.Skipped)
 	}
 }
 

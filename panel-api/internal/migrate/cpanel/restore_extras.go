@@ -179,16 +179,26 @@ func ImportExtras(
 	for _, domName := range aliasDomains {
 		aliasFile := aliasFiles[domName]
 		ct, fwds, sk := parseAliases(aliasFile)
+		// The domain names and their lines come from the source's files. Act
+		// only on a domain of the migrated account: a name that resolves to
+		// another tenant's domain must not get its catch-all set or forwarders
+		// added on its mailboxes (that would hand the source that tenant's mail).
+		dom, refusal := ownedMailDomain(ctx, domainsRepo, domName, targetUserID)
+		if refusal != "" {
+			if ct != "" || len(fwds) > 0 {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"aliases_refused:%s (not a domain of the migrated account; its catch-all and %d forwarder line(s) were not imported)",
+					domName, len(fwds)))
+			}
+			continue
+		}
 		if ct != "" {
 			addr, why := catchAllAddress(ct)
-			dom, err := domainsRepo.FindByName(ctx, domName)
 			if why != "" {
 				// Not an address Jabali can route unknown mail to (see
 				// catchAllAddress); the domain keeps no catch-all.
 				res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:%s:%s→%s", why, domName, ct))
-			} else if ct = addr; err != nil {
-				res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:domain_missing:%s", domName))
-			} else if !preserveMailRouting {
+			} else if ct = addr; !preserveMailRouting {
 				// JAB-46: don't auto-route unknown-address mail to an
 				// imported catch-all (attacker-controllable if the source
 				// was compromised). Quarantine — leave the catch-all unset;
@@ -234,6 +244,12 @@ func ImportExtras(
 			if mErr != nil || mb == nil {
 				res.ForwardersOrphaned++
 				res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_orphan:%s→%s (no local mailbox)", srcEmail, target))
+				continue
+			}
+			if mb.DomainID != dom.ID {
+				// The address resolved to a mailbox outside the migrated
+				// account's domain; never forward someone else's mail.
+				res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_refused:%s→%s (mailbox is not on the migrated account's domain)", srcEmail, target))
 				continue
 			}
 			fwd := &models.EmailForwarder{
