@@ -156,24 +156,9 @@ func recordImportedGrant(ctx context.Context, dbsRepo repository.DatabaseReposit
 	if grantsRepo == nil {
 		return "the grant records are not wired"
 	}
-	dbID, ok := dbIDs[dbName]
-	if !ok {
-		// A database an earlier run restored (resume): look up its row. Only
-		// a MariaDB one: a PostgreSQL database may have the same name.
-		dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
-		if err != nil {
-			return fmt.Sprintf("look up its database: %v", err)
-		}
-		for i := range dbs {
-			if _, have := dbIDs[dbs[i].Name]; !have && dbs[i].Engine == "mariadb" {
-				dbIDs[dbs[i].Name] = dbs[i].ID
-			}
-		}
-		dbID = dbIDs[dbName]
-		dbIDs[dbName] = dbID // "" remembers a miss
-	}
-	if dbID == "" {
-		return "its database has no row"
+	dbID, why := importedDBID(ctx, dbsRepo, dbIDs, ownerID, dbName)
+	if why != "" {
+		return why
 	}
 	canonical, level, err := dbops.CanonicalDBGrant(privs, "")
 	if err != nil {
@@ -192,6 +177,65 @@ func recordImportedGrant(ctx context.Context, dbsRepo repository.DatabaseReposit
 		return err.Error()
 	}
 	return ""
+}
+
+// preserveCompatUser marks user, a compat user recreated with the source
+// password hash that can open the database imported from sourceDB, so app
+// configs naming it keep their original credentials. res.Credentials is keyed
+// by the SOURCE DB name.
+func preserveCompatUser(res *DBImportResult, sourceDB, user string) {
+	cred, have := res.Credentials[sourceDB]
+	if !have {
+		return
+	}
+	if cred.PreservedUsers == nil {
+		cred.PreservedUsers = map[string]bool{}
+	}
+	cred.PreservedUsers[user] = true
+	res.Credentials[sourceDB] = cred
+}
+
+// importedDBID returns the row id of MariaDB database dbName, one this import
+// restored (dbIDs) or, on a resume, one an earlier run restored; or why there
+// is none.
+func importedDBID(ctx context.Context, dbsRepo repository.DatabaseRepository, dbIDs map[string]string,
+	ownerID, dbName string) (string, string) {
+	dbID, ok := dbIDs[dbName]
+	if !ok {
+		// A database an earlier run restored (resume): look up its row. Only
+		// a MariaDB one: a PostgreSQL database may have the same name.
+		dbs, _, err := dbsRepo.ListByUserID(ctx, ownerID, repository.ListOptions{Limit: 10000})
+		if err != nil {
+			return "", fmt.Sprintf("look up its database: %v", err)
+		}
+		for i := range dbs {
+			if _, have := dbIDs[dbs[i].Name]; !have && dbs[i].Engine == "mariadb" {
+				dbIDs[dbs[i].Name] = dbs[i].ID
+			}
+		}
+		dbID = dbIDs[dbName]
+		dbIDs[dbName] = dbID // "" remembers a miss
+	}
+	if dbID == "" {
+		return "", "its database has no row"
+	}
+	return dbID, ""
+}
+
+// holdsImportedGrant reports whether account dbUserID already has a recorded
+// grant on database dbName: the grant this import (or an earlier run) gave the
+// panel-managed user it made for that database.
+func holdsImportedGrant(ctx context.Context, dbsRepo repository.DatabaseRepository, grantsRepo repository.DatabaseUserGrantRepository,
+	dbIDs map[string]string, ownerID, dbName, dbUserID string) bool {
+	if grantsRepo == nil {
+		return false
+	}
+	dbID, why := importedDBID(ctx, dbsRepo, dbIDs, ownerID, dbName)
+	if why != "" {
+		return false
+	}
+	_, err := grantsRepo.FindByDBAndDBUser(ctx, dbID, dbUserID)
+	return err == nil
 }
 
 // accountRefusal is the report's reason for a database account name an
@@ -677,6 +721,18 @@ func ImportDatabases(
 				if gErr != nil {
 					res.Skipped = append(res.Skipped, fmt.Sprintf(
 						"compat_user %s: db_user.grant on %s: %v", u.Name, finalDB, gErr))
+					// The account may be the panel-managed user this import
+					// made for finalDB (same name as the source user). Its
+					// password is now the source hash, so the temp password
+					// the rewriter would write no longer opens it, but its
+					// own grant on finalDB stands: the app's source password
+					// still works there. Keep it rather than break the app.
+					if holdsImportedGrant(ctx, dbsRepo, dbGrantsRepo, finalDBIDs, targetUserID, finalDB, duRow.ID) {
+						preserveCompatUser(res, g.SourceDB, u.Name)
+						res.Skipped = append(res.Skipped, fmt.Sprintf(
+							"compat_user %s: keeps its grant on %s from this import; app configs keep the source password",
+							u.Name, finalDB))
+					}
 					continue
 				}
 				grantedDBs++
@@ -687,14 +743,7 @@ func ImportDatabases(
 				// The recreated user now has both the source password hash and a
 				// grant on this DB's namespaced destination — so an app config
 				// pointing at (this DB, this user) keeps its original credentials.
-				// res.Credentials is keyed by the SOURCE DB name (g.SourceDB).
-				if cred, have := res.Credentials[g.SourceDB]; have {
-					if cred.PreservedUsers == nil {
-						cred.PreservedUsers = map[string]bool{}
-					}
-					cred.PreservedUsers[u.Name] = true
-					res.Credentials[g.SourceDB] = cred
-				}
+				preserveCompatUser(res, g.SourceDB, u.Name)
 			}
 			compatCreated++
 			res.Skipped = append(res.Skipped, fmt.Sprintf(

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -72,7 +73,45 @@ func normalisePrivs(raw string) []string {
 		}
 		out = append(out, p)
 	}
+	if allDBLevelPrivs(out) {
+		return []string{"ALL"}
+	}
 	return out
+}
+
+// dbLevelPrivs is every privilege MySQL grants on one database (`db`.*).
+// cPanel writes ALL PRIVILEGES on a database out as this list, and a MySQL
+// SHOW GRANTS does too. The agent's db_user.grant takes ALL or a few of these
+// (dbops), so the spelled-out list was refused whole and the source user got
+// no grant at all.
+var dbLevelPrivs = []string{
+	"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "REFERENCES", "INDEX", "ALTER",
+	"CREATE TEMPORARY TABLES", "LOCK TABLES", "EXECUTE", "CREATE VIEW", "SHOW VIEW",
+	"CREATE ROUTINE", "ALTER ROUTINE", "EVENT", "TRIGGER",
+}
+
+// mariaDBOnlyDBLevelPrivs are database-level privileges MariaDB adds; a
+// MariaDB source lists them too when it spells out ALL PRIVILEGES.
+var mariaDBOnlyDBLevelPrivs = map[string]bool{"DELETE HISTORY": true, "SHOW CREATE ROUTINE": true}
+
+// allDBLevelPrivs reports whether privs is every database-level privilege
+// and nothing else: ALL PRIVILEGES on that database, spelled out. Sent as ALL
+// it is the grant the import gives the panel-managed user of the database.
+func allDBLevelPrivs(privs []string) bool {
+	seen := make(map[string]bool, len(privs))
+	for _, p := range privs {
+		up := strings.ToUpper(strings.Join(strings.Fields(p), " "))
+		if !slices.Contains(dbLevelPrivs, up) && !mariaDBOnlyDBLevelPrivs[up] {
+			return false
+		}
+		seen[up] = true
+	}
+	for _, p := range dbLevelPrivs {
+		if !seen[p] {
+			return false
+		}
+	}
+	return true
 }
 
 // ParseMySQLGrants reads a cpmove `cpmove-<user>/mysql.sql` grants
