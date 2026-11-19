@@ -54,7 +54,7 @@ func runFwdImport(t *testing.T, dom, aliasesBody string, mb *models.Mailbox) (*f
 }
 
 func TestImportExtras_MultiTargetForwarderSplits(t *testing.T) {
-	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
 	fwdRepo, ag := runFwdImport(t, "example.com", "sales: a@out.org, b@out.org\n", mb)
 
 	if len(fwdRepo.rows) != 2 {
@@ -76,7 +76,7 @@ func TestImportExtras_MultiTargetForwarderSplits(t *testing.T) {
 }
 
 func TestImportExtras_SelfTargetIsKeepCopy(t *testing.T) {
-	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
 	// cpanel "forward and keep a local copy": source forwards to itself + external.
 	fwdRepo, _ := runFwdImport(t, "example.com", "sales: sales@example.com, fwd@out.org\n", mb)
 
@@ -96,7 +96,7 @@ func TestImportExtras_SelfTargetIsKeepCopy(t *testing.T) {
 }
 
 func TestImportExtras_EximDirectiveTargetSkipped(t *testing.T) {
-	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
 	fwdRepo, _ := runFwdImport(t, "example.com", "sales: |/usr/bin/procmail, fwd@out.org\n", mb)
 
 	if len(fwdRepo.rows) != 1 {

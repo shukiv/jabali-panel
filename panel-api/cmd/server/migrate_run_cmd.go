@@ -1298,6 +1298,33 @@ func cpanelRestoreCallback(
 			warnings = append(warnings, "databases: skipped (databases disabled in plan)")
 		}
 
+		// cPanel/WHM SSH pull: pkgacct ran with --skiphomedir, which on cPanel
+		// excludes homedir/* — the Maildirs under ~/mail included. Nothing else
+		// copies ~/mail, so the import walked an empty tree and moved ZERO
+		// mailboxes while the job reported done. Same gap JAB-152 closed for
+		// Plesk and CyberPanel.
+		//
+		// The copy runs HERE, before ImportDomains: a domain's mail facet is
+		// decided from the ~/mail/<domain> directories (scanMailDomains), and on
+		// an SSH pull they only exist once this copy has run. Copied after the
+		// domains, every domain of a live pull was created mail-off and every
+		// mailbox came in send-only ("hosted elsewhere"), though the source
+		// received its mail. The password-hash files are still copied right
+		// before the mailbox import (below), so they sit on disk for that step
+		// only, not through the docroot rsync.
+		cpanelMailCrit := ""
+		if plan.Mailboxes {
+			root, lines, crit := cpanelPullMail(ctx, restoreAgent.Call, job, p.parsed.SourceUser, p.targetUsername)
+			warnings = append(warnings, lines...)
+			if crit != "" {
+				cpanelMailCrit = crit
+				p.criticals = append(p.criticals, crit)
+			}
+			if root != "" {
+				p.parsed.MailRoot = root
+			}
+		}
+
 		// JAB-56: gate all website content (home/docroot rsync + domain rows) on
 		// the websites plan area. Skipped => no home copy, no domain creation.
 		if plan.Websites {
@@ -1794,26 +1821,14 @@ func cpanelRestoreCallback(
 			}
 		}
 
-		// cPanel/WHM SSH pull: pkgacct ran with --skiphomedir, which on cPanel
-		// excludes homedir/* — the Maildirs under ~/mail included. The docroots
-		// came over by direct rsync above, but nothing copied ~/mail, so the
-		// import below walked an empty tree and moved ZERO mailboxes while the
-		// job reported done. Same gap JAB-152 closed for Plesk and CyberPanel.
+		// The cPanel/WHM SSH pull's ~/mail copy ran before the domains (above).
 		if plan.Mailboxes {
-			root, lines, crit := cpanelPullMail(ctx, restoreAgent.Call, job, p.parsed.SourceUser, p.targetUsername)
-			warnings = append(warnings, lines...)
-			if crit != "" {
-				p.criticals = append(p.criticals, crit)
-			}
-			if root != "" {
-				p.parsed.MailRoot = root
-			}
 			// The same pull leaves out <home>/etc/<domain>/shadow, so every
 			// mailbox got a new password even with --preserve-source-state.
 			// Copy just those files; the import reads them and they are
 			// removed as soon as it is over (dropMailShadow, deferred as a
 			// backstop).
-			if crit == "" {
+			if cpanelMailCrit == "" {
 				shadowDir, unreadable, shadowLines, notCopied := cpanelPullMailShadow(ctx, restoreAgent.Call, job, p.parsed.SourceUser, preserve.Credentials)
 				warnings = append(warnings, shadowLines...)
 				p.parsed.MailShadowUnreadable = unreadable

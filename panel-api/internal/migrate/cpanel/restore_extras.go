@@ -1,7 +1,9 @@
 // restore_extras.go — M35.8 P2/P5 "everything else" writers.
 //
 // Covered:
-//   * Catch-all addresses    (cpanel: <home>/etc/<dom>/aliases line "*: target")
+//   * Catch-all addresses    (cpanel: va/<dom> from /etc/valiases, else
+//                             <home>/etc/<dom>/aliases; line "*: target")
+//   * Forwarders             (same files; "local: target[, target]")
 //   * Subdomains             (cpanel: SUB_DOMAINS=<sub.dom>,<sub.dom>,... in cp/<user>)
 //
 // Recorded-as-warning (no agent endpoint yet — operator follow-up):
@@ -23,6 +25,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -157,7 +160,7 @@ func ImportExtras(
 		}
 	}
 
-	// ---- P2: catch-all from <homedir>/etc/<dom>/aliases ----
+	// ---- P2: catch-all + forwarders from va/<dom> (else <homedir>/etc/<dom>/aliases) ----
 	// Format: lines like `address: target` or `*: target` (where
 	// asterisk = the catch-all). We only consume the catch-all row;
 	// forwarder rows are recorded as warnings (M6.5 schema needs a
@@ -167,103 +170,129 @@ func ImportExtras(
 	// alone does nothing (GH #1795 follow-up). Collect the mailboxes whose
 	// forwarders were created enabled and converge them after the walk.
 	convergeFwds := map[string]string{}
-	if parsed.HomeDir != "" {
-		etcDir := filepath.Join(parsed.HomeDir, "etc")
-		if doms, derr := os.ReadDir(etcDir); derr == nil {
-			for _, d := range doms {
-				if !d.IsDir() || strings.HasPrefix(d.Name(), ".") {
-					continue
-				}
-				domName := d.Name()
-				aliasFile := filepath.Join(etcDir, domName, "aliases")
-				ct, fwds, sk := parseAliases(aliasFile)
-				if ct != "" {
-					dom, err := domainsRepo.FindByName(ctx, domName)
-					if err != nil {
-						res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:domain_missing:%s", domName))
-					} else if !preserveMailRouting {
-						// JAB-46: don't auto-route unknown-address mail to an
-						// imported catch-all (attacker-controllable if the source
-						// was compromised). Quarantine — leave the catch-all unset;
-						// the operator re-applies it in the Mail tab if trusted.
-						res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_quarantined:%s→%s", domName, ct))
-					} else if uErr := domainsRepo.UpdateCatchallTarget(ctx, dom.ID, &ct); uErr != nil {
-						res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:db_update:%s:%v", domName, uErr))
-					} else {
-						res.CatchallsSet++
-					}
-				}
-				// Forwarder rows — M6.5 EmailForwarder needs both
-				// MailboxID + DomainID. Look up by `<local>@<dom>` to
-				// find the source mailbox; skip the line when no
-				// matching panel mailbox exists (cpanel allows forwards
-				// without a local mailbox, jabali doesn't).
-				// A source whose target set includes its own address uses the
-				// cpanel "keep a local copy" idiom (forward out AND deliver
-				// locally). Map that to KeepCopy on the source's external rows;
-				// the self entry itself is not a forward destination.
-				keepCopyLocal := map[string]bool{}
-				for _, f := range fwds {
-					if strings.EqualFold(f.Target, f.Local+"@"+domName) {
-						keepCopyLocal[f.Local] = true
-					}
-				}
-				for _, f := range fwds {
-					if mailboxesRepo == nil || forwardersRepo == nil {
-						res.Skipped = append(res.Skipped, "forwarders_skip:repos_unwired")
-						break
-					}
-					local := f.Local
-					target := f.Target
-					if local == "" || target == "" {
-						continue
-					}
-					srcEmail := local + "@" + domName
-					if strings.EqualFold(target, srcEmail) {
-						// keep-copy marker, folded into keepCopyLocal above.
-						continue
-					}
-					mb, mErr := mailboxesRepo.FindByEmail(ctx, srcEmail)
-					if mErr != nil || mb == nil {
-						res.ForwardersOrphaned++
-						res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_orphan:%s→%s (no local mailbox)", srcEmail, target))
-						continue
-					}
-					fwd := &models.EmailForwarder{
-						ID:        ids.NewULID(),
-						MailboxID: &mb.ID,
-						DomainID:  mb.DomainID,
-						Type:      "external",
-						// local_part stays NULL for type='external' — the source is
-						// the mailbox (MailboxID), matching api.create and the model.
-						// Setting it non-NULL wrongly consumes the uq_alias_local
-						// (domain_id, local_part) slot, which the migration reserves
-						// for aliases: two external forwards off the same source local
-						// (or a later same-local alias) then collide and get dropped.
-						Target:    target,
-						KeepCopy:  keepCopyLocal[local],
-						Enabled:   preserveMailRouting, // JAB-46: inert unless opted in
-						ManagedBy: "m35",
-					}
-					if cErr := forwardersRepo.Create(ctx, fwd); cErr != nil {
-						res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_skip:create:%s→%s:%v", srcEmail, target, cErr))
-						continue
-					}
-					res.ForwardersCreated++
-					if fwd.Enabled {
-						// Enabled (preserveMailRouting). Needs a Stalwart Sieve push,
-						// keyed on the MAILBOX's own canonical address (what
-						// accountIDByEmail resolves), not the alias source line.
-						email := mb.EmailCached
-						if email == "" {
-							email = srcEmail
-						}
-						convergeFwds[mb.ID] = email
-					}
-				}
-				res.Skipped = append(res.Skipped, sk...)
+	aliasFiles := cpanelAliasFiles(parsed)
+	aliasDomains := make([]string, 0, len(aliasFiles))
+	for name := range aliasFiles {
+		aliasDomains = append(aliasDomains, name)
+	}
+	sort.Strings(aliasDomains)
+	for _, domName := range aliasDomains {
+		aliasFile := aliasFiles[domName]
+		ct, fwds, sk := parseAliases(aliasFile)
+		// The domain names and their lines come from the source's files. Act
+		// only on a domain of the migrated account: a name that resolves to
+		// another tenant's domain must not get its catch-all set or forwarders
+		// added on its mailboxes (that would hand the source that tenant's mail).
+		dom, refusal := ownedMailDomain(ctx, domainsRepo, domName, targetUserID)
+		if refusal != "" {
+			if ct != "" || len(fwds) > 0 {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"aliases_refused:%s (not a domain of the migrated account; its catch-all and %d forwarder line(s) were not imported)",
+					domName, len(fwds)))
+			}
+			continue
+		}
+		if ct != "" {
+			addr, why := catchAllAddress(ct)
+			if why != "" {
+				// Not an address Jabali can route unknown mail to (see
+				// catchAllAddress); the domain keeps no catch-all.
+				res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:%s:%s→%s", why, domName, ct))
+			} else if ct = addr; !preserveMailRouting {
+				// JAB-46: don't auto-route unknown-address mail to an
+				// imported catch-all (attacker-controllable if the source
+				// was compromised). Quarantine — leave the catch-all unset;
+				// the operator re-applies it in the Mail tab if trusted.
+				res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_quarantined:%s→%s", domName, ct))
+			} else if uErr := domainsRepo.UpdateCatchallTarget(ctx, dom.ID, &ct); uErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("catchall_skip:db_update:%s:%v", domName, uErr))
+			} else {
+				res.CatchallsSet++
 			}
 		}
+		// Forwarder rows — M6.5 EmailForwarder needs both
+		// MailboxID + DomainID. Look up by `<local>@<dom>` to
+		// find the source mailbox; skip the line when no
+		// matching panel mailbox exists (cpanel allows forwards
+		// without a local mailbox, jabali doesn't).
+		// A source whose target set includes its own address uses the
+		// cpanel "keep a local copy" idiom (forward out AND deliver
+		// locally). Map that to KeepCopy on the source's external rows;
+		// the self entry itself is not a forward destination.
+		keepCopyLocal := map[string]bool{}
+		for _, f := range fwds {
+			if strings.EqualFold(f.Target, f.Local+"@"+domName) {
+				keepCopyLocal[f.Local] = true
+			}
+		}
+		// cPanel's own valiases (va/<dom>): a forwarder on an address that
+		// has a mailbox delivers each message to that mailbox AND to the
+		// targets — no self-target needed. Checked on a WHM 11.138 server:
+		// every message to two forwarded addresses was logged both as a
+		// local dovecot delivery and a remote one. Without KeepCopy the
+		// mailbox would stop receiving once the account moved. Only va/ has
+		// that meaning; the homedir layout keeps the self-target rule above.
+		fromValiases := filepath.Base(filepath.Dir(aliasFile)) == "va"
+		for _, f := range fwds {
+			if mailboxesRepo == nil || forwardersRepo == nil {
+				res.Skipped = append(res.Skipped, "forwarders_skip:repos_unwired")
+				break
+			}
+			local := f.Local
+			target := f.Target
+			if local == "" || target == "" {
+				continue
+			}
+			srcEmail := local + "@" + domName
+			if strings.EqualFold(target, srcEmail) {
+				// keep-copy marker, folded into keepCopyLocal above.
+				continue
+			}
+			mb, mErr := mailboxesRepo.FindByEmail(ctx, srcEmail)
+			if mErr != nil || mb == nil {
+				res.ForwardersOrphaned++
+				res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_orphan:%s→%s (no local mailbox)", srcEmail, target))
+				continue
+			}
+			if mb.DomainID != dom.ID {
+				// The address resolved to a mailbox outside the migrated
+				// account's domain; never forward someone else's mail.
+				res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_refused:%s→%s (mailbox is not on the migrated account's domain)", srcEmail, target))
+				continue
+			}
+			fwd := &models.EmailForwarder{
+				ID:        ids.NewULID(),
+				MailboxID: &mb.ID,
+				DomainID:  mb.DomainID,
+				Type:      "external",
+				// local_part stays NULL for type='external' — the source is
+				// the mailbox (MailboxID), matching api.create and the model.
+				// Setting it non-NULL wrongly consumes the uq_alias_local
+				// (domain_id, local_part) slot, which the migration reserves
+				// for aliases: two external forwards off the same source local
+				// (or a later same-local alias) then collide and get dropped.
+				Target:    target,
+				KeepCopy:  keepCopyLocal[local] || fromValiases,
+				Enabled:   preserveMailRouting, // JAB-46: inert unless opted in
+				ManagedBy: "m35",
+			}
+			if cErr := forwardersRepo.Create(ctx, fwd); cErr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("forwarder_skip:create:%s→%s:%v", srcEmail, target, cErr))
+				continue
+			}
+			res.ForwardersCreated++
+			if fwd.Enabled {
+				// Enabled (preserveMailRouting). Needs a Stalwart Sieve push,
+				// keyed on the MAILBOX's own canonical address (what
+				// accountIDByEmail resolves), not the alias source line.
+				email := mb.EmailCached
+				if email == "" {
+					email = srcEmail
+				}
+				convergeFwds[mb.ID] = email
+			}
+		}
+		res.Skipped = append(res.Skipped, sk...)
 	}
 
 	// Push the imported enabled forwarders to Stalwart. Best-effort: the DB row
@@ -774,6 +803,89 @@ func parseAliases(path string) (string, []aliasForward, []string) {
 		warnings = append(warnings, fmt.Sprintf("aliases_scan_err:%s:%v", path, err))
 	}
 	return catchAll, forwards, warnings
+}
+
+// cpanelAliasFiles maps each source domain to the file holding its forwarders
+// and catch-all. cPanel keeps them in /etc/valiases/<domain>, which pkgacct ships
+// as va/<domain>; the <homedir>/etc/<domain>/aliases layout is read only for a
+// domain the va/ tree does not cover. Before va/ was read, none of an account's
+// forwarders or catch-alls were imported from a current cPanel: its homedir has
+// no such file, and the --skiphomedir SSH pull ships no homedir at all.
+//
+// Only regular files with a domain-shaped name are taken from va/, so a
+// tampered tarball cannot point the reader elsewhere through a symlink.
+func cpanelAliasFiles(parsed *ParsedTarball) map[string]string {
+	out := map[string]string{}
+	if parsed.ExtractDir != "" {
+		for _, root := range []string{
+			filepath.Join(parsed.ExtractDir, "cpmove-"+parsed.SourceUser, "va"),
+			filepath.Join(parsed.ExtractDir, "va"),
+		} {
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				name := e.Name()
+				if !e.Type().IsRegular() || !aliasDomainRE.MatchString(name) {
+					continue
+				}
+				if _, ok := out[name]; !ok {
+					out[name] = filepath.Join(root, name)
+				}
+			}
+		}
+	}
+	if parsed.HomeDir != "" {
+		etcDir := filepath.Join(parsed.HomeDir, "etc")
+		if doms, err := os.ReadDir(etcDir); err == nil {
+			for _, d := range doms {
+				name := d.Name()
+				if !d.IsDir() || strings.HasPrefix(name, ".") {
+					continue
+				}
+				if _, ok := out[name]; !ok {
+					out[name] = filepath.Join(etcDir, name, "aliases")
+				}
+			}
+		}
+	}
+	return out
+}
+
+// aliasDomainRE is the shape of a va/<domain> file name: lower-case DNS labels
+// (punycode included), at least one dot, no leading dot.
+var aliasDomainRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+$`)
+
+// catchAllAddress checks a source catch-all value and returns it when it is an
+// address Jabali can route a domain's unknown mail to. cPanel's other values are
+// not one, and are returned with the reason:
+//
+//	:fail: <text>    reject unknown addresses — Jabali's behavior without a catch-all
+//	:blackhole:      accept and discard
+//	|<command>       pipe to a program
+//	<account user>   the cPanel account's own default inbox, which has no address
+//
+// Before the value was checked, any of these was written verbatim as the
+// domain's catch-all target.
+func catchAllAddress(v string) (addr, skip string) {
+	v = strings.TrimSpace(v)
+	switch {
+	case strings.HasPrefix(v, ":fail:"):
+		return "", "source_rejects_unknown"
+	case strings.HasPrefix(v, ":blackhole:"):
+		return "", "source_discards_unknown"
+	case strings.HasPrefix(v, "|"):
+		return "", "pipe"
+	case !strings.Contains(v, "@"):
+		return "", "account_inbox"
+	}
+	at := strings.LastIndexByte(v, '@')
+	if strings.Count(v, "@") != 1 || at < 1 || !strings.Contains(v[at+1:], ".") ||
+		strings.ContainsAny(v, " \t,;:<>\"'|/\\") {
+		return "", "invalid"
+	}
+	return v, ""
 }
 
 // userdataRoots returns the candidate locations of the source's userdata dir

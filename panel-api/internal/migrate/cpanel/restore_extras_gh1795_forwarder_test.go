@@ -82,7 +82,7 @@ func TestImportExtras_ConvergesImportedForwarder(t *testing.T) {
 	}
 	parsed.HomeDir = home
 
-	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales"}
+	mb := &models.Mailbox{ID: "mb-sales", EmailCached: "sales@example.com", LocalPart: "sales", DomainID: "dom-example.com"}
 	ag := &fwdConvergeAgent{}
 	fwdRepo := &fwdForwarderRepo{}
 

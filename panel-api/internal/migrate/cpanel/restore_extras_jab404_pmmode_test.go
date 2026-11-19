@@ -162,7 +162,7 @@ type bindDomainRepo struct {
 }
 
 func (r *bindDomainRepo) FindByName(_ context.Context, name string) (*models.Domain, error) {
-	return &models.Domain{ID: "dom-" + name, Name: name}, nil
+	return &models.Domain{ID: "dom-" + name, Name: name, UserID: "user-123"}, nil
 }
 func (r *bindDomainRepo) SetPHPPoolID(_ context.Context, id string, poolID *string) error {
 	if r.bound == nil {
