@@ -1,0 +1,169 @@
+services:
+  # php-fpm on :9000 plus, under supervisord, two queue workers and the
+  # scheduler. The image keeps its front-end in /tmp/public and its
+  # entrypoint copies it into public/ on every container create, so the
+  # public bind mount is refreshed by an Update. On the first start the
+  # entrypoint seeds the database and creates the IN_USER_EMAIL account;
+  # it exits (and the container restarts) if either IN_* value is empty.
+  invoiceninja:
+    image: {{ .ImageChannel }}
+    container_name: jabali-app-{{ .Slug }}
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      APP_NAME: "Invoice Ninja"
+      APP_ENV: "production"
+      APP_DEBUG: "false"
+      APP_URL: "https://{{ .Domain }}"
+      APP_KEY: {{ q (index .Env "APP_KEY") }}
+      # TLS ends at the panel's reverse proxy; the app trusts its
+      # X-Forwarded-* headers (the port is loopback-only).
+      REQUIRE_HTTPS: "false"
+      TRUSTED_PROXIES: "*"
+      IS_DOCKER: "true"
+      PHANTOMJS_PDF_GENERATION: "false"
+      PDF_GENERATOR: "snappdf"
+      FILESYSTEM_DISK: "debian_docker"
+      SCOUT_DRIVER: "null"
+      DB_CONNECTION: "mysql"
+      DB_HOST: "mysql"
+      DB_PORT: "3306"
+      DB_DATABASE: "ninja"
+      DB_USERNAME: "ninja"
+      DB_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+      CACHE_DRIVER: "redis"
+      QUEUE_CONNECTION: "redis"
+      SESSION_DRIVER: "redis"
+      REDIS_HOST: "redis"
+      REDIS_PORT: "6379"
+      IN_USER_EMAIL: {{ q (index .Env "IN_USER_EMAIL") }}
+      IN_PASSWORD: {{ q (index .Env "IN_PASSWORD") }}
+{{- if (index .Env "SMTP_HOST") }}
+      # Operator-supplied SMTP (GH #322), values q-escaped.
+      MAIL_MAILER: "smtp"
+      MAIL_HOST: {{ q (index .Env "SMTP_HOST") }}
+      MAIL_PORT: {{ q (or (index .Env "SMTP_PORT") "587") }}
+      MAIL_USERNAME: {{ q (index .Env "SMTP_USER") }}
+      MAIL_PASSWORD: {{ q (index .Env "SMTP_PASSWORD") }}
+      MAIL_ENCRYPTION: "{{ if eq (index .Env "SMTP_PORT") "465" }}ssl{{ else }}tls{{ end }}"
+      MAIL_FROM_ADDRESS: {{ q (or (index .Env "SMTP_FROM") (printf "invoices@%s" .Domain)) }}
+      MAIL_FROM_NAME: {{ q (or (index .Env "SMTP_FROM_NAME") "Invoice Ninja") }}
+{{- else }}
+      MAIL_MAILER: "log"
+{{- end }}
+    volumes:
+      - {{ .DataRoot }}/public:/var/www/html/public
+      - {{ .DataRoot }}/storage:/var/www/html/storage
+    deploy:
+      resources:
+        limits:
+          cpus: "{{ .CPULimit }}"
+          memory: {{ .MemoryLimit }}
+    # The image's own healthcheck (php-fpm answers /health) applies.
+
+  # Serves public/ and hands /index.php to php-fpm, following upstream's
+  # nginx config (invoiceninja/dockerfiles). The config is written by the
+  # entrypoint because a tenant install may not mount configs. Only
+  # /index.php reaches php-fpm: any other .php path, such as a file under
+  # public/storage, gets a 404. `$$` is a literal `$` for compose.
+  nginx:
+    image: nginx:1.30-alpine@sha256:3bc3836dc0be3b811f238210360bf8e7ca8a2d0effdae46160bf1f3578710051
+    container_name: jabali-app-{{ .Slug }}-nginx
+    restart: unless-stopped
+    depends_on:
+      invoiceninja:
+        condition: service_started
+    entrypoint:
+      - sh
+      - -c
+      - |
+        cat > /etc/nginx/conf.d/default.conf <<'CONF'
+        client_max_body_size 10M;
+        client_body_buffer_size 10M;
+        server_tokens off;
+        fastcgi_buffers 32 16K;
+        gzip on;
+        gzip_comp_level 2;
+        gzip_min_length 1M;
+        gzip_proxied any;
+        gzip_types *;
+        types {
+            text/javascript mjs;
+        }
+        server {
+            listen 8080 default_server;
+            server_name _;
+            root /var/www/html/public;
+            index index.php;
+            charset utf-8;
+            add_header X-Frame-Options "SAMEORIGIN";
+            add_header X-Content-Type-Options "nosniff";
+            location / {
+                try_files $$uri $$uri/ /index.php?$$query_string;
+            }
+            # "/" always goes to php-fpm, which starts only once the
+            # entrypoint has migrated: until then it is a 502, so the
+            # panel's health probe waits for the app, not an empty public/.
+            location = / {
+                rewrite ^ /index.php last;
+            }
+            location = /favicon.ico { access_log off; log_not_found off; }
+            location = /robots.txt { access_log off; log_not_found off; }
+            error_page 404 /index.php;
+            location = /index.php {
+                fastcgi_pass invoiceninja:9000;
+                fastcgi_param SCRIPT_FILENAME $$realpath_root$$fastcgi_script_name;
+                include fastcgi_params;
+            }
+            location ~ \.php$$ {
+                return 404;
+            }
+            location ~ /\.(?!well-known).* {
+                deny all;
+            }
+        }
+        CONF
+        exec nginx -g 'daemon off;'
+    volumes:
+      - {{ .DataRoot }}/public:/var/www/html/public:ro
+      - {{ .DataRoot }}/storage:/var/www/html/storage:ro
+    ports:
+{{- with index .Ports "http" }}
+      - "{{ .BindInterface }}:{{ .HostPort }}:{{ .ContainerPort }}/{{ .Protocol }}"
+{{- end }}
+
+  mysql:
+    image: mysql:8.4@sha256:a81d043930e51745522bd5c430961cf8286f0a23f0a9a2a6e0108f7ea71b0902
+    container_name: jabali-app-{{ .Slug }}-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: "ninja"
+      MYSQL_USER: "ninja"
+      MYSQL_PASSWORD: {{ q (index .Env "DB_PASSWORD") }}
+      MYSQL_ROOT_PASSWORD: {{ q (index .Env "MYSQL_ROOT_PASSWORD") }}
+    volumes:
+      - {{ .DataRoot }}/db:/var/lib/mysql
+    # Over TCP, so the entrypoint's socket-only bootstrap server never
+    # counts as healthy.
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$${MYSQL_PASSWORD}\" mysqladmin ping -h 127.0.0.1 -u ninja --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  redis:
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    container_name: jabali-app-{{ .Slug }}-redis
+    restart: unless-stopped
+    volumes:
+      - {{ .DataRoot }}/redis:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

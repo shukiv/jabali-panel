@@ -1,0 +1,88 @@
+slug: invoiceninja
+name: Invoice Ninja
+tags: ["Accounting", "Billing"]
+version: "5.13.53"
+track: "5"
+description: |
+  Invoicing, quotes, recurring billing, expenses, time tracking and a
+  client portal with online payments, for freelancers and small
+  businesses. Four services: the Laravel app (with its queue workers,
+  scheduler and a bundled Chrome for PDFs), nginx, MySQL and Redis.
+  Source-available under the Elastic License 2.0, which does not allow
+  offering it to third parties as a hosted or managed service: whether a
+  given use fits the license is the server operator's responsibility.
+icon: icon.svg
+upstream: https://github.com/invoiceninja/invoiceninja
+documentation: https://invoiceninja.github.io/en/self-host-installation/
+
+image_channel: invoiceninja/invoiceninja-debian:5.13.53@sha256:217a0f2d45403b9562f90af51762cdd22bc6d9728c9a8751571ff6bfefc51f64
+update_mode: manual
+# Builds its links and PDFs from the install's domain.
+requires_domain: true
+tenant_installable: true
+# Added back after cap_drop ALL, on top of the CHOWN/SETUID/SETGID
+# baseline. What each one does, seen by leaving it out:
+# - DAC_OVERRIDE: on every container create the root entrypoint empties
+#   www-data's /tmp/public (image) and public/ (after the first start);
+#   without it: "Permission denied".
+# - FOWNER: it then resets the modes of files it has just given to
+#   www-data; without it the app still starts, but every start logs
+#   ~2,100 "Operation not permitted" lines and no mode is reset.
+# - KILL: root supervisord and the php-fpm master signal their www-data
+#   workers; without it a stop waits for docker's SIGKILL (exit 137).
+tenant_caps: ["DAC_OVERRIDE", "FOWNER", "KILL"]
+
+resources:
+  cpu: "1.5"
+  memory: "1536m"
+  # Per service; the app container's busiest moment is a PDF render
+  # (Chrome threads) while php-fpm and both queue workers run.
+  pids: 512
+
+volumes:
+  - name: public
+    container_path: /var/www/html/public
+  - name: storage
+    container_path: /var/www/html/storage
+  - name: db
+    container_path: /var/lib/mysql
+  - name: redis
+    container_path: /data
+
+ports:
+  - name: http
+    container_port: 8080
+    protocol: tcp
+    default_enabled: true
+    default_bind: loopback
+    default_reverse_proxy: true
+    health_path: /
+
+env:
+  # The first admin account, created on the first start only.
+  - name: IN_USER_EMAIL
+    value: "admin@example.com"
+  - name: IN_PASSWORD
+    secret: true
+    generate: password32
+  - name: APP_KEY
+    secret: true
+    generate: laravel_key
+  - name: DB_PASSWORD
+    secret: true
+    generate: password32
+  - name: MYSQL_ROOT_PASSWORD
+    secret: true
+    generate: password32
+
+# Operator-supplied SMTP (GH #322). Without it, mail is written to the
+# app's log instead of being sent.
+smtp: true
+
+post_install_note: |
+  Open https://{{domain}} and sign in with IN_USER_EMAIL (default
+  admin@example.com) and the generated IN_PASSWORD (see this app's env).
+  The first start migrates and seeds the database, which takes a few
+  minutes. Change the email and password under Settings > User Details.
+  To email invoices, fill in the SMTP fields; until then mail goes to
+  the app's log.
