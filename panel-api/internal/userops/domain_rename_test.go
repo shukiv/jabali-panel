@@ -21,6 +21,16 @@ type drDomains struct {
 	rec       *drRecorder
 	byName    map[string]*models.Domain // pre-existing names (FindByName)
 	renameErr error
+	// owned is the owner's other domains (ListByUserID); listErr fails it.
+	owned   []models.Domain
+	listErr error
+}
+
+func (d *drDomains) ListByUserID(_ context.Context, _ string, _ repository.ListOptions) ([]models.Domain, int64, error) {
+	if d.listErr != nil {
+		return nil, 0, d.listErr
+	}
+	return d.owned, int64(len(d.owned)), nil
 }
 
 func (d *drDomains) FindByName(_ context.Context, name string) (*models.Domain, error) {
@@ -674,24 +684,69 @@ func TestRenameDomain_DefaultLayoutNoPrune(t *testing.T) {
 	}
 }
 
-// Nested/importer docroot layout: the docroot leaf moves out of the old-name
-// wrapper dir, so the reown call must ask the agent to prune that empty wrapper.
-func TestRenameDomain_NestedLayoutPrunesOldDir(t *testing.T) {
+// GH #2541: with the docroot inside the domain's own folder
+// (/home/<u>/domains/<name>), the whole folder is renamed, so what sits next
+// to the docroot goes with it and nothing is left behind to prune.
+func TestRenameDomain_DomainFolderMovesWhole(t *testing.T) {
+	for _, tc := range []struct{ docRoot, newDocRoot string }{
+		{"/home/u1/domains/old.com/public_html", "/home/u1/domains/new.com/public_html"},
+		{"/home/u1/domains/old.com/public_html/public", "/home/u1/domains/new.com/public_html/public"},
+	} {
+		rec := &drRecorder{}
+		dom := drWebDomain()
+		dom.DocRoot = tc.docRoot
+		d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+		if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
+			t.Fatalf("%s: unexpected error: %v", tc.docRoot, err)
+		}
+		if ag.reownLast["old_doc_root"] != "/home/u1/domains/old.com" || ag.reownLast["new_doc_root"] != "/home/u1/domains/new.com" {
+			t.Errorf("%s: moved %v -> %v, want the domain folder", tc.docRoot, ag.reownLast["old_doc_root"], ag.reownLast["new_doc_root"])
+		}
+		if got, ok := ag.reownLast["prune_empty_dir"]; ok {
+			t.Errorf("%s: prune_empty_dir = %v, want none (nothing is left behind)", tc.docRoot, got)
+		}
+		if dom.DocRoot != tc.newDocRoot {
+			t.Errorf("%s: domain docroot = %q, want %q", tc.docRoot, dom.DocRoot, tc.newDocRoot)
+		}
+	}
+}
+
+// A wrapper folder named after the domain somewhere else than ~/domains is
+// not the domain's folder: the docroot moves out of it and the agent is asked
+// to prune it once empty, as before.
+func TestRenameDomain_OtherWrapperStillPrunes(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
-	dom.DocRoot = "/home/u1/domains/old.com/public_html"
+	dom.DocRoot = "/home/u1/sites/old.com/www"
 	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
 	if _, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if ag.reownLast["new_doc_root"] != "/home/u1/domains/new.com/public_html" {
-		t.Fatalf("new_doc_root = %v", ag.reownLast["new_doc_root"])
+	if ag.reownLast["old_doc_root"] != "/home/u1/sites/old.com/www" || ag.reownLast["new_doc_root"] != "/home/u1/sites/new.com/www" {
+		t.Errorf("moved %v -> %v", ag.reownLast["old_doc_root"], ag.reownLast["new_doc_root"])
 	}
-	if ag.reownLast["prune_empty_dir"] != "/home/u1/domains/old.com" {
-		t.Fatalf("prune_empty_dir = %v, want /home/u1/domains/old.com", ag.reownLast["prune_empty_dir"])
+	if ag.reownLast["prune_empty_dir"] != "/home/u1/sites/old.com" {
+		t.Errorf("prune_empty_dir = %v, want /home/u1/sites/old.com", ag.reownLast["prune_empty_dir"])
 	}
-	if dom.DocRoot != "/home/u1/domains/new.com/public_html" {
-		t.Fatalf("domain docroot not updated: %q", dom.DocRoot)
+}
+
+// GH #2541: another of the owner's domains served from inside the folder that
+// moves refuses the rename before anything moves.
+func TestRenameDomain_SiteInsideTheFolderRefuses(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	dom.DocRoot = "/home/u1/domains/old.com/public_html"
+	d, ag, _ := drNewDeps(rec, dom, drHappyOwner())
+	d.Domains.(*drDomains).owned = []models.Domain{
+		{ID: dom.ID, Name: "old.com", DocRoot: dom.DocRoot},
+		{ID: "dom-2", Name: "blog.example", DocRoot: "/home/u1/domains/old.com/public_html/blog"},
+	}
+	_, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if got := drCodeOf(t, err); got != "nested_site" {
+		t.Fatalf("code = %q, want nested_site", got)
+	}
+	if ag.reownLast != nil {
+		t.Errorf("files moved on a refused rename: %v", ag.reownLast)
 	}
 }
 

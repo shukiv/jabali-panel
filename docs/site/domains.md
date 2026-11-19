@@ -55,7 +55,10 @@ tree at the same time.
 the vhost, DNS, and mail follow the new owner on the next reconcile. The
 domain's Python apps, Git repository settings and Composer project folder
 setting belong to the old owner and are deleted; the new owner sets them up
-again. The site's files are kept and move with the domain. A Docker app of the
+again. The site's files are kept and move with the domain: the whole
+`~/domains/<domain>` folder, not just the document root, goes to the new
+owner and is re-owned to them. It is refused while one of the old owner's
+FTP/SFTP accounts has its home inside that folder. A Docker app of the
 old owner is unlinked from the domain and keeps running with its data; a
 server-level Docker app stays linked.
 

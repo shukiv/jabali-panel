@@ -221,6 +221,27 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 		return nil, derr
 	}
 
+	// What moves (GH #2541): the domain's whole folder when the docroot is in
+	// it (see domainFolder), so what sits next to the docroot (a Laravel app's
+	// code, logs, a Git deploy's releases) is renamed with it and nothing is
+	// left behind to prune. Else the docroot alone, as before.
+	moveFrom, moveTo := oldDocRoot, newDocRoot
+	if owner.Username != nil {
+		if dir := domainFolder(*owner.Username, oldName, oldDocRoot); dir != "" && dir != oldDocRoot {
+			moveFrom, moveTo = dir, "/home/"+*owner.Username+"/domains/"+newName
+			pruneOldDir = ""
+		}
+	}
+	other, lerr := siteInsideTree(ctx, d.Domains, domain.UserID, domain.ID, moveFrom)
+	if lerr != nil {
+		return nil, renameErr("lookup_failed", "could not list the owner's domains before renaming %q: %v", oldName, lerr)
+	}
+	if other != nil {
+		return nil, renameErr("nested_site",
+			"the files of %q (%s) are inside %q, which moves with %q — move %q's document root out first",
+			other.Name, other.DocRoot, moveFrom, oldName, other.Name)
+	}
+
 	// Refuse when an FTP/SFTP subaccount is homed at (or under) the tree this
 	// rename is about to move. The reown relocates the docroot directory, but
 	// ftp_accounts.home_path is STORED (not derived from the domain), and the
@@ -235,7 +256,7 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	// (…/olddomain-other) is never falsely caught. Runs before any mutation, so a
 	// refusal leaves the domain fully intact.
 	if d.FtpAccounts != nil {
-		gateRoot := oldDocRoot
+		gateRoot := moveFrom
 		if pruneOldDir != "" {
 			gateRoot = pruneOldDir
 		}
@@ -301,8 +322,8 @@ func RenameDomain(ctx context.Context, d Deps, rec RenameReconciler, domain *mod
 	//    later mid-failure finishes cleanly. Nothing is persisted yet: a failure
 	//    here leaves the domain fully intact.
 	reownParams := map[string]any{
-		"old_doc_root": oldDocRoot,
-		"new_doc_root": newDocRoot,
+		"old_doc_root": moveFrom,
+		"new_doc_root": moveTo,
 		"new_uid":      int(*owner.LinuxUID),
 	}
 	// Nested docroot layout (/home/<u>/domains/<name>/public_html): the leaf

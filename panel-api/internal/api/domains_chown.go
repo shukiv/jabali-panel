@@ -92,7 +92,10 @@ func (h *domainHandler) chown(c *gin.Context) {
 		Users:   h.cfg.Users,
 		Domains: h.cfg.Domains,
 		Agent:   h.cfg.Agent,
-		Log:     slog.Default(),
+		// FtpAccounts backs the refusal when an FTP/SFTP subaccount is homed
+		// in the files that move (GH #2541).
+		FtpAccounts: h.cfg.FtpAccounts,
+		Log:         slog.Default(),
 	}
 	cd := userops.ChownDeps{AppInstalls: h.cfg.AppInstalls, PythonApps: h.cfg.PythonApps}
 	// Unlike rename (which leaves the reconciler nil and waits for the periodic
