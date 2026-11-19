@@ -465,7 +465,7 @@ func cliValidUsername(s string) bool { return cliUsernameRe.MatchString(s) }
 // Stricter than RFC 5322 but covers ≥99% of real addresses without a
 // 6KB regex; downstream Kratos applies its own validation if this passes.
 var cliEmailRe = regexp.MustCompile(
-	`^[A-Za-z0-9._%+\-]+@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$`)
+	`^[A-Za-z0-9._%+\-]+@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,63}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
 
 func cliValidEmail(s string) bool {
 	return len(s) <= 320 && cliEmailRe.MatchString(s)

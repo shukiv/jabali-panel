@@ -44,7 +44,7 @@ type sslIssueResponse struct {
 var sslDomainRegex = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]{1,253}$`)
 
 // emailRegex for basic email validation.
-var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:[a-zA-Z]{2,}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
 
 func sslIssueHandler(ctx context.Context, params json.RawMessage) (any, error) {
 	var p sslIssueParams

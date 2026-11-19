@@ -55,7 +55,7 @@ export const safeText: Rule = noXSS;
 
 /** Domain name (RFC 1123 host). */
 export const domain: Rule = {
-  pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/,
+  pattern: /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,63}|[xX][nN]--[a-zA-Z0-9-]{1,59})$/,
   message: "Enter a valid domain name (e.g. example.com)",
 };
 

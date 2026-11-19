@@ -35,7 +35,8 @@ type configField struct {
 // manually; the installer runs before any panel is up so it can't query the API.
 var availablePHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"}
 
-var hostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$`)
+// hostnameRe takes a letters-only TLD or an IDN TLD in punycode (xn--p1ai = .рф).
+var hostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 // newConfigFields builds the ordered config inputs. The panel hostname is

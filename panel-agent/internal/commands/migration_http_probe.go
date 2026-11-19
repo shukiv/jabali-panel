@@ -44,7 +44,7 @@ type migrationHTTPProbeResponse struct {
 }
 
 // probeDomainRe bounds what reaches curl's --resolve / URL args.
-var probeDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}\.)+[a-z]{2,63}$`)
+var probeDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$`)
 
 // probeTargetIP is the IP curl --resolve pins the migrated domain to so the
 // request hits THIS box's nginx (the domain's real DNS may still point at
