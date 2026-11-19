@@ -2609,11 +2609,6 @@ var pleskSystemExcludes = []string{
 	"/bin", "/dev", "/etc", "/lib", "/lib64", "/sbin", "/usr", "/var", "/tmp",
 }
 
-// pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
-// (GH #429 follow-up): every already-rsynced docroot, expressed RELATIVE to
-// the vhost root, plus the Plesk system dirs. A docroot outside the vhost
-// root (shouldn't happen post-allowlist) is skipped rather than emitting a
-// traversal pattern the agent would reject.
 // nestedDocrootExcludes returns, for each source docroot in srcPaths, the
 // rsync excludes of the other docroots nested inside it, anchored to its
 // transfer root ("/<rel>/"). cPanel puts an addon domain's docroot inside the
@@ -2643,6 +2638,11 @@ func nestedDocrootExcludes(srcPaths []string) [][]string {
 	return out
 }
 
+// pleskExtraExcludes builds the --exclude list for the vhost-extra rsync
+// (GH #429 follow-up): every already-rsynced docroot, expressed RELATIVE to
+// the vhost root, plus the Plesk system dirs. A docroot outside the vhost
+// root (shouldn't happen post-allowlist) is skipped rather than emitting a
+// traversal pattern the agent would reject.
 func pleskExtraExcludes(vhostRoot string, docroots []string) []string {
 	out := append([]string{}, pleskSystemExcludes...)
 	for _, dr := range docroots {
