@@ -21,12 +21,15 @@ update_mode: manual
 requires_domain: true
 tenant_installable: true
 # Added back after cap_drop ALL, on top of the CHOWN/SETUID/SETGID
-# baseline (each one tested by leaving it out):
+# baseline. What each one does, seen by leaving it out:
 # - DAC_OVERRIDE: on every container create the root entrypoint empties
 #   www-data's /tmp/public (image) and public/ (after the first start);
-# - FOWNER: it then chmods files it has just given to www-data;
+#   without it: "Permission denied".
+# - FOWNER: it then resets the modes of files it has just given to
+#   www-data; without it the app still starts, but every start logs
+#   ~2,100 "Operation not permitted" lines and no mode is reset.
 # - KILL: root supervisord and the php-fpm master signal their www-data
-#   workers; without it a stop hangs until docker's SIGKILL.
+#   workers; without it a stop waits for docker's SIGKILL (exit 137).
 tenant_caps: ["DAC_OVERRIDE", "FOWNER", "KILL"]
 
 resources:
