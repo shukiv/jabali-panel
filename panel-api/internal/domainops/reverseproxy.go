@@ -191,3 +191,47 @@ func PersistDomain(ctx context.Context, domains DomainCreator, ports repository.
 	}
 	return &kindError{kind: ErrPersist, cause: err}
 }
+
+// ErrNotReverseProxy means the domain serves a docroot, so it has no
+// reverse-proxy port to change.
+var ErrNotReverseProxy = errors.New("domainops: not a reverse-proxy domain")
+
+// ReverseProxyPortSetter is the slice of the domain repository that
+// ChangeReverseProxyPort needs.
+type ReverseProxyPortSetter interface {
+	SetReverseProxyPort(ctx context.Context, id string, port int) error
+}
+
+// ChangeReverseProxyPort moves a reverse-proxy domain to another loopback port
+// (GH #2544). The new port passes the same gates as one chosen at create (GH
+// #1401): the static policy, then the system-uid probe. The pool reservation
+// and the domain row change together (SetReverseProxyPort). On success
+// dom.ReverseProxyPort holds the new port; the caller re-renders the vhost.
+// The current port is a no-op. Errors are the create path's sentinels, plus
+// ErrNotReverseProxy.
+func ChangeReverseProxyPort(ctx context.Context, domains ReverseProxyPortSetter, ag agent.AgentInterface, dom *models.Domain, port int) error {
+	if dom == nil || dom.ReverseProxyPort == 0 {
+		return ErrNotReverseProxy
+	}
+	if port == int(dom.ReverseProxyPort) {
+		return nil
+	}
+	if err := repository.ValidateReverseProxyPort(port); err != nil {
+		return &InvalidPortError{Reason: err}
+	}
+	if boundBySystemUID(ctx, ag, port) {
+		return ErrReverseProxyPortSystemBound
+	}
+	err := domains.SetReverseProxyPort(ctx, dom.ID, port)
+	switch {
+	case err == nil:
+		dom.ReverseProxyPort = uint32(port)
+		return nil
+	case errors.Is(err, repository.ErrPortInUse):
+		return &kindError{kind: ErrReverseProxyPortInUse, cause: err}
+	case errors.Is(err, repository.ErrNotReverseProxy):
+		return ErrNotReverseProxy
+	default:
+		return err
+	}
+}

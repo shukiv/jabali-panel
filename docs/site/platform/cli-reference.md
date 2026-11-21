@@ -2474,6 +2474,14 @@ Show a domain's bound PHP version
 jabali domain php-version show <domain-name-or-id>
 ```
 
+#### `jabali domain proxy-port`
+
+Change the local port a reverse-proxy domain forwards to
+
+```
+jabali domain proxy-port <domain-name|domain-id> <port>
+```
+
 #### `jabali domain prune-orphans`
 
 List sites in nginx sites-enabled that have no panel DB row (and optionally delete them)

@@ -1391,6 +1391,7 @@ func (*mockDomainRepo) DetachDockerApp(context.Context, string, bool) error {
 func (r *mockDomainRepo) RewriteDocRootPrefix(context.Context, string, string, string) (int64, error) {
 	return 0, nil
 }
+func (*mockDomainRepo) SetReverseProxyPort(context.Context, string, int) error { return nil }
 func (r *mockDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
 
 // ListByZoneIDs added for the JAB-374 batch interface method.

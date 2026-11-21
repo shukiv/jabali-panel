@@ -17,6 +17,7 @@ import { getSSLTag } from "../../../../utils/sslState";
 import { daysUntil } from "../../../../components/ssl/sslHealth";
 import { SSLCertViewModal } from "../../../../components/ssl/SSLCertViewModal";
 import type { Domain } from "../../../../components/domains/types";
+import { ReverseProxyPortControl } from "../../../../components/domains/ReverseProxyPortControl";
 
 const stripHomePrefix = (path: string): string => {
   if (path.startsWith("/home/")) {
@@ -136,7 +137,11 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
         </Descriptions.Item>
         {domain.reverse_proxy_port ? (
           <Descriptions.Item label="Reverse proxy">
-            <Typography.Text>Port {domain.reverse_proxy_port}</Typography.Text>
+            <ReverseProxyPortControl
+              domainId={domain.id}
+              domainName={domain.name}
+              port={domain.reverse_proxy_port}
+            />
           </Descriptions.Item>
         ) : null}
         {domain.temp_url_enabled && domain.temp_url ? (

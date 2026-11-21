@@ -33,6 +33,7 @@ import { DomainMailTLSSection } from "./DomainMailTLSSection";
 import { DomainDeliverabilitySection } from "./DomainDeliverabilitySection";
 import { DomainStatsPanel } from "../../../components/domains/DomainStatsPanel";
 import { DomainRateLimitSection } from "./DomainRateLimitSection";
+import { ReverseProxyPortControl } from "../../../components/domains/ReverseProxyPortControl";
 import { isOwnershipPending } from "../../../components/domains/ownership";
 
 export type DomainEditInput = {
@@ -136,6 +137,16 @@ export const DomainEdit = () => {
       >
         <Input placeholder="auto-generated (default public_html)" allowClear />
       </Form.Item>
+
+      {domain.reverse_proxy_port ? (
+        <Form.Item label="Reverse proxy">
+          <ReverseProxyPortControl
+            domainId={domain.id}
+            domainName={domain.name}
+            port={domain.reverse_proxy_port}
+          />
+        </Form.Item>
+      ) : null}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
         <Form.Item name="is_enabled" valuePropName="checked" noStyle>

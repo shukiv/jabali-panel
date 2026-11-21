@@ -420,8 +420,8 @@ jabali domain            bandwidth|bot-exclusion|browse|catchall|chown|create|
                          delete|dir-privacy|disable|disclaimer|email-disable|
                          email-dkim-rotate|email-enable|enable|fix-perms|
                          htaccess-preview|ip-acl|list|mta-sts|ownership|
-                         php-settings|php-version|prune-orphans|set|show|
-                         skip-auto-san|whois
+                         php-settings|php-version|proxy-port|prune-orphans|set|
+                         show|skip-auto-san|whois
 jabali dr                feed|pair|promote|status|unfeed|unpair
 jabali files             archive|chmod|copy|delete|download|extract|list|mkdir|
                          move|read|rename|stat|upload|write

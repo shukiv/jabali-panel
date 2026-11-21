@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
@@ -54,6 +55,14 @@ type DomainRepository interface {
 	// deletes the domain's Git repository settings in the same transaction:
 	// they hold the old owner's token (GH #2277).
 	TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error
+	// SetReverseProxyPort moves a reverse-proxy domain (GH #1175) to another
+	// loopback port (GH #2544). One transaction changes both the domain's
+	// port_allocations row and domains.reverse_proxy_port, so the pool and the
+	// vhost can never disagree. ErrNotFound when the domain is gone,
+	// ErrNotReverseProxy when it is a normal docroot domain, ErrPortInUse when
+	// another owner holds the port. The caller validates the port first
+	// (ValidateReverseProxyPort). Setting the current port is a no-op.
+	SetReverseProxyPort(ctx context.Context, id string, port int) error
 	// Rename changes a domain's name and doc_root together (GH #1579 domain
 	// rename). Dedicated setter: the generic Update allowlist includes name, but
 	// a rename must move name + doc_root as a unit and is only ever driven by
@@ -474,6 +483,66 @@ func (r *domainRepo) RewriteDocRootPrefix(ctx context.Context, userID, oldPrefix
 		Where("user_id = ? AND doc_root LIKE ?", userID, oldPrefix+"%").
 		Update("doc_root", gorm.Expr("CONCAT(?, SUBSTRING(doc_root, ?))", newPrefix, len(oldPrefix)+1))
 	return res.RowsAffected, res.Error
+}
+
+// ErrNotReverseProxy is returned by SetReverseProxyPort for a domain that
+// serves a docroot, not a reverse-proxy target.
+var ErrNotReverseProxy = errors.New("repository: domain is not a reverse-proxy domain")
+
+func (r *domainRepo) SetReverseProxyPort(ctx context.Context, id string, port int) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var dom models.Domain
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "reverse_proxy_port").
+			Where("id = ?", id).First(&dom).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
+		if dom.ReverseProxyPort == 0 {
+			return ErrNotReverseProxy
+		}
+		if int(dom.ReverseProxyPort) == port {
+			return nil
+		}
+		// Lock the rows for the new port; another owner's reservation refuses.
+		var taken int64
+		if err := tx.Model(&models.PortAllocation{}).
+			Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("bind_interface = ? AND protocol = ? AND port = ? AND NOT (owner_kind = ? AND owner_id = ?)",
+				ReverseProxyBindIface, ReverseProxyProto, port, models.PortOwnerReverseProxy, id).
+			Count(&taken).Error; err != nil {
+			return err
+		}
+		if taken > 0 {
+			return ErrPortInUse
+		}
+		res := tx.Model(&models.PortAllocation{}).
+			Where("owner_kind = ? AND owner_id = ? AND bind_interface = ? AND protocol = ?",
+				models.PortOwnerReverseProxy, id, ReverseProxyBindIface, ReverseProxyProto).
+			Update("port", uint32(port))
+		if res.Error != nil {
+			return ErrPortInUse // UNIQUE(bind_interface, port, protocol) backstop on a concurrent claim
+		}
+		if res.RowsAffected == 0 {
+			// The domain lost its reservation (a pre-allocator row): take one now.
+			row := &models.PortAllocation{
+				ID:            ids.NewULID(),
+				Port:          uint32(port),
+				BindInterface: ReverseProxyBindIface,
+				Protocol:      ReverseProxyProto,
+				OwnerKind:     models.PortOwnerReverseProxy,
+				OwnerID:       id,
+				CreatedAt:     time.Now().UTC(),
+			}
+			if err := tx.Create(row).Error; err != nil {
+				return ErrPortInUse
+			}
+		}
+		return tx.Model(&models.Domain{}).Where("id = ?", id).
+			Update("reverse_proxy_port", uint32(port)).Error
+	})
 }
 
 func (r *domainRepo) TransferOwner(ctx context.Context, domainID, newUserID, newDocRoot string) error {
