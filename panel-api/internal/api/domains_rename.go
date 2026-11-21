@@ -222,7 +222,7 @@ func renameHTTPStatus(code string) int {
 		return http.StatusBadRequest
 	case "mail_domain_conflict", "panel_primary", "web_disabled", "rename_requires_proven_name",
 		"ssl_custom_cert", "name_taken", "owner_unprovisioned", "owner_unresolved",
-		"ftp_subaccounts", "nested_site":
+		"ftp_subaccounts":
 		return http.StatusConflict
 	case "not_found":
 		return http.StatusNotFound

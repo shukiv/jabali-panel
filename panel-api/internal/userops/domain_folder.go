@@ -9,8 +9,8 @@ import (
 )
 
 // domainFolder returns the domain's own folder, /home/<user>/domains/<name>,
-// when docRoot is that folder or inside it, else "". A change of owner or a
-// rename moves that whole folder (GH #2541), not only the docroot, so what
+// when docRoot is that folder or inside it, else "". A change of owner
+// moves that whole folder (GH #2541), not only the docroot, so what
 // sits next to the docroot goes with it: a Laravel-style site served from
 // public_html/public keeps its app code, vendor/ and .env.
 func domainFolder(username, name, docRoot string) string {
