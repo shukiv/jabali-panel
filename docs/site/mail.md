@@ -6,18 +6,29 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 ## Per-mailbox
 
-- Authentication: per-mailbox password, bcrypt-hashed in the panel's database. Stalwart reads it through a read-only SQL directory, so the password is changed in the panel: **Rotate password** on the mailbox (Mail → a domain → Mailboxes), by the account owner or an admin. Webmail's password change is refused.
+- Authentication: per-mailbox password, bcrypt-hashed in the panel's database. Stalwart reads it through a read-only SQL directory, so the password is changed in the panel: **Rotate password** on the mailbox (Mail → a domain → Mailboxes), by the account owner or an admin, or by the mailbox's user on the [mailbox password page](#mailbox-password-page). Webmail's password change is refused.
 - Quota: per-mailbox MiB, enforced by Stalwart.
 - Webmail: **Bulwark** at `https://mail.<domain>/`. Its sign-in page asks for the address and password only: it always signs in to this server, so it has no JMAP server field. One-click SSO from a mailbox (Mail Domains → a domain → Accounts) uses the self-deleting `jabali-sso-*.php` file (not the earlier magic-link/mu-plugin approach, which failed).
 - IMAP / SMTP submission: `imap.<panel-hostname>:993` (TLS), `smtp.<panel-hostname>:465` (TLS) or `:587` (STARTTLS).
 - Autoconfig / autodiscover: Apple `mobileconfig`, Thunderbird `autoconfig.xml`, Outlook `autodiscover.xml` (see [platform/mail-autoconfig.md](./platform/mail-autoconfig.md)).
 - Calendars + contacts: the mail vhost serves CalDAV / CardDAV and `/.well-known/caldav|carddav`, and the `_caldavs._tcp` / `_carddavs._tcp` SRV records point clients at it, so mail apps find a mailbox's calendars and contacts on their own. The panel no longer shows per-mailbox DAV URLs; an external-DNS domain gets the two SRV records in its mail DNS record list.
 
+## Mailbox password page
+
+A mailbox's user can change its password without a panel login at `https://mail.<domain>/mailbox-password`, on every domain with webmail on (a custom mail hostname serves it too). They enter the address, the current password and the new one twice. The new password follows the panel's rule: at least 8 characters, at most 72 bytes.
+
+- The current password is checked against the hash the panel keeps, never by signing in to Stalwart, so an app password or a password changed a moment ago doesn't pass.
+- It refuses, with one message for every case, an unknown address, a wrong current password, a disabled mailbox, a mailbox whose domain isn't verified or whose owner is suspended, and a mailbox moved from another panel that still has that panel's password hash (not bcrypt). The owner or an admin changes those in the panel; after that the page works for them.
+- Each address gets a few tries a minute, and each mailbox twice that from all addresses together. An address that keeps going past its limit is banned by the CrowdSec scenario `jabali/mailbox-password-bf`.
+- After a change the mailbox's app passwords are removed and Stalwart's login cache is flushed, as after a change in the panel. Mail apps and webmail need the new password.
+- There is no "forgot password" here: a user who has lost the password asks the domain's owner, who sets a new one in the panel.
+- The page is not linked from webmail yet; give users the address.
+
 ## App passwords
 
 Webmail's **Settings → Security** lets a mailbox create app passwords for its mail apps. Stalwart checks an app password itself, apart from the mailbox password the panel keeps, so the panel removes app passwords when they must stop working:
 
-- **Password changed in the panel**: the app passwords made before the change, or in the minute after it, are removed. Until the panel's flush of Stalwart's login cache reaches it, webmail and JMAP still take the old password for a few seconds, so an app password made in that minute may have been made with the old one. Webmail opened from the panel in that minute is signed out about a minute later; open it again.
+- **Password changed in the panel or on the mailbox password page**: the app passwords made before the change, or in the minute after it, are removed. Until the panel's flush of Stalwart's login cache reaches it, webmail and JMAP still take the old password for a few seconds, so an app password made in that minute may have been made with the old one. Webmail opened from the panel in that minute is signed out about a minute later; open it again.
 - **Mailbox disabled, or its owner suspended**: all of the mailbox's app passwords are removed. Enabling the mailbox or unsuspending the owner does not bring them back; the user creates new ones.
 - The reconciler's `mail.credentials` pass checks every mailbox when the panel starts, when a mailbox's password or sign-in state changes, a minute after a password change, and every 10 minutes, and removes what the rules above would. It also covers changes made outside these actions, such as a domain that is no longer verified. The first start after the update that added it removes every app password made before the update.
 

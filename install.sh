@@ -12122,7 +12122,8 @@ install_crowdsec_jabali_kratos_scenarios() {
   # scenarios: SEED-ONLY. The panel-agent's security.crowdsec.sensitivity.apply
   # verb rewrites these at runtime to apply relaxed/strict thresholds; write-on-
   # diff here would clobber the operator's preset on every `jabali update`.
-  for f in "$src"/scenarios/jabali-kratos-*.yaml; do
+  for f in "$src"/scenarios/jabali-kratos-*.yaml \
+           "$src"/scenarios/jabali-mailbox-*.yaml; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
     dst="/etc/crowdsec/scenarios/$base"

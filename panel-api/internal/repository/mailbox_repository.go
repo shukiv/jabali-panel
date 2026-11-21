@@ -55,6 +55,11 @@ type MailboxRepository interface {
 	// updated atomically so an SSO-mint can't hand out a token that
 	// decrypts to a password Stalwart no longer accepts.
 	UpdatePasswordHashAndEnc(ctx context.Context, id string, hash string, enc []byte) error
+	// ReplacePasswordHash is UpdatePasswordHashAndEnc guarded by the hash the
+	// caller verified (GH #2543 self-service change): it writes only while the
+	// stored hash still equals oldHash, so a rotation that landed in between
+	// wins and this reports false.
+	ReplacePasswordHash(ctx context.Context, id, oldHash, newHash string, enc []byte) (bool, error)
 	UpdateQuota(ctx context.Context, id string, quotaBytes uint64) error
 	UpdateDisplayName(ctx context.Context, id, displayName string) error
 	SetDisabled(ctx context.Context, id string, disabled bool) error
@@ -439,6 +444,22 @@ func (r *mailboxRepo) UpdatePasswordHashAndEnc(ctx context.Context, id string, h
 			"password_changed_at": now,
 			"updated_at":          now,
 		}).Error
+}
+
+func (r *mailboxRepo) ReplacePasswordHash(ctx context.Context, id, oldHash, newHash string, enc []byte) (bool, error) {
+	now := time.Now().UTC()
+	res := r.db.WithContext(ctx).Model(&models.Mailbox{}).
+		Where("id = ? AND password_hash = ?", id, oldHash).
+		Updates(map[string]any{
+			"password_hash":       newHash,
+			"password_enc":        enc,
+			"password_changed_at": now,
+			"updated_at":          now,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (r *mailboxRepo) UpdateQuota(ctx context.Context, id string, quotaBytes uint64) error {

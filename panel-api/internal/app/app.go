@@ -452,6 +452,23 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 		})
 	}
 
+	// Mailbox password page (GH #2543): GET/POST /mailbox-password, proxied
+	// from the mail hostnames only. A mailbox user changes their own password
+	// by proving the current one; the shared limiter throttles it per address
+	// and per mailbox, and logs the marker CrowdSec bans on.
+	if deps.Mailboxes != nil && deps.Domains != nil && deps.Users != nil {
+		api.RegisterMailboxPasswordRoutes(r, api.MailboxPasswordPageConfig{
+			Mailboxes:       deps.Mailboxes,
+			Domains:         deps.Domains,
+			Users:           deps.Users,
+			SSOKey:          deps.SSOKey,
+			MailCredentials: deps.MailCredentials,
+			Agent:           deps.Agent,
+			Limiter:         rl,
+			Log:             deps.Log,
+		})
+	}
+
 	// Mail-client autoconfiguration (GH #1039). Served from the mail vhost
 	// (autoconfig./autodiscover.<domain>) which proxies /mail/config-v1.1.xml
 	// and /autodiscover/autodiscover.xml here. Public, like the branding +

@@ -76,6 +76,11 @@ const (
 	// tierKratosAccount keys the /.ory login and recovery POSTs on the
 	// account they name, with twice the Kratos tier's settings.
 	tierKratosAccount
+	// tierMailboxPassword is the mailbox password page's per-address
+	// budget (GH #2543), with the Strict tier's settings in its own bucket;
+	// tierMailboxPasswordAccount keys it on the mailbox, with twice that.
+	tierMailboxPassword
+	tierMailboxPasswordAccount
 )
 
 type entry struct {
@@ -263,6 +268,13 @@ func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
 		// spend all of an account's, so it can't lock the owner out.
 		r, b := l.tierSettings(tierKratos)
 		return r * 2, b * 2
+	}
+	if t == tierMailboxPasswordAccount {
+		r, b := l.tierSettings(tierMailboxPassword)
+		return r * 2, b * 2
+	}
+	if t == tierMailboxPassword {
+		t = tierStrict
 	}
 	if t == tierScan {
 		if l.cfg.ScanBurst > 0 {

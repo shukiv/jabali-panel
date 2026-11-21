@@ -611,7 +611,7 @@ func TestWebmailVhostApply_NoWebmail(t *testing.T) {
 			t.Errorf("missing %q:\n%s", w, s)
 		}
 	}
-	for _, w := range []string{"proxy_pass http://jabali_bulwark", "/sso/webmail", "proxy_read_timeout 3600s;\n    proxy_send_timeout"} {
+	for _, w := range []string{"proxy_pass http://jabali_bulwark", "/sso/webmail", "/mailbox-password", "proxy_read_timeout 3600s;\n    proxy_send_timeout"} {
 		if strings.Contains(s, w) {
 			t.Errorf("webmail is off, must not contain %q:\n%s", w, s)
 		}
@@ -675,5 +675,43 @@ func TestWebmailVhostApply_DocRootServesBothACMEWebroots(t *testing.T) {
 	}
 	if !strings.Contains(s, "root /home/alice/domains/example.com/public_html;") {
 		t.Errorf("@acme_docroot must root at the tenant docroot:\n%s", s)
+	}
+}
+
+// With webmail on, mail.<domain> serves the mailbox password page (GH #2543)
+// from panel-api, with the client's address forwarded for its rate limit.
+func TestWebmailVhostApply_MailboxPasswordPage(t *testing.T) {
+	avail, _ := wireMailVhostPaths(t)
+	wireNginxReload(t)
+
+	params, _ := json.Marshal(webmailVhostApplyParams{
+		DomainName:    "client.example",
+		SSLCertPath:   "/etc/letsencrypt/live/mail.client.example/fullchain.pem",
+		SSLKeyPath:    "/etc/letsencrypt/live/mail.client.example/privkey.pem",
+		DocRoot:       "/home/client/public_html",
+		PanelHostname: "mx.jabali-panel.com",
+	})
+	if _, err := webmailVhostApplyHandler(context.Background(), params); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(avail, "client.example-mail.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, "location = /mailbox-password {")
+	if i < 0 {
+		t.Fatalf("no mailbox password location:\n%s", s)
+	}
+	block := s[i:]
+	block = block[:strings.Index(block, "\n  }")]
+	for _, w := range []string{
+		"proxy_pass http://jabali_panel_api/mailbox-password;",
+		"proxy_set_header X-Real-IP $remote_addr;",
+		"client_max_body_size 16k;",
+	} {
+		if !strings.Contains(block, w) {
+			t.Errorf("mailbox password location lacks %q:\n%s", w, block)
+		}
 	}
 }
