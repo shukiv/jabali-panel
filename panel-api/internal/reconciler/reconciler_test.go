@@ -2909,6 +2909,7 @@ func (r *fakeDomainRepo) RewriteDocRootPrefix(context.Context, string, string, s
 }
 
 func (r *fakeUserRepo) UpdateUsername(context.Context, string, string) error          { return nil }
+func (*fakeDomainRepo) SetReverseProxyPort(context.Context, string, int) error { return nil }
 func (r *fakeDomainRepo) TransferOwner(context.Context, string, string, string) error { return nil }
 
 // GH #1238 stub.

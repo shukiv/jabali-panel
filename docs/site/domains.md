@@ -21,7 +21,7 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 | **Environment variables** | Per-domain env vars passed to the FPM pool. |
 | **Web / Mail / DNS** | Each service is an **independent per-domain flag** — a domain can run any combination. Turning **Mail** on adds DKIM keys + MX hint + Stalwart Domain entry; **DNS** on manages the zone in PowerDNS; **Web** on builds the nginx vhost. |
 | **Statistics** | Requests and bandwidth per day and visitors by country for the last 7, 30 or 90 days, from the nightly access-log count (country only on hosts with CrowdSec's GeoLite2 database). Same tab for the admin (Edit Domain) and the tenant (Web Domain page); see [Domains (User) → Statistics](user/domains.md#statistics). |
-| **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check; ports come from a shared loopback-port allocator so two tenants can't collide. |
+| **Reverse proxy** | Instead of serving files, proxy the domain to a local app on a chosen loopback port. Tenants pick the port through an SSRF-safe validator with an agent-side bind check; ports come from a shared loopback-port allocator so two tenants can't collide. The port can be changed later: **Change port** on the domain's Overview (admins: on the domain's page), or `jabali domain proxy-port <domain> <port>`. The new port goes through the same checks. |
 
 **Keep a reverse-proxied app running.** The panel allocates the port and nginx
 proxies the domain to it, but the process listening on the port is the

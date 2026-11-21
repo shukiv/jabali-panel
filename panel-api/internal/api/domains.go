@@ -151,6 +151,9 @@ func RegisterDomainRoutes(g *gin.RouterGroup, cfg DomainHandlerConfig) {
 	// GH #1579: rename a domain in place (owner-scoped; admin or the domain's
 	// own tenant). Experimental phase 1 — web-only, mail must be off.
 	domains.POST("/:id/rename", h.rename)
+	// GH #2544: move a reverse-proxy domain to another loopback port
+	// (owner-scoped; admin or the domain's own tenant).
+	domains.PUT("/:id/reverse-proxy-port", h.setReverseProxyPort)
 
 	// GH #1238: reassign a domain to a new tenant (move + re-own the docroot,
 	// repoint the DB row). Admin-only AND behind the JAB-380 recent-auth
