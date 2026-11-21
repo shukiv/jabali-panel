@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -17,10 +16,13 @@ const MailboxPasswordRateLimitedMarker = "mailbox_password_rate_limited"
 
 // AllowMailboxPassword spends one try at the mailbox password page (GH #2543)
 // from the request's address and, when the form names one, one from that
-// mailbox's own budget, which is twice an address's. Each try at the page
-// checks a password, so both budgets are the Strict tier's: a typo or two,
-// not a guessing run. The mailbox budget holds guessing one mailbox from many
-// addresses to what two addresses may try.
+// mailbox's own budget.
+//
+// The address budget is the panel sign-in's (the Kratos tier), in its own
+// bucket: an office behind one address, its users all changing passwords the
+// same morning, gets the room a panel sign-in gets, and isn't banned for it.
+// The mailbox budget is twice the Strict tier's, across all addresses: a typo
+// or two, not a guessing run, however many addresses the guesses come from.
 //
 // An address over its budget is logged with MailboxPasswordRateLimitedMarker.
 // A mailbox over its budget is logged with its own marker and a short hash of
@@ -35,11 +37,14 @@ func (l *RateLimiter) AllowMailboxPassword(c *gin.Context, email string, log *sl
 		}
 		return false
 	}
-	name := strings.ToLower(strings.TrimSpace(email))
-	if name == "" {
+	// Folded as the mailboxes table compares addresses (utf8mb4_unicode_ci:
+	// case, accents and width don't count), so a variant spelling that finds
+	// the same mailbox spends the same budget.
+	name := foldAccountName(email)
+	if name == nil {
 		return true
 	}
-	sum := sha256.Sum256([]byte(name))
+	sum := sha256.Sum256(name)
 	h := hex.EncodeToString(sum[:16])
 	if !l.limiterFor("mailbox_password:"+h, tierMailboxPasswordAccount).Allow() {
 		if log != nil {

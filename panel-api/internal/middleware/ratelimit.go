@@ -77,8 +77,9 @@ const (
 	// account they name, with twice the Kratos tier's settings.
 	tierKratosAccount
 	// tierMailboxPassword is the mailbox password page's per-address
-	// budget (GH #2543), with the Strict tier's settings in its own bucket;
-	// tierMailboxPasswordAccount keys it on the mailbox, with twice that.
+	// budget (GH #2543): the Kratos tier's settings, in its own bucket.
+	// tierMailboxPasswordAccount keys it on the mailbox, with twice the
+	// Strict tier's.
 	tierMailboxPassword
 	tierMailboxPasswordAccount
 )
@@ -270,11 +271,11 @@ func (l *RateLimiter) tierSettings(t tier) (rate.Limit, int) {
 		return r * 2, b * 2
 	}
 	if t == tierMailboxPasswordAccount {
-		r, b := l.tierSettings(tierMailboxPassword)
+		r, b := l.tierSettings(tierStrict)
 		return r * 2, b * 2
 	}
 	if t == tierMailboxPassword {
-		t = tierStrict
+		t = tierKratos
 	}
 	if t == tierScan {
 		if l.cfg.ScanBurst > 0 {

@@ -20,9 +20,11 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/userops"
 )
 
-// mailboxPasswordPath is the mailbox password page (GH #2543). It is served on
-// the mail hostnames, where webmail is, so a mailbox user who has no panel
-// login can change their own password by proving the current one.
+// mailboxPasswordPath is the mailbox password page (GH #2543), where a mailbox
+// user who has no panel login changes their own password by proving the
+// current one. nginx forwards it from every mail hostname with webmail on;
+// the panel hostname reaches it too, as it reaches every panel-api path. The
+// page doesn't depend on the host it is reached on.
 const mailboxPasswordPath = "/mailbox-password"
 
 // mailboxPasswordBodyLimit bounds the form: four short fields.
@@ -53,7 +55,7 @@ type MailboxPasswordPageConfig struct {
 }
 
 // RegisterMailboxPasswordRoutes mounts the page at the engine root, like
-// /sso/webmail: nginx proxies it from the mail hostnames only.
+// /sso/webmail, outside /api/v1 and its session auth.
 func RegisterMailboxPasswordRoutes(r gin.IRouter, cfg MailboxPasswordPageConfig) {
 	h := &mailboxPasswordPage{cfg: cfg}
 	r.GET(mailboxPasswordPath, h.show)
@@ -239,14 +241,13 @@ h1{font-size:20px;margin:0 0 8px}
 p{color:#94a3b8;line-height:1.5;margin:0 0 20px}
 label{display:block;font-size:14px;margin:0 0 6px}
 input{width:100%;box-sizing:border-box;padding:10px 12px;margin:0 0 16px;border:1px solid #334155;border-radius:8px;background:#1e293b;color:#e2e8f0;font-size:15px}
-button,a.btn{display:inline-block;width:100%;box-sizing:border-box;text-align:center;background:#2563eb;color:#fff;border:0;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600;font-size:15px;cursor:pointer}
+button{display:inline-block;width:100%;box-sizing:border-box;text-align:center;background:#2563eb;color:#fff;border:0;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600;font-size:15px;cursor:pointer}
 .err{background:#450a0a;border:1px solid #7f1d1d;color:#fecaca;border-radius:8px;padding:10px 12px;margin:0 0 16px;line-height:1.4}
 .ok{background:#052e16;border:1px solid #166534;color:#bbf7d0;border-radius:8px;padding:10px 12px;margin:0 0 20px;line-height:1.4}
 small{display:block;color:#94a3b8;margin:-10px 0 16px}
 </style></head><body><div class="card">
 <h1>Change mailbox password</h1>
 {{if .Done}}<div class="ok" role="status">Your password was changed. Sign in again with the new password in webmail and in every mail app.</div>
-<a class="btn" href="/">Go to webmail</a>
 {{else}}<p>Enter your email address and current password, then choose a new password.</p>
 {{if .Error}}<div class="err" role="alert">{{.Error}}</div>{{end}}
 <form method="post" action="/mailbox-password" autocomplete="on">

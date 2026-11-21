@@ -16,10 +16,13 @@ import (
 // The mailbox password page (GH #2543) spends a per-address budget and, when
 // the form names a mailbox, that mailbox's budget, twice an address's.
 
-func mailboxPasswordLimiter(burst int) *middleware.RateLimiter {
+// mailboxPasswordLimiter allows addrBurst tries per address and twice
+// strictBurst per mailbox, no refill.
+func mailboxPasswordLimiter(addrBurst, strictBurst int) *middleware.RateLimiter {
 	return middleware.NewRateLimiter(middleware.RateLimiterConfig{
 		DefaultRate: 1000, DefaultBurst: 1000,
-		StrictRate: 0, StrictBurst: burst,
+		KratosRate: 0, KratosBurst: addrBurst,
+		StrictRate: 0, StrictBurst: strictBurst,
 	})
 }
 
@@ -36,7 +39,7 @@ func tryMailboxPassword(l *middleware.RateLimiter, ip, email string, log *slog.L
 func TestAllowMailboxPassword_PerAddressBudgetAndMarker(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
-	l := mailboxPasswordLimiter(3)
+	l := mailboxPasswordLimiter(3, 100)
 	for i := 0; i < 3; i++ {
 		if !tryMailboxPassword(l, "203.0.113.7", "", log) {
 			t.Fatalf("try %d refused inside the budget", i+1)
@@ -54,30 +57,33 @@ func TestAllowMailboxPassword_PerAddressBudgetAndMarker(t *testing.T) {
 	}
 }
 
-// Its own bucket: spending the Strict tier elsewhere doesn't spend this page's.
-func TestAllowMailboxPassword_OwnBucketApartFromStrict(t *testing.T) {
-	l := mailboxPasswordLimiter(1)
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.POST("/auth/x", l.Strict(), func(c *gin.Context) { c.Status(http.StatusOK) })
+// Its own bucket: panel sign-ins from the address don't spend this page's
+// budget, nor the other way round.
+func TestAllowMailboxPassword_OwnBucketApartFromSignIn(t *testing.T) {
+	l := mailboxPasswordLimiter(1, 100)
+	login := kratosPost{path: kratosLogin, ip: "203.0.113.7", contentType: jsonType, body: `{}`}
 	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest(http.MethodPost, "/auth/x", nil)
-		req.RemoteAddr = "203.0.113.7:1"
-		r.ServeHTTP(httptest.NewRecorder(), req)
+		serveKratos(l.KratosFlows(nil), login)
 	}
 	if !tryMailboxPassword(l, "203.0.113.7", "", nil) {
-		t.Fatal("the Strict tier's use spent the mailbox password page's budget")
+		t.Fatal("panel sign-ins spent the mailbox password page's budget")
+	}
+	l = mailboxPasswordLimiter(1, 100)
+	tryMailboxPassword(l, "203.0.113.7", "", nil)
+	tryMailboxPassword(l, "203.0.113.7", "", nil)
+	if w, _ := serveKratos(l.KratosFlows(nil), login); w.Code == http.StatusTooManyRequests {
+		t.Fatal("the mailbox password page spent the panel sign-in budget")
 	}
 }
 
 func TestAllowMailboxPassword_MailboxBudgetAcrossAddresses(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewJSONHandler(&buf, nil))
-	l := mailboxPasswordLimiter(2)
-	// Twice an address's budget for one mailbox, from many addresses, and
+	l := mailboxPasswordLimiter(100, 2)
+	// Twice the Strict tier's budget for one mailbox, from many addresses, and
 	// the address case and spaces don't make a new mailbox.
 	ips := []string{"203.0.113.1", "203.0.113.2", "203.0.113.3", "203.0.113.4"}
-	names := []string{"alice@example.com", " Alice@Example.com", "ALICE@example.com ", "alice@example.com"}
+	names := []string{"alice@example.com", " Alice@Example.com", "ÀLICE@example.com ", "alice@EXAMPLE.com"}
 	for i := range ips {
 		if !tryMailboxPassword(l, ips[i], names[i], log) {
 			t.Fatalf("try %d refused inside the mailbox budget of 4", i+1)

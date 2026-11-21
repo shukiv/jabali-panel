@@ -75,7 +75,10 @@ func ChangeOwnPassword(ctx context.Context, d Deps, eligible Eligibility, in Cha
 		}
 		return nil, fmt.Errorf("%w: lookup: %v", ErrInternal, err)
 	}
-	if mb.System || mb.IsDisabled || !isBcryptHash(mb.PasswordHash) {
+	// The lookup compares addresses the way the mailboxes table does, which
+	// ignores accents too; only the mailbox's own address is accepted, so a
+	// variant spelling can't get its own rate-limit budget for the mailbox.
+	if strings.ToLower(mb.EmailCached) != email || mb.System || mb.IsDisabled || !isBcryptHash(mb.PasswordHash) {
 		burnCompare(in.CurrentPassword)
 		return nil, ErrSelfServiceRefused
 	}

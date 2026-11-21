@@ -15,11 +15,11 @@ Mail is an optional module (Server Settings → Modules). It needs the DNS modul
 
 ## Mailbox password page
 
-A mailbox's user can change its password without a panel login at `https://mail.<domain>/mailbox-password`, on every domain with webmail on (a custom mail hostname serves it too). They enter the address, the current password and the new one twice. The new password follows the panel's rule: at least 8 characters, at most 72 bytes.
+A mailbox's user can change its password without a panel login at `https://mail.<domain>/mailbox-password`, on every domain with webmail on (a custom mail hostname serves it too). The same page answers at `https://<panel-hostname>/mailbox-password`, which also suits a domain with webmail off. They enter the address, the current password and the new one twice. The new password follows the panel's rule: at least 8 characters, at most 72 bytes.
 
 - The current password is checked against the hash the panel keeps, never by signing in to Stalwart, so an app password or a password changed a moment ago doesn't pass.
 - It refuses, with one message for every case, an unknown address, a wrong current password, a disabled mailbox, a mailbox whose domain isn't verified or whose owner is suspended, and a mailbox moved from another panel that still has that panel's password hash (not bcrypt). The owner or an admin changes those in the panel; after that the page works for them.
-- Each address gets a few tries a minute, and each mailbox twice that from all addresses together. An address that keeps going past its limit is banned by the CrowdSec scenario `jabali/mailbox-password-bf`.
+- Each address gets as many tries as it gets panel sign-ins (an office behind one address can change all its passwords at once), and each mailbox about ten a minute from all addresses together. An address that keeps going past its limit is banned by the CrowdSec scenario `jabali/mailbox-password-bf`; a mailbox past its limit only waits, so its owner isn't banned while someone else guesses.
 - After a change the mailbox's app passwords are removed and Stalwart's login cache is flushed, as after a change in the panel. Mail apps and webmail need the new password.
 - There is no "forgot password" here: a user who has lost the password asks the domain's owner, who sets a new one in the panel.
 - The page is not linked from webmail yet; give users the address.

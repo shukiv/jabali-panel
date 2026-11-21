@@ -453,7 +453,8 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 	}
 
 	// Mailbox password page (GH #2543): GET/POST /mailbox-password, proxied
-	// from the mail hostnames only. A mailbox user changes their own password
+	// from the mail hostnames with webmail on (and reached on the panel
+	// hostname like every root path). A mailbox user changes their own password
 	// by proving the current one; the shared limiter throttles it per address
 	// and per mailbox, and logs the marker CrowdSec bans on.
 	if deps.Mailboxes != nil && deps.Domains != nil && deps.Users != nil {
