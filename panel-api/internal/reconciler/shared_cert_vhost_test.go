@@ -68,8 +68,11 @@ func TestSharedCertVhost_ACMEWildcardServesItsLineage(t *testing.T) {
 		p["ssl_key_path"] != "/etc/letsencrypt/live/wild-example/privkey.pem" {
 		t.Fatalf("ssl paths = %v / %v, want the certificate's lineage", p["ssl_cert_path"], p["ssl_key_path"])
 	}
-	if p["serve_https"] != true || p["redirect_https"] != true {
-		t.Fatalf("serve_https=%v redirect_https=%v, want both on for a trusted shared cert", p["serve_https"], p["redirect_https"])
+	// The :443 block is what was missing. Whether :80 also redirects
+	// depends on whether the apex resolves to a CDN (apexFronted, a live
+	// DNS lookup), so only serve_https is asserted.
+	if p["serve_https"] != true {
+		t.Fatalf("serve_https = %v, want true for a trusted shared cert", p["serve_https"])
 	}
 }
 
