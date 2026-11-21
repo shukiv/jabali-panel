@@ -2591,9 +2591,18 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 	// GH #1816: a pending name never presents the shared (CA-issued) cert;
 	// it falls through to its self-signed placeholder row.
 	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" && !ownershipPending(domain) {
-		certPath, keyPath := sharedCertPaths(*domain.SharedCertificateID)
-		params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
-		redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, certPath)
+		certPath, keyPath, serr := r.sharedCertPair(ctx, *domain.SharedCertificateID)
+		if serr != nil {
+			// Not knowing where the certificate is must not render the
+			// domain HTTP-only: leave it dirty and dispatch next run.
+			r.log.Warn("domain vhost deferred: shared certificate lookup failed",
+				"domain_id", domain.ID, "domain", domain.Name, "err", serr)
+			return
+		}
+		if certPath != "" {
+			params["ssl_cert_path"], params["ssl_key_path"] = certPath, keyPath
+			redirectHTTPS = redirectHTTPSForCert(domain.SSLMode, certPath)
+		}
 	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
@@ -2697,6 +2706,31 @@ func redirectHTTPSForCert(mode, certPath string) bool {
 // domain (JAB-170).
 const sharedCertDir = "/etc/jabali/ssl/shared"
 
+// sharedCertPair returns the cert and key paths a domain attached to shared
+// certificate id serves (GH #2545). They come from the certificate's row: an
+// uploaded certificate lives under sharedCertDir, but one the panel issued
+// from Let's Encrypt (DNS-01) lives in its certbot lineage, which the row
+// records. A certificate not issued yet, or gone, has no paths: the domain
+// serves HTTP until it lands. Without a shared-certificate store (tests,
+// minimal wiring) it falls back to sharedCertPaths.
+func (r *Reconciler) sharedCertPair(ctx context.Context, id string) (certPath, keyPath string, err error) {
+	if r.sharedCerts == nil {
+		certPath, keyPath = sharedCertPaths(id)
+		return certPath, keyPath, nil
+	}
+	row, err := r.sharedCertGet(ctx, id)
+	if errors.Is(err, repository.ErrNotFound) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if row.CertPath == nil || row.KeyPath == nil || *row.CertPath == "" || *row.KeyPath == "" {
+		return "", "", nil
+	}
+	return *row.CertPath, *row.KeyPath, nil
+}
+
 // sharedCertPaths returns the on-disk fullchain + privkey paths for a shared
 // certificate id. The agent stat-guards them, so an id whose cert has not been
 // installed yet renders as HTTP-only rather than a broken :443 block.
@@ -2754,7 +2788,13 @@ func (r *Reconciler) reconcileDockerAppDomain(ctx context.Context, domain *model
 	// within a tick of the domain appearing.
 	var certPath, keyPath string
 	if domain.SSLMode == models.SSLModeShared && domain.SharedCertificateID != nil && *domain.SharedCertificateID != "" {
-		certPath, keyPath = sharedCertPaths(*domain.SharedCertificateID)
+		var serr error
+		certPath, keyPath, serr = r.sharedCertPair(ctx, *domain.SharedCertificateID)
+		if serr != nil {
+			r.log.Warn("docker-app vhost deferred: shared certificate lookup failed",
+				"domain", domain.Name, "err", serr)
+			return
+		}
 	} else if r.sslCerts != nil {
 		sslCtx, sslCancel := context.WithTimeout(ctx, 10*time.Second)
 		cert, err := r.sslCerts.FindByDomainID(sslCtx, domain.ID)
