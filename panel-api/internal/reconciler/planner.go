@@ -461,6 +461,8 @@ type tickMemo struct {
 	finished  bool
 	settings  *models.ServerSettings
 	templates map[string]*models.PageTemplate // nil value = not found
+	// sharedCerts holds the shared certificates read this run, by id.
+	sharedCerts map[string]*models.SharedCertificate // nil value = not found
 }
 
 // finish ends the run's memo. Every entry point that runs passes calls it
@@ -474,6 +476,7 @@ func (rr *runRecorder) finish() {
 	rr.memo.finished = true
 	rr.memo.settings = nil
 	rr.memo.templates = nil
+	rr.memo.sharedCerts = nil
 }
 
 // settingsGet reads the server settings, once per run. Outside a run (the
@@ -542,6 +545,42 @@ func (r *Reconciler) pageTemplateGet(ctx context.Context, key string) (*models.P
 			m.templates = map[string]*models.PageTemplate{}
 		}
 		m.templates[key] = row
+	}
+	if row == nil {
+		return nil, repository.ErrNotFound
+	}
+	cp := *row
+	return &cp, nil
+}
+
+// sharedCertGet reads one shared certificate, once per run, like
+// pageTemplateGet: every domain attached to it reads the same row.
+func (r *Reconciler) sharedCertGet(ctx context.Context, id string) (*models.SharedCertificate, error) {
+	_, rr := runFrom(ctx)
+	if rr == nil {
+		return r.sharedCerts.FindByID(ctx, id)
+	}
+	m := &rr.memo
+	m.mu.Lock()
+	if m.finished {
+		m.mu.Unlock()
+		return r.sharedCerts.FindByID(ctx, id)
+	}
+	defer m.mu.Unlock()
+	row, seen := m.sharedCerts[id]
+	if !seen {
+		var err error
+		row, err = r.sharedCerts.FindByID(ctx, id)
+		switch {
+		case errors.Is(err, repository.ErrNotFound):
+			row = nil
+		case err != nil:
+			return nil, err
+		}
+		if m.sharedCerts == nil {
+			m.sharedCerts = map[string]*models.SharedCertificate{}
+		}
+		m.sharedCerts[id] = row
 	}
 	if row == nil {
 		return nil, repository.ErrNotFound
