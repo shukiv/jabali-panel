@@ -3495,6 +3495,28 @@ paths:
         "409": { description: "Refused — mail_domain_conflict (new name already carries mail), panel primary, web disabled, custom/shared cert, or name taken", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "503": { description: "Rename not available (dependencies not wired, or mail check unreachable)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
 
+  /domains/{id}/reverse-proxy-port:
+    put:
+      tags: [Domains]
+      summary: Change the local port a reverse-proxy domain forwards to (owner-scoped, GH #2544)
+      description: |
+        Moves a reverse-proxy domain to another loopback port after create. The
+        port passes the same checks as one chosen at create: the static port
+        policy (no privileged ports, allocator pools, FTP passive range or
+        panel/service ports), then a probe refusing a port a system service
+        listens on. The port reservation and the domain row change together;
+        the vhost re-renders on the next reconcile. Setting the current port is
+        a no-op. Admin, or the domain's own tenant.
+      security: [ { KratosSession: [] } ]
+      parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { port: { type: integer, minimum: 1024, maximum: 65535 } }, required: [port] } } } }
+      responses:
+        "200": { description: "The domain, with its new reverse_proxy_port", content: { application/json: { schema: { type: object } } } }
+        "400": { description: "invalid_request (no port), or reverse_proxy_port_invalid (the port policy refused it)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "403": { description: Not the domain owner, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "404": { description: Domain not found, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "409": { description: "not_reverse_proxy, reverse_proxy_port_system_bound, or reverse_proxy_port_in_use (another domain holds it)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
 
   # --- Branding (auto) ---
 
