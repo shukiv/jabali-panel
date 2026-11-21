@@ -43,7 +43,7 @@ first (a cross-tenant credential leak otherwise).`,
 
 			if !yes {
 				ok, cerr := confirm(fmt.Sprintf(
-					"Reassign %q to %q? This moves its docroot into the new owner's home and re-owns the files.",
+					"Reassign %q to %q? This moves its files into the new owner's home and re-owns them.",
 					dom.Name, args[1]))
 				if cerr != nil {
 					return cerr
@@ -56,7 +56,10 @@ first (a cross-tenant credential leak otherwise).`,
 			d := userops.Deps{
 				Users:   userRepo(),
 				Domains: domainRepoFromDB(),
-				Log:     slog.Default(),
+				// FtpAccounts: refuse when an FTP/SFTP subaccount is homed in
+				// the files that move (GH #2541).
+				FtpAccounts: repository.NewFtpAccountRepository(sharedDB),
+				Log:         slog.Default(),
 			}
 			if sharedAgent != nil {
 				d.Agent = sharedAgent

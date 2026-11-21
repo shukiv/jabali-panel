@@ -38,6 +38,14 @@ func (r *chownDomainsRepo) FindByID(context.Context, string) (*models.Domain, er
 	return r.byID, nil
 }
 
+// ListByUserID backs chown's check for another site inside the moving folder.
+func (r *chownDomainsRepo) ListByUserID(context.Context, string, repository.ListOptions) ([]models.Domain, int64, error) {
+	if r.byID == nil {
+		return nil, 0, nil
+	}
+	return []models.Domain{*r.byID}, 1, nil
+}
+
 func (r *chownDomainsRepo) TransferOwner(context.Context, string, string, string) error {
 	r.transferCalls++
 	return r.transferErr

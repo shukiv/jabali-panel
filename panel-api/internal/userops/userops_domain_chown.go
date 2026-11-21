@@ -25,8 +25,10 @@ type ChownDeps struct {
 	Reconciler ChownReconciler
 }
 
-// ChangeDomainOwner reassigns a domain to a new tenant, moving its docroot into
-// the new owner's home and re-owning the files to the new uid (GH #1238).
+// ChangeDomainOwner reassigns a domain to a new tenant, moving its files into
+// the new owner's home and re-owning them to the new uid (GH #1238). The files
+// are the domain's whole folder, /home/<old>/domains/<name>, when the docroot
+// is in it (GH #2541), else the docroot alone.
 //
 // The domain row is never deleted/recreated — domain_id survives, so tombstones,
 // the SSL lineage, the DNS zone, and mailboxes all stay. Files move first (agent
@@ -90,17 +92,46 @@ func ChangeDomainOwner(ctx context.Context, d Deps, cd ChownDeps, domain *models
 	}
 	newDocRoot := newPrefix + strings.TrimPrefix(domain.DocRoot, oldPrefix)
 
-	// Move + re-own the docroot tree on the box.
-	reownParams := map[string]any{
-		"old_doc_root": domain.DocRoot,
-		"new_doc_root": newDocRoot,
-		"new_uid":      int(*newOwner.LinuxUID),
+	// What moves (GH #2541): the domain's whole folder when the docroot is in
+	// it (see domainFolder), else the docroot alone (e.g. ~/public_html).
+	moveFrom, moveTo := domain.DocRoot, newDocRoot
+	if dir := domainFolder(*oldOwner.Username, domain.Name, domain.DocRoot); dir != "" {
+		moveFrom, moveTo = dir, newPrefix+"domains/"+domain.Name
 	}
-	// Nested layout (/home/<old>/domains/<name>/public_html): the move empties
-	// the old owner's <name> folder; the agent removes it if it is empty, as
-	// on a rename.
-	if _, pruneOldDir, rerr := renameDocRootSegment(domain.DocRoot, domain.Name, domain.Name); rerr == nil && pruneOldDir != "" {
-		reownParams["prune_empty_dir"] = pruneOldDir
+
+	// Refuse when the move would carry another domain's site with it.
+	other, err := siteInsideTree(ctx, d.Domains, domain.UserID, domain.ID, moveFrom)
+	if err != nil {
+		return fmt.Errorf("chown: could not list the current owner's domains: %w", err)
+	}
+	if other != nil {
+		return fmt.Errorf("chown: the files of %q (%s) are inside %q, which moves with %q — move %q's document root out first", other.Name, other.DocRoot, moveFrom, domain.Name, other.Name)
+	}
+
+	// Refuse when an FTP/SFTP subaccount is homed in the tree that moves, as
+	// a rename does: the account keeps its stored home path, which would point
+	// at a folder that is gone.
+	if d.FtpAccounts != nil {
+		accts, aerr := d.FtpAccounts.ListByUserID(ctx, domain.UserID)
+		if aerr != nil {
+			return fmt.Errorf("chown: could not check FTP subaccounts of %q: %w", domain.Name, aerr)
+		}
+		var blocking []string
+		for _, a := range accts {
+			if a.HomePath == moveFrom || strings.HasPrefix(a.HomePath, moveFrom+"/") {
+				blocking = append(blocking, a.Username)
+			}
+		}
+		if len(blocking) > 0 {
+			return fmt.Errorf("chown: %q has FTP/SFTP subaccount(s) homed in its files (%s) — delete them or move their home outside %q first", domain.Name, strings.Join(blocking, ", "), moveFrom)
+		}
+	}
+
+	// Move + re-own the tree on the box.
+	reownParams := map[string]any{
+		"old_doc_root": moveFrom,
+		"new_doc_root": moveTo,
+		"new_uid":      int(*newOwner.LinuxUID),
 	}
 	if _, err := d.Agent.Call(ctx, "domain.reown", reownParams); err != nil {
 		return fmt.Errorf("chown: agent domain.reown failed: %w", err)

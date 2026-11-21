@@ -109,8 +109,9 @@ export const DomainChownAction = ({ domain, open, onClose }: DomainChownActionPr
       destroyOnHidden
     >
       <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        Reassigns <b>{domain.name}</b> to another tenant. The document root moves
-        into the new owner's home and is re-owned to their user; the domain keeps
+        Reassigns <b>{domain.name}</b> to another tenant. The domain's folder (the
+        document root and everything next to it) moves into the new owner's home
+        and is re-owned to their user; the domain keeps
         its SSL, DNS and mail. The site re-renders under the new owner within
         about a minute.
       </Typography.Paragraph>
@@ -142,6 +143,10 @@ export const DomainChownAction = ({ domain, open, onClose }: DomainChownActionPr
               migrate the app + its database to the new owner first.
             </li>
             <li>The files move to the new owner's home and are re-owned to their user.</li>
+            <li>
+              Refused if one of the current owner's <b>FTP/SFTP accounts</b> has its home
+              inside the domain's folder. Delete it or point it elsewhere first.
+            </li>
             <li>
               The domain's <b>Python apps</b>, Git repository settings and Composer
               project folder setting are deleted: they belong to the current owner.

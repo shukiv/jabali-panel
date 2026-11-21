@@ -33,7 +33,28 @@ type chownDomains struct {
 	// agent, when set, has its calls so far counted at TransferOwner.
 	agent           *chownAgent
 	callsAtTransfer int
+	// owned is what ListByUserID returns for the old owner; listErr fails it.
+	owned   []models.Domain
+	listErr error
 }
+
+func (f *chownDomains) ListByUserID(_ context.Context, _ string, _ repository.ListOptions) ([]models.Domain, int64, error) {
+	if f.listErr != nil {
+		return nil, 0, f.listErr
+	}
+	return f.owned, int64(len(f.owned)), nil
+}
+
+type chownFtp struct {
+	accts []models.FtpAccount
+	err   error
+}
+
+func (f *chownFtp) ListByUserID(_ context.Context, _ string) ([]models.FtpAccount, error) {
+	return f.accts, f.err
+}
+
+func (f *chownFtp) List(_ context.Context) ([]models.FtpAccount, error) { return f.accts, f.err }
 
 func (f *chownDomains) TransferOwner(_ context.Context, _ string, newUserID, newDocRoot string) error {
 	f.transferCalled = true
@@ -99,11 +120,13 @@ func chownFixture() (Deps, ChownDeps, *models.Domain, *models.User, *chownDomain
 	oldOwner := &models.User{ID: "old", Username: strptr("alice"), LinuxUID: cuidptr(1001)}
 	newOwner := &models.User{ID: "new", Username: strptr("bob"), LinuxUID: cuidptr(1002)}
 	users := &chownUsers{byID: map[string]*models.User{"old": oldOwner, "new": newOwner}}
-	doms := &chownDomains{}
-	ag := &chownAgent{}
-	d := Deps{Users: users, Domains: doms, Agent: ag}
-	cd := ChownDeps{AppInstalls: &chownApps{}}
 	domain := &models.Domain{ID: "d1", Name: "site.example", UserID: "old", DocRoot: "/home/alice/domains/site.example/public_html"}
+	// The old owner's domains include the one changing owner (its row is the
+	// same one, so ListByUserID returns it too).
+	doms := &chownDomains{owned: []models.Domain{{ID: "d1", Name: "site.example", UserID: "old", DocRoot: domain.DocRoot}}}
+	ag := &chownAgent{}
+	d := Deps{Users: users, Domains: doms, Agent: ag, FtpAccounts: &chownFtp{}}
+	cd := ChownDeps{AppInstalls: &chownApps{}}
 	return d, cd, domain, newOwner, doms, ag
 }
 
@@ -116,9 +139,11 @@ func TestChangeDomainOwner_HappyPath(t *testing.T) {
 	if !ag.called || ag.lastMethod != "domain.reown" {
 		t.Fatalf("agent domain.reown not called; called=%v method=%q", ag.called, ag.lastMethod)
 	}
+	// The whole domain folder moves (GH #2541); the docroot keeps its place
+	// inside it.
 	wantNew := "/home/bob/domains/site.example/public_html"
-	if ag.lastParams["old_doc_root"] != "/home/alice/domains/site.example/public_html" || ag.lastParams["new_doc_root"] != wantNew {
-		t.Errorf("agent docroots wrong: %v", ag.lastParams)
+	if ag.lastParams["old_doc_root"] != "/home/alice/domains/site.example" || ag.lastParams["new_doc_root"] != "/home/bob/domains/site.example" {
+		t.Errorf("agent move wrong: %v", ag.lastParams)
 	}
 	if ag.lastParams["new_uid"] != 1002 {
 		t.Errorf("agent new_uid = %v, want 1002", ag.lastParams["new_uid"])
@@ -131,29 +156,66 @@ func TestChangeDomainOwner_HappyPath(t *testing.T) {
 	}
 }
 
-// The move empties the old owner's /home/<old>/domains/<name>; the agent is
-// asked to remove it. The default layout's leaf is the domain's own folder,
-// so nothing is left behind there.
-func TestChangeDomainOwner_PrunesTheOldWrapper(t *testing.T) {
+// GH #2541: when the docroot is the domain's folder or inside it, the whole
+// folder moves, so nothing next to the docroot (a Laravel app's code next to
+// public_html/public, logs, .env) is left behind under the old owner. A
+// docroot outside it moves on its own. Nothing is left empty to prune.
+func TestChangeDomainOwner_WhatMoves(t *testing.T) {
 	for _, tc := range []struct {
-		docRoot, want string
+		docRoot, from, to, newDocRoot string
 	}{
-		{"/home/alice/domains/site.example/public_html", "/home/alice/domains/site.example"},
-		{"/home/alice/public_html/site.example", ""},
-		{"/home/alice/custom/www", ""},
+		{"/home/alice/domains/site.example/public_html",
+			"/home/alice/domains/site.example", "/home/bob/domains/site.example",
+			"/home/bob/domains/site.example/public_html"},
+		{"/home/alice/domains/site.example/public_html/public",
+			"/home/alice/domains/site.example", "/home/bob/domains/site.example",
+			"/home/bob/domains/site.example/public_html/public"},
+		{"/home/alice/domains/site.example",
+			"/home/alice/domains/site.example", "/home/bob/domains/site.example",
+			"/home/bob/domains/site.example"},
+		// A folder whose name only starts with the domain's is not its folder.
+		{"/home/alice/domains/site.example-old/public_html",
+			"/home/alice/domains/site.example-old/public_html", "/home/bob/domains/site.example-old/public_html",
+			"/home/bob/domains/site.example-old/public_html"},
+		{"/home/alice/public_html/site.example",
+			"/home/alice/public_html/site.example", "/home/bob/public_html/site.example",
+			"/home/bob/public_html/site.example"},
+		{"/home/alice/custom/www",
+			"/home/alice/custom/www", "/home/bob/custom/www",
+			"/home/bob/custom/www"},
 	} {
-		d, cd, domain, newOwner, _, ag := chownFixture()
+		d, cd, domain, newOwner, doms, ag := chownFixture()
 		domain.DocRoot = tc.docRoot
+		doms.owned[0].DocRoot = tc.docRoot
 		if err := ChangeDomainOwner(context.Background(), d, cd, domain, newOwner); err != nil {
 			t.Fatalf("%s: chown: %v", tc.docRoot, err)
 		}
-		got, set := ag.lastParams["prune_empty_dir"]
-		if tc.want == "" && set {
+		if ag.lastParams["old_doc_root"] != tc.from || ag.lastParams["new_doc_root"] != tc.to {
+			t.Errorf("%s: moved %v -> %v, want %s -> %s", tc.docRoot, ag.lastParams["old_doc_root"], ag.lastParams["new_doc_root"], tc.from, tc.to)
+		}
+		if got, set := ag.lastParams["prune_empty_dir"]; set {
 			t.Errorf("%s: prune_empty_dir = %v, want none", tc.docRoot, got)
 		}
-		if tc.want != "" && got != tc.want {
-			t.Errorf("%s: prune_empty_dir = %v, want %q", tc.docRoot, got, tc.want)
+		if doms.newDocRoot != tc.newDocRoot || domain.DocRoot != tc.newDocRoot {
+			t.Errorf("%s: new docroot = %q (row) / %q (domain), want %q", tc.docRoot, doms.newDocRoot, domain.DocRoot, tc.newDocRoot)
 		}
+	}
+}
+
+// An FTP/SFTP subaccount homed outside the tree that moves doesn't stop it:
+// its home stays where it is.
+func TestChangeDomainOwner_FtpAccountOutsideTheFolderIsFine(t *testing.T) {
+	d, cd, domain, newOwner, doms, _ := chownFixture()
+	d.FtpAccounts = &chownFtp{accts: []models.FtpAccount{
+		{Username: "alice_all", HomePath: "/home/alice"},
+		{Username: "alice_domains", HomePath: "/home/alice/domains"},
+		{Username: "alice_other", HomePath: "/home/alice/domains/site.example-old"},
+	}}
+	if err := ChangeDomainOwner(context.Background(), d, cd, domain, newOwner); err != nil {
+		t.Fatalf("chown: %v", err)
+	}
+	if !doms.transferCalled {
+		t.Errorf("owner not changed")
 	}
 }
 
@@ -178,6 +240,24 @@ func TestChangeDomainOwner_Refusals(t *testing.T) {
 		{"new owner no uid", func(_ *Deps, _ *ChownDeps, _ *models.Domain, no *models.User) {
 			no.LinuxUID = nil
 		}, "no linux_uid"},
+		// GH #2541: the folder that moves holds another domain's site.
+		{"another domain's site inside the folder", func(d *Deps, _ *ChownDeps, _ *models.Domain, _ *models.User) {
+			doms := d.Domains.(*chownDomains)
+			doms.owned = append(doms.owned, models.Domain{ID: "d2", Name: "blog.example", UserID: "old", DocRoot: "/home/alice/domains/site.example/public_html/blog"})
+		}, `"blog.example"`},
+		{"listing the owner's domains fails", func(d *Deps, _ *ChownDeps, _ *models.Domain, _ *models.User) {
+			d.Domains.(*chownDomains).listErr = errors.New("db down")
+		}, "could not list"},
+		// GH #2541: an FTP/SFTP subaccount homed in the folder that moves.
+		{"ftp account homed in the folder", func(d *Deps, _ *ChownDeps, _ *models.Domain, _ *models.User) {
+			d.FtpAccounts = &chownFtp{accts: []models.FtpAccount{{Username: "alice_site", HomePath: "/home/alice/domains/site.example"}}}
+		}, "alice_site"},
+		{"ftp account homed under the docroot", func(d *Deps, _ *ChownDeps, _ *models.Domain, _ *models.User) {
+			d.FtpAccounts = &chownFtp{accts: []models.FtpAccount{{Username: "alice_up", HomePath: "/home/alice/domains/site.example/public_html/uploads"}}}
+		}, "alice_up"},
+		{"listing ftp accounts fails", func(d *Deps, _ *ChownDeps, _ *models.Domain, _ *models.User) {
+			d.FtpAccounts = &chownFtp{err: errors.New("db down")}
+		}, "FTP subaccounts"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
