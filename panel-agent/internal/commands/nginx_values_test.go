@@ -113,6 +113,7 @@ func TestDockerAppVhostApply_RefusesNginxSyntaxInParams(t *testing.T) {
 }
 
 func TestMailWebadminApply_RefusesNginxSyntaxInParams(t *testing.T) {
+	newFakeOAuthStalwart(t) // the well-formed apply registers the WebAdmin OAuth client (GH #2542)
 	av, _ := withDockerAppVhostTestDirs(t)
 	origHt := stalwartAdminHtpasswd
 	stalwartAdminHtpasswd = filepath.Join(t.TempDir(), "htpasswd")

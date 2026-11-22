@@ -10,6 +10,7 @@ import (
 )
 
 func TestMailWebadminApply_RenderAndGate(t *testing.T) {
+	newFakeOAuthStalwart(t) // apply registers the WebAdmin OAuth client (GH #2542)
 	sa, se := t.TempDir(), t.TempDir()
 	oldA, oldE := mailVhostSitesAvailable, mailVhostSitesEnabled
 	mailVhostSitesAvailable, mailVhostSitesEnabled = sa, se
