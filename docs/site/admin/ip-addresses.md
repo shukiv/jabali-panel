@@ -32,6 +32,16 @@ Domains → Edit → **Listen IP** → pick from the pool. The reconciler:
 
 Convergence latency is typically under 60 seconds.
 
+## Changing the server's main IP
+
+The server's own address lives in **Settings** (`public_ipv4`, `public_ipv6`, `ns1_ipv4`, `ns2_ipv4`), not in the pool. After you change it there, the reconciler moves the DNS records that name the server itself, in every zone, within one pass:
+
+- the `mail` A/AAAA record (the MX target);
+- the default SPF record (`v=spf1 mx ip4:… ip6:… ~all`);
+- the `ns1`/`ns2` A records in the zone that holds the nameserver names.
+
+It moves only records the panel created and nobody edited. A record you changed by hand, or an SPF you added an `include:` to, stays as you left it.
+
 ## Removing an IP
 
 Forbidden if any domain is currently using the IP. Reassign affected domains first.
