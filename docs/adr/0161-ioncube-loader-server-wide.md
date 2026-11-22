@@ -40,7 +40,7 @@ not a separate page, not per-domain.
 
 - **Delivery** (kept from the first cut): panel-api fetches the official loaders
   tarball, verifies each `.so` against a **pinned per-version sha256** catalogue
-  (`panel-api/internal/ioncube`, loader v15.5.0, PHP 7.4/8.1/8.2/8.3/8.4/8.5),
+  (`panel-api/internal/ioncube`, loader v15.5.1, PHP 7.4/8.1/8.2/8.3/8.4/8.5),
   and hands the verified bytes to the agent — the agent has no outbound HTTPS
   (ADR-0050). The agent re-verifies and writes to `/usr/lib/php/ioncube/<ver>/`
   (already permitted by the `jabali-fpm-app` AppArmor `/usr/lib/php/** mr` rule —
