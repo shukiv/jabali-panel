@@ -20,6 +20,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
 func ipRepoFromDB() repository.ManagedIPRepository {
@@ -145,6 +146,7 @@ func newIPUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("user-selectable") {
 				row.IsUserSelectable = userSelectable
 			}
+			promoted := false
 			if cmd.Flags().Changed("default") {
 				if !makeDefault {
 					return fmt.Errorf("cannot un-set default; promote another IP to default instead")
@@ -158,12 +160,18 @@ func newIPUpdateCmd() *cobra.Command {
 						}
 					}
 					row.IsDefault = true
+					promoted = true
 				}
 			}
 			if err := repo.Update(ctx, row); err != nil {
 				return fmt.Errorf("update IP: %w", err)
 			}
 			cliAuditOK(ctx, "managed_ip.update", "managed_ip", args[0], nil)
+			if promoted {
+				if err := followDefaultIPv4(ctx, row); err != nil {
+					return err
+				}
+			}
 			if jsonOutput {
 				return printJSON(row)
 			}
@@ -175,6 +183,24 @@ func newIPUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&userSelectable, "user-selectable", false, "tenants may pick this IP")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "promote to per-family default")
 	return cmd
+}
+
+// followDefaultIPv4 moves the panel's default vhost to a newly promoted
+// default IPv4, the same call the REST PATCH makes; tenant vhosts follow on
+// the next reconcile pass. An IPv6 default has nothing to move.
+func followDefaultIPv4(ctx context.Context, row *models.ManagedIP) error {
+	if row.Family != "ipv4" {
+		return nil
+	}
+	call := settingsops.DefaultIPv4ListenCall(row.Address)
+	err := initAgent()
+	if err == nil {
+		err = dispatchSettingsAgentCall(ctx, call)
+	}
+	if err != nil {
+		return fmt.Errorf("IP %d (%s) is the default now, but the panel's default vhost did not follow it (%s): %w", row.ID, row.Address, call.Method, err)
+	}
+	return nil
 }
 
 func newIPDeleteCmd() *cobra.Command {
