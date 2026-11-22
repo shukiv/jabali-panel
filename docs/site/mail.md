@@ -348,6 +348,14 @@ If Stalwart's blob store already points at a path outside `/var/lib/stalwart`, t
 
 A server set up either way isn't moved to Stalwart 1.0 by `jabali update`: see [Moving to Stalwart 1.0](#moving-to-stalwart-10).
 
+## Stalwart web admin
+
+Server Settings can publish Stalwart's own admin interface at `https://<panel-hostname>:8449/`, behind TLS, the optional source IP allowlist, and Stalwart's admin login (user `admin`; the card reveals or rotates the password).
+
+Stalwart signs in to its admin interface with OAuth, and it recognises that interface by itself only on its own hostnames, which never carry a port. So when the door opens, the panel registers its address on port 8449 with Stalwart as an OAuth client named **Jabali WebAdmin**. It removes the client when the door closes and replaces it when the panel hostname changes. A server that opened the door before this was added gets the client after its next update. Without it, the sign-in stops at "Client metadata documents are disabled".
+
+Signing in shows Stalwart's consent screen for Jabali WebAdmin: allow it. Only the admin interface (`/admin`) is set up on this port, not Stalwart's account portal (`/account`).
+
 ## Moving to Stalwart 1.0
 
 Stalwart 1.0 can't open a 0.16 mail store. So `jabali update` moves a server from 0.16 to 1.0 by copying the data with Stalwart's migration tool:

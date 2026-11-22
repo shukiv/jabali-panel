@@ -168,6 +168,11 @@ type Reconciler struct {
 	// mid-rollout agent (missing kratos.config.rehost) or an unreadable config
 	// does not log at Warn every tick.
 	kratosRehostLastErr string
+	// webadminApplied is the hostname|allowlist the WebAdmin door was last
+	// applied for in this process (GH #2542); webadminLastErr debounces its
+	// warnings.
+	webadminApplied string
+	webadminLastErr string
 	// paused is an atomic flag to pause reconciliation (for SSO key rotation)
 	paused atomic.Bool
 
@@ -1109,6 +1114,9 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 	// so a panel FQDN change doesn't leave the identity service on the old
 	// origin (a CORS-blocked full login lockout). Cheap noop when they match.
 	r.reconcileKratosHostname(ctx)
+	// GH #2542: the Stalwart WebAdmin door and its OAuth client, once per
+	// process and on a hostname change. Noop while the door is off.
+	r.reconcileStalwartWebadmin(ctx)
 	// JAB-391: converge Stalwart outbound TLS strategies to dane=disable.
 	r.reconcileOutboundMailTLS(ctx)
 	r.reconcileUpdateRuns(ctx)

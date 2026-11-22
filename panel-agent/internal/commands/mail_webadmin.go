@@ -136,6 +136,7 @@ func mailWebadminApplyHandler(ctx context.Context, params json.RawMessage) (any,
 			}
 		}
 		ufwSetWebadminPort(ctx, 0, false) // best-effort: close the port
+		dropWebadminOAuthClient(ctx)      // GH #2542
 		return webadminApplyResponse{Ok: true, Changed: changed}, nil
 	}
 
@@ -205,6 +206,10 @@ func mailWebadminApplyHandler(ctx context.Context, params json.RawMessage) (any,
 		if err := nginxTestAndReload(ctx); err != nil {
 			return nil, err
 		}
+	}
+	// GH #2542: without this client the WebAdmin's sign-in is refused.
+	if err := syncWebadminOAuthClient(ctx, p.ServerName, p.Port, true); err != nil {
+		return nil, err
 	}
 	return webadminApplyResponse{Ok: true, Changed: changed}, nil
 }

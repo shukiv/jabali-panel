@@ -1281,7 +1281,7 @@ func (h *serverSettingsHandler) pythonRuntimeStatus(c *gin.Context) {
 
 // stalwartWebadminPort is the dedicated HTTPS port the WebAdmin proxy listens
 // on (panel hostname, panel cert). Distinct from the panel :8443.
-const stalwartWebadminPort = 8449
+const stalwartWebadminPort = settingsops.StalwartWebadminPort
 
 // stalwartAdminCredentialResponse carries the Stalwart admin GUI login. The
 // password is the recovery-admin token — the same credential the panel uses to
@@ -1345,30 +1345,10 @@ func (h *serverSettingsHandler) stalwartAdminCredential(c *gin.Context) {
 // cert; Stalwart stays loopback. No gateway credential — the gate is TLS + the
 // IP allowlist + Stalwart's own admin login (ADR-0142).
 func (h *serverSettingsHandler) applyStalwartWebadmin(ctx context.Context, s *models.ServerSettings) error {
-	cidrs := splitCIDRList(s.StalwartWebadminAllowCIDRs)
-	params := map[string]any{
-		"enabled":       s.StalwartWebadminEnabled,
-		"server_name":   s.Hostname,
-		"port":          stalwartWebadminPort,
-		"ssl_cert_path": "/etc/jabali/tls/panel.crt",
-		"ssl_key_path":  "/etc/jabali/tls/panel.key",
-		"allow_cidrs":   cidrs,
-	}
 	callCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	_, err := h.cfg.Agent.Call(callCtx, "mail.webadmin.apply", params)
+	_, err := h.cfg.Agent.Call(callCtx, "mail.webadmin.apply", settingsops.WebadminApplyParams(s))
 	return err
-}
-
-// splitCIDRList parses a comma/space-separated allowlist into a clean slice.
-func splitCIDRList(in string) []string {
-	out := []string{}
-	for _, f := range strings.FieldsFunc(in, func(r rune) bool { return r == ',' || r == ' ' || r == '\n' || r == '\t' }) {
-		if f != "" {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 // hexColorRE matches an empty string (use default) or a #rgb / #rrggbb /
