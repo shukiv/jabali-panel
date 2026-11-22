@@ -1,9 +1,11 @@
 // Admin IP address manager CLI (Gitea #555). Mirrors /admin/ips (ips.go):
 // list/add/update/delete managed IP pool rows with the same validation
 // (DeriveFamily + routable check), uniqueness, default-per-family promotion,
-// and in-use protection. The DB is the source of truth; the agent binds rows to
-// the kernel on its managed-ips sync (the API's push-bind is feature-flagged and
-// not replicated here). Mutations are CLI-audited; inventory honours --json.
+// and in-use protection. The DB is the source of truth. An added row is not bound
+// to a network interface: the managed-ips reconciler only re-binds rows already
+// marked bound and never adopts an unbound one, and the API's push-bind is
+// feature-flagged and not replicated here. Mutations are CLI-audited; inventory
+// honours --json.
 package main
 
 import (
@@ -111,7 +113,7 @@ func newIPAddCmd() *cobra.Command {
 			if jsonOutput {
 				return printJSON(row)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s) id=%d. The agent binds it to the kernel on its next managed-ips sync.\n", addr, family, row.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s) id=%d to the IP pool. Jabali does not bind it to a network interface: the address must already be configured on the server (netplan or /etc/network/interfaces).\n", addr, family, row.ID)
 			return nil
 		},
 	}
