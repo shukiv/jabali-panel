@@ -1,0 +1,109 @@
+Build on PHP 8.6 (backport of upstream's PHP 8.6 compatibility fixes)
+
+Snuffleupagus 0.14.0 does not compile against PHP 8.6: php_hash_bin2hex()
+is gone (zend_bin2hex() replaces it) and internal functions' arg_info[].name
+is now a zend_string. Without this patch the 8.6 build fails and 8.6 pools
+would run with no PHP Defense.
+
+Squash of upstream commits 4feaa001c, b8f4cd7f7, e765f2fd6, c78c14165,
+cdcad800c and 9e0a8de9f (2026-10-13), not yet in a release. The 8.6 changes
+are behind PHP_VERSION_ID >= 80600. The other two compile to the same code
+on PHP 8.0-8.5: zval_is_true() is an alias of zend_is_true(), and
+EMPTY_SWITCH_DEFAULT_CASE() expands to the default/ZEND_UNREACHABLE() it is
+replaced with. Drop this patch when bumping to a release that has them.
+
+Applied at build time by ../apply-patches.sh (all patches or none).
+Upstream: https://github.com/jvoisin/snuffleupagus
+
+diff --git a/src/sp_cookie_encryption.c b/src/sp_cookie_encryption.c
+index 7b3e088..8aaf34a 100644
+--- a/src/sp_cookie_encryption.c
++++ b/src/sp_cookie_encryption.c
+@@ -74,17 +74,17 @@ static void php_head_parse_cookie_options_array(
+         *domain = zval_get_string(value);
+         found++;
+       } else if (zend_string_equals_literal_ci(key, "secure")) {
+-        *secure = zval_is_true(value);
++        *secure = zend_is_true(value);
+         found++;
+       } else if (zend_string_equals_literal_ci(key, "httponly")) {
+-        *httponly = zval_is_true(value);
++        *httponly = zend_is_true(value);
+         found++;
+       } else if (zend_string_equals_literal_ci(key, "samesite")) {
+         *samesite = zval_get_string(value);
+         found++;
+ #if PHP_VERSION_ID >= 80500
+       } else if (zend_string_equals_literal_ci(key, "partitioned")) {
+-        *partitioned = zval_is_true(value);
++        *partitioned = zend_is_true(value);
+         found++;
+ #endif
+       } else {
+diff --git a/src/sp_disabled_functions.c b/src/sp_disabled_functions.c
+index 087132a..e398456 100644
+--- a/src/sp_disabled_functions.c
++++ b/src/sp_disabled_functions.c
+@@ -97,7 +97,11 @@ static inline const char* get_fn_arg_name(zend_function *fn, uint32_t i) {
+   if (fn->type == ZEND_USER_FUNCTION || (fn->common.fn_flags & ZEND_ACC_USER_ARG_INFO)) {
+     return ZSTR_VAL(fn->op_array.arg_info[i].name);
+   } else {
++#if PHP_VERSION_ID < 80600
+     return fn->internal_function.arg_info[i].name;
++#else
++    return ZSTR_VAL(fn->internal_function.arg_info[i].name);
++#endif
+   }
+ }
+ 
+diff --git a/src/sp_execute.c b/src/sp_execute.c
+index 6fa721c..761b2b9 100644
+--- a/src/sp_execute.c
++++ b/src/sp_execute.c
+@@ -312,7 +312,13 @@ static inline void sp_stream_open_checks(zend_string *zend_filename, zend_file_h
+               zend_hash_str_find_ptr(disabled_functions_hooked, ZEND_STRL("include_once")),
+               disabled_functions_hooked);
+           break;
+-          EMPTY_SWITCH_DEFAULT_CASE();  // LCOV_EXCL_LINE
++#if PHP_VERSION_ID < 80000
++		  EMPTY_SWITCH_DEFAULT_CASE();  // LCOV_EXCL_LINE
++#else
++		default:
++		  ZEND_UNREACHABLE();
++		  break;
++#endif
+       }
+   }
+ }
+diff --git a/src/sp_unserialize.c b/src/sp_unserialize.c
+index d76cbcb..1362a83 100644
+--- a/src/sp_unserialize.c
++++ b/src/sp_unserialize.c
+@@ -44,7 +44,11 @@ static zend_string *sp_do_hash_hmac_sha256(char* restrict data, size_t data_len,
+ 
+   zend_string *hex_digest = zend_string_safe_alloc(ops->digest_size, 2, 0, 0);
+ 
++#if PHP_VERSION_ID < 80600
+   php_hash_bin2hex(ZSTR_VAL(hex_digest), (unsigned char *) ZSTR_VAL(digest), ops->digest_size);
++#else
++  zend_bin2hex(ZSTR_VAL(hex_digest), (unsigned char *) ZSTR_VAL(digest), ops->digest_size);
++#endif
+   ZSTR_VAL(hex_digest)[2 * ops->digest_size] = 0;
+   zend_string_release_ex(digest, 0);
+   return hex_digest;
+diff --git a/src/sp_var_value.c b/src/sp_var_value.c
+index ad5724e..3c24f59 100644
+--- a/src/sp_var_value.c
++++ b/src/sp_var_value.c
+@@ -9,7 +9,11 @@ static zval *get_param_var(const zend_execute_data *const ed,
+     if (ZEND_USER_CODE(ed->func->type)) {
+       arg_name = ZSTR_VAL(ed->func->common.arg_info[i].name);
+     } else {
++#if PHP_VERSION_ID < 80600
+       arg_name = ed->func->internal_function.arg_info[i].name;
++#else
++      arg_name = ZSTR_VAL(ed->func->internal_function.arg_info[i].name);
++#endif
+     }
+     if (0 == strcmp(arg_name, var_name)) {
+       return ZEND_CALL_VAR_NUM(ed, i);
