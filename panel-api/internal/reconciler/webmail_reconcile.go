@@ -599,6 +599,14 @@ func (r *Reconciler) webmailSSLPaths(ctx context.Context, d *models.Domain) (str
 	if !haveDomain {
 		return "", "", false, mailErr
 	}
+	// The panel-primary domain's own row is usually a self-signed
+	// placeholder, its per-domain mail certificate is pruned, and the panel
+	// refuses per-domain issuance for it (GH #2126). The panel mail
+	// certificate is the real one for mail.<hostname>, so it beats the
+	// placeholder.
+	if d.IsPanelPrimary && fileReadable(panelMailCertPair[0]) && fileReadable(panelMailCertPair[1]) {
+		return panelMailCertPair[0], panelMailCertPair[1], true, nil
+	}
 	return *cert.CertPath, *cert.KeyPath, true, nil
 }
 
