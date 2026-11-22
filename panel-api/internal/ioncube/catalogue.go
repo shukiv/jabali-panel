@@ -16,7 +16,7 @@ import (
 // LoaderVersion is the ionCube Loader release this catalogue's checksums pin.
 // Bumping the loader = new tarball → new per-version sha256 → a panel release
 // (same cadence contract as the ADR-0031 extension catalogue).
-const LoaderVersion = "15.5.0"
+const LoaderVersion = "15.5.1"
 
 // TarballURL is ionCube's official Linux x86-64 loaders archive. It is a
 // rolling "latest" URL; integrity is enforced by verifying each extracted .so
@@ -32,16 +32,16 @@ func soNameFor(version string) string {
 }
 
 // SHA256ByVersion pins the sha256 of each shipped loader .so (ionCube Loader
-// v15.5.0, non-TS, lin x86-64). Keys are the PHP versions jabali offers ionCube
+// v15.5.1, non-TS, lin x86-64). Keys are the PHP versions jabali offers ionCube
 // for. Adding a PHP version or bumping the loader updates this map + the
 // LoaderVersion constant in the same change.
 var sha256ByVersion = map[string]string{
-	"7.4": "c02556b30a25f4370b4e7ece73f83db5952068d4ee8a1165f8baf9df79070258",
-	"8.1": "380f2ecad4ba295f66ebd88a758b55a75fc567b17b852e95f4788b0b588ebf98",
-	"8.2": "8b6c18809f5d83a0f69cc29e7e0c05a6e21ae6f484e5e8db7d6aca140aefa68a",
-	"8.3": "5698913066b2f205fe3d14d32d908df322262237c7890f8ccbbd99ad9af801ce",
-	"8.4": "e2a653cad6623968e82ca19a9031039d85808cf07a7ac929b222c25af8eabcf1",
-	"8.5": "ad4b4e37cb2a270cb736ba8676521121ba3b56a7bc82287808b46b046d9ba3d4",
+	"7.4": "a8b2de9ceb50e813e22e31cfd6ebed891dae70e44cfa4c00efb268160d68630d",
+	"8.1": "ff3a9b407592a116907180c22378c7a8b4aaec0b071b2027aad244d6d0a6f30d",
+	"8.2": "2da620c94158eb8d89c3cacbeb79ad671a783a58d61ee28fce29567ea8c8d31d",
+	"8.3": "4bdbb9bba091bedcf995b06a8296e2db761bc593d048b1905d3b018df46a3fcf",
+	"8.4": "17cc326b10182b1716f722823972083119f4826c74298c1dd1dfb6f9eddb353b",
+	"8.5": "96c89075a07d0ef8c4b2f28a7d5facb0f2597069da2276a50f4c7f3920a7d4bb",
 }
 
 var versionRegex = regexp.MustCompile(`^\d+\.\d+$`)
