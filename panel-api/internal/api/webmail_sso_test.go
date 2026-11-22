@@ -117,6 +117,10 @@ func (r *ssoFakeMailboxRepo) ExistsByDomainAndLocalPart(ctx context.Context, dom
 func (r *ssoFakeMailboxRepo) UpdatePasswordHash(ctx context.Context, id, hash string) error {
 	return nil
 }
+func (*ssoFakeMailboxRepo) ReplacePasswordHash(context.Context, string, string, string, []byte) (bool, error) {
+	return true, nil
+}
+
 func (r *ssoFakeMailboxRepo) UpdatePasswordHashAndEnc(ctx context.Context, id, hash string, enc []byte) error {
 	return nil
 }

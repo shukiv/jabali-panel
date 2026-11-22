@@ -188,6 +188,20 @@ const mailVhostTemplate = `# Rendered by panel-agent webmail.vhost_apply (M6 Ste
     proxy_set_header X-Forwarded-Proto https;
     proxy_http_version 1.1;
   }
+
+  # Mailbox password page (GH #2543): a mailbox user changes their own
+  # password by proving the current one. panel-api serves the form and
+  # throttles it per address and per mailbox; its rate-limit marker feeds
+  # the jabali/mailbox-password-bf CrowdSec scenario.
+  location = /mailbox-password {
+    proxy_pass http://jabali_panel_api/mailbox-password;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_http_version 1.1;
+    client_max_body_size 16k;
+  }
 {{ end }}
   # Mail-client autoconfiguration (GH #1039). panel-api renders the config
   # documents from the domain's mail settings (mail.<domain>, IMAPS 993 /

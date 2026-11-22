@@ -70,3 +70,28 @@ func TestRequireContentType_AutodiscoverExempt(t *testing.T) {
 		t.Errorf("non-exempt text/xml: got %d, want 415", w.Code)
 	}
 }
+
+// The mailbox password page (GH #2543) is an HTML form: its form-urlencoded POST
+// is exempt on that exact path only.
+func TestRequireContentType_MailboxPasswordFormExempt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RequireContentType())
+	ok := func(c *gin.Context) { c.Status(http.StatusOK) }
+	r.POST("/mailbox-password", ok)
+	r.POST("/mailbox-password/x", ok)
+	r.POST("/api/v1/x", ok)
+	for path, want := range map[string]int{
+		"/mailbox-password":   http.StatusOK,
+		"/mailbox-password/x": http.StatusUnsupportedMediaType,
+		"/api/v1/x":           http.StatusUnsupportedMediaType,
+	} {
+		req := httptest.NewRequest("POST", path, strings.NewReader("email=a%40b.c"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != want {
+			t.Errorf("%s form post: got %d, want %d", path, w.Code, want)
+		}
+	}
+}

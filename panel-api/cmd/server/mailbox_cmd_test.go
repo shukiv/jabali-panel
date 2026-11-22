@@ -140,6 +140,10 @@ func (f *fakeMailboxRepo) UpdatePasswordHash(_ context.Context, id string, hash 
 	return repository.ErrNotFound
 }
 
+func (*fakeMailboxRepo) ReplacePasswordHash(context.Context, string, string, string, []byte) (bool, error) {
+	return true, nil
+}
+
 func (f *fakeMailboxRepo) UpdatePasswordHashAndEnc(_ context.Context, id string, hash string, enc []byte) error {
 	if f.updateErr != nil {
 		return f.updateErr

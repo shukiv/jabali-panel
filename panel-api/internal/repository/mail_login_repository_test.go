@@ -124,3 +124,30 @@ func TestMailLoginQuery_MatchesTheMailServerLoginQuery(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, login, ours)
 }
+
+// The mailbox password page (GH #2543) writes the new hash only while the
+// stored one is the hash it checked, and stamps the change time like any
+// other password change; a row that changed meanwhile is not written.
+func TestMailboxReplacePasswordHash_IsACompareAndSwap(t *testing.T) {
+	for name, tc := range map[string]struct {
+		rows int64
+		want bool
+	}{
+		"stored hash unchanged": {rows: 1, want: true},
+		"changed meanwhile":     {rows: 0, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db, mock, raw := newMockDB(t)
+			defer raw.Close()
+			mock.ExpectBegin()
+			mock.ExpectExec("UPDATE `mailboxes` SET .*`password_changed_at`=\\?.* WHERE id = \\? AND password_hash = \\?").
+				WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "mb1", "$2b$12$old").
+				WillReturnResult(sqlmock.NewResult(0, tc.rows))
+			mock.ExpectCommit()
+			got, err := NewMailboxRepository(db).ReplacePasswordHash(context.Background(), "mb1", "$2b$12$old", "$2b$12$new", []byte("sealed"))
+			require.NoError(t, err)
+			require.Equal(t, tc.want, got)
+			require.NoError(t, mock.ExpectationsWereMet())
+		})
+	}
+}

@@ -107,7 +107,9 @@ run "$tmp/tools:$tmp/cs"
 for f in install/crowdsec/stalwart/parsers/s01-parse/jabali-stalwart-logs.yaml \
          install/crowdsec/stalwart/acquis.d/jabali-stalwart.yaml \
          install/crowdsec/panel/parsers/s01-parse/jabali-panel-kratos.yaml \
+         install/crowdsec/panel/parsers/s01-parse/jabali-panel-mailbox-password.yaml \
          install/crowdsec/panel/acquis.d/jabali-panel.yaml \
+         install/crowdsec/panel/scenarios/jabali-mailbox-password-bf.yaml \
          "$repo_scenario"; do
   rel="${f#install/crowdsec/*/}"
   if ! cmp -s "$f" "$etc/$rel"; then

@@ -35,6 +35,14 @@ func RequireContentType() gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		// The mailbox password page (GH #2543) is a plain HTML form, so it
+		// posts form-urlencoded. It uses no cookie or session (it proves the
+		// current password itself), so the cross-site form this guard stops
+		// gains nothing there; the handler accepts that one type and caps it.
+		if c.Request.URL.Path == "/mailbox-password" {
+			c.Next()
+			return
+		}
 
 		ct := c.GetHeader("Content-Type")
 		if !strings.HasPrefix(ct, "application/json") &&
