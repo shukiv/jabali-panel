@@ -271,7 +271,7 @@ func RegisterPHPVersionAdminRoutes(rg *gin.RouterGroup, cli agent.AgentInterface
 
 // isVersionSupported checks if a version is in the supported list.
 // Must match the list in panel-agent/internal/commands/php_version_status.go
-var supportedPHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"}
+var supportedPHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "8.6"}
 
 func isVersionSupported(version string) bool {
 	for _, v := range supportedPHPVersions {

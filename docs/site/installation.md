@@ -92,7 +92,7 @@ If `docker`, `docker_apps` or `postgres` fails to install, the installer warns a
 ## What the installer does
 
 1. Verifies root, a Debian or Ubuntu system, no conflicting cPanel/Plesk/CyberPanel install.
-2. Adds Sury PHP repository (PHP 8.1–8.5+) and PackageCloud for CrowdSec.
+2. Adds Sury PHP repository (PHP 8.1–8.6) and PackageCloud for CrowdSec.
 3. **Purges sury-nginx** if present — Jabali uses Debian-native nginx (Sury dropped nginx in 2026; this is defensive).
 4. Installs system packages: nginx, mariadb, php-fpm (all current Sury versions), redis, certbot, restic, ufw. The modules add their own: pdns-server and pdns-recursor for `dns`; Stalwart for `mail`; CrowdSec, Linux Malware Detect (LMD) and YARA-X for `security`, which also sets up the UFW firewall; Docker for `docker`; postgresql for `postgres`.
 5. Installs Kratos, and with `mail` Bulwark (Node SPA bridge), on Unix sockets — no TCP `:4433/:4434/:3000` exposure.

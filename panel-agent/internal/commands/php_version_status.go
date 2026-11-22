@@ -11,7 +11,7 @@ import (
 
 // SupportedPHPVersions is the list of PHP versions that can be managed.
 // Exported so API and other packages can reference it.
-var SupportedPHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"}
+var SupportedPHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "8.6"}
 
 // phpVersionStatusResponse is the output shape for php.version.status.
 type phpVersionStatusResponse struct {

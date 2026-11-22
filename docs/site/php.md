@@ -26,6 +26,14 @@ Per-user pools mean:
 
 Each Domain row has a `php_pool_id` foreign key into `php_pools`. The vhost `fastcgi_pass` line is rendered from that pool's socket path. Change the version per-domain via Domains → Edit → PHP Version. One-click apps with their own nginx rules (subdirectory installs, osTicket, OpenEMR, InvoiceShelf, Flarum, Nextcloud) pass PHP to the same pool, and follow the domain when its version changes.
 
+### PHP 8.6
+
+PHP 8.6 installs from the PHP Manager like the other versions, and PHP Defense (Snuffleupagus) covers it. Before moving a site to it, check these differences:
+
+- **Session cookies are stricter by default.** `session.use_strict_mode` and `session.cookie_httponly` are on, and `session.cookie_samesite` is `Lax`. A site that needs its session cookie on a POST from another site, such as a payment gateway posting back to a checkout, must set `SameSite=None` with a secure cookie itself, with `session_set_cookie_params()` or `ini_set()`. The panel doesn't set these for it.
+- **No ionCube Loader.** ionCube hasn't released a loader for 8.6, so encoded scripts don't run on it.
+- **Nextcloud** installs only on PHP 8.3, 8.4 or 8.5.
+
 ## User-facing PHP settings
 
 `/jabali-panel/php-settings` exposes:
