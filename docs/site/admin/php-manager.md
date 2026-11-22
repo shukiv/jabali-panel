@@ -4,7 +4,7 @@
 
 ## Versions list
 
-Each installed PHP version (Sury packages, currently 8.1 through 8.5+) shows:
+Each installed PHP version (Sury packages, currently 8.1 through 8.6) shows:
 
 - Version number
 - Number of user pools currently using this version

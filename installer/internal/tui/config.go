@@ -33,7 +33,7 @@ type configField struct {
 // availablePHPVersions mirrors panel-agent SupportedPHPVersions / panel-api
 // supportedPHPVersions — the versions Sury/jabali can install. Kept in sync
 // manually; the installer runs before any panel is up so it can't query the API.
-var availablePHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5"}
+var availablePHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8.5", "8.6"}
 
 // hostnameRe takes a letters-only TLD or an IDN TLD in punycode (xn--p1ai = .рф).
 var hostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
