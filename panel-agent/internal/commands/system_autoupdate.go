@@ -49,6 +49,7 @@ const (
 	// Applied" for hours after the scheduled run — which reads as "never ran".
 	aptUpgradeSvcDropinDir  = "/etc/systemd/system/apt-daily-upgrade.service.d"
 	aptUpgradeSvcDropinFile = "/etc/systemd/system/apt-daily-upgrade.service.d/jabali-report.conf"
+	aptUpgradeListsDropin   = "/etc/systemd/system/apt-daily-upgrade.service.d/jabali-refresh-lists.conf"
 	jabaliAutoSvcFile       = "/etc/systemd/system/jabali-autoupdate.service"
 	jabaliAutoTimerFile     = "/etc/systemd/system/jabali-autoupdate.timer"
 	jabaliAutoTimer         = "jabali-autoupdate.timer"
@@ -104,6 +105,22 @@ func systemAutoupdateApplyHandler(ctx context.Context, raw json.RawMessage) (any
 	}
 	aptReport := "[Service]\nExecStartPost=-/usr/local/bin/jabali update apt-refresh\n"
 	if wrote, err := writeIfChanged(aptUpgradeSvcDropinFile, aptReport); err != nil {
+		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
+	} else if wrote {
+		changed = true
+	}
+
+	// --- apt-daily-upgrade.service ExecStartPre: fresh package lists ---------
+	// The install run uses whatever lists apt-daily.timer fetched, at a random
+	// time up to a day earlier. Sury drops a superseded .deb from its pool at
+	// once, so a stale list 404s and unattended-upgrades aborts the WHOLE run,
+	// Debian security updates included. apt-get update does not wait for the
+	// lists lock (DPkg::Lock::Timeout covers only dpkg's lock; checked on apt
+	// 3.0.4) and the agent's Updates check runs apt-get update too, so retry.
+	// Best-effort ('-'): a failed refresh leaves the run as it was, and the
+	// timeout keeps a hung mirror from holding it.
+	aptLists := "[Service]\nExecStartPre=-/usr/bin/timeout 900 /bin/sh -c 'for i in 1 2 3 4 5 6; do apt-get -qq update && exit 0; sleep 20; done; exit 1'\n"
+	if wrote, err := writeIfChanged(aptUpgradeListsDropin, aptLists); err != nil {
 		return nil, &agentwire.AgentError{Code: agentwire.CodeInternal, Message: err.Error()}
 	} else if wrote {
 		changed = true
