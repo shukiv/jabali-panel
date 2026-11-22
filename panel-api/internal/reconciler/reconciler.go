@@ -377,11 +377,13 @@ type Reconciler struct {
 	skelAt          time.Time
 	// dkim2Applied caches, per mail domain, the DKIM2 signing state last
 	// converged to the agent (GH #648) — see dkim2_reconcile.go.
-	dkim2Mu      sync.Mutex
-	dkim2Applied map[string]bool
 	// dkimSigApplied marks the mail domains whose Ed25519 + RSA DKIM
 	// signatures were converged since boot (GH #2475) — see
-	// dkim_signatures_reconcile.go.
+	// dkim_signatures_reconcile.go. Both are keyed by domain ID: a domain
+	// deleted and imported again under its name is a new row and must
+	// converge again.
+	dkim2Mu        sync.Mutex
+	dkim2Applied   map[string]bool
 	dkimSigMu      sync.Mutex
 	dkimSigApplied map[string]bool
 	// mailElsewhereSum / mailElsewhereAt: the list of domains whose mail is

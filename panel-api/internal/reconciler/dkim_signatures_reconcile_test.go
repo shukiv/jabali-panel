@@ -287,3 +287,20 @@ func TestReconcileDKIMSignatures_SendsThePublishedKeys(t *testing.T) {
 		t.Errorf("keys written %d times, want none", doms.updates)
 	}
 }
+
+// A domain deleted and imported again under the same name is a new row with
+// no RSA key; it must be converged again, not skipped as already done. A
+// migration re-sync left a domain with no jabalirsa key or record
+// until jabali-panel was restarted.
+func TestReconcileDKIMSignatures_ReimportedDomainConvergesAgain(t *testing.T) {
+	doms := &fakeDkimSigDomainRepo{rows: []models.Domain{dkimMailDomain("d1", "again.example.com", "k")}}
+	ag := &fakeDkimEnsureAgent{resp: map[string]string{"again.example.com": ensureResp("k", longRSA)}}
+	r := dkimSigReconciler(ag, doms, &fakeDNSRecordRepo{records: map[string]*models.DNSRecord{}}, &fakeDNSZoneRepo{zones: map[string]*models.DNSZone{}})
+
+	r.reconcileDKIMSignatures(context.Background())
+	doms.rows = []models.Domain{dkimMailDomain("d2", "again.example.com", "k")}
+	r.reconcileDKIMSignatures(context.Background())
+	if len(ag.calls) != 2 {
+		t.Fatalf("calls = %v, want the re-imported row converged too", ag.calls)
+	}
+}

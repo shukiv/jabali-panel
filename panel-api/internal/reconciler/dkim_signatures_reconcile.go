@@ -59,12 +59,12 @@ func (r *Reconciler) reconcileDKIMSignatures(ctx context.Context) {
 			// Disabling mail drops the domain's Stalwart entry; forget it so
 			// a later re-enable converges again.
 			r.dkimSigMu.Lock()
-			delete(r.dkimSigApplied, d.Name)
+			delete(r.dkimSigApplied, d.ID)
 			r.dkimSigMu.Unlock()
 			continue
 		}
 		r.dkimSigMu.Lock()
-		done := r.dkimSigApplied[d.Name]
+		done := r.dkimSigApplied[d.ID]
 		r.dkimSigMu.Unlock()
 		if done {
 			continue
@@ -76,7 +76,7 @@ func (r *Reconciler) reconcileDKIMSignatures(ctx context.Context) {
 		}
 		if done {
 			r.dkimSigMu.Lock()
-			r.dkimSigApplied[d.Name] = true
+			r.dkimSigApplied[d.ID] = true
 			r.dkimSigMu.Unlock()
 		}
 	}

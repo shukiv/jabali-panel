@@ -51,12 +51,12 @@ func (r *Reconciler) reconcileDKIM2(ctx context.Context) {
 			// entry (and with it the signature) via domain_email.disable —
 			// drop it from the cache so a later re-enable reconverges.
 			r.dkim2Mu.Lock()
-			delete(r.dkim2Applied, d.Name)
+			delete(r.dkim2Applied, d.ID)
 			r.dkim2Mu.Unlock()
 			continue
 		}
 		r.dkim2Mu.Lock()
-		applied, seen := r.dkim2Applied[d.Name]
+		applied, seen := r.dkim2Applied[d.ID]
 		r.dkim2Mu.Unlock()
 		if seen && applied == enabled {
 			continue
@@ -73,7 +73,7 @@ func (r *Reconciler) reconcileDKIM2(ctx context.Context) {
 			continue
 		}
 		r.dkim2Mu.Lock()
-		r.dkim2Applied[d.Name] = enabled
+		r.dkim2Applied[d.ID] = enabled
 		r.dkim2Mu.Unlock()
 	}
 }
