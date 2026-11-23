@@ -16,6 +16,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/middleware"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
 // IPHandlerConfig wires the dependencies the M24 IP-pool endpoints need.
@@ -282,6 +283,9 @@ func (h *ipHandler) update(c *gin.Context) {
 	if req.IsUserSelectable != nil {
 		row.IsUserSelectable = *req.IsUserSelectable
 	}
+	// is_default:true on the current default re-applies it on the host (the
+	// retry after promoting an address before it was on an interface).
+	applyDefault := req.IsDefault != nil && *req.IsDefault
 	if req.IsDefault != nil && *req.IsDefault != row.IsDefault {
 		// Promoting a new default demotes the previous default in the
 		// same family. Undoing default (true→false) is rejected — the
@@ -304,7 +308,24 @@ func (h *ipHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
+	if applyDefault && row.Family == "ipv4" && h.cfg.Agent != nil {
+		go h.applyDefaultIPv4(row.Address)
+	}
 	c.JSON(http.StatusOK, row)
+}
+
+// applyDefaultIPv4 moves what install.sh pinned to the old address (the
+// panel's default server, /etc/hosts, the CrowdSec self-whitelist) to the new
+// default IPv4, detached and best-effort like the Settings side effects: the
+// row is saved, tenant vhosts follow it on the next reconcile pass, and a
+// failure here (the address is not on an interface yet) is logged.
+func (h *ipHandler) applyDefaultIPv4(address string) {
+	call := settingsops.DefaultIPv4RehostCall(address)
+	ctx, cancel := context.WithTimeout(context.Background(), call.Timeout)
+	defer cancel()
+	if _, err := h.cfg.Agent.Call(ctx, call.Method, call.Params); err != nil {
+		h.cfg.Log.Error("the host did not follow the new default IPv4", "ip", address, "err", err)
+	}
 }
 
 // promoteDefault demotes the existing per-family default (if any) so

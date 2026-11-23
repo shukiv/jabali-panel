@@ -947,6 +947,11 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 		for _, call := range settingsops.HostnameEffects(&prev, current).Calls() {
 			go h.dispatchSettingsCall(call, "agent "+call.Method+" failed")
 		}
+		// New nameserver addresses: PowerDNS binds them (a restart, only if
+		// one is on this server and not listened on yet).
+		if call := settingsops.NameserverAddrCall(&before, current); call != nil {
+			go h.dispatchSettingsCall(*call, "agent dns.pdns_rebind failed")
+		}
 	}
 
 	// Optional-module lifecycle (JAB-294). settingsops.ModuleEffects is the single

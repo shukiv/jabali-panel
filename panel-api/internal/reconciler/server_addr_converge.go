@@ -18,7 +18,10 @@ import (
 // (BootstrapRecords, restoreBootstrapApex), and before this nothing moved
 // them when those addresses changed, so after an IP swap every zone kept
 // pointing its mail and its SPF at the old address. convergeApexAddrRecords
-// covers only the apex A/AAAA.
+// covers only the apex A/AAAA. The in-zone nameserver A rows (`ns1`, `ns2`
+// when server_settings.ns1_name/ns2_name live inside the zone) follow
+// ns1_ipv4/ns2_ipv4 the same way: the reconciler only ever backfilled them
+// when missing, so an IP swap left the glue on the old address.
 //
 // Guard rails, the same as migrateBootstrapShape's:
 //
@@ -37,7 +40,8 @@ func (r *Reconciler) convergeServerAddrRecords(ctx context.Context, zone *models
 	if r.dnsRecords == nil || zone == nil || srv == nil {
 		return
 	}
-	if srv.PublicIPv4 == "" && srv.PublicIPv6 == "" {
+	nsWant := serverNSAddrs(zone.Name, srv)
+	if srv.PublicIPv4 == "" && srv.PublicIPv6 == "" && len(nsWant) == 0 {
 		return
 	}
 	existing, err := r.dnsRecords.ListByZoneID(ctx, zone.ID)
@@ -56,6 +60,8 @@ func (r *Reconciler) convergeServerAddrRecords(ctx context.Context, zone *models
 			want = srv.PublicIPv4
 		case rec.Name == "mail" && rec.Type == "AAAA" && srv.PublicIPv6 != "":
 			want = srv.PublicIPv6
+		case rec.Type == "A" && nsWant[rec.Name] != "":
+			want = nsWant[rec.Name]
 		case rec.Name == "@" && rec.Type == "TXT":
 			v4, v6, ok := parseBootstrapSPF(rec.Content)
 			if !ok {
@@ -85,6 +91,25 @@ func (r *Reconciler) convergeServerAddrRecords(ctx context.Context, zone *models
 		r.log.Info("record follows the server address",
 			"zone", zone.Name, "name", rec.Name, "type", rec.Type, "from", old, "to", want)
 	}
+}
+
+// serverNSAddrs maps the in-zone label of each configured nameserver to its
+// IPv4 — the rows BootstrapRecords seeds (appendNSARecord): ns1_name
+// "ns1.example.com" in zone "example.com" is label "ns1". A nameserver outside
+// the zone, or one without an address, is left out.
+func serverNSAddrs(zoneName string, srv *models.ServerSettings) map[string]string {
+	out := map[string]string{}
+	if zoneName == "" {
+		return out
+	}
+	for _, ns := range [][2]string{{srv.NS1Name, srv.NS1IPv4}, {srv.NS2Name, srv.NS2IPv4}} {
+		label := strings.TrimSuffix(ns[0], "."+zoneName)
+		if ns[1] == "" || label == "" || label == ns[0] {
+			continue
+		}
+		out[label] = ns[1]
+	}
+	return out
 }
 
 // parseBootstrapSPF reports whether content is exactly the SPF shape

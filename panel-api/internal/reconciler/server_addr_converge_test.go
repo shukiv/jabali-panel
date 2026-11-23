@@ -85,6 +85,45 @@ func TestConvergeServerAddr_OperatorAndFeatureRowsUntouched(t *testing.T) {
 	require.Equal(t, "192.0.2.70", rec.records["shopA"].Content, "a non-mail A moved")
 }
 
+// The in-zone nameserver A rows are the server's address too. After an IP
+// swap the panel zone kept `ns1 A <old-ip>` and `ns2 A <old-ip>` because the
+// reconciler only backfilled them when missing. They follow
+// ns1_ipv4/ns2_ipv4, under the same guard rails as the mail rows.
+func TestConvergeServerAddr_NameserverGlueFollowsTheNSAddresses(t *testing.T) {
+	ctx := context.Background()
+	r, rec, zr := newMigrator(t)
+	z := seedZone(t, zr, "zone1", "example.com")
+	rec.records["ns1"] = managedBootstrap("ns1", z.ID, "ns1", "A", "192.0.2.70")
+	rec.records["ns2"] = managedBootstrap("ns2", z.ID, "ns2", "A", "192.0.2.70")
+	opNS := managedBootstrap("opNS", z.ID, "ns3", "A", "192.0.2.70")
+	rec.records["opNS"] = opNS
+	srv := &models.ServerSettings{
+		NS1Name: "ns1.example.com", NS1IPv4: "192.0.2.175",
+		NS2Name: "ns2.example.com", NS2IPv4: "192.0.2.176",
+	}
+
+	r.convergeServerAddrRecords(ctx, z, srv)
+
+	require.Equal(t, "192.0.2.175", rec.records["ns1"].Content)
+	require.Equal(t, "192.0.2.176", rec.records["ns2"].Content)
+	require.Equal(t, "192.0.2.70", rec.records["opNS"].Content, "a label that is not a configured nameserver moved")
+
+	// An operator's edit of the glue, and a zone the nameservers don't live
+	// in, are left alone.
+	rec.records["ns1"].Managed = false
+	rec.records["ns1"].Content = "198.51.100.7"
+	other := seedZone(t, zr, "zone2", "other.net")
+	rec.records["otherNS1"] = managedBootstrap("otherNS1", other.ID, "ns1", "A", "192.0.2.70")
+	srv.NS1IPv4, srv.NS2IPv4 = "192.0.2.180", "192.0.2.181"
+
+	r.convergeServerAddrRecords(ctx, z, srv)
+	r.convergeServerAddrRecords(ctx, other, srv)
+
+	require.Equal(t, "198.51.100.7", rec.records["ns1"].Content, "operator-edited ns1 A moved")
+	require.Equal(t, "192.0.2.181", rec.records["ns2"].Content)
+	require.Equal(t, "192.0.2.70", rec.records["otherNS1"].Content, "ns1 A in a zone the nameserver is not in moved")
+}
+
 // No address for a family never blanks or drops that family: an unset
 // setting is not evidence the address went away.
 func TestConvergeServerAddr_NoAddressLeavesRows(t *testing.T) {

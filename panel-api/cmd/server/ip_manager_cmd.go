@@ -1,9 +1,11 @@
 // Admin IP address manager CLI (Gitea #555). Mirrors /admin/ips (ips.go):
 // list/add/update/delete managed IP pool rows with the same validation
 // (DeriveFamily + routable check), uniqueness, default-per-family promotion,
-// and in-use protection. The DB is the source of truth; the agent binds rows to
-// the kernel on its managed-ips sync (the API's push-bind is feature-flagged and
-// not replicated here). Mutations are CLI-audited; inventory honours --json.
+// and in-use protection. The DB is the source of truth. An added row is not bound
+// to a network interface: the managed-ips reconciler only re-binds rows already
+// marked bound and never adopts an unbound one, and the API's push-bind is
+// feature-flagged and not replicated here. Mutations are CLI-audited; inventory
+// honours --json.
 package main
 
 import (
@@ -20,6 +22,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
 func ipRepoFromDB() repository.ManagedIPRepository {
@@ -110,7 +113,7 @@ func newIPAddCmd() *cobra.Command {
 			if jsonOutput {
 				return printJSON(row)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s) id=%d. The agent binds it to the kernel on its next managed-ips sync.\n", addr, family, row.ID)
+			fmt.Fprintf(cmd.OutOrStdout(), "Added %s (%s) id=%d to the IP pool. Jabali does not bind it to a network interface: the address must already be configured on the server (netplan or /etc/network/interfaces).\n", addr, family, row.ID)
 			return nil
 		},
 	}
@@ -164,6 +167,14 @@ func newIPUpdateCmd() *cobra.Command {
 				return fmt.Errorf("update IP: %w", err)
 			}
 			cliAuditOK(ctx, "managed_ip.update", "managed_ip", args[0], nil)
+			// --default moves the host side to this address, also when it
+			// already is the default: that is the retry after promoting an
+			// address before it was on an interface.
+			if makeDefault {
+				if err := followDefaultIPv4(ctx, row); err != nil {
+					return err
+				}
+			}
 			if jsonOutput {
 				return printJSON(row)
 			}
@@ -175,6 +186,25 @@ func newIPUpdateCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&userSelectable, "user-selectable", false, "tenants may pick this IP")
 	cmd.Flags().BoolVar(&makeDefault, "default", false, "promote to per-family default")
 	return cmd
+}
+
+// followDefaultIPv4 moves what install.sh pinned to the old address (the
+// panel's default server, /etc/hosts, the CrowdSec self-whitelist) to a newly
+// promoted default IPv4, the same call the REST PATCH makes; tenant vhosts
+// follow on the next reconcile pass. An IPv6 default has nothing to move.
+func followDefaultIPv4(ctx context.Context, row *models.ManagedIP) error {
+	if row.Family != "ipv4" {
+		return nil
+	}
+	call := settingsops.DefaultIPv4RehostCall(row.Address)
+	err := initAgent()
+	if err == nil {
+		err = dispatchSettingsAgentCall(ctx, call)
+	}
+	if err != nil {
+		return fmt.Errorf("IP %d (%s) is the default now, but the server's own settings did not follow it (%s): %w", row.ID, row.Address, call.Method, err)
+	}
+	return nil
 }
 
 func newIPDeleteCmd() *cobra.Command {
