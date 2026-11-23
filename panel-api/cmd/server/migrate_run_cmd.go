@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -819,6 +820,8 @@ failed stage. Already-done stages are skipped.`,
 							fmt.Fprintf(cmd.ErrOrStderr(), "warning: record dest_domain: %v\n", derr)
 						}
 					}
+					registerImportedApps(ctx, cmd.OutOrStdout(), sharedAgent, domainsRepo,
+						repository.NewApplicationInstallRepository(sharedDB), user)
 				}
 			}
 
@@ -2653,4 +2656,24 @@ func pleskExtraExcludes(vhostRoot string, docroots []string) []string {
 		out = append(out, "/"+rel)
 	}
 	return out
+}
+
+// registerImportedApps adds the application_installs rows for the WordPress /
+// Joomla / Drupal / Magento sites an import brought over, the rows a fresh
+// install or `jabali app scan` gives them; without them the panel lists none
+// of the account's apps. Best-effort: the account is restored either way.
+func registerImportedApps(ctx context.Context, out io.Writer, ag agent.AgentInterface, domains appScanDomains, installs appScanInstalls, u *models.User) {
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	scanned, added, report, err := registerScannedApps(sctx, ag, domains, installs, u, u.Email)
+	if err != nil {
+		fmt.Fprintf(out, "warning: apps not registered: %v (run: jabali app scan --user %s)\n", err, *u.Username)
+		return
+	}
+	fmt.Fprintf(out, "apps: %d found, %d registered\n", scanned, added)
+	for _, r := range report {
+		if r.Action != "added" && r.Action != "skipped_already_present" {
+			fmt.Fprintf(out, "  apps: %s %s/%s not registered: %s\n", r.AppType, r.Domain, r.Subdirectory, r.Action)
+		}
+	}
 }
