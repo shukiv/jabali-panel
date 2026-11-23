@@ -58,8 +58,8 @@ func TestIPHandler_PromoteIPv4Default_MovesTheDefaultVhost(t *testing.T) {
 	require.Equal(t, map[string]any{"ipv4": "203.0.113.9"}, defaultListenCalls(a)[0])
 }
 
-// A label edit, a re-promote of the current default and an IPv6 promotion
-// leave the default vhost alone (its specific listen lines are IPv4).
+// A label edit and an IPv6 promotion leave the host alone (the default
+// server's specific listen lines are IPv4).
 func TestIPHandler_NoDefaultVhostCallWithoutAnIPv4Promotion(t *testing.T) {
 	repo := newFakeIPRepo()
 	repo.rows = []models.ManagedIP{
@@ -67,7 +67,7 @@ func TestIPHandler_NoDefaultVhostCallWithoutAnIPv4Promotion(t *testing.T) {
 		{ID: 2, Address: "2001:db8::1", Family: "ipv6", IsDefault: true},
 		{ID: 3, Address: "2001:db8::2", Family: "ipv6"},
 	}
-	a := agent.NewMockClient().On("system.default_ipv4_rehost", map[string]any{"rewritten": true})
+	a := agent.NewMockClient().On("system.default_ipv4_rehost", map[string]any{"listen_rewritten": 0})
 	r := newIPRouterWithAgent(repo, a)
 
 	for _, req := range []struct {
@@ -75,7 +75,6 @@ func TestIPHandler_NoDefaultVhostCallWithoutAnIPv4Promotion(t *testing.T) {
 		body map[string]any
 	}{
 		{"/api/v1/admin/ips/1", map[string]any{"label": "main"}},
-		{"/api/v1/admin/ips/1", map[string]any{"is_default": true}},
 		{"/api/v1/admin/ips/3", map[string]any{"is_default": true}},
 	} {
 		w := doJSON(t, r, "PATCH", req.path, req.body)
@@ -83,4 +82,19 @@ func TestIPHandler_NoDefaultVhostCallWithoutAnIPv4Promotion(t *testing.T) {
 	}
 	time.Sleep(50 * time.Millisecond)
 	require.Empty(t, defaultListenCalls(a))
+}
+
+// is_default:true on the address that already is the default applies it on
+// the host again: the way to retry after promoting an address before it was
+// on an interface.
+func TestIPHandler_RepromoteCurrentDefault_AppliesAgain(t *testing.T) {
+	repo := newFakeIPRepo()
+	repo.rows = []models.ManagedIP{{ID: 1, Address: "203.0.113.9", Family: "ipv4", IsDefault: true}}
+	a := agent.NewMockClient().On("system.default_ipv4_rehost", map[string]any{"listen_rewritten": 3})
+	r := newIPRouterWithAgent(repo, a)
+
+	w := doJSON(t, r, "PATCH", "/api/v1/admin/ips/1", map[string]any{"is_default": true})
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Eventually(t, func() bool { return len(defaultListenCalls(a)) == 1 }, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, map[string]any{"ipv4": "203.0.113.9"}, defaultListenCalls(a)[0])
 }

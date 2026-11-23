@@ -148,7 +148,6 @@ func newIPUpdateCmd() *cobra.Command {
 			if cmd.Flags().Changed("user-selectable") {
 				row.IsUserSelectable = userSelectable
 			}
-			promoted := false
 			if cmd.Flags().Changed("default") {
 				if !makeDefault {
 					return fmt.Errorf("cannot un-set default; promote another IP to default instead")
@@ -162,14 +161,16 @@ func newIPUpdateCmd() *cobra.Command {
 						}
 					}
 					row.IsDefault = true
-					promoted = true
 				}
 			}
 			if err := repo.Update(ctx, row); err != nil {
 				return fmt.Errorf("update IP: %w", err)
 			}
 			cliAuditOK(ctx, "managed_ip.update", "managed_ip", args[0], nil)
-			if promoted {
+			// --default moves the host side to this address, also when it
+			// already is the default: that is the retry after promoting an
+			// address before it was on an interface.
+			if makeDefault {
 				if err := followDefaultIPv4(ctx, row); err != nil {
 					return err
 				}

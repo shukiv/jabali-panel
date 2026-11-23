@@ -283,7 +283,9 @@ func (h *ipHandler) update(c *gin.Context) {
 	if req.IsUserSelectable != nil {
 		row.IsUserSelectable = *req.IsUserSelectable
 	}
-	promoted := false
+	// is_default:true on the current default re-applies it on the host (the
+	// retry after promoting an address before it was on an interface).
+	applyDefault := req.IsDefault != nil && *req.IsDefault
 	if req.IsDefault != nil && *req.IsDefault != row.IsDefault {
 		// Promoting a new default demotes the previous default in the
 		// same family. Undoing default (true→false) is rejected — the
@@ -299,7 +301,6 @@ func (h *ipHandler) update(c *gin.Context) {
 			return
 		}
 		row.IsDefault = true
-		promoted = true
 	}
 
 	if err := h.cfg.Repo.Update(ctx, row); err != nil {
@@ -307,7 +308,7 @@ func (h *ipHandler) update(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}
-	if promoted && row.Family == "ipv4" && h.cfg.Agent != nil {
+	if applyDefault && row.Family == "ipv4" && h.cfg.Agent != nil {
 		go h.applyDefaultIPv4(row.Address)
 	}
 	c.JSON(http.StatusOK, row)

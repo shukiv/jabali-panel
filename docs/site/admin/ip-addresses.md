@@ -44,7 +44,7 @@ Moving the server to a new address takes two steps, in this order. Put the new a
 
 Within one reconcile pass (about a minute) every domain on **Default** moves its vhost and its apex `A` record to the new address. Wait for that before step 2.
 
-If the address is not on an interface yet, the promotion is saved but nothing on the server moves; the CLI says so, and the panel log records it. Put the address on the interface and promote it again.
+If the address is not on an interface yet, the panel's default server, `/etc/hosts` and the whitelist stay where they are, and the CLI says so (the panel log records it for a promotion made in the UI). The promotion itself is saved, though, and tenant vhosts still move to the address on the next pass, where nginx cannot bind them. So put the address on the interface first. If you promoted too early, add it to the interface and promote it again.
 
 **2. Change the addresses in Settings** (`public_ipv4`, `public_ipv6`, `ns1_ipv4`, `ns2_ipv4`). The reconciler then moves the DNS records that name the server itself, in every zone:
 
