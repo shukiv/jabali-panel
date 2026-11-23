@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,14 +106,26 @@ func frontedByCDN(apexAddrs, ourAddrs []string) bool {
 // the domain's certificate is issued as --cert-name <domain> — so the
 // hook, resolving them again at issue time, picks the same ones.
 func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings, name string) dns01.Route {
+	return r.dns01RouteFor(ctx, srv, name, name)
+}
+
+// dns01RouteFor is dns01Route for one name on a certificate lineage — an
+// alias on the domain's certificate (GH #2561). The tokens are the ones the
+// ACME hook offers for that name on that lineage (cftoken.For), so the
+// decision matches the hook's write.
+func (r *Reconciler) dns01RouteFor(ctx context.Context, srv *models.ServerSettings, lineage, name string) dns01.Route {
 	tokens := cftoken.Resolver{Domains: r.domains, Tokens: r.dns01UserTokens, Key: r.dns01SSOKey}
-	set, tokErr := tokens.For(ctx, srv, name, name)
+	set, tokErr := tokens.For(ctx, srv, lineage, name)
 	if tokErr != nil {
 		r.log.Error("ssl: cannot read every Cloudflare API token — DNS-01 uses the ones that could be read", "domain", name, "err", tokErr)
 	}
+	cacheKey := name
+	if lineage != name {
+		cacheKey = lineage + " " + name
+	}
 
 	r.dns01RouteMu.Lock()
-	if cached, ok := r.dns01RouteCache[name]; ok && cached.version == set.Version && time.Now().Before(cached.expires) {
+	if cached, ok := r.dns01RouteCache[cacheKey]; ok && cached.version == set.Version && time.Now().Before(cached.expires) {
 		r.dns01RouteMu.Unlock()
 		return cached.route
 	}
@@ -156,7 +169,7 @@ func (r *Reconciler) dns01Route(ctx context.Context, srv *models.ServerSettings,
 	if r.dns01RouteCache == nil {
 		r.dns01RouteCache = map[string]dns01CachedRoute{}
 	}
-	r.dns01RouteCache[name] = dns01CachedRoute{route: route, version: set.Version, expires: time.Now().Add(ttl)}
+	r.dns01RouteCache[cacheKey] = dns01CachedRoute{route: route, version: set.Version, expires: time.Now().Add(ttl)}
 	r.dns01RouteMu.Unlock()
 	return route
 }
@@ -183,9 +196,9 @@ func (r *Reconciler) tryDNS01OrPark(ctx context.Context, domain *models.Domain, 
 		return
 	}
 
+	sans := r.dns01CertSANs(ctx, srv, domain, route, liveDNS01CertSANs(cert), false)
 	issueCtx, cancel := context.WithTimeout(ctx, dns01IssueTimeout)
 	defer cancel()
-	sans := []string{domain.Name, "www." + domain.Name}
 	// Same lineage name as the HTTP-01 path (--cert-name <domain>), so the
 	// two methods share one certbot lineage: certbot persists the manual
 	// hooks in the renewal conf and `certbot renew` / ssl.renew keeps
@@ -229,6 +242,90 @@ func (r *Reconciler) tryDNS01OrPark(ctx context.Context, domain *models.Domain, 
 	}
 	_ = r.sslCerts.SetIssueMethod(ctx, cert.ID, issueMethodDNS01)
 	r.log.Info("ssl: issued via dns-01", "domain", domain.Name, "provider", string(route.Provider), "zone", route.Zone, "expires_at", expires.Format(time.RFC3339))
+}
+
+// dns01DesiredSANs is the name policy of a domain's DNS-01 certificate: the
+// base name, www.<name>, and the domain's verified aliases (GH #2561). www is
+// validated over DNS, so it never depended on a www record pointing here; a
+// name that already starts with "www." gets no "www.www.". The mail helper
+// names stay on the mail certificate, as they always have for DNS-01: each
+// would add a TXT round to every renewal.
+func dns01DesiredSANs(name string, aliases []string) []string {
+	out := []string{name}
+	seen := map[string]bool{name: true}
+	add := func(n string) {
+		n = strings.ToLower(strings.TrimSpace(n))
+		if n != "" && !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	if !strings.HasPrefix(name, "www.") {
+		add("www." + name)
+	}
+	for _, a := range aliases {
+		add(a)
+	}
+	return out
+}
+
+// dns01CertSANs picks the names to request for a domain's DNS-01 certificate
+// from dns01DesiredSANs (GH #2561). No HTTP-01 reachability filter: the TXT
+// challenge does not care where a name's A record points, which is the whole
+// reason a Cloudflare-proxied alias belongs here. What does fail a DNS-01
+// certificate is a name whose _acme-challenge the hook cannot write — one
+// such name fails all of them — so an alias goes on only when its zone is
+// writable with this lineage's credentials, and, unless anyZone, only when it
+// is in the base name's own zone or already on the live certificate: a first
+// issuance must not stake the domain's certificate on another zone's token
+// permissions. The SAN-drift pass adds those, where a failure keeps the
+// current certificate. The base name and www.<name> are requested as before.
+func (r *Reconciler) dns01CertSANs(ctx context.Context, srv *models.ServerSettings, domain *models.Domain, base dns01.Route, onCert map[string]struct{}, anyZone bool) []string {
+	desired := dns01DesiredSANs(domain.Name, r.aliasHostnames(ctx, domain.ID))
+	sans := make([]string, 0, len(desired))
+	for _, n := range desired {
+		if n == domain.Name || n == "www."+domain.Name {
+			sans = append(sans, n)
+			continue
+		}
+		route := r.dns01RouteFor(ctx, srv, domain.Name, n)
+		_, live := onCert[n]
+		switch {
+		case route.Provider == dns01.ProviderNone:
+			r.log.Info("ssl: dns-01 leaves an alias off the certificate — its zone is not writable with this certificate's DNS-01 credentials",
+				"domain", domain.Name, "alias", n, "reason", route.Reason)
+		case anyZone || live || (route.Provider == base.Provider && route.Zone == base.Zone):
+			sans = append(sans, n)
+		default:
+			r.log.Info("ssl: dns-01 leaves an alias in another zone for the SAN-drift pass to add",
+				"domain", domain.Name, "alias", n, "zone", route.Zone)
+		}
+	}
+	return sans
+}
+
+// liveDNS01CertSANs is the name set of the Let's Encrypt certificate a domain
+// got over DNS-01, so a renewal keeps the aliases the SAN-drift pass added.
+// Empty for anything else (a self-signed placeholder lists names no CA has
+// validated).
+func liveDNS01CertSANs(cert *models.SSLCertificate) map[string]struct{} {
+	if cert == nil || cert.IssueMethod != issueMethodDNS01 || cert.CertPath == nil ||
+		(cert.Status != models.SSLStatusIssued && cert.Status != models.SSLStatusRenewing) {
+		return nil
+	}
+	names, err := certDNSNames(*cert.CertPath)
+	if err != nil {
+		return nil
+	}
+	return lowerSet(names)
+}
+
+func lowerSet(names []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		set[strings.ToLower(n)] = struct{}{}
+	}
+	return set
 }
 
 // JAB-407 post-timeout confirmation tunables. Vars, not consts, so tests can
