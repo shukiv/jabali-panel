@@ -69,7 +69,7 @@ VHOST=/var/www/vhosts/$SUB
 MAILROOT=/var/qmail/mailnames/$SUB
 
 rm -rf "$TMP" "$OUT"
-mkdir -p "$TMP/cpmove-$SLUG/cp" "$TMP/cpmove-$SLUG/dnszones"
+mkdir -p "$TMP/cpmove-$SLUG/cp" "$TMP/cpmove-$SLUG/dnszones" "$TMP/cpmove-$SLUG/userdata"
 
 # 1. cp/<slug> — meta the cpanel PeekAccountMeta reader expects.
 {
@@ -111,6 +111,17 @@ plesk db -Ne "SELECT name FROM domains WHERE name='$SUB' OR webspace_id=(SELECT 
     DR=$(plesk db -Ne "SELECT h.www_root FROM domains d JOIN hosting h ON d.id=h.dom_id WHERE d.name='$DOM'" 2>/dev/null)
     [ -n "$DR" ] && [ -d "$DR" ] && printf '%%s\t%%s\n' "$DOM" "$DR" >> "$TMP/cpmove-$SLUG/domains-paths.txt"
     touch "$TMP/cpmove-$SLUG/dnszones/$DOM.db"
+    # The domain's PHP version, in the cPanel userdata/<domain> form the
+    # restore reads to give it a pool of that version. Plesk records it only
+    # as the handler id (plesk-php83-fpm, plesk-php74-fastcgi); an OS-vendor
+    # handler (fpm, cgi, module) names no version and the box default applies.
+    PHPV=$(plesk db -Ne "SELECT h.php_handler_id FROM domains d JOIN hosting h ON d.id=h.dom_id WHERE d.name='$DOM'" 2>/dev/null \
+      | sed -n 's/^plesk-php\([0-9]\)\([0-9]\)-.*/\1.\2/p' | head -1)
+    # An if, not &&: as the loop's last command a false test would end the
+    # pipeline non-zero and set -e would abort the whole backup.
+    if [ -n "$PHPV" ]; then
+      printf 'phpversion: %%s\n' "$PHPV" > "$TMP/cpmove-$SLUG/userdata/$DOM"
+    fi
   done
 
 # 4. mail-paths.txt — every mailbox Maildir, for restore-time rsync +

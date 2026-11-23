@@ -190,3 +190,21 @@ func TestNormalisePHPVersion_CpanelForms(t *testing.T) {
 		}
 	}
 }
+
+// The Plesk pull writes only userdata/<domain> with a dotted `phpversion: X.Y`
+// (from the plesk-phpXY-* handler) under cpmove-<slug>, with no main file and
+// no sidecars. That alone must give each domain its source version.
+func TestDetectPHPVersionsPerDomain_PleskPullLayout(t *testing.T) {
+	extract := t.TempDir()
+	root := filepath.Join(extract, "cpmove-example_co_il", "userdata")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "example.co.il"), []byte("phpversion: 8.3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := detectPHPVersionsPerDomain(&ParsedTarball{ExtractDir: extract, SourceUser: "example_co_il"})
+	if want := map[string][]string{"8.3": {"example.co.il"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
