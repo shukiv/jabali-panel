@@ -180,6 +180,20 @@ func TestPanelLEAuto_TurnsOnAndIssuesWhenPublicDNSShowsTheHost(t *testing.T) {
 	assert.Equal(t, 1, g.issues())
 }
 
+// A free <label>.jabalihosted.com name gets its certificate too: the
+// allowance it shares with every such server is there for exactly this.
+func TestPanelLEAuto_FreeHostnameTurnsOnAndIssues(t *testing.T) {
+	g := newLEAutoRig(t, leAutoCase{host: "203-0-113-10.jabalihosted.com", adminEmail: "admin@example.com", public: []string{leAutoIP}})
+
+	g.pass()
+	assert.True(t, g.host().UseLE, "Let's Encrypt is turned on")
+	assert.Equal(t, int32(1), g.lookups.Load(), "public DNS is asked")
+
+	g.pass()
+	assert.Equal(t, 1, g.issues(), "the next pass issues")
+	assert.Equal(t, models.PanelCertStatusIssued, g.host().Status)
+}
+
 func TestPanelLEAuto_FailedFirstIssueTurnsItBackOff(t *testing.T) {
 	g := newLEAutoRig(t, leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP},
 		issueErr: errors.New("certbot: Timeout during connect (likely firewall problem)")})
@@ -239,7 +253,6 @@ func TestPanelLEAuto_NeverTurnsOn(t *testing.T) {
 		c    leAutoCase
 	}{
 		{"an existing server, no window", leAutoCase{adminEmail: "admin@example.com", public: []string{leAutoIP}, noWindow: true}},
-		{"a free jabalihosted.com name", leAutoCase{host: "203-0-113-10.jabalihosted.com", adminEmail: "admin@example.com", public: []string{leAutoIP}}},
 		{"no admin email", leAutoCase{public: []string{leAutoIP}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

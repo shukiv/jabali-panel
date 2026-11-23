@@ -278,13 +278,20 @@ describe("PanelSSLTab: a new install's automatic Let's Encrypt", () => {
     expect(await screen.findByText(/Let's Encrypt was turned on by itself/)).toBeTruthy();
   });
 
-  it("says nothing for a name it can never apply to", async () => {
-    for (const name of ["panel.local", "203-0-113-10.jabalihosted.com"]) {
+  it("says nothing for a local name no public DNS can show", async () => {
+    for (const name of ["panel.local", "localhost"]) {
       renderTab([cert("hostname", { hostname: name, le_auto_until: until })]);
       await certCard(name);
       expect(screen.queryByText(/by itself/)).toBeNull();
       cleanup();
     }
+  });
+
+  it("applies to a free jabalihosted.com name too", async () => {
+    const name = "203-0-113-10.jabalihosted.com";
+    renderTab([cert("hostname", { hostname: name, le_auto_until: until })]);
+    const note = await screen.findByText(/the panel turns Let's Encrypt on by itself/);
+    expect(note.textContent).toContain(`once ${name} resolves publicly`);
   });
 
   it("says nothing on a server without the window, or once it passed", async () => {

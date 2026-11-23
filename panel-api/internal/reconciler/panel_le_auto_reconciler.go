@@ -28,10 +28,12 @@ const panelLEAutoGrace = 15 * time.Minute
 // With Let's Encrypt still off it waits for the panel hostname, from
 // panelLEAutoGrace after the window opens. Once public DNS shows it at this
 // server, and so does the routability check the issue runs, it turns Let's
-// Encrypt on, and the next pass issues. It doesn't for a free <label>.jabalihosted.com name, whose
-// certificates come out of one Let's Encrypt allowance shared by every such
-// server, or without an admin email to register with. When the window
-// passes, Let's Encrypt is left to the admin.
+// Encrypt on, and the next pass issues. That includes a free
+// <label>.jabalihosted.com name: its certificates share one Let's Encrypt
+// allowance with every such server (50 new a week, renewals exempt), but a
+// new server's one certificate is what that allowance is for. It doesn't
+// without an admin email to register with. When the window passes, Let's
+// Encrypt is left to the admin.
 //
 // With Let's Encrypt on, it follows that first, automatic issue. Issued ends
 // the window. A failed attempt turns Let's Encrypt back off, so a server
@@ -75,7 +77,7 @@ func (r *Reconciler) reconcilePanelLEAuto(ctx context.Context, row *models.Panel
 		return false
 	}
 	host := settings.Hostname
-	if host == "" || settings.AdminEmail == "" || models.IsFreeHostnameBase(host) {
+	if host == "" || settings.AdminEmail == "" {
 		return false
 	}
 
