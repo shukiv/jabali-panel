@@ -247,7 +247,12 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ end }}{{end}}{{define "panelhostguard"}}{{ if .PanelHostGuard }}    # A request naming the panel never reaches a domain, not even on the
     # domain's own address (panelHostGuard).
     if ($http_host ~* "{{.PanelHostGuard}}") { return 421; }
-{{ end }}{{end}}{{define "servebody"}}{{ if .IsEnabled }}
+{{ end }}{{end}}{{define "staticmiss"}}{{ if and .HasPHP (not .RootOverridden) }}
+        # A file that isn't on disk goes to the app, as it does with the cache
+        # off: plugins serve virtual .js/.ico/images, and .html permalinks are
+        # pages. shortcut: a subfolder WordPress's miss reaches the root front
+        # controller, not its own; route per subfolder if that ever matters.
+        try_files $uri $uri/ {{.TryFilesFallback}};{{ end }}{{end}}{{define "servebody"}}{{ if .IsEnabled }}
     root {{.DocRoot}};
     # JAB-183: refuse to follow a symlink whose owner differs from the owner of
     # the thing it points at. Docroots are 2750 <user>:www-data and homes are
@@ -338,6 +343,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
 {{ if .CacheEnabled }}
     # Long-cache static assets (immutable content; 30 days).
     location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {
+{{- template "staticmiss" . }}
         expires 30d;
         add_header Cache-Control "public, immutable";
         access_log off;
@@ -356,6 +362,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
     # block below (with X-Jabali-Cache header). Plain HTML hits
     # only this; it does not enable server-side caching.
     location ~* \.html?$ {
+{{- template "staticmiss" . }}
         expires 5m;
         add_header Cache-Control "public, max-age=300" always;
     }
@@ -400,7 +407,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         # never stored and served cross-visitor (the old denylist was fail-open).
         set $jabali_skip 1;
         if ($http_cookie = "") { set $jabali_skip 0; }
-        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
         if ($request_method = POST) { set $jabali_skip 1; }
         # Gitea #610: bypass only when the query has a non-tracking (content-
         # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
@@ -508,7 +515,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         # never stored and served cross-visitor (the old denylist was fail-open).
         set $jabali_skip 1;
         if ($http_cookie = "") { set $jabali_skip 0; }
-        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
         if ($request_method = POST) { set $jabali_skip 1; }
         # Gitea #610: bypass only when the query has a non-tracking (content-
         # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
