@@ -756,3 +756,55 @@ func TestEnable_SSLFlipError_TypedWarn(t *testing.T) {
 	require.Len(t, warnings, 1)
 	require.Equal(t, WarnSSLFlipFailed, warnings[0].Kind)
 }
+
+// A domain whose provider is 'none' (no mail anywhere — a migration sets it
+// when the source had no MX) becomes a Jabali-mail domain when email is turned
+// on, in the same row write. It used to end email-on with provider 'none',
+// which every mail path reads as hosted elsewhere: no mailbox could be made.
+func TestEnable_ProviderNone_SwitchesToJabali(t *testing.T) {
+	domains, _, _, d := baseDeps()
+	dom := newDomain()
+	dom.MailProvider, dom.SkipAutoSAN = models.MailProviderNone, true
+
+	_, _, _, err := Enable(context.Background(), d, dom)
+	require.NoError(t, err)
+	require.NotNil(t, domains.updated)
+	require.True(t, domains.updated.SwitchToJabali, "the provider switch rides the email write")
+	require.Equal(t, models.MailProviderJabali, dom.MailProvider)
+	require.False(t, dom.SkipAutoSAN)
+	require.False(t, models.MailHostedElsewhere(dom.EmailEnabled, dom.MailProvider), "the domain now hosts its own mail")
+}
+
+// Jabali (or a pre-enum empty provider) stays as it is: no switch.
+func TestEnable_ProviderJabali_NoSwitch(t *testing.T) {
+	for _, p := range []string{"", models.MailProviderJabali} {
+		domains, _, _, d := baseDeps()
+		dom := newDomain()
+		dom.MailProvider = p
+		_, _, _, err := Enable(context.Background(), d, dom)
+		require.NoError(t, err)
+		require.False(t, domains.updated.SwitchToJabali, "provider %q", p)
+	}
+}
+
+// Mail at Microsoft 365, Google or a DNS template's external host is live
+// elsewhere: enabling Jabali mail would publish our MX over it. Refused with
+// no agent call and no write; the provider is switched on purpose instead.
+func TestEnable_MailHostedElsewhere_Refused(t *testing.T) {
+	for _, p := range []string{models.MailProviderM365, models.MailProviderGoogle, models.MailProviderCustom} {
+		domains, _, records, d := baseDeps()
+		called := false
+		d.Call = func(ctx context.Context, cmd string, params any) (json.RawMessage, error) {
+			called = true
+			return okCall(cmd, params)
+		}
+		dom := newDomain()
+		dom.MailProvider = p
+		_, _, _, err := Enable(context.Background(), d, dom)
+		require.ErrorIs(t, err, ErrMailHostedElsewhere, "provider %q", p)
+		require.False(t, called, "provider %q: no agent call", p)
+		require.Nil(t, domains.updated, "provider %q: no DB write", p)
+		require.Empty(t, records.created)
+		require.False(t, dom.EmailEnabled)
+	}
+}

@@ -48,3 +48,26 @@ func TestDomain_Rename_MissingRowIsNotFound(t *testing.T) {
 	require.True(t, errors.Is(err, repository.ErrNotFound), "missing row → ErrNotFound, got %v", err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+// Turning email on for a 'none'-provider domain makes Jabali its provider in
+// the same UPDATE (no window where the row is email-on but provider 'none');
+// a plain enable leaves the provider columns alone.
+func TestDomain_UpdateEmailState_SwitchToJabali(t *testing.T) {
+	gdb, mock, raw := newMockDB(t)
+	defer raw.Close()
+	repo := repository.NewDomainRepository(gdb)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `domains` SET `email_enabled`=\\?,`email_enabled_at`=\\?,`mail_provider`=\\?,`skip_auto_san`=\\?,`updated_at`=\\? WHERE id = \\?").
+		WithArgs(true, sqlmock.AnyArg(), "jabali", false, sqlmock.AnyArg(), "dom-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	require.NoError(t, repo.UpdateEmailState(context.Background(), "dom-1", repository.DomainEmailState{Enabled: true, SwitchToJabali: true}))
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE `domains` SET `email_enabled`=\\?,`email_enabled_at`=\\?,`updated_at`=\\? WHERE id = \\?").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+	require.NoError(t, repo.UpdateEmailState(context.Background(), "dom-1", repository.DomainEmailState{Enabled: true}))
+	require.NoError(t, mock.ExpectationsWereMet())
+}

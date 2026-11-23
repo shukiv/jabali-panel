@@ -258,6 +258,10 @@ type DomainEmailState struct {
 	// DkimRSAPublicKey is the RSA key's TXT value (GH #2475); nil leaves it.
 	DkimRSAPublicKey *string
 	EmailEnabledAt   *time.Time
+	// SwitchToJabali also makes Jabali the domain's mail provider (and lets
+	// the mail SANs back on the cert), in the same write: email on a domain
+	// whose provider was 'none' means Jabali now hosts its mail.
+	SwitchToJabali bool
 }
 
 // DomainPHPSettings holds per-domain PHP INI overrides.
@@ -886,6 +890,10 @@ func (r *domainRepo) UpdateEmailState(ctx context.Context, id string, state Doma
 	}
 	if state.DkimRSAPublicKey != nil {
 		updates["dkim_rsa_public_key"] = state.DkimRSAPublicKey
+	}
+	if state.SwitchToJabali {
+		updates["mail_provider"] = models.MailProviderJabali
+		updates["skip_auto_san"] = false
 	}
 	res := r.db.WithContext(ctx).Model(&models.Domain{}).
 		Where("id = ?", id).

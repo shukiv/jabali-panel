@@ -109,6 +109,11 @@ var (
 	// not proven control of the name (GH #1816 / ADR-0170): an unproven name
 	// is never registered with Stalwart.
 	ErrOwnershipPending = errors.New("domainmailops: domain ownership is not proven yet")
+	// ErrMailHostedElsewhere: the domain's mail provider is Microsoft 365,
+	// Google or a DNS template's external mail. Turning Jabali mail on would
+	// publish Jabali's MX over theirs, so the provider is switched on purpose
+	// (the domain's mail settings), never by enabling email.
+	ErrMailHostedElsewhere = errors.New("domainmailops: the domain's mail is hosted elsewhere; switch its mail provider to Jabali first")
 )
 
 // WarningKind classifies a single managed-DNS or SSL-SAN result surfaced by the
@@ -227,6 +232,13 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 	if !dom.Verified() {
 		return "", "", nil, ErrOwnershipPending
 	}
+	// 'none' (no mail anywhere) becomes Jabali with the email flip below; the
+	// row used to end up email-on with provider 'none', which every mail path
+	// reads as hosted elsewhere, so no mailbox could be created on it.
+	switchToJabali := dom.MailProvider == models.MailProviderNone
+	if dom.MailProvider != "" && dom.MailProvider != models.MailProviderJabali && !switchToJabali {
+		return "", "", nil, ErrMailHostedElsewhere
+	}
 	if d.Call == nil {
 		return "", "", nil, ErrAgentUnconfigured
 	}
@@ -268,8 +280,13 @@ func Enable(ctx context.Context, d Deps, dom *models.Domain) (selector, pubKey s
 		DkimPublicKey:    &pubKey,
 		DkimRSAPublicKey: rsaKey,
 		EmailEnabledAt:   &now,
+		SwitchToJabali:   switchToJabali,
 	}); err != nil {
 		return "", "", nil, fmt.Errorf("update email_enabled row: %w", err)
+	}
+	if switchToJabali {
+		dom.MailProvider = models.MailProviderJabali
+		dom.SkipAutoSAN = false
 	}
 
 	// DNS sync is best-effort. Warnings flow back to the caller; a DNS-side
