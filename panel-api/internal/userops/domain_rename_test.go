@@ -968,9 +968,34 @@ func TestRenameDomain_NonWordPressAppNoRewrite(t *testing.T) {
 	}
 }
 
-// An owner whose name is outside the refresh verb's stricter shape (underscore)
-// skips the rewrite with a warning rather than sending a rejected call.
-func TestRenameDomain_WordPressRewrite_UnderscoreOwnerWarns(t *testing.T) {
+// An owner whose name is outside the refresh verb's shape (a leading '_',
+// which provisioning allows) skips the rewrite with a warning rather than
+// sending a rejected call.
+func TestRenameDomain_WordPressRewrite_LeadingUnderscoreOwnerWarns(t *testing.T) {
+	rec := &drRecorder{}
+	dom := drWebDomain()
+	uname := "_u1"
+	owner := &models.User{ID: "user-1", Username: &uname, LinuxUID: drUIDPtr(1001)}
+	d, ag, _ := drNewDeps(rec, dom, owner)
+	d.AppInstalls = &drAppInstalls{installs: []models.ApplicationInstall{
+		{ID: "app-1", DomainID: dom.ID, AppType: "wordpress", Subdirectory: ""},
+	}}
+
+	warnings, err := RenameDomain(context.Background(), d, &drSched{}, dom, "new.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ag.refreshCalls) != 0 {
+		t.Fatalf("a leading-underscore owner must not send a refresh call, got %v", ag.refreshCalls)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("a leading-underscore owner must produce exactly one warning, got %v", warnings)
+	}
+}
+
+// A Plesk import's owner is the subscription's slug (u_1 here); the refresh
+// verb accepts it, so the rename rewrites the WordPress URL as for anyone.
+func TestRenameDomain_WordPressRewrite_SlugOwnerRewrites(t *testing.T) {
 	rec := &drRecorder{}
 	dom := drWebDomain()
 	uname := "u_1"
@@ -984,11 +1009,11 @@ func TestRenameDomain_WordPressRewrite_UnderscoreOwnerWarns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(ag.refreshCalls) != 0 {
-		t.Fatalf("underscore owner must not send a refresh call, got %v", ag.refreshCalls)
+	if len(ag.refreshCalls) == 0 {
+		t.Fatal("a slug owner must get the WordPress URL rewrite")
 	}
-	if len(warnings) != 1 {
-		t.Fatalf("underscore owner must produce exactly one warning, got %v", warnings)
+	if len(warnings) != 0 {
+		t.Fatalf("a slug owner must produce no warning, got %v", warnings)
 	}
 }
 

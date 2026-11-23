@@ -82,6 +82,8 @@ func newRefreshBox(t *testing.T) *refreshBox {
 		"bob":      {Username: "bob", Uid: "1002", Gid: "1002", HomeDir: filepath.Join(b.homes, "bob")},
 		"www-data": {Username: "www-data", Uid: "33", Gid: "33", HomeDir: "/var/www"},
 		"carol":    {Username: "carol", Uid: "1003", Gid: "1003", HomeDir: "/srv/carol"},
+		// A Plesk import's user is the subscription's slug.
+		"shop_example": {Username: "shop_example", Uid: "1004", Gid: "1004", HomeDir: filepath.Join(b.homes, "shop_example")},
 	}
 	prevLookup, prevHome, prevChown, prevRoots, prevExec := lookupRefreshUser, refreshHomeRoot, refreshChownTree, migrationStagingRoots, execCommandContext
 	lookupRefreshUser = func(name string) (*user.User, error) {
@@ -402,5 +404,26 @@ func TestMigrationRefreshReconcile_StaysInTheTenantsHome(t *testing.T) {
 	} {
 		err := b.call(t, migrationRefreshReconcileHandler, map[string]string{"os_user": tc[0], "install_path": tc[1]})
 		wantRefreshRefused(t, b, what, err)
+	}
+}
+
+// A Plesk-imported tenant's name carries '_' (the subscription's slug,
+// example_co_il). Refresh refused every such account with "invalid os_user".
+func TestResolveRefreshTenant_AcceptsAPleskSlugUser(t *testing.T) {
+	b := newRefreshBox(t)
+	if err := os.MkdirAll(filepath.Join(b.homes, "shop_example", "domains"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tn, err := resolveRefreshTenant("shop_example")
+	if err != nil {
+		t.Fatalf("resolveRefreshTenant(shop_example): %v", err)
+	}
+	if tn.name != "shop_example" || tn.uid != 1004 {
+		t.Fatalf("tenant = %+v, want shop_example uid 1004", tn)
+	}
+	for _, bad := range []string{"_lead", "Shop_example", "shop.example", "shop/example"} {
+		if _, err := resolveRefreshTenant(bad); err == nil || err.Error() != "invalid os_user" {
+			t.Errorf("resolveRefreshTenant(%q) = %v, want invalid os_user", bad, err)
+		}
 	}
 }

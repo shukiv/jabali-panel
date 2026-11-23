@@ -26,7 +26,10 @@ import (
 var (
 	refreshDBNameRE = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
 	refreshStampRE  = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}$`)
-	refreshOSUserRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+	// '_' as provisioning allows it: a Plesk import's user is the
+	// subscription's slug (example_co_il). The name must still be a hosting
+	// user whose passwd home is exactly <refreshHomeRoot>/<name>.
+	refreshOSUserRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 	refreshTableRE  = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 )
 
