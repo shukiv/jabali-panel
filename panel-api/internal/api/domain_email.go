@@ -273,6 +273,8 @@ func (h *domainEmailHandler) enable(c *gin.Context) {
 		switch {
 		case errors.Is(err, domainmailops.ErrOwnershipPending):
 			c.JSON(http.StatusConflict, gin.H{"error": "domain_ownership_pending", "detail": "prove ownership of the domain before enabling mail"})
+		case errors.Is(err, domainmailops.ErrMailHostedElsewhere):
+			c.JSON(http.StatusConflict, gin.H{"error": "mail_hosted_elsewhere", "detail": "the domain's mail is hosted with another provider; switch its mail provider to Jabali to host mail here"})
 		case errors.Is(err, domainmailops.ErrAgentUnconfigured):
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "agent_unconfigured"})
 		case errors.Is(err, domainmailops.ErrAgentBadResponse):
