@@ -38,14 +38,23 @@ func withPanelMailCertFiles(t *testing.T, present bool) (string, string) {
 
 func panelPrimaryVhostApply(t *testing.T, mailHostname *string, domainCert bool) map[string]any {
 	t.Helper()
+	var cert *models.SSLCertificate
+	if domainCert {
+		cert = &models.SSLCertificate{DomainID: "p1", Status: models.SSLStatusIssued,
+			CertPath: wmPtr("/etc/letsencrypt/live/mx.jabali-panel.com/fullchain.pem"), KeyPath: wmPtr("/etc/letsencrypt/live/mx.jabali-panel.com/privkey.pem")}
+	}
+	return panelPrimaryVhostApplyCert(t, mailHostname, cert)
+}
+
+func panelPrimaryVhostApplyCert(t *testing.T, mailHostname *string, cert *models.SSLCertificate) map[string]any {
+	t.Helper()
 	ag := &paramsWebmailAgent{}
 	dr := newFakeDomainRepo()
 	dr.domains["p1"] = &models.Domain{OwnershipState: verifiedOwnership, ID: "p1", Name: "mx.jabali-panel.com", UserID: "u1", EmailEnabled: true, WebmailEnabled: true, IsPanelPrimary: true}
 	ur := &fakeUserRepo{users: map[string]*models.User{"u1": {ID: "u1"}}}
 	certs := newFakeSSLCertRepo()
-	if domainCert {
-		certs.byDomain["p1"] = &models.SSLCertificate{DomainID: "p1", Status: models.SSLStatusIssued,
-			CertPath: wmPtr("/etc/letsencrypt/live/mx.jabali-panel.com/fullchain.pem"), KeyPath: wmPtr("/etc/letsencrypt/live/mx.jabali-panel.com/privkey.pem")}
+	if cert != nil {
+		certs.byDomain["p1"] = cert
 	}
 	r := New(dr, ur, ag, slog.Default(), Config{}).WithSSLCerts(certs).WithPackages(&webmailGatePkgRepo{})
 	r.serverSettings = &fakeServerSettingsRepo{settings: &models.ServerSettings{
@@ -83,4 +92,27 @@ func TestPanelPrimaryWebmailVhost_NoDomainCertFallsBackToPanelMailCert(t *testin
 	crt, _ := withPanelMailCertFiles(t, true)
 	got := panelPrimaryVhostApply(t, nil, false)
 	assert.Equal(t, crt, got["ssl_cert_path"], "the existing fallback for a panel-primary domain without a certificate row")
+}
+
+// The panel-primary domain's own certificate row is often a self-signed
+// placeholder (its hostname is served by the panel certificate system). The
+// mail vhost served that placeholder on mail.<hostname> while the panel mail
+// certificate, a real one for mail.<hostname>, sat on disk, and the panel
+// refuses per-domain issuance for this domain, so nothing could fix it. A
+// placeholder must lose to the panel mail certificate.
+func TestPanelPrimaryWebmailVhost_SelfSignedDomainCertLosesToPanelMailCert(t *testing.T) {
+	crt, key := withPanelMailCertFiles(t, true)
+	got := panelPrimaryVhostApplyCert(t, nil, &models.SSLCertificate{DomainID: "p1", Status: models.SSLStatusSelfSigned,
+		CertPath: wmPtr("/etc/ssl/jabali-selfsigned/mx.jabali-panel.com/fullchain.pem"), KeyPath: wmPtr("/etc/ssl/jabali-selfsigned/mx.jabali-panel.com/privkey.pem")})
+	assert.Equal(t, crt, got["ssl_cert_path"])
+	assert.Equal(t, key, got["ssl_key_path"])
+}
+
+// Without the panel mail certificate on disk, the placeholder still serves:
+// a self-signed certificate beats no vhost.
+func TestPanelPrimaryWebmailVhost_SelfSignedDomainCertWithoutPanelMailCert(t *testing.T) {
+	withPanelMailCertFiles(t, false)
+	got := panelPrimaryVhostApplyCert(t, nil, &models.SSLCertificate{DomainID: "p1", Status: models.SSLStatusSelfSigned,
+		CertPath: wmPtr("/etc/ssl/jabali-selfsigned/mx.jabali-panel.com/fullchain.pem"), KeyPath: wmPtr("/etc/ssl/jabali-selfsigned/mx.jabali-panel.com/privkey.pem")})
+	assert.Equal(t, "/etc/ssl/jabali-selfsigned/mx.jabali-panel.com/fullchain.pem", got["ssl_cert_path"])
 }
