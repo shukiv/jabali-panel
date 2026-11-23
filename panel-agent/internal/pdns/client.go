@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type Client struct {
@@ -269,8 +271,41 @@ func (c *Client) UpsertZone(name string, records []Record) (int64, error) {
 	return zoneID, nil
 }
 
-// UpsertZoneWithMeta is UpsertZone + metadata, in the same txn.
+// lockRetryAttempts bounds retryOnLockConflict. lockRetryBackoff is a var so
+// tests run without the wait.
+const lockRetryAttempts = 3
+
+var lockRetryBackoff = 100 * time.Millisecond
+
+// isLockConflict: MariaDB error 1213 (deadlock: it rolled this transaction
+// back so another could finish) or 1205 (lock wait timeout). Either way the
+// whole transaction is safe to run again.
+func isLockConflict(err error) bool {
+	var me *mysql.MySQLError
+	return errors.As(err, &me) && (me.Number == 1213 || me.Number == 1205)
+}
+
+// retryOnLockConflict runs one whole transaction again when it lost a lock
+// conflict. Two domains created at the same moment deadlock on their SOA
+// inserts this way (Error 1213), and the losing zone was left unwritten
+// until something upserted it again.
+func retryOnLockConflict(fn func() (int64, error)) (int64, error) {
+	for attempt := 1; ; attempt++ {
+		id, err := fn()
+		if err == nil || attempt == lockRetryAttempts || !isLockConflict(err) {
+			return id, err
+		}
+		time.Sleep(time.Duration(attempt) * lockRetryBackoff)
+	}
+}
+
+// UpsertZoneWithMeta is UpsertZone + metadata, in the same txn, retried on a
+// lock conflict.
 func (c *Client) UpsertZoneWithMeta(name string, records []Record, opts UpsertZoneOptions) (int64, error) {
+	return retryOnLockConflict(func() (int64, error) { return c.upsertZoneWithMetaOnce(name, records, opts) })
+}
+
+func (c *Client) upsertZoneWithMetaOnce(name string, records []Record, opts UpsertZoneOptions) (int64, error) {
 	tx, err := c.db.Begin()
 	if err != nil {
 		return 0, err
