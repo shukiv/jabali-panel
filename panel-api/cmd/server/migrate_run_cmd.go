@@ -77,6 +77,18 @@ func defaultOwnerEmail(parsed *cpanel.ParsedTarball, parseKind, sourceUser, prim
 	parsed.OwnerEmail = sourceUser + "@" + primaryDomain
 }
 
+// accountMetaUser is the name the extracted cpmove files the account meta
+// (contact email, primary domain) under. A Plesk job carries the
+// subscription's domain, but the Plesk pull names its cpmove after the slug
+// (cpmove-<slug>/cp/<slug>), so looking under the domain found nothing and
+// the new user got a <user>@<source host> placeholder email.
+func accountMetaUser(sourceKind, sourceUser string) string {
+	if sourceKind == models.MigrationSourcePlesk {
+		return plesk.Slug(sourceUser)
+	}
+	return sourceUser
+}
+
 func newMigrateImportCmd() *cobra.Command {
 	var jobID, targetUser, targetEmail, targetPassword, targetPackageID string
 	var keepStaging bool
@@ -204,7 +216,7 @@ failed stage. Already-done stages are skipped.`,
 			// expects Argon2/bcrypt) but is surfaced so the operator
 			// can verify the hash style before sending a reset link.
 			extractDir := filepath.Join("/var/lib/jabali-migrations", jobID, "extracted")
-			meta, _ := cpanel.PeekAccountMeta(extractDir, job.SourceUser)
+			meta, _ := cpanel.PeekAccountMeta(extractDir, accountMetaUser(job.SourceKind, job.SourceUser))
 			if job.SourceKind == models.MigrationSourceDirectAdmin && meta == nil {
 				// A DirectAdmin user backup restored offline: its contact email,
 				// primary domain and shadow hash are in backup/user.conf and

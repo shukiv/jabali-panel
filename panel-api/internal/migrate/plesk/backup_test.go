@@ -2,6 +2,10 @@ package plesk
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -63,6 +67,68 @@ func TestBackupUser_RejectsBadSubscription(t *testing.T) {
 	s := fixtureSession(map[string]string{})
 	if _, err := d.BackupUser(context.Background(), s, "bad; rm -rf /"); err == nil {
 		t.Error("BackupUser must reject a shell-unsafe subscription name")
+	}
+}
+
+// The synthesis script, run for real against a stub `plesk` CLI: the cpmove
+// carries the owner's contact email under cp/<slug>, and each domain's PHP
+// version as cPanel userdata/<domain> `phpversion: X.Y`, read from the
+// plesk-phpXY-* handler id. A domain on an OS-vendor handler (fpm) gets no
+// file, and being the LAST domain must not abort the script under set -e.
+func TestBackupUser_ScriptCarriesContactEmailAndPHPVersion(t *testing.T) {
+	for _, tool := range []string{"bash", "tar", "sed"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not available", tool)
+		}
+	}
+	sub := fmt.Sprintf("jt%d.example", time.Now().UnixNano()%1_000_000_000)
+	slug := pleskSlug(sub)
+	out := "/tmp/cpmove-" + slug + ".tar.gz"
+	t.Cleanup(func() { os.Remove(out) })
+
+	var captured string
+	s := &session{execFn: func(_ context.Context, _ time.Duration, cmd string) ([]byte, error) {
+		captured = cmd
+		return []byte(out + "\n"), nil
+	}}
+	if _, err := New().BackupUser(context.Background(), s, sub); err != nil {
+		t.Fatalf("BackupUser: %v", err)
+	}
+
+	bin := t.TempDir()
+	docroot := t.TempDir()
+	stub := `#!/bin/sh
+q="$3"
+case "$q" in
+  *c.email*) echo "owner@example.net" ;;
+  *"SELECT name FROM domains"*) echo "$SUB_A"; echo "shop.$SUB_A" ;;
+  *www_root*) echo "$DOCROOT" ;;
+  *php_handler_id*) case "$q" in *"'shop."*) echo "fpm" ;; *) echo "plesk-php83-fpm" ;; esac ;;
+esac
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "plesk"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", captured)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "SUB_A="+sub, "DOCROOT="+docroot)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("script failed: %v\n%s", err, b)
+	}
+
+	x := t.TempDir()
+	if b, err := exec.Command("tar", "-xzf", out, "-C", x).CombinedOutput(); err != nil {
+		t.Fatalf("untar: %v\n%s", err, b)
+	}
+	root := filepath.Join(x, "cpmove-"+slug)
+	if b, _ := os.ReadFile(filepath.Join(root, "cp", slug)); !strings.Contains(string(b), "CONTACTEMAIL=owner@example.net") {
+		t.Errorf("cp/%s = %q, want the owner's CONTACTEMAIL", slug, b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(root, "userdata", sub)); string(b) != "phpversion: 8.3\n" {
+		t.Errorf("userdata/%s = %q, want \"phpversion: 8.3\\n\"", sub, b)
+	}
+	if _, err := os.Stat(filepath.Join(root, "userdata", "shop."+sub)); err == nil {
+		t.Error("a domain on the OS-vendor handler got a userdata PHP version")
 	}
 }
 
