@@ -3215,7 +3215,8 @@ func sanHostnamesForDomain(d *models.Domain, aliases []string) []string {
 	// from p.Domain); resolvableSANs drops it if the record isn't live yet,
 	// so it never tanks issuance. Placed before the SkipAutoSAN return so an
 	// opt-in www survives even when the helper subdomains are skipped.
-	if d.CreateWWW {
+	// A name that already starts with "www." gets no "www.www." (GH #2561).
+	if d.CreateWWW && !strings.HasPrefix(d.Name, "www.") {
 		out = append(out, "www."+d.Name)
 	}
 	// GH #1625 web domain aliases. An alias is served from the SAME

@@ -68,6 +68,13 @@ func TestWebCertSANsForDomain(t *testing.T) {
 			aliases: []string{"alias.example.net"},
 			want:    []string{"example.com", "alias.example.net"},
 		},
+		{
+			// GH #2561: a www. primary with www opted in gets no www.www.
+			name:    "www. primary, www in",
+			dom:     &models.Domain{Name: "www.example.com", CreateWWW: true, SkipAutoSAN: true},
+			aliases: []string{"example.com"},
+			want:    []string{"www.example.com", "example.com"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

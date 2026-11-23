@@ -792,7 +792,7 @@ func (h *sslHandler) aliasHostnames(ctx context.Context, domainID string) []stri
 // listing it here over-reported coverage the cert never had.
 func webCertSANsForDomain(d *models.Domain, aliases []string) []string {
 	sans := []string{d.Name}
-	if d.CreateWWW {
+	if d.CreateWWW && !strings.HasPrefix(d.Name, "www.") {
 		sans = append(sans, "www."+d.Name)
 	}
 	// GH #1625: explicit tenant aliases are SANs too. Appended before the

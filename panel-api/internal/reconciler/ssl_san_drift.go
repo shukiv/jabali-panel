@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -62,6 +63,12 @@ func sslSANDriftMissing(row repository.SSLCertificateWithDomain, certSANs, alias
 		MTASTSEnabled: row.MTASTSEnabled,
 	}
 	desired := sanHostnamesForDomain(dom, aliases)
+	if row.IssueMethod == issueMethodDNS01 {
+		// A DNS-01 certificate carries its own policy (GH #2561): www.<name> and
+		// the verified aliases, never the mail helpers — so a helper it will
+		// never carry cannot hold one of the pass's slots.
+		desired = dns01DesiredSANs(row.DomainName, aliases)[1:]
+	}
 	if len(desired) == 0 {
 		return nil
 	}
@@ -186,6 +193,20 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 		return
 	}
 
+	// GH #2561: a certificate issued over DNS-01 is topped up over DNS-01. The
+	// HTTP-01 reachability filter below would hold back a name whose A record
+	// points at a CDN — exactly the names DNS-01 validates without trouble —
+	// and the HTTP-01 request it makes would be answered at that CDN's edge.
+	// With no DNS-01 provider any more, the HTTP-01 top-up runs as before.
+	if cert.IssueMethod == issueMethodDNS01 {
+		if srv, err := r.settingsGet(ctx); err == nil && srv != nil {
+			if route := r.dns01Route(ctx, srv, dom.Name); route.Provider != dns01.ProviderNone {
+				r.expandDNS01CertSANs(ctx, dom, cert, srv, route, certSANs, missing)
+				return
+			}
+		}
+	}
+
 	desired := sanHostnamesForDomain(dom, r.aliasHostnames(ctx, dom.ID))
 	reachable := r.resolvableSANs(ctx, desired)
 	if len(reachable) > 0 {
@@ -258,8 +279,74 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 	}
 	var res sslIssueResult
 	_ = json.Unmarshal(raw, &res)
-	if err := r.sslCerts.UpdateAfterIssuance(ctx, cert.ID, issued, expires, res.CertPath, res.KeyPath); err != nil {
-		r.log.Error("ssl_san_drift: write issuance failed", "domain", dom.Name, "error", err)
+	r.recordSANDriftExpand(ctx, dom.Name, cert.ID, issued, expires, res.CertPath, res.KeyPath, request)
+}
+
+// expandDNS01CertSANs is the DNS-01 top-up (GH #2561): request the DNS-01 name
+// policy — every verified alias whose zone the hook can write, in any zone —
+// and reissue over ssl.issue_dns01. Names the policy no longer wants (a
+// "www.www." from before) drop off with it. As on the HTTP-01 side, a failure
+// leaves the current certificate exactly as it was.
+func (r *Reconciler) expandDNS01CertSANs(ctx context.Context, dom *models.Domain, cert repository.SSLCertificateWithDomain, srv *models.ServerSettings, route dns01.Route, certSANs, missing []string) {
+	have := lowerSet(certSANs)
+	request := r.dns01CertSANs(ctx, srv, dom, route, have, true)
+	addsSomething := false
+	for _, n := range request {
+		if _, ok := have[n]; !ok {
+			addsSomething = true
+			break
+		}
+	}
+	if !addsSomething {
+		r.log.Info("ssl_san_drift: no missing SAN is writable over DNS-01 yet, deferring",
+			"domain", dom.Name, "missing", strings.Join(missing, ","))
+		return
+	}
+
+	r.sslIssueMu.Lock()
+	defer r.sslIssueMu.Unlock()
+	issueCtx, cancel := context.WithTimeout(ctx, dns01IssueTimeout)
+	defer cancel()
+	attemptStart := time.Now()
+	raw, err := r.agent.Call(issueCtx, "ssl.issue_dns01", map[string]any{
+		"cert_name": dom.Name,
+		"sans":      request,
+		"email":     srv.AdminEmail,
+		"staging":   cert.Staging,
+	})
+	var issued, expires time.Time
+	var certPath, keyPath string
+	switch {
+	case err == nil:
+		var ok bool
+		if issued, expires, ok = parseSSLIssueResult(raw, r.log, dom.Name); !ok {
+			r.log.Warn("ssl_san_drift: unparseable ssl.issue_dns01 result", "domain", dom.Name)
+			return
+		}
+		var res sslIssueResult
+		_ = json.Unmarshal(raw, &res)
+		certPath, keyPath = res.CertPath, res.KeyPath
+	case isAgentDeadlineError(err):
+		// JAB-407: certbot runs on after the socket read times out.
+		info, ok := r.confirmDNS01IssuedAfterTimeout(dom.Name, request, attemptStart)
+		if !ok {
+			r.log.Warn("ssl_san_drift: dns-01 expand failed, keeping current cert", "domain", dom.Name, "error", firstLine(err.Error()))
+			return
+		}
+		issued, _ = time.Parse(time.RFC3339, info.NotBefore)
+		expires, _ = time.Parse(time.RFC3339, info.NotAfter)
+		certPath, keyPath = info.CertPath, info.KeyPath
+	default:
+		r.log.Warn("ssl_san_drift: dns-01 expand failed, keeping current cert", "domain", dom.Name, "error", firstLine(err.Error()))
+		return
+	}
+	r.recordSANDriftExpand(ctx, dom.Name, cert.ID, issued, expires, certPath, keyPath, request)
+}
+
+// recordSANDriftExpand stores an expanded certificate and gets nginx to serve it.
+func (r *Reconciler) recordSANDriftExpand(ctx context.Context, domainName, certID string, issued, expires time.Time, certPath, keyPath string, request []string) {
+	if err := r.sslCerts.UpdateAfterIssuance(ctx, certID, issued, expires, certPath, keyPath); err != nil {
+		r.log.Error("ssl_san_drift: write issuance failed", "domain", domainName, "error", err)
 		return
 	}
 	// The vhost config is unchanged (same cert path), so the per-domain vhost
@@ -270,5 +357,5 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 	_, _ = r.agent.Call(reloadCtx, "nginx.reload", map[string]any{})
 	rcancel()
 	r.log.Info("ssl_san_drift: expanded certificate SANs",
-		"domain", dom.Name, "hostnames", strings.Join(request, ","))
+		"domain", domainName, "hostnames", strings.Join(request, ","))
 }
