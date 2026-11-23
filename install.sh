@@ -15867,6 +15867,54 @@ PY
   esac
 }
 
+# _stalwart_wait_jmap_port <max seconds> — poll /jmap/session on 8446, then
+# 8080, until one answers below 500. Prints "<port> <http status> <seconds
+# waited>"; returns 1 on timeout. 401 counts: the HTTP layer is up.
+_stalwart_wait_jmap_port() {
+  local max_wait="$1" waited=0 p status
+  while (( waited < max_wait )); do
+    for p in 8446 8080; do
+      # `|| true`: curl exits 7 on "connection refused" while Stalwart binds.
+      status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
+        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null || true)"
+      if [[ "${status:-000}" =~ ^[234][0-9][0-9]$ ]]; then
+        echo "$p $status $waited"
+        return 0
+      fi
+    done
+    sleep 1
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
+# _stalwart_admin_token_ok <port> <admin token> — does the Stalwart on <port>
+# accept the admin token the way stalwart-cli and the agent send it (HTTP
+# Basic, user admin)? /jmap/session answers 200 without credentials too, so
+# only an authenticated request tells. The token reaches curl on stdin.
+_stalwart_admin_token_ok() {
+  local code
+  code="$(printf 'user = "admin:%s"\n' "$2" | curl -sS -o /dev/null -w '%{http_code}' \
+    --connect-timeout 2 -m 5 -K - "http://127.0.0.1:${1}/jmap/session" 2>/dev/null || true)"
+  [[ "$code" =~ ^2[0-9][0-9]$ ]]
+}
+
+# _stalwart_apply_non_idempotent <apply output> — what in a FAILED
+# `stalwart-cli apply --continue-on-error` is not an idempotent re-run.
+# Each failed operation prints a line starting with ✗; primaryKeyViolation
+# means the object exists from a prior apply. The trailing "error: apply
+# completed with N failed operation(s)" only restates the exit code. A
+# failure with no ✗ line ran no operation at all (stalwart-cli 1.0.14 on a
+# refused token prints only "error: authentication failed (HTTP 401)"), so
+# its error: lines are returned. Empty output = idempotent.
+_stalwart_apply_non_idempotent() {
+  if ! grep -q '^✗' <<<"$1"; then
+    grep -E '^error:' <<<"$1" || echo "stalwart-cli apply failed before any operation ran"
+    return 0
+  fi
+  grep '^✗' <<<"$1" | grep -v 'primaryKeyViolation' || true
+}
+
 # _install_stalwart_apply_plan starts Stalwart (if not already running),
 # waits for /jmap to be reachable, runs stalwart-cli apply against the
 # rendered plan, then deletes factory listeners and restarts. Idempotent:
@@ -15896,34 +15944,35 @@ _install_stalwart_apply_plan() {
   # built-in default HTTP port 8080. On every subsequent run the
   # registry holds the plan's `127.0.0.1:8446` listener, so 8446 is the
   # management port. We probe both and apply against whichever answers.
-  local jmap_port=""
-  local jmap_status=""
-  local waited=0
-  local max_wait=30
-  while (( waited < max_wait )); do
-    for p in 8446 8080; do
-      local status
-      # `|| true` is load-bearing: curl exits 7 on "connection refused"
-      # which is expected while Stalwart is still binding its listeners.
-      # Under `set -euo pipefail`, the bare assignment would abort the
-      # script on the first refused port before we ever get to try :8080.
-      status="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 -m 3 \
-        "http://127.0.0.1:${p}/jmap/session" 2>/dev/null || true)"
-      status="${status:-000}"
-      if [[ "$status" =~ ^[234][0-9][0-9]$ ]]; then
-        jmap_port="$p"
-        jmap_status="$status"
-        break 2
-      fi
-    done
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if [[ -z "$jmap_port" ]]; then
-    _err "Stalwart /jmap did not come up on 8446 or 8080 within ${max_wait}s — check 'journalctl -u jabali-stalwart'"
+  local jmap_port="" jmap_status="" waited=0 probe
+  if ! probe="$(_stalwart_wait_jmap_port 30)"; then
+    _err "Stalwart /jmap did not come up on 8446 or 8080 within 30s — check 'journalctl -u jabali-stalwart'"
     _die "Stalwart bootstrap timed out"
   fi
+  read -r jmap_port jmap_status waited <<<"$probe"
   _ok "Stalwart /jmap ready on :${jmap_port} (HTTP ${jmap_status}) after ${waited}s"
+
+  # A Stalwart started before config.json and stalwart.env were written (a
+  # unit an older update left enabled, started by the panel mid-install)
+  # runs in bootstrap mode on :8080 with a temporary admin password. It
+  # answers the probe above, but every apply and converger call gets 401.
+  # A token rotated since its last start looks the same. A restart makes it
+  # read both files.
+  if ! _stalwart_admin_token_ok "$jmap_port" "$admin_token"; then
+    _warn "Stalwart on :${jmap_port} refuses the admin token (started before its config was written?); restarting it"
+    systemctl restart jabali-stalwart.service
+    if ! probe="$(_stalwart_wait_jmap_port 30)"; then
+      _die "Stalwart did not come back within 30s of the restart — check 'journalctl -u jabali-stalwart'"
+    fi
+    read -r jmap_port jmap_status waited <<<"$probe"
+    if _stalwart_admin_token_ok "$jmap_port" "$admin_token"; then
+      _ok "Stalwart accepts the admin token on :${jmap_port} after the restart"
+    else
+      # Not fatal here: an update carries on as before (its convergers warn),
+      # and a first apply stops below on the 401.
+      _warn "Stalwart on :${jmap_port} still refuses the admin token in /etc/jabali-panel/stalwart-admin.token; mail management calls will fail"
+    fi
+  fi
 
   # If Stalwart is serving on :8446 we know the plan is already applied
   # (that's the whole point of the 8080→restart→8446 dance below). Re-
@@ -15999,16 +16048,8 @@ _install_stalwart_apply_plan() {
   printf '%s\n' "$apply_out" | tail -20
 
   if (( apply_rc != 0 )); then
-    # Inspect every per-operation failure line (starts with ✗) and
-    # categorize: primaryKeyViolation = idempotent (object already
-    # exists from a prior apply), anything else = real error. Ignore
-    # the trailing `error: apply completed with N failed operation(s)`
-    # summary — it's just a restatement of rc!=0 and tells us nothing
-    # about whether the underlying failures are idempotent.
     local non_idempotent_errs
-    non_idempotent_errs="$(printf '%s\n' "$apply_out" \
-      | grep '^✗' \
-      | grep -v 'primaryKeyViolation' || true)"
+    non_idempotent_errs="$(_stalwart_apply_non_idempotent "$apply_out")"
     if [[ -n "$non_idempotent_errs" ]]; then
       _err "stalwart-cli apply reported non-idempotent failures:"
       printf '  %s\n' "$non_idempotent_errs" >&2
