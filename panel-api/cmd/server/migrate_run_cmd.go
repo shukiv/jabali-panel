@@ -2671,9 +2671,49 @@ func registerImportedApps(ctx context.Context, out io.Writer, ag agent.AgentInte
 		return
 	}
 	fmt.Fprintf(out, "apps: %d found, %d registered\n", scanned, added)
+	fctx, fcancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer fcancel()
 	for _, r := range report {
 		if r.Action != "added" && r.Action != "skipped_already_present" {
 			fmt.Fprintf(out, "  apps: %s %s/%s not registered: %s\n", r.AppType, r.Domain, r.Subdirectory, r.Action)
+			continue
 		}
+		if r.AppType == "wordpress" {
+			fixImportedUploadPath(fctx, out, ag, *u.Username, r)
+		}
+	}
+}
+
+// fixImportedUploadPath clears a WordPress upload_path that still names the
+// source server's folder (cPanel keeps an addon site's as
+// /home/<u>/public_html/<addon>/wp-content/uploads), which otherwise sends
+// media uploads and generated CSS to a directory that does not exist here.
+// The agent decides, and changes nothing it cannot tell is stale.
+func fixImportedUploadPath(ctx context.Context, out io.Writer, ag agent.AgentInterface, username string, r appScanRow) {
+	site := strings.TrimSuffix(r.Domain+"/"+r.Subdirectory, "/")
+	cctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	raw, err := ag.Call(cctx, "wordpress.upload_path_fix", map[string]any{
+		"os_user": username,
+		"path":    filepath.Join("/home", username, "domains", r.Domain, "public_html", r.Subdirectory),
+	})
+	if err != nil {
+		fmt.Fprintf(out, "  wordpress %s: upload_path not checked: %v\n", site, err)
+		return
+	}
+	var res struct {
+		Before string `json:"before"`
+		Action string `json:"action"`
+		Reason string `json:"reason"`
+	}
+	if jErr := json.Unmarshal(raw, &res); jErr != nil {
+		fmt.Fprintf(out, "  wordpress %s: upload_path not checked: %v\n", site, jErr)
+		return
+	}
+	switch res.Action {
+	case "cleared":
+		fmt.Fprintf(out, "  wordpress %s: upload_path %s was the old server's folder; cleared, so uploads go to the site's own wp-content/uploads\n", site, res.Before)
+	case "kept":
+		fmt.Fprintf(out, "  wordpress %s: upload_path %s left as is (%s); check that media uploads work\n", site, res.Before, res.Reason)
 	}
 }

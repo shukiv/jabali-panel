@@ -3,7 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -116,5 +119,41 @@ func TestRegisterImportedApps_AgentFailureIsAWarning(t *testing.T) {
 	}
 	if len(installs.created) != 0 {
 		t.Errorf("created %d rows on a failed scan", len(installs.created))
+	}
+}
+
+func TestRegisterImportedApps_ChecksUploadPathOfEachWordPressSite(t *testing.T) {
+	ag, domains, installs, u := scanFixture()
+	resp, err := os.ReadFile("../../internal/agent/testdata/wordpress_upload_path_fix_response.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag.On("wordpress.upload_path_fix", json.RawMessage(resp))
+	var out bytes.Buffer
+	registerImportedApps(context.Background(), &out, ag, domains, installs, u)
+
+	var params []json.RawMessage
+	for _, c := range ag.Calls() {
+		if c.Command == "wordpress.upload_path_fix" {
+			params = append(params, c.Params)
+		}
+	}
+	// The two WordPress sites registered; not the Joomla site, nor the hits on
+	// another user's or an unknown domain.
+	if len(params) != 2 {
+		t.Fatalf("upload_path_fix calls = %d, want 2: %s", len(params), params)
+	}
+	want, err := os.ReadFile("../../internal/agent/testdata/wordpress_upload_path_fix_request.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, wantMap map[string]any
+	_ = json.Unmarshal(params[1], &got)
+	_ = json.Unmarshal(want, &wantMap)
+	if !reflect.DeepEqual(got, wantMap) {
+		t.Errorf("subfolder site params = %v, want the contract fixture %v", got, wantMap)
+	}
+	if !strings.Contains(out.String(), "wordpress shop.example/blog: upload_path /home/alice/public_html/shop.example/blog/wp-content/uploads was the old server's folder; cleared") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }
