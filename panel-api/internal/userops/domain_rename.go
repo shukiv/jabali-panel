@@ -76,11 +76,12 @@ type FtpDocrootLister interface {
 const appTypeWordPress = "wordpress"
 
 // refreshableOSUserRE mirrors the migration.refresh_reconcile agent verb's
-// os_user constraint (panel-agent internal/commands/migration_refresh.go). It is
-// stricter than provisioning's usernameRe (it rejects '_'), so a rename whose
-// owner name falls outside it skips the WordPress URL rewrite with a warning
-// rather than sending a call the agent would reject.
-var refreshableOSUserRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+// os_user constraint (panel-agent internal/commands/migration_refresh.go). It
+// is stricter than provisioning's usernameRe only in the first character (a
+// letter, not '_'), so a rename whose owner name falls outside it skips the
+// WordPress URL rewrite with a warning rather than sending a call the agent
+// would reject.
+var refreshableOSUserRE = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // RenameError is a typed gate/orchestration failure so the HTTP handler can map
 // a stable code to a 4xx and any future CLI to a usage error.
