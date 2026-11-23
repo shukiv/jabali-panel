@@ -54,7 +54,7 @@ describe("useApplyBrandingToTitle (GH #1604 — keep the host)", () => {
     renderHook(() => useApplyBrandingToTitle(), { wrapper: makeWrapper() });
     const host = window.location.hostname;
     await waitFor(() => {
-      expect(document.title).toBe(`${host} | Acme — Panel`);
+      expect(document.title).toBe(`${host} | Acme`);
     });
   });
 });

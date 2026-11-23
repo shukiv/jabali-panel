@@ -6,8 +6,8 @@
 // reflects exactly the address the tab was opened on (an IP shows as the IP).
 //
 // The suffix is branding-aware: when the operator has set a custom panel
-// brand text (Look and feel), it reads "<host> | <brand> — Panel"; otherwise
-// the default product name. This is the single builder both title writers go
+// brand text (Branding), it reads "<host> | <brand>", the brand alone;
+// otherwise the default product name. This is the single builder both title writers go
 // through — boot (setPageTitle in main.tsx) and the branding effect
 // (useApplyBrandingToTitle) — so the branding hook can no longer overwrite the
 // host away, which is what silently defeated #1604 before this.
@@ -26,7 +26,7 @@ export function buildPageTitle(
 ): string {
   const host = (hostname ?? "").trim();
   const brand = (brandText ?? "").trim();
-  const suffix = brand ? `${brand} — Panel` : DEFAULT_SUFFIX;
+  const suffix = brand || DEFAULT_SUFFIX;
   return host ? `${host} | ${suffix}` : suffix;
 }
 

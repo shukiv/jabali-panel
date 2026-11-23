@@ -27,7 +27,7 @@ describe("buildPageTitle (GH #1604)", () => {
 
   it("composes a custom brand as the suffix, keeping the host", () => {
     expect(buildPageTitle("panel.example.com", "Acme")).toBe(
-      "panel.example.com | Acme — Panel",
+      "panel.example.com | Acme",
     );
   });
 
@@ -38,10 +38,10 @@ describe("buildPageTitle (GH #1604)", () => {
   });
 
   it("drops the host prefix but keeps the brand when host is empty", () => {
-    expect(buildPageTitle("", "Acme")).toBe("Acme — Panel");
+    expect(buildPageTitle("", "Acme")).toBe("Acme");
   });
 
   it("trims a custom brand", () => {
-    expect(buildPageTitle("host.local", "  Acme  ")).toBe("host.local | Acme — Panel");
+    expect(buildPageTitle("host.local", "  Acme  ")).toBe("host.local | Acme");
   });
 });
