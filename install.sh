@@ -5192,6 +5192,15 @@ only-notify=
 # MariaDB socket, with the packet cache in front) the per-query backend
 # hit is unmeasurable; the zone cache exists for million-zone operators.
 zone-cache-refresh-interval=0
+
+# Simultaneous TCP connections. The default of 20 ran out on a server whose
+# IP had just changed: Let's Encrypt checked many names at once, pdns logged
+# "Limit of simultaneous TCP connections reached", and LE got SERVFAIL or
+# timeouts, so certificates failed. 200 in total gives room for that burst;
+# 50 per client (the default is no per-client limit) keeps one address from
+# taking every slot. ensure_pdns_tcp_limits carries both to existing boxes.
+max-tcp-connections=200
+max-tcp-connections-per-client=50
 PDNSCONF
 
   # Idempotency: if .new matches live, skip write + restart.
@@ -6762,6 +6771,34 @@ ZONECACHE
       || _warn "pdns restart failed after zone-cache config — new setting applies on next pdns restart"
   else
     _log "pdns not active — zone-cache setting staged in $conf for next start"
+  fi
+}
+
+# ensure_pdns_tcp_limits — carry the TCP connection limits from the
+# install_powerdns template to existing boxes (install_powerdns does not run
+# on `jabali update`). Each setting is replaced in place or appended; pdns
+# restarts only when something changed and the unit is active.
+ensure_pdns_tcp_limits() {
+  local conf=/etc/powerdns/pdns.d/01-jabali-mysql.conf
+  [[ -f "$conf" ]] || return 0   # dns module never installed here
+  local changed=0 kv key
+  for kv in max-tcp-connections=200 max-tcp-connections-per-client=50; do
+    key="${kv%%=*}"
+    grep -qx "$kv" "$conf" && continue
+    if grep -q "^${key}=" "$conf"; then
+      sed -i "s/^${key}=.*/${kv}/" "$conf"
+    else
+      printf '\n# Appended by ensure_pdns_tcp_limits on update; see install_powerdns.\n%s\n' "$kv" >> "$conf"
+    fi
+    changed=1
+  done
+  (( changed )) || return 0
+  if systemctl is-active --quiet pdns 2>/dev/null; then
+    systemctl restart pdns \
+      && _ok "pdns TCP limits applied (max-tcp-connections=200, 50 per client)" \
+      || _warn "pdns restart failed after the TCP limits change — they apply on next pdns restart"
+  else
+    _log "pdns not active — TCP limits staged in $conf for next start"
   fi
 }
 
@@ -18471,6 +18508,7 @@ provision_new_software() {
   # stray lines into, so pdns starts again.
   ensure_pdns_conf_no_stray_lines
   ensure_pdns_zone_cache
+  ensure_pdns_tcp_limits
   # JAB-350: same reasoning — pin the global AXFR ACL to loopback on update so a
   # permissive global on an existing host stops leaving zones internet-transferable.
   ensure_pdns_axfr_deny
