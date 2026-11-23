@@ -6,7 +6,7 @@
 // The version string is imported from panel-ui/package.json at build
 // time so bumping the SPA version there propagates automatically.
 import { useTranslation } from "react-i18next";
-import { GithubOutlined } from "@icons";
+import { GithubOutlined, GlobalOutlined } from "@icons";
 import { Grid, Layout, Space, theme, Typography } from "antd";
 
 import { useThemeMode } from "../theme/ThemeModeContext";
@@ -16,6 +16,8 @@ import pkg from "../../package.json";
 // to a GitHub URL here if the project gets mirrored publicly.
 const SOURCE_URL = "https://github.com/shukiv/jabali-panel";
 const WEBSITE_URL = "https://jabali-panel.com/";
+// Weblate's contributor landing page for the project (same link as README).
+const TRANSLATE_URL = "https://translate.jabali-panel.com/engage/jabali-panel/";
 
 export function JabaliFooter() {
   const { t } = useTranslation();
@@ -80,6 +82,19 @@ export function JabaliFooter() {
       </Space>
 
       <Space size={12}>
+        <a
+          href={TRANSLATE_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={t("jabalifooter.translate")}
+          style={{ color: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}
+        >
+          <GlobalOutlined style={{ fontSize: 16 }} />
+          {showExtras && (
+            <Typography.Text type="secondary">{t("jabalifooter.translate")}</Typography.Text>
+          )}
+        </a>
+        <Typography.Text type="secondary">·</Typography.Text>
         <a
           href={SOURCE_URL}
           target="_blank"
