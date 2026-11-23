@@ -18324,6 +18324,29 @@ ensure_stalwart_not_in_panel_group() {
   fi
 }
 
+# remove_stray_stalwart_unit — a box without the mail module must not keep a
+# jabali-stalwart unit. `jabali update` from a release before the
+# /opt/stalwart gate in its "sync systemd + shims" step copied the unit onto
+# every box, and the panel then enabled and started it: a 217/USER crash loop
+# with OnFailure spam, and a start that raced `--install-module mail` came up
+# in Stalwart's bootstrap mode and broke the install (2026-11-23). Only where
+# Stalwart is absent (no /opt/stalwart and no jabali-mail user), so a host with
+# mail, or one mid-way through installing it, is never touched. Idempotent.
+remove_stray_stalwart_unit() {
+  local opt_dir="${_STALWART_OPT_DIR:-/opt/stalwart}"
+  local unit_dir="${_SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
+  local unit="${unit_dir}/jabali-stalwart.service"
+  [[ -e "$opt_dir" ]] && return 0
+  getent passwd jabali-mail >/dev/null 2>&1 && return 0
+  [[ -f "$unit" ]] || return 0
+  systemctl disable --now jabali-stalwart.service >/dev/null 2>&1 || true
+  rm -f "$unit" "${unit_dir}/multi-user.target.wants/jabali-stalwart.service"
+  rm -rf "${unit}.d"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed jabali-stalwart.service >/dev/null 2>&1 || true
+  _ok "removed the jabali-stalwart unit from a host without the mail module"
+}
+
 # ensure_webmail_not_in_panel_group — JAB-351/357 criterion 2, webmail twin of
 # ensure_stalwart_not_in_panel_group. The Bulwark webmail server
 # (User=jabali-webmail) is internet-facing and must NOT hold the broad
@@ -18530,6 +18553,8 @@ provision_new_software() {
   # group is dead weight for mail and let a mail compromise reach the root Agent
   # socket at the FS layer.
   ensure_stalwart_not_in_panel_group
+  # A stalwart unit an older update copied onto a box without mail.
+  remove_stray_stalwart_unit
 
   # JAB-351/357: same convergence for the Bulwark webmail server. Its own
   # convergence lives inside install_bulwark, which is gated behind the mail

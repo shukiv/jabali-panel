@@ -58,6 +58,10 @@ const dkimKeyDir = "/etc/jabali-panel/dkim"
 // dkimKeyDirFunc is overridable for tests. `runSystemctl` is shared with
 // the php_ext handlers (defined in php_ext_shell.go) — reused directly
 // so all systemctl invocations share one test-swappable seam.
+// stalwartConfigPath is what install_stalwart writes before Stalwart may run
+// (the unit's --config). A var so tests can point it at a temp file.
+var stalwartConfigPath = "/etc/stalwart/config.json"
+
 var dkimKeyDirFunc = func() string {
 	if d := os.Getenv("JABALI_DKIM_KEY_DIR"); d != "" {
 		return d
@@ -78,6 +82,17 @@ func domainEmailEnableHandler(ctx context.Context, params json.RawMessage) (any,
 	}
 	if err := validateDomainNameForShell(p.DomainName); err != nil {
 		return nil, err
+	}
+
+	// Never enable or start Stalwart before its installer wrote the config:
+	// a box without the mail module (whose unit an old update left behind)
+	// crash-looped on it, and a start racing `--install-module mail` came up
+	// in bootstrap mode on :8080 and broke the install (seen on a fresh install, 2026-11-23).
+	if _, err := os.Stat(stalwartConfigPath); err != nil {
+		return nil, &agentwire.AgentError{
+			Code:    agentwire.CodeFailedPrecondition,
+			Message: "the mail server is not installed on this host (no " + stalwartConfigPath + "); install the mail module first",
+		}
 	}
 
 	// Generate or reuse the DKIM key for this domain. Reuse is the

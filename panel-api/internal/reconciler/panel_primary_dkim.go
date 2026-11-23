@@ -71,6 +71,9 @@ func (r *Reconciler) ensurePanelPrimaryDKIM(ctx context.Context, domain *models.
 	if domain.DkimSelector != nil && *domain.DkimSelector != "" {
 		return
 	}
+	if !r.mailModuleOn(ctx) {
+		return
+	}
 	if r.agent == nil {
 		r.log.Warn("panel-primary DKIM: agent unconfigured; skipping", "domain", domain.Name)
 		return
@@ -115,6 +118,9 @@ func (r *Reconciler) ensureTenantEmailEnabled(ctx context.Context, domain *model
 	}
 	// Idempotent guard: DKIM already provisioned → nothing to do.
 	if domain.DkimSelector != nil && *domain.DkimSelector != "" {
+		return
+	}
+	if !r.mailModuleOn(ctx) {
 		return
 	}
 	if r.agent == nil {
@@ -275,4 +281,19 @@ func conflictingDNSRecord(existing []models.DNSRecord, name, recType string) boo
 		}
 	}
 	return false
+}
+
+// mailModuleOn reports whether the mail module is on (server_settings
+// .mail_enabled). email_enabled on a row isn't a module check: the panel's own
+// hostname row has it whenever the name is routable. Without this, a box
+// without mail had domain.email_enable enable + start a Stalwart unit an old
+// update left behind (a crash loop), and a start racing `--install-module
+// mail` came up in bootstrap mode. Unreadable settings skip: the next tick
+// retries.
+func (r *Reconciler) mailModuleOn(ctx context.Context) bool {
+	if r.serverSettings == nil {
+		return false
+	}
+	srv, err := r.settingsGet(ctx)
+	return err == nil && srv != nil && srv.MailEnabled
 }

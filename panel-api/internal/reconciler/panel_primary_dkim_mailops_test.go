@@ -58,7 +58,7 @@ func mailOpsTestReconciler(agent *fakeMailEnableAgent, dom *models.Domain) (*Rec
 		domains:        domainRepo,
 		dnsZones:       zoneRepo,
 		dnsRecords:     recordRepo,
-		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{}},
+		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{MailEnabled: true}},
 		agent:          agent,
 		log:            slog.New(slog.DiscardHandler),
 	}
@@ -103,6 +103,22 @@ func runEnableMatrix(t *testing.T, isPanelPrimary bool, invoke func(r *Reconcile
 		// ordering ran through the Module.
 		if len(records.records) == 0 {
 			t.Fatalf("expected managed DNS records published, got none")
+		}
+	})
+
+	t.Run("mail module off → no agent call (it would enable + start Stalwart)", func(t *testing.T) {
+		agent := &fakeMailEnableAgent{}
+		dom := mailOpsTestDomain(isPanelPrimary)
+		r, records := mailOpsTestReconciler(agent, dom)
+		r.serverSettings = &fakeSettingsRepo{srv: &models.ServerSettings{MailEnabled: false}}
+
+		invoke(r, ctx, dom)
+
+		if agent.calls != 0 {
+			t.Fatalf("mail module off: expected no agent call, got %d", agent.calls)
+		}
+		if dom.DkimSelector != nil || len(records.records) != 0 {
+			t.Fatalf("mail module off: nothing may be persisted or published")
 		}
 	})
 

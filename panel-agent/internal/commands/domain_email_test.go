@@ -34,6 +34,30 @@ func wireSystemctl(t *testing.T, cap *systemctlCapture) {
 		return nil, nil
 	}
 	t.Cleanup(func() { runSystemctl = orig })
+	// The mail server is installed: its config exists.
+	origCfg := stalwartConfigPath
+	stalwartConfigPath = filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(stalwartConfigPath, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stalwartConfigPath = origCfg })
+}
+
+// A box without the mail module: domain.email_enable must not enable or start
+// Stalwart (seen on a fresh install 2026-11-23: a left-behind unit crash-looped, and a start
+// racing `--install-module mail` came up in bootstrap mode).
+func TestDomainEmailEnable_NoMailServerNeverTouchesSystemd(t *testing.T) {
+	wireDKIMDir(t)
+	var sysctl systemctlCapture
+	wireSystemctl(t, &sysctl)
+	stalwartConfigPath = filepath.Join(t.TempDir(), "absent", "config.json")
+
+	_, err := domainEmailEnableHandler(context.Background(), json.RawMessage(
+		`{"domain_id":"01J","domain_name":"example.com"}`))
+	requireAgentErrorCode(t, err, agentwire.CodeFailedPrecondition)
+	if len(sysctl.calls) != 0 {
+		t.Errorf("systemctl must not run without the mail server, got %v", sysctl.calls)
+	}
 }
 
 // wireDKIMDir points dkimKeyDirFunc at a test temp dir + restores it.
