@@ -165,12 +165,10 @@ export function panelLEAutoNote(host: PanelCertificate, now: number = Date.now()
   return `New server: once ${name} resolves publicly to this server, the panel turns Let's Encrypt on by itself and issues the certificate (until ${shortDate(host.le_auto_until)}). Turning the switch on or off yourself ends this.`;
 }
 
-// panelLEAutoCanApply mirrors the names the panel never turns Let's Encrypt
-// on for by itself: a local name no public DNS can show, and a free
-// <label>.jabalihosted.com name (models.IsFreeHostnameBase), whose
-// certificates come out of one allowance shared by every such server.
+// panelLEAutoCanApply: the panel never turns Let's Encrypt on by itself for a
+// local name no public DNS can show. A free <label>.jabalihosted.com name is
+// covered like any other.
 export function panelLEAutoCanApply(hostname: string): boolean {
   const h = hostname.trim().toLowerCase();
-  if (!h || h === "localhost" || h.endsWith(".local") || h.endsWith(".localdomain")) return false;
-  return !/^[^.]+\.jabalihosted\.com$/.test(h);
+  return !(!h || h === "localhost" || h.endsWith(".local") || h.endsWith(".localdomain"));
 }

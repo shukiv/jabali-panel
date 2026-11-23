@@ -53,7 +53,7 @@ While this applies, the Panel SSL tab says so, and until when. It ends when:
 - the seven days pass without the hostname pointing at the server;
 - you turn the switch on or off, or click **Issue / retry** yourself. A failure after that is retried every three hours, as for any Let's Encrypt certificate.
 
-It doesn't apply to a free `<label>.jabalihosted.com` hostname, to a server without an admin email (Server Settings → General), or to servers installed before this release: those keep their setting.
+It also applies to a free `<label>.jabalihosted.com` hostname. It doesn't apply to a server without an admin email (Server Settings → General), or to servers installed before this release: those keep their setting.
 
 ## Self-signed mode (Let's Encrypt off)
 
