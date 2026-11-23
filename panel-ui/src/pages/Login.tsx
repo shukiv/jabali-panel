@@ -61,7 +61,7 @@ import {
   webauthn2faLoginFields,
   webauthnSupported,
 } from "../webauthn";
-import { useBranding } from "../hooks/useBranding";
+import { logoURL, useBranding } from "../hooks/useBranding";
 import { loginHostHint } from "./loginHostHint";
 
 // JAB-159: demo-only quick-enter buttons. VITE_DEMO is a build-time
@@ -78,10 +78,6 @@ export const LoginPage = () => {
   const qc = useQueryClient();
   const { token } = theme.useToken();
   const { mode } = useThemeMode();
-  const logoSrc =
-    mode === "dark"
-      ? "/images/jabali_logo_dark.svg"
-      : "/images/jabali_logo.svg";
 
   const [flow, setFlow] = useState<KratosFlow | null>(null);
   const [loadingFlow, setLoadingFlow] = useState(true);
@@ -102,7 +98,17 @@ export const LoginPage = () => {
   // host — falling back to a bare-IP heuristic only when the hostname is
   // unknown. We never hide the form: IP access is the recovery path when
   // DNS is broken, and it works for an IP-only install.
-  const { panelHostname, isLoading: brandingLoading } = useBranding();
+  const {
+    panelHostname,
+    isLoading: brandingLoading,
+    brandText,
+    hasLogoLight,
+    hasLogoDark,
+  } = useBranding();
+  // The operator's Branding (logo, brand text) shows here too; unset keeps Jabali's.
+  const logoSrc =
+    mode === "dark" ? logoURL("dark", hasLogoDark) : logoURL("light", hasLogoLight);
+  const brandName = brandText.trim() || "Jabali Panel";
   const hostHint = loginHostHint({
     configuredHostname: panelHostname,
     brandingSettled: !brandingLoading,
@@ -314,7 +320,7 @@ export const LoginPage = () => {
           >
             <img
               src={logoSrc}
-              alt="Jabali"
+              alt={brandName}
               // Prominent brand mark: scales with the viewport but is
               // capped so it never crowds the card or pushes fields below
               // the fold on small laptop/mobile screens. SVG keeps it crisp
@@ -326,7 +332,7 @@ export const LoginPage = () => {
               }}
             />
             <Typography.Title level={2} style={{ margin: 0 }}>
-              Jabali Panel
+              {brandName}
             </Typography.Title>
           </div>
 

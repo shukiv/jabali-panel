@@ -9,6 +9,7 @@ import { BrowserRouter } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { apiClient } from "../apiClient";
 import * as kratos from "../kratos";
 import { ThemeModeProvider } from "../theme/ThemeModeContext";
 import { LoginPage } from "./Login";
@@ -382,5 +383,35 @@ describe("LoginPage", () => {
       fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
       await waitFor(() => expect(assign).toHaveBeenCalledWith("/.ory/self-service/logout?token=t"));
     });
+  });
+});
+
+// The operator's Branding (brand text, uploaded logos) reaches the sign-in
+// page too; with none set it stays "Jabali Panel" with Jabali's logo.
+describe("LoginPage branding", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function stubBranding(data: Record<string, unknown>) {
+    vi.spyOn(apiClient, "get").mockImplementation((url: string) =>
+      url === "/branding" ? Promise.resolve({ data }) : Promise.reject(new Error("unexpected " + url)),
+    );
+    vi.spyOn(kratos, "initLoginFlow").mockResolvedValue(passwordFlow());
+  }
+
+  it("shows the brand text and the uploaded logo", async () => {
+    stubBranding({ panel_brand_text: "Acme", has_logo_light: true, has_logo_dark: true, panel_hostname: "" });
+    renderLogin();
+    expect(await screen.findByRole("heading", { name: "Acme" })).toBeInTheDocument();
+    expect(screen.queryByText("Jabali Panel")).toBeNull();
+    expect(screen.getByAltText("Acme").getAttribute("src")).toMatch(/^\/api\/v1\/branding\/logo\/(light|dark)$/);
+  });
+
+  it("keeps Jabali Panel and its logo when nothing is branded", async () => {
+    stubBranding({ panel_brand_text: "", has_logo_light: false, has_logo_dark: false, panel_hostname: "" });
+    renderLogin();
+    expect(await screen.findByRole("heading", { name: "Jabali Panel" })).toBeInTheDocument();
+    expect(screen.getByAltText("Jabali Panel").getAttribute("src")).toMatch(/^\/images\/jabali_logo(_dark)?\.svg$/);
   });
 });

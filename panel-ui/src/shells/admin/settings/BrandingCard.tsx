@@ -160,7 +160,7 @@ export const BrandingCard = () => {
             label={t("brandingcard.brand_text")}
             name="panel_brand_text"
             rules={[{ max: 60, message: "<= 60 chars" }]}
-            extra="Shown next to the logo and in the browser tab title. Empty falls back to 'Jabali'."
+            extra="Shown next to the logo, on the sign-in page and as the browser tab title. Empty keeps the Jabali name."
           >
             <Input placeholder={t("brandingcard.jabali")} maxLength={60} showCount />
           </Form.Item>
