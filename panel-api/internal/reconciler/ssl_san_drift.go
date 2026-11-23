@@ -105,6 +105,14 @@ func sslSANDriftEligible(row repository.SSLCertificateWithDomain) bool {
 	return row.SSLMode == models.SSLModeLE || row.SSLMode == ""
 }
 
+// acmeStaging reports whether a top-up goes to Let's Encrypt staging: when the
+// row says so, or when the box is set to staging (JABALI_ACME_STAGING_ONLY) the
+// way its first issuance reads it. That issuance never stores the flag on the
+// row, so the row alone sent a staging box's top-up to production.
+func (r *Reconciler) acmeStaging(rowStaging bool) bool {
+	return rowStaging || (r.cfg != nil && r.cfg.ACME.StagingOnly)
+}
+
 // sanDriftCooldownPassed reports whether this cert may be attempted again, and
 // (when true) is expected to be paired with markSANDriftAttempt by the caller.
 func (r *Reconciler) sanDriftCooldownPassed(certID string, now time.Time) bool {
@@ -261,7 +269,7 @@ func (r *Reconciler) expandCertSANsForDrift(ctx context.Context, cert repository
 		"domain":    dom.Name,
 		"webroot":   acmeWebroot(dom),
 		"email":     srv.AdminEmail,
-		"staging":   cert.Staging,
+		"staging":   r.acmeStaging(cert.Staging),
 		"hostnames": request,
 	}
 	raw, err := r.agent.Call(issueCtx, "ssl.issue", params)
@@ -312,7 +320,7 @@ func (r *Reconciler) expandDNS01CertSANs(ctx context.Context, dom *models.Domain
 		"cert_name": dom.Name,
 		"sans":      request,
 		"email":     srv.AdminEmail,
-		"staging":   cert.Staging,
+		"staging":   r.acmeStaging(cert.Staging),
 	})
 	var issued, expires time.Time
 	var certPath, keyPath string

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/config"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/dns01"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
@@ -70,6 +71,33 @@ func TestSANDrift_DNS01CertGetsItsProxiedAlias(t *testing.T) {
 	}
 	if got := dns01IssuedSANs(t, ag); !reflect.DeepEqual(got, []string{"www.example.com", "example.com"}) {
 		t.Errorf("sans = %v, want [www.example.com example.com]", got)
+	}
+}
+
+// A box set to Let's Encrypt staging tops a certificate up on staging too. Its
+// first issuance never stores the flag on the row, so reading the row alone
+// sent the top-up to production (seen on a staging test box, GH #2561 test).
+func TestSANDrift_StagingOnlyBoxTopsUpOnStaging(t *testing.T) {
+	for _, stagingOnly := range []bool{true, false} {
+		r, ag, _, dom := dns01Fixture(t, cfNS, "zone123")
+		r.WithConfig(&config.Config{ACME: config.ACMEConfig{StagingOnly: stagingOnly}})
+		dom.Name = "www.example.com"
+		withZones(r, dom.ID, []string{"example.com"}, "example.com")
+		cp := "/etc/letsencrypt/live/www.example.com/fullchain.pem"
+		row := repository.SSLCertificateWithDomain{
+			ID: "c1", DomainID: dom.ID, DomainName: dom.Name, Status: models.SSLStatusIssued,
+			CertPath: &cp, IssueMethod: issueMethodDNS01, SSLMode: models.SSLModeLE,
+		}
+		onCert := []string{"www.example.com"}
+		r.expandCertSANsForDrift(context.Background(), row, onCert, []string{"example.com"})
+
+		call, ok := findAgentCall(ag, "ssl.issue_dns01")
+		if !ok {
+			t.Fatalf("stagingOnly=%v: no ssl.issue_dns01 call", stagingOnly)
+		}
+		if got := call.params.(map[string]any)["staging"]; got != stagingOnly {
+			t.Errorf("stagingOnly=%v: top-up sent staging=%v", stagingOnly, got)
+		}
 	}
 }
 

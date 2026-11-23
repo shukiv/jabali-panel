@@ -63,6 +63,39 @@ func TestReconcileSSL_DockerApp_IssuesFromSharedACMERoot(t *testing.T) {
 	}
 }
 
+// Every SAN top-up request (HTTP-01 and DNS-01) takes its staging flag through
+// acmeStaging, so a box set to Let's Encrypt staging never tops up on
+// production. The HTTP-01 one probes public DNS, so pin it in the source.
+func TestSANDrift_StagingGoesThroughACMEStaging(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "ssl_san_drift.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	ast.Inspect(f, func(node ast.Node) bool {
+		kv, ok := node.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if k, ok := kv.Key.(*ast.BasicLit); !ok || k.Value != `"staging"` {
+			return true
+		}
+		n++
+		ok = false
+		if c, isCall := kv.Value.(*ast.CallExpr); isCall {
+			sel, isSel := c.Fun.(*ast.SelectorExpr)
+			ok = isSel && sel.Sel.Name == "acmeStaging"
+		}
+		if !ok {
+			t.Errorf(`a "staging" param in ssl_san_drift.go is not r.acmeStaging(...)`)
+		}
+		return true
+	})
+	if n != 2 {
+		t.Fatalf(`found %d "staging" params in ssl_san_drift.go, want 2 (HTTP-01 and DNS-01 top-up)`, n)
+	}
+}
+
 // The SAN top-up (expandCertSANsForDrift) sends ssl.issue too. It resolves
 // names against public DNS, so pin its webroot in the source.
 func TestSANDrift_UsesACMEWebroot(t *testing.T) {
