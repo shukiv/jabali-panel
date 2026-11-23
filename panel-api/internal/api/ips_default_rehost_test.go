@@ -31,7 +31,7 @@ func newIPRouterWithAgent(repo *fakeIPRepo, a agent.AgentInterface) *gin.Engine 
 func defaultListenCalls(a *agent.MockClient) []map[string]any {
 	var out []map[string]any
 	for _, c := range a.Calls() {
-		if c.Command == "nginx.default_vhost_listen" {
+		if c.Command == "system.default_ipv4_rehost" {
 			var p map[string]any
 			_ = json.Unmarshal(c.Params, &p)
 			out = append(out, p)
@@ -49,7 +49,7 @@ func TestIPHandler_PromoteIPv4Default_MovesTheDefaultVhost(t *testing.T) {
 		{ID: 1, Address: "203.0.113.121", Family: "ipv4", IsDefault: true},
 		{ID: 2, Address: "203.0.113.9", Family: "ipv4"},
 	}
-	a := agent.NewMockClient().On("nginx.default_vhost_listen", map[string]any{"rewritten": true})
+	a := agent.NewMockClient().On("system.default_ipv4_rehost", map[string]any{"rewritten": true})
 	r := newIPRouterWithAgent(repo, a)
 
 	w := doJSON(t, r, "PATCH", "/api/v1/admin/ips/2", map[string]any{"is_default": true})
@@ -67,7 +67,7 @@ func TestIPHandler_NoDefaultVhostCallWithoutAnIPv4Promotion(t *testing.T) {
 		{ID: 2, Address: "2001:db8::1", Family: "ipv6", IsDefault: true},
 		{ID: 3, Address: "2001:db8::2", Family: "ipv6"},
 	}
-	a := agent.NewMockClient().On("nginx.default_vhost_listen", map[string]any{"rewritten": true})
+	a := agent.NewMockClient().On("system.default_ipv4_rehost", map[string]any{"rewritten": true})
 	r := newIPRouterWithAgent(repo, a)
 
 	for _, req := range []struct {

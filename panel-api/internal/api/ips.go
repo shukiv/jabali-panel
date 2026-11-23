@@ -313,16 +313,17 @@ func (h *ipHandler) update(c *gin.Context) {
 	c.JSON(http.StatusOK, row)
 }
 
-// applyDefaultIPv4 moves the panel's default vhost to the new default IPv4,
-// detached and best-effort like the Settings side effects: the row is saved,
-// tenant vhosts follow it on the next reconcile pass, and a failure here
-// (the address is not on an interface yet) is logged for the operator.
+// applyDefaultIPv4 moves what install.sh pinned to the old address (the
+// panel's default server, /etc/hosts, the CrowdSec self-whitelist) to the new
+// default IPv4, detached and best-effort like the Settings side effects: the
+// row is saved, tenant vhosts follow it on the next reconcile pass, and a
+// failure here (the address is not on an interface yet) is logged.
 func (h *ipHandler) applyDefaultIPv4(address string) {
-	call := settingsops.DefaultIPv4ListenCall(address)
+	call := settingsops.DefaultIPv4RehostCall(address)
 	ctx, cancel := context.WithTimeout(context.Background(), call.Timeout)
 	defer cancel()
 	if _, err := h.cfg.Agent.Call(ctx, call.Method, call.Params); err != nil {
-		h.cfg.Log.Error("default vhost did not follow the new default IPv4", "ip", address, "err", err)
+		h.cfg.Log.Error("the host did not follow the new default IPv4", "ip", address, "err", err)
 	}
 }
 

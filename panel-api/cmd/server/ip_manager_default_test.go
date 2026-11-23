@@ -13,8 +13,8 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/settingsops"
 )
 
-// `jabali ip update <id> --default` on an IPv4 moves the panel's default vhost
-// to it with the same call as the REST PATCH; an IPv6 default does not, and a
+// `jabali ip update <id> --default` on an IPv4 moves the host files pinned to
+// the old address with the same call as the REST PATCH; an IPv6 default does not, and a
 // failed call is reported after the DB change.
 func TestFollowDefaultIPv4(t *testing.T) {
 	saved := sharedAgent
@@ -25,7 +25,7 @@ func TestFollowDefaultIPv4(t *testing.T) {
 	require.NoError(t, followDefaultIPv4(context.Background(), &models.ManagedIP{ID: 2, Address: "203.0.113.9", Family: "ipv4"}))
 	require.NoError(t, followDefaultIPv4(context.Background(), &models.ManagedIP{ID: 3, Address: "2001:db8::9", Family: "ipv6"}))
 	require.Equal(t, []settingsops.AgentCall{{
-		Method:  "nginx.default_vhost_listen",
+		Method:  "system.default_ipv4_rehost",
 		Params:  map[string]any{"ipv4": "203.0.113.9"},
 		Timeout: 30 * time.Second,
 	}}, *calls)

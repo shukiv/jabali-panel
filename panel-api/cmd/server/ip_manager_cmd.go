@@ -185,20 +185,21 @@ func newIPUpdateCmd() *cobra.Command {
 	return cmd
 }
 
-// followDefaultIPv4 moves the panel's default vhost to a newly promoted
-// default IPv4, the same call the REST PATCH makes; tenant vhosts follow on
-// the next reconcile pass. An IPv6 default has nothing to move.
+// followDefaultIPv4 moves what install.sh pinned to the old address (the
+// panel's default server, /etc/hosts, the CrowdSec self-whitelist) to a newly
+// promoted default IPv4, the same call the REST PATCH makes; tenant vhosts
+// follow on the next reconcile pass. An IPv6 default has nothing to move.
 func followDefaultIPv4(ctx context.Context, row *models.ManagedIP) error {
 	if row.Family != "ipv4" {
 		return nil
 	}
-	call := settingsops.DefaultIPv4ListenCall(row.Address)
+	call := settingsops.DefaultIPv4RehostCall(row.Address)
 	err := initAgent()
 	if err == nil {
 		err = dispatchSettingsAgentCall(ctx, call)
 	}
 	if err != nil {
-		return fmt.Errorf("IP %d (%s) is the default now, but the panel's default vhost did not follow it (%s): %w", row.ID, row.Address, call.Method, err)
+		return fmt.Errorf("IP %d (%s) is the default now, but the server's own settings did not follow it (%s): %w", row.ID, row.Address, call.Method, err)
 	}
 	return nil
 }

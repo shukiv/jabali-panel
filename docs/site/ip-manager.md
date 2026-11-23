@@ -41,4 +41,4 @@ When a domain's listen IP changes, the `@ A` record (and `@ AAAA` if IPv6 is con
 
 ## CLI
 
-(IP management is currently UI-only; CLI verbs may follow.)
+`jabali ip list | add | update | delete`. Moving the whole server to a new address: see [IP Addresses → Changing the server's main IP](./admin/ip-addresses.md#changing-the-servers-main-ip).
