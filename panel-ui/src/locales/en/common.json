@@ -1993,7 +1993,8 @@
     "install_jabali_as_an_app": "Install Jabali as an app"
   },
   "jabalifooter": {
-    "source_code": "Source code"
+    "source_code": "Source code",
+    "translate": "Translate Jabali into your language"
   },
   "notificationbell": {
     "clear": "Clear",
