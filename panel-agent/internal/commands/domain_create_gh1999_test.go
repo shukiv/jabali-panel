@@ -32,10 +32,11 @@ func gh1999Vhost(fallback string, hasPHP bool) vhostData {
 // fallback written out literally, as it was.
 func TestVhost_NoFrontControllerIsByteIdentical(t *testing.T) {
 	const tok = "{{.TryFilesFallback}}"
-	if strings.Count(vhostTemplate, tok) != 1 {
-		t.Fatalf("expected the fallback token exactly once in vhostTemplate")
+	// location / and, with the page cache on, the static-file locations.
+	if strings.Count(vhostTemplate, tok) != 2 {
+		t.Fatalf("expected the fallback token twice in vhostTemplate")
 	}
-	ref, err := templ.New("ref").Parse(strings.Replace(vhostTemplate, tok, "/index.php?$query_string", 1))
+	ref, err := templ.New("ref").Parse(strings.ReplaceAll(vhostTemplate, tok, "/index.php?$query_string"))
 	if err != nil {
 		t.Fatal(err)
 	}

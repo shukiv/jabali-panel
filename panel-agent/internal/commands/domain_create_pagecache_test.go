@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 	"testing"
 	"text/template"
@@ -110,5 +111,69 @@ func TestVhostTemplate_ExtraBypass(t *testing.T) {
 	// both location blocks carry the merged bypass regex
 	if n := strings.Count(out, `/edd-api/|/private|/members") { set $jabali_skip 1; }`); n != 2 {
 		t.Errorf("extra bypass folded into %d blocks, want 2\n%s", n, out)
+	}
+}
+
+// WooCommerce's order attribution (on by default since WC 8.5) sets sbjs_*
+// cookies from JS on the first page view; its PHP never reads them. They must
+// not turn every shop visitor into a bypass from the second page on, while a
+// cart, session or login cookie next to them still bypasses.
+func TestVhostTemplate_CookieGateAllowsWooAttributionCookies(t *testing.T) {
+	t.Parallel()
+	out := renderQAllowVhost(t, canonicalCacheVhostData())
+	m := regexp.MustCompile(`if \(\$http_cookie ~\* "([^"]+)"\) \{ set \$jabali_skip 0; \}`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatal("cookie gate not found in the rendered vhost")
+	}
+	gate := regexp.MustCompile("(?i)" + m[1]) // ~* is case-insensitive
+	for cookie, cacheable := range map[string]bool{
+		"sbjs_migrations=1418474375998%3D1; sbjs_current_add=fd%3D2026; sbjs_first=typ%3Dtypein; sbjs_udata=vst%3D1; sbjs_session=pgs%3D1": true,
+		"_ga=GA1.1.1.1; sbjs_current=typ%3Dorganic":                      true,
+		"sbjs_session=pgs%3D2; woocommerce_items_in_cart=1":              false,
+		"sbjs_first=typ%3Dtypein; wp_woocommerce_session_abc=1%7C%7C2":   false,
+		"sbjs_first=typ%3Dtypein; wordpress_logged_in_abc=u%7C1%7Ct%7Ch": false,
+		"pys_session_limit=true; sbjs_first=typ%3Dtypein":                false,
+		"cmplz_marketing=allow":                                          false,
+	} {
+		if got := gate.MatchString(cookie); got != cacheable {
+			t.Errorf("cookie %q: cacheable=%v, want %v", cookie, got, cacheable)
+		}
+	}
+}
+
+// With the cache on, the static-asset and .html locations win over location /.
+// A file that isn't on disk must still reach the app, as with the cache off:
+// plugin-served virtual .js/.ico/images and .html permalinks are real URLs.
+func TestVhostTemplate_CacheStaticMissFallsBackToApp(t *testing.T) {
+	t.Parallel()
+	block := func(out, open string) string {
+		i := strings.Index(out, open)
+		if i < 0 {
+			t.Fatalf("location %q not rendered", open)
+		}
+		return out[i : i+strings.Index(out[i:], "}")]
+	}
+	const assets = `location ~* \.(?:css|js|jpe?g|png|gif|ico|svg|webp|woff2?|ttf|eot)$ {`
+	const html = `location ~* \.html?$ {`
+	const fallback = "try_files $uri $uri/ /index.php?$query_string;"
+
+	php := renderQAllowVhost(t, canonicalCacheVhostData())
+	for _, loc := range []string{assets, html} {
+		if !strings.Contains(block(php, loc), fallback) {
+			t.Errorf("PHP domain: %s must fall back to the front controller", loc)
+		}
+	}
+
+	static := canonicalCacheVhostData()
+	static.HasPHP = false
+	overridden := canonicalCacheVhostData()
+	overridden.RootOverridden = true
+	for name, vd := range map[string]vhostData{"no PHP": static, "root overridden": overridden} {
+		out := renderQAllowVhost(t, vd)
+		for _, loc := range []string{assets, html} {
+			if strings.Contains(block(out, loc), "try_files") {
+				t.Errorf("%s: %s must keep the plain static 404", name, loc)
+			}
+		}
 	}
 }

@@ -154,7 +154,8 @@ server {                          # :443 — HTTPS (when SSL is configured)
     # an invalid value renders the default above.
 
     # Error pages (M28)
-    # Static asset caching (if cache_enabled)
+    # Static asset caching (if cache_enabled; on a PHP domain a file not on
+    #   disk falls back to the front controller, as location / does)
     # PHP handler: location = /index.php { … }
     # PHP handler: location ~ \.php$ { … }
     # FastCGI micro-cache gate (if cache_enabled)
@@ -190,7 +191,8 @@ allows caching (sets to 0) when:
 1. **No cookie** OR the cookie is exclusively known-benign
    analytics/consent tokens (exhaustive allowlist:
    `_ga*`, `_gid`, `_gat*`, `_gcl*`, `__utm*`, `_fbp`, `_fbc`,
-   `_pk_*`, `_hj*`, `cookie_consent*`, `wordpress_test_cookie`, …)
+   `_pk_*`, `_hj*`, `cookie_consent*`, WooCommerce's order-attribution
+   `sbjs_*`, `wordpress_test_cookie`, …)
 2. **Request method is GET** (POST always skips)
 3. **Query string is empty or tracking-only** (`utm_*`, `gclid`,
    `fbclid`, … — strict map in `jabali-fastcgi-cache.conf`)
