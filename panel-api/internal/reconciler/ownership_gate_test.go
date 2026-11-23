@@ -214,8 +214,8 @@ func TestPendingDomain_SharedCertNotPresented(t *testing.T) {
 func TestPendingDomain_NoMailSideEffects(t *testing.T) {
 	dkimAgent := &fakeDkim2Agent{}
 	rd := dkim2Reconciler(dkimAgent, &models.ServerSettings{}, []models.Domain{
-		{OwnershipState: verifiedOwnership, Name: "proven.example", EmailEnabled: true},
-		{OwnershipState: pendingOwnership(), Name: "pending.example", EmailEnabled: true},
+		{ID: "p1", OwnershipState: verifiedOwnership, Name: "proven.example", EmailEnabled: true},
+		{ID: "p2", OwnershipState: pendingOwnership(), Name: "pending.example", EmailEnabled: true},
 	})
 	rd.reconcileDKIM2(context.Background())
 	for _, c := range dkimAgent.calls {

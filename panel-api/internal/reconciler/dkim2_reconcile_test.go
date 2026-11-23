@@ -52,9 +52,9 @@ func TestReconcileDKIM2_AppliedStateGating(t *testing.T) {
 	agent := &fakeDkim2Agent{}
 	srv := &models.ServerSettings{}
 	r := dkim2Reconciler(agent, srv, []models.Domain{
-		{OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true},
-		{OwnershipState: verifiedOwnership, Name: "mail2.example", EmailEnabled: true},
-		{OwnershipState: verifiedOwnership, Name: "web-only.example", EmailEnabled: false},
+		{ID: "m1", OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true},
+		{ID: "m2", OwnershipState: verifiedOwnership, Name: "mail2.example", EmailEnabled: true},
+		{ID: "w1", OwnershipState: verifiedOwnership, Name: "web-only.example", EmailEnabled: false},
 	})
 	ctx := context.Background()
 
@@ -98,7 +98,7 @@ func TestReconcileDKIM2_AppliedStateGating(t *testing.T) {
 func TestReconcileDKIM2_RetryAndLateMailDomain(t *testing.T) {
 	agent := &fakeDkim2Agent{fail: true}
 	srv := &models.ServerSettings{DKIM2SigningEnabled: true}
-	repo := &fakeDkim2DomainRepo{rows: []models.Domain{{OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true}}}
+	repo := &fakeDkim2DomainRepo{rows: []models.Domain{{ID: "m1", OwnershipState: verifiedOwnership, Name: "mail1.example", EmailEnabled: true}}}
 	r := &Reconciler{
 		domains:        repo,
 		serverSettings: &fakeSettingsRepo{srv: srv},
@@ -115,12 +115,31 @@ func TestReconcileDKIM2_RetryAndLateMailDomain(t *testing.T) {
 	}
 
 	// New mail domain appears: converged on the next tick, existing one not re-called.
-	repo.rows = append(repo.rows, models.Domain{OwnershipState: verifiedOwnership, Name: "late.example", EmailEnabled: true})
+	repo.rows = append(repo.rows, models.Domain{ID: "l1", OwnershipState: verifiedOwnership, Name: "late.example", EmailEnabled: true})
 	r.reconcileDKIM2(ctx)
 	if len(agent.calls) != 3 {
 		t.Fatalf("late mail domain must converge exactly once (calls=%d)", len(agent.calls))
 	}
 	if agent.calls[2]["domain_name"] != "late.example" {
 		t.Fatalf("third call = %v, want late.example", agent.calls[2])
+	}
+}
+
+// A mail domain deleted and imported again under the same name gets a new
+// mail-server entry, so its DKIM2 state must be converged again.
+func TestReconcileDKIM2_ReimportedDomainConvergesAgain(t *testing.T) {
+	agent := &fakeDkim2Agent{}
+	repo := &fakeDkim2DomainRepo{rows: []models.Domain{{ID: "d1", OwnershipState: verifiedOwnership, Name: "again.example", EmailEnabled: true}}}
+	r := &Reconciler{
+		domains:        repo,
+		serverSettings: &fakeSettingsRepo{srv: &models.ServerSettings{DKIM2SigningEnabled: true}},
+		agent:          agent,
+		log:            slog.New(slog.DiscardHandler),
+	}
+	r.reconcileDKIM2(context.Background())
+	repo.rows = []models.Domain{{ID: "d2", OwnershipState: verifiedOwnership, Name: "again.example", EmailEnabled: true}}
+	r.reconcileDKIM2(context.Background())
+	if len(agent.calls) != 2 {
+		t.Fatalf("calls = %d, want the re-imported row converged too", len(agent.calls))
 	}
 }
