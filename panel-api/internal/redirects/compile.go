@@ -83,12 +83,46 @@ func Compile(d *models.Domain) string {
 				escapedSource, quoteNginxURL(pr.Destination+"/$1"), statusFlag)
 			fmt.Fprintf(&b, "    }\n")
 		} else {
-			// Exact-match: location = /src, plain return
-			fmt.Fprintf(&b, "    location = %s {\n        return %s %s;\n    }\n",
-				quoteNginxLocation(pr.Source), pr.Type, quoteNginxURL(pr.Destination))
+			for _, src := range ExactSources(pr) {
+				writeExact(&b, src, pr)
+			}
 		}
 	}
 	return b.String()
+}
+
+// ExactSources lists the paths an exact (non-wildcard) entry matches: its
+// Source, plus Source + "/" with TrailingSlash. Each becomes its own
+// `location =`, so two entries sharing one of these paths would fail nginx -t
+// for the whole vhost; the validator rejects that using this same list.
+func ExactSources(pr models.PageRedirect) []string {
+	if pr.Wildcard {
+		return nil
+	}
+	out := []string{pr.Source}
+	if pr.TrailingSlash && !strings.HasSuffix(pr.Source, "/") {
+		out = append(out, pr.Source+"/")
+	}
+	return out
+}
+
+// writeExact renders one `location = src { return ...; }`. With KeepQuery the
+// request's query string is appended, after '&' when the destination already
+// has a query and '?' otherwise; a request without one gets the destination
+// unchanged. ($jabali_rq is per request: `set` runs in this location only.)
+func writeExact(b *strings.Builder, src string, pr models.PageRedirect) {
+	fmt.Fprintf(b, "    location = %s {\n", quoteNginxLocation(src))
+	if pr.KeepQuery {
+		sep := "?"
+		if strings.Contains(pr.Destination, "?") {
+			sep = "&"
+		}
+		fmt.Fprintf(b, "        set $jabali_rq \"\";\n        if ($args != \"\") { set $jabali_rq \"%s$args\"; }\n", sep)
+		dst := quoteNginxURL(pr.Destination)
+		fmt.Fprintf(b, "        return %s %s$jabali_rq\";\n    }\n", pr.Type, strings.TrimSuffix(dst, `"`))
+		return
+	}
+	fmt.Fprintf(b, "        return %s %s;\n    }\n", pr.Type, quoteNginxURL(pr.Destination))
 }
 
 // escapeRegex escapes special regex characters in a path so it's safe in rewrite patterns.
@@ -118,7 +152,8 @@ func quoteNginxURL(s string) string {
 }
 
 func quoteNginxLocation(s string) string {
-	if strings.ContainsAny(s, " \t\"'\\") {
+	// ; { } and # end or open a token unquoted (# starts a comment).
+	if strings.ContainsAny(s, " \t\"'\\;{}#") {
 		return quoteNginxURL(s)
 	}
 	return s

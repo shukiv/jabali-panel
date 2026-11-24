@@ -117,7 +117,15 @@ export type Domain = {
   redirect_all_to?: string | null;
   redirect_all_type?: string | null;
   page_redirects?:
-    | { source: string; destination: string; type: "301" | "302" | "307" | "308" }[]
+    | {
+        source: string;
+        destination: string;
+        type: "301" | "302" | "303" | "307" | "308";
+        active?: boolean;
+        wildcard?: boolean;
+        keep_query?: boolean;
+        trailing_slash?: boolean;
+      }[]
     | null;
   index_priority?:
     | "html_first"

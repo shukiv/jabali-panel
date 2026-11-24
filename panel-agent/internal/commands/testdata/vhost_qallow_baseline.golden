@@ -78,10 +78,9 @@ server {
     # native 404 that lands here. Files are converged from the editable
     # page_template rows into /var/www/jabali-errors by the reconciler.
     # The per-domain intercept_errors toggle (GH #879) turns interception
-    # on inside the PHP locations for the 5xx codes only.
-    error_page 404 /jabali-err-404.html;
-    error_page 403 /jabali-err-403.html;
-    error_page 500 502 503 504 /jabali-err-500.html;
+    # on inside the PHP locations for the 5xx codes only. The error_page
+    # lines sit further down, after the domain's own directives, so an
+    # error_page the domain sets wins.
     location = /jabali-err-404.html { internal; root /var/www/jabali-errors; }
     location = /jabali-err-403.html { internal; root /var/www/jabali-errors; }
     location = /jabali-err-500.html { internal; root /var/www/jabali-errors; }
@@ -285,6 +284,14 @@ server {
     
     
     
+
+    # Branded error pages, after the domain's directives: nginx answers a
+    # code with the FIRST error_page listed for it, so one the domain sets
+    # (e.g. a migrated site's own 404 page) wins over these.
+    error_page 404 /jabali-err-404.html;
+    error_page 403 /jabali-err-403.html;
+    error_page 500 502 503 504 /jabali-err-500.html;
+
 
 
 }

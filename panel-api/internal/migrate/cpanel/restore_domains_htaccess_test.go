@@ -27,16 +27,21 @@ Require valid-user`
 	res := &DomainImportResult{}
 	applyMigratedHtaccess(path, "example.com", d, res)
 
-	// front controller skipped; redirect + header converted = 2 rules.
+	// front controller skipped; the header is a rule and the Redirect line a
+	// page redirect: 2 imported.
 	if res.HtaccessRulesImported != 2 {
-		t.Fatalf("expected 2 imported rules, got %d: %+v", res.HtaccessRulesImported, d.NginxRules)
+		t.Fatalf("expected 2 imported entries, got %d: %+v %+v", res.HtaccessRulesImported, d.NginxRules, d.PageRedirects)
 	}
-	if len(d.NginxRules) != 2 {
-		t.Fatalf("domain should carry 2 NginxRules, got %d", len(d.NginxRules))
+	if len(d.NginxRules) != 1 {
+		t.Fatalf("domain should carry 1 NginxRule, got %d", len(d.NginxRules))
 	}
-	// Require valid-user is auth → a warning, not a rule.
-	if len(res.HtaccessWarnings) == 0 {
-		t.Errorf("expected a warning for Require valid-user")
+	if len(d.PageRedirects) != 1 || d.PageRedirects[0].Source != "/old" || d.PageRedirects[0].Type != "301" {
+		t.Fatalf("domain should carry the Redirect as a page redirect, got %+v", d.PageRedirects)
+	}
+	// Require valid-user is auth → a warning, not a rule; the Redirect's
+	// narrower match (no deeper paths) is a warning too.
+	if len(res.HtaccessWarnings) < 2 {
+		t.Errorf("expected warnings for Require valid-user and the Redirect match, got %q", res.HtaccessWarnings)
 	}
 }
 

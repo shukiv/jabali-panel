@@ -31,7 +31,8 @@ type DomainImportResult struct {
 	// area; the caller promotes these to criticals, which downgrades the run to
 	// DEGRADED and exits non-zero unless --allow-degraded.
 	Failed []string
-	// HtaccessRulesImported counts typed Rule Builder entries converted from
+	// HtaccessRulesImported counts typed Rule Builder entries and page
+	// redirects (Redirect lines) converted from
 	// migrated .htaccess files (ADR-0130). HtaccessWarnings carries the
 	// per-domain "not converted" advisories for the migration manifest.
 	HtaccessRulesImported int
@@ -369,6 +370,23 @@ func applyMigratedHtaccess(path, domainName string, d *models.Domain, res *Domai
 	if len(rules) > 0 {
 		d.NginxRules = models.NginxRules(rules)
 		res.HtaccessRulesImported += len(rules)
+	}
+	// Redirect lines become the domain's page redirects (its Redirects list),
+	// capped like the API's maxPageRedirects.
+	const maxImportRedirects = 2000
+	redirs := conv.Redirects
+	if len(redirs) > maxImportRedirects {
+		res.HtaccessWarnings = append(res.HtaccessWarnings,
+			fmt.Sprintf("%s: .htaccess produced %d redirects; only the first %d were imported", domainName, len(redirs), maxImportRedirects))
+		redirs = redirs[:maxImportRedirects]
+	}
+	if len(redirs) > 0 {
+		d.PageRedirects = models.PageRedirects(redirs)
+		res.HtaccessRulesImported += len(redirs)
+		// Apache's Redirect also moves the paths below each one; the page
+		// redirects match the path and path/ only.
+		res.HtaccessWarnings = append(res.HtaccessWarnings,
+			fmt.Sprintf("%s: %d .htaccess Redirect lines became page redirects; deeper paths below them (/path/more) are no longer redirected — review the domain's Redirects list", domainName, len(redirs)))
 	}
 	for _, w := range conv.Warnings {
 		res.HtaccessWarnings = append(res.HtaccessWarnings,

@@ -27,6 +27,7 @@ import (
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/reconciler"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -2195,11 +2196,53 @@ func IsValidRedirectType(s string) bool {
 	}
 }
 
-func validatePageRedirects(prs models.PageRedirects) error {
-	if len(prs) > 100 {
-		return fmt.Errorf("too many redirects (max 100)")
+// maxPageRedirects caps a domain's page redirects. Each one is an exact or
+// prefix nginx location (looked up in a tree, never scanned per request), so
+// the cap is a size bound for the vhost, not a speed one. Raised from 100 for
+// sites migrating hundreds of short links and renamed pages.
+const maxPageRedirects = 2000
+
+// validatePageRedirectDestination accepts a full http(s) URL or a path on the
+// same site ("/he/new-page"); "//host" is a URL without a scheme, not a path.
+func validatePageRedirectDestination(d string) error {
+	if strings.HasPrefix(d, "/") && !strings.HasPrefix(d, "//") {
+		// nginx would read a $ as a variable in the rendered return.
+		if strings.ContainsAny(d, " \t\r\n\x00$") {
+			return fmt.Errorf("destination path must not contain spaces, control characters or $ (write it as %%24)")
+		}
+		return nil
 	}
+	return ValidateRedirectURL(d)
+}
+
+// pageRedirectLocations is the nginx locations an active entry renders. Two
+// active entries sharing one make nginx -t fail for the whole vhost.
+func pageRedirectLocations(pr models.PageRedirect) []string {
+	if pr.Active != nil && !*pr.Active {
+		return nil
+	}
+	if pr.Wildcard {
+		return []string{"^~ " + pr.Source}
+	}
+	var out []string
+	for _, s := range redirects.ExactSources(pr) {
+		out = append(out, "= "+s)
+	}
+	return out
+}
+
+func validatePageRedirects(prs models.PageRedirects) error {
+	if len(prs) > maxPageRedirects {
+		return fmt.Errorf("too many redirects (max %d)", maxPageRedirects)
+	}
+	seen := map[string]int{}
 	for i, pr := range prs {
+		for _, loc := range pageRedirectLocations(pr) {
+			if j, dup := seen[loc]; dup {
+				return fmt.Errorf("entry %d: redirects the same path as entry %d (%s)", i, j, strings.TrimLeft(loc, "=^~ "))
+			}
+			seen[loc] = i
+		}
 		if !strings.HasPrefix(pr.Source, "/") {
 			return fmt.Errorf("entry %d: source must start with /", i)
 		}
@@ -2217,15 +2260,20 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		if strings.ContainsAny(pr.Source, " \t\r\n\x00") {
 			return fmt.Errorf("entry %d: source must not contain spaces or control characters", i)
 		}
-		if err := ValidateRedirectURL(pr.Destination); err != nil {
+		if err := validatePageRedirectDestination(pr.Destination); err != nil {
 			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
 		}
-		if !IsValidRedirectType(pr.Type) {
+		// 303 (Apache's "seeother") is a page-redirect code only; the
+		// whole-domain redirect keeps IsValidRedirectType's set.
+		if !IsValidRedirectType(pr.Type) && pr.Type != "303" {
 			return fmt.Errorf("entry %d: invalid type for page redirect: %s", i, pr.Type)
 		}
 		// Wildcard only supports 301 and 302
 		if pr.Wildcard && pr.Type != "301" && pr.Type != "302" {
 			return fmt.Errorf("entry %d: wildcard redirects only support 301 or 302", i)
+		}
+		if pr.Wildcard && (pr.KeepQuery || pr.TrailingSlash) {
+			return fmt.Errorf("entry %d: keep query and trailing slash apply to exact redirects only (a wildcard redirect already covers both)", i)
 		}
 	}
 	return nil

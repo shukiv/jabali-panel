@@ -97,7 +97,16 @@ func Convert(htaccess, basePath string) Result {
 			noteOnce(&res, st, "expires", "browser-cache directives (mod_expires) skipped — nginx sets cache headers for static assets; adjust caching in the panel if needed")
 		case "addtype", "addcharset", "adddefaultcharset":
 			noteOnce(&res, st, "mime", "MIME-type / charset directives skipped — nginx serves these from its own mime.types")
-		case "errordocument", "directoryindex", "setenv", "setenvif", "addhandler":
+		case "errordocument":
+			// `ErrorDocument 404 /path` maps to nginx error_page, which the
+			// domain's Raw directives accept (and, rendered before the
+			// template's branded pages, override them).
+			if len(args) == 2 && strings.HasPrefix(args[1], "/") && !strings.ContainsAny(args[1], " \t;{}\"'") {
+				res.warn(ln.num, ln.text, "not a Rule Builder entry: an administrator can add `error_page "+args[0]+" "+args[1]+";` under Raw directives")
+			} else {
+				res.warn(ln.num, ln.text, "directive not supported by the Rule Builder; configure it in the panel instead")
+			}
+		case "directoryindex", "setenv", "setenvif", "addhandler":
 			res.warn(ln.num, ln.text, "directive not supported by the Rule Builder; configure it in the panel instead")
 		default:
 			res.warn(ln.num, ln.text, "unrecognized or unsupported directive")

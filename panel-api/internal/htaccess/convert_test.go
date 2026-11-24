@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -71,20 +72,102 @@ RewriteRule . /index.php [L]
 	}
 }
 
-func TestRedirect301PrefixAppend(t *testing.T) {
+// Redirect lines go to the domain's Redirects list (exact nginx locations,
+// their own cap), not the 500-rule Rule Builder: an affiliate site's hundreds
+// of short links must fit, and cost nothing per request.
+func TestRedirectBecomesPageRedirect(t *testing.T) {
 	r := Convert(`Redirect 301 /old-page https://example.com/new-page`, "/")
-	ru, ok := firstRule(r, "rewrite")
-	if !ok {
-		t.Fatalf("expected a rewrite rule, got %+v", r)
+	if len(r.Rules) != 0 {
+		t.Fatalf("a Redirect must not become a rewrite rule: %+v", r.Rules)
 	}
-	if ru.Flag != "permanent" {
-		t.Errorf("301 should map to permanent, got %q", ru.Flag)
+	want := models.PageRedirect{Source: "/old-page", Destination: "https://example.com/new-page", Type: "301", KeepQuery: true, TrailingSlash: true}
+	if len(r.Redirects) != 1 || r.Redirects[0] != want {
+		t.Fatalf("got %+v, want [%+v]", r.Redirects, want)
 	}
-	if ru.Pattern != `^/old-page(.*)$` {
-		t.Errorf("unexpected pattern %q", ru.Pattern)
+}
+
+func TestRedirectStatusesAndTargets(t *testing.T) {
+	cases := []struct {
+		line       string
+		wantType   string // "" = not converted, a warning instead
+		wantSource string
+		wantDest   string
+	}{
+		// PrettyLinks short link: quoted, 307, destination with its own query.
+		{`Redirect 307 "/booking" "http://www.booking.com/index.html?aid=1157792"`, "307", "/booking", "http://www.booking.com/index.html?aid=1157792"},
+		{`Redirect 308 /a https://x.example/b`, "308", "/a", "https://x.example/b"},
+		{`Redirect seeother /a https://x.example/b`, "303", "/a", "https://x.example/b"},
+		{`Redirect 303 /a https://x.example/b`, "303", "/a", "https://x.example/b"},
+		{`RedirectPermanent /a /b`, "301", "/a", "/b"},
+		// Hebrew source, %-encoded in the file: nginx matches the decoded path.
+		{`Redirect 301 /he/%D7%A9%D7%9C%D7%95%D7%9D /he/new/`, "301", "/he/שלום", "/he/new/"},
+		{`Redirect 301 /he/שלום /he/new/`, "301", "/he/שלום", "/he/new/"},
+		// A literal $ would be an nginx variable.
+		{`Redirect 302 /a https://x.example/?p=$1`, "302", "/a", "https://x.example/?p=%241"},
+		{`Redirect gone /a`, "", "", ""},
+		{`Redirect 410 /a`, "", "", ""},
+		{`Redirect 301 /a relative/path`, "", "", ""},
+		{`Redirect 301 /a //evil.example/x`, "", "", ""},
 	}
-	if ru.Replacement != "https://example.com/new-page$1" {
-		t.Errorf("unexpected replacement %q", ru.Replacement)
+	for _, c := range cases {
+		r := Convert(c.line, "/")
+		if c.wantType == "" {
+			if len(r.Redirects) != 0 || len(r.Warnings) == 0 {
+				t.Errorf("%s: want a warning and no redirect, got %+v / %+v", c.line, r.Redirects, r.Warnings)
+			}
+			continue
+		}
+		if len(r.Redirects) != 1 {
+			t.Errorf("%s: want one redirect, got %+v (warnings %+v)", c.line, r.Redirects, r.Warnings)
+			continue
+		}
+		got := r.Redirects[0]
+		if got.Type != c.wantType || got.Source != c.wantSource || got.Destination != c.wantDest || !got.KeepQuery || !got.TrailingSlash {
+			t.Errorf("%s: got %+v", c.line, got)
+		}
+	}
+}
+
+// Apache uses the first Redirect for a path; a second would also be a
+// duplicate nginx location and fail the whole vhost.
+func TestRedirectOfRootPointsAtWholeDomain(t *testing.T) {
+	res := Convert("Redirect 301 / https://new.example/", "/")
+	if len(res.Redirects) != 0 {
+		t.Fatalf("a Redirect of / must not become an exact entry: %+v", res.Redirects)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "whole-domain redirect") {
+		t.Fatalf("warnings %+v", res.Warnings)
+	}
+}
+
+func TestRedirectDuplicatePathKeepsFirst(t *testing.T) {
+	r := Convert("Redirect 301 /a https://one.example/\nRedirect 307 /a/ https://two.example/", "/")
+	if len(r.Redirects) != 1 || r.Redirects[0].Destination != "https://one.example/" {
+		t.Fatalf("want only the first redirect, got %+v", r.Redirects)
+	}
+	if len(r.Warnings) != 1 {
+		t.Fatalf("want a warning for the duplicate, got %+v", r.Warnings)
+	}
+}
+
+// nginx rewrite flags only issue 301/302: a 307/308 must not come out as 302.
+func TestRedirect307NeverDowngradedTo302(t *testing.T) {
+	for _, line := range []string{
+		`RewriteRule ^old$ /new [R=307,L]`,
+		`RewriteRule ^old$ /new [R=308,L]`,
+		`RedirectMatch 307 ^/old/(.*)$ https://x.example/$1`,
+	} {
+		r := Convert(line, "/")
+		if len(r.Rules) != 0 || len(r.Redirects) != 0 || len(r.Warnings) != 1 {
+			t.Errorf("%s: want no rule and one warning, got rules %+v redirects %+v warnings %+v", line, r.Rules, r.Redirects, r.Warnings)
+		}
+	}
+}
+
+func TestErrorDocumentPointsAtRawDirective(t *testing.T) {
+	r := Convert(`ErrorDocument 404 /he/404/index.html`, "/")
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0].Reason, "error_page 404 /he/404/index.html;") {
+		t.Fatalf("want the error_page line to add under Raw directives, got %+v", r.Warnings)
 	}
 }
 
@@ -401,7 +484,7 @@ func TestUnknownDirectiveWarns(t *testing.T) {
 
 func TestRuleOrderPreserved(t *testing.T) {
 	in := `Header set A 1
-Redirect 301 /x /y
+RedirectMatch 301 ^/x$ /y
 php_value memory_limit 256M`
 	r := Convert(in, "/")
 	if len(r.Rules) != 3 {

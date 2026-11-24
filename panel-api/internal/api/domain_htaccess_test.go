@@ -52,9 +52,11 @@ func TestHtaccessPreview_OwnerConverts(t *testing.T) {
 
 	var resp htaccessPreviewResponse
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	// one rewrite rule from the redirect; the auth line is a warning.
-	assert.Len(t, resp.Rules, 1)
-	assert.Equal(t, "rewrite", resp.Rules[0].Type)
+	// the Redirect line goes to the domain's Redirects list, not the Rule
+	// Builder; the auth line is a warning.
+	assert.Empty(t, resp.Rules)
+	require.Len(t, resp.Redirects, 1)
+	assert.Equal(t, models.PageRedirect{Source: "/old", Destination: "https://example.com/new", Type: "301", KeepQuery: true, TrailingSlash: true}, resp.Redirects[0])
 	assert.NotEmpty(t, resp.Warnings)
 	assert.Empty(t, resp.Invalid, "converter must emit only valid rules")
 }

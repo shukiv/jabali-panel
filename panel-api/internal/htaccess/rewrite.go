@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -68,6 +69,13 @@ func convertRewriteRule(res *Result, st *state, args []string, ln line) {
 		return
 	}
 
+	// nginx's rewrite flags only issue 301/302; turning [R=307] into a 302
+	// would silently change the method-preserving semantics.
+	if flags.redirect && flags.redirectCode != 301 && flags.redirectCode != 302 {
+		res.warn(ln.num, ln.text, "RewriteRule [R="+strconv.Itoa(flags.redirectCode)+"] can't be a rewrite rule (only 301/302) — not converted; an exact path can go in the domain's Redirects list")
+		return
+	}
+
 	replacement := rebaseSubstitution(sub, st.base)
 	flag := "last"
 	if flags.redirect {
@@ -87,8 +95,13 @@ func convertRewriteRule(res *Result, st *state, args []string, ln line) {
 }
 
 // convertRedirect handles mod_alias `Redirect [status] /url-path target`
-// (prefix match + append the remainder). RedirectPermanent/RedirectTemp are
-// the fixed-status spellings.
+// (RedirectPermanent/RedirectTemp are the fixed-status spellings). It becomes
+// a page redirect in the domain's Redirects list, not a rewrite rule: an exact
+// match on the path and on the path with a trailing slash, keeping the
+// request's query string (Apache appends it). Exact locations are looked up,
+// not scanned, so a site's hundreds of short links cost nothing per request.
+// Deeper paths, which Apache also redirects with the rest appended, are not
+// covered; a note says so.
 func convertRedirect(res *Result, st *state, directive string, args []string, ln line) {
 	code := 302
 	switch strings.ToLower(directive) {
@@ -97,11 +110,13 @@ func convertRedirect(res *Result, st *state, directive string, args []string, ln
 	case "redirecttemp":
 		code = 302
 	}
-	// `Redirect [status] url-path url`
-	if len(args) >= 3 {
+	// `Redirect [status] url-path [url]`: the URL-path begins with a slash, so
+	// a first argument without one is the status (`Redirect gone /x` has no
+	// target at all).
+	if len(args) >= 1 && !strings.HasPrefix(args[0], "/") {
 		c, ok := parseRedirectStatus(args[0])
 		if !ok {
-			res.warn(ln.num, ln.text, "unsupported Redirect status (only 301/302/permanent/temp convert)")
+			res.warn(ln.num, ln.text, "unsupported Redirect status (301/302/303/307/308, permanent, temp and seeother convert)")
 			return
 		}
 		code = c
@@ -112,27 +127,67 @@ func convertRedirect(res *Result, st *state, directive string, args []string, ln
 		return
 	}
 	urlPath, target := args[0], args[1]
+	// Apache compares the %-decoded request path; so does an nginx location.
+	if dec, err := url.PathUnescape(urlPath); err == nil {
+		urlPath = dec
+	}
 	if !strings.HasPrefix(urlPath, "/") {
 		urlPath = "/" + urlPath
 	}
-	flag := "redirect"
-	if code == 301 {
-		flag = "permanent"
+	if strings.ContainsAny(urlPath, " \t\r\n\x00") {
+		res.warn(ln.num, ln.text, "Redirect path contains a space or control character — not converted")
+		return
 	}
-	// Prefix + append: /old/x -> target/x.
-	res.addRule(models.NginxRule{
-		Type:        "rewrite",
-		Pattern:     "^" + regexEscapePath(urlPath) + "(.*)$",
-		Replacement: strings.TrimRight(target, "/") + "$1",
-		Flag:        flag,
-	})
+	// Apache's `Redirect /` sends every path of the site; one exact entry
+	// would move only the home page.
+	if urlPath == "/" {
+		res.warn(ln.num, ln.text, "Redirect of / moves the whole site: set the domain's whole-domain redirect instead — not converted")
+		return
+	}
+	// nginx would read a literal $ in the destination as a variable.
+	target = strings.ReplaceAll(target, "$", "%24")
+	if !isRedirectTarget(target) {
+		res.warn(ln.num, ln.text, "Redirect target must be a full http(s) URL or a path on this site — not converted")
+		return
+	}
+	pr := models.PageRedirect{
+		Source:        urlPath,
+		Destination:   target,
+		Type:          strconv.Itoa(code),
+		KeepQuery:     true,
+		TrailingSlash: !strings.HasSuffix(urlPath, "/"),
+	}
+	if !res.addRedirect(pr) {
+		res.warn(ln.num, ln.text, "an earlier Redirect already covers this path (Apache uses the first) — skipped")
+		return
+	}
+	noteOnce(res, st, "redirect-exact", "Redirect lines became entries in the domain's Redirects list: each matches its path and the path with a trailing slash, and keeps the query string. Deeper paths below them (/path/more), which Apache also redirects, are not covered.")
+}
+
+// isStatusWord is a mod_alias status: a keyword or a three-digit code.
+func isStatusWord(s string) bool {
+	switch strings.ToLower(s) {
+	case "permanent", "temp", "seeother", "gone":
+		return true
+	}
+	_, err := strconv.Atoi(s)
+	return err == nil && len(s) == 3
+}
+
+// isRedirectTarget is a full http(s) URL or a path on the same site.
+func isRedirectTarget(t string) bool {
+	if strings.HasPrefix(t, "/") {
+		return !strings.HasPrefix(t, "//") && !strings.ContainsAny(t, " \t\r\n\x00")
+	}
+	u, err := url.Parse(t)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
 // convertRedirectMatch handles `RedirectMatch [status] regex target` (regex,
 // not prefix). Backreferences in target use $1 in both Apache and nginx.
 func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 	code := 302
-	if len(args) >= 3 {
+	if len(args) >= 3 || (len(args) == 2 && isStatusWord(args[0])) {
 		c, ok := parseRedirectStatus(args[0])
 		if !ok {
 			res.warn(ln.num, ln.text, "unsupported RedirectMatch status")
@@ -143,6 +198,10 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 	}
 	if len(args) < 2 {
 		res.warn(ln.num, ln.text, "malformed RedirectMatch (need regex and target)")
+		return
+	}
+	if code != 301 && code != 302 {
+		res.warn(ln.num, ln.text, "RedirectMatch with status "+strconv.Itoa(code)+" can't be a rewrite rule (only 301/302) — not converted")
 		return
 	}
 	flag := "redirect"
@@ -343,18 +402,18 @@ func parseRewriteFlags(toks []string) rewriteFlags {
 
 func parseRedirectStatus(s string) (int, bool) {
 	switch strings.ToLower(s) {
-	case "permanent":
+	case "permanent", "301":
 		return 301, true
-	case "temp", "302", "seeother":
+	case "temp", "302":
 		return 302, true
-	case "301":
-		return 301, true
+	case "seeother", "303":
+		return 303, true
+	case "307":
+		return 307, true
+	case "308":
+		return 308, true
 	}
-	// Bare numeric codes other than 301/302 aren't representable as a
-	// rewrite flag.
-	if _, err := strconv.Atoi(s); err == nil {
-		return 0, false
-	}
+	// gone/410 and other codes have no destination to redirect to.
 	return 0, false
 }
 
@@ -441,17 +500,4 @@ func validHeaderName(s string) bool {
 		}
 	}
 	return true
-}
-
-// regexEscapePath escapes regex metacharacters in a literal URL path so a
-// mod_alias prefix is matched literally.
-func regexEscapePath(p string) string {
-	var b strings.Builder
-	for _, c := range p {
-		if strings.ContainsRune(`.+*?()|[]{}^$\`, c) {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(c)
-	}
-	return b.String()
 }

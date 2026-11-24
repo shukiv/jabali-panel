@@ -16,7 +16,10 @@
 //     recognized and SKIPPED with a note, not translated.
 package htaccess
 
-import "git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+import (
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
+)
 
 // Warning records a line the converter could not represent as a typed rule.
 // Security-relevant gaps (an unconvertible deny/forbid/auth) set Security so
@@ -40,6 +43,31 @@ type Result struct {
 	// Notes are informational (e.g. a front-controller block intentionally
 	// skipped because the default routing already covers it).
 	Notes []string `json:"notes"`
+	// Redirects are page redirects for the domain's Redirects list (mod_alias
+	// Redirect lines), kept apart from Rules: exact nginx locations instead
+	// of rewrite rules, and their own, larger cap.
+	Redirects []models.PageRedirect `json:"redirects"`
+
+	redirectPaths map[string]bool
+}
+
+// addRedirect appends pr unless an earlier redirect already matches one of its
+// paths (Apache applies the first; nginx would refuse the duplicate location).
+func (r *Result) addRedirect(pr models.PageRedirect) bool {
+	paths := redirects.ExactSources(pr)
+	for _, p := range paths {
+		if r.redirectPaths[p] {
+			return false
+		}
+	}
+	if r.redirectPaths == nil {
+		r.redirectPaths = map[string]bool{}
+	}
+	for _, p := range paths {
+		r.redirectPaths[p] = true
+	}
+	r.Redirects = append(r.Redirects, pr)
+	return true
 }
 
 func (r *Result) addRule(rule models.NginxRule) { r.Rules = append(r.Rules, rule) }

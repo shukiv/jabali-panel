@@ -273,3 +273,38 @@ func ptr[T any](v T) *T {
 func str(s string) *string {
 	return &s
 }
+
+// TestCompile_KeepQueryAndTrailingSlash pins what an Apache `Redirect` imports
+// to: /slug and /slug/ both answer, and the request's query string is carried
+// over after '?' (or '&' when the destination already has one). Falsify by
+// dropping the KeepQuery branch of writeExact (query lost) or the
+// TrailingSlash entry of ExactSources (/slug/ falls through to the site).
+func TestCompile_KeepQueryAndTrailingSlash(t *testing.T) {
+	got := Compile(&models.Domain{PageRedirects: models.PageRedirects{
+		{Source: "/go", Destination: "https://shop.example/p?aid=7", Type: "307", KeepQuery: true, TrailingSlash: true},
+		{Source: "/he/", Destination: "/he/new", Type: "301", KeepQuery: true, TrailingSlash: true},
+		{Source: "/a;b", Destination: `https://x.example/"q"`, Type: "308"},
+	}})
+	want := `    location = /go {
+        set $jabali_rq "";
+        if ($args != "") { set $jabali_rq "&$args"; }
+        return 307 "https://shop.example/p?aid=7$jabali_rq";
+    }
+    location = /go/ {
+        set $jabali_rq "";
+        if ($args != "") { set $jabali_rq "&$args"; }
+        return 307 "https://shop.example/p?aid=7$jabali_rq";
+    }
+    location = /he/ {
+        set $jabali_rq "";
+        if ($args != "") { set $jabali_rq "?$args"; }
+        return 301 "/he/new$jabali_rq";
+    }
+    location = "/a;b" {
+        return 308 "https://x.example/\"q\"";
+    }
+`
+	if got != want {
+		t.Errorf("Compile() =\n%s\nwant\n%s", got, want)
+	}
+}

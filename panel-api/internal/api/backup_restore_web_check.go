@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/phpenv"
@@ -146,17 +147,16 @@ func dropRestoredNginxRules(row *models.Domain, ownerUsername string, source Res
 	return warnings
 }
 
-// maxPageRedirects is validatePageRedirects' cap.
-const maxPageRedirects = 100
-
 // dropRestoredPageRedirects keeps each page redirect the redirects page would
-// accept, in order.
+// accept, in order (validatePageRedirects' cap; a later entry redirecting a
+// path an earlier one already does is dropped, as a save would refuse it).
 func dropRestoredPageRedirects(row *models.Domain) []string {
 	if len(row.PageRedirects) == 0 {
 		return nil
 	}
 	var warnings []string
 	kept := models.PageRedirects{}
+	taken := map[string]bool{}
 	for i, pr := range row.PageRedirects {
 		if len(kept) == maxPageRedirects {
 			warnings = append(warnings, fmt.Sprintf("page redirects after redirect %d dropped: a domain can have at most %d", i, maxPageRedirects))
@@ -165,6 +165,14 @@ func dropRestoredPageRedirects(row *models.Domain) []string {
 		if err := validatePageRedirects(models.PageRedirects{pr}); err != nil {
 			warnings = append(warnings, fmt.Sprintf("page redirect %d (%s) dropped: %s", i+1, pr.Source, strings.TrimPrefix(err.Error(), "entry 0: ")))
 			continue
+		}
+		locs := pageRedirectLocations(pr)
+		if slices.ContainsFunc(locs, func(l string) bool { return taken[l] }) {
+			warnings = append(warnings, fmt.Sprintf("page redirect %d (%s) dropped: an earlier redirect already covers that path", i+1, pr.Source))
+			continue
+		}
+		for _, l := range locs {
+			taken[l] = true
 		}
 		kept = append(kept, pr)
 	}
