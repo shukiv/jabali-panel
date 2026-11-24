@@ -60,7 +60,10 @@ func convertRewriteRule(res *Result, st *state, args []string, ln line) {
 	if flags.redirect && (flags.redirectCode < 300 || flags.redirectCode > 399) {
 		code := strconv.Itoa(flags.redirectCode)
 		reason := "RewriteRule [R=" + code + "] answers " + code + " and has no typed-rule equivalent — not converted"
-		p, _ := rebasePattern(pattern, st.base)
+		p := ""
+		if flags.redirectCode >= 400 && flags.redirectCode <= 599 {
+			p, _ = rebasePattern(pattern, st.base)
+		}
 		res.warnSec(ln.num, ln.text, reason+rawRecipe(p, flags.nocase, "return "+code+";", ""))
 		return
 	}
@@ -167,6 +170,14 @@ func convertRedirect(res *Result, st *state, directive string, args []string, ln
 		res.warn(ln.num, ln.text, "Redirect target must be a full http(s) URL or a path on this site — not converted")
 		return
 	}
+	// A RedirectMatch left for Raw directives that matches this path comes
+	// first in Apache; this exact entry would beat its regex location.
+	for _, re := range st.demotedMatch {
+		if re.MatchString(urlPath) {
+			res.warn(ln.num, ln.text, "an earlier RedirectMatch ("+re.String()+") left for Raw directives already redirects this path in Apache — not converted")
+			return
+		}
+	}
 	pr := models.PageRedirect{
 		Source:        urlPath,
 		Destination:   target,
@@ -226,8 +237,11 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 	// it would beat the exact page redirects of EARLIER Redirect lines that
 	// it also matches (a later Redirect loses in Apache too). Such a
 	// RedirectMatch is left to a regex location, which the exact ones beat.
-	if re, err := regexp.Compile(args[0]); err == nil {
-		var hit []string
+	// Every later RedirectMatch follows it there: regex locations keep file
+	// order, and a rewrite rule would jump ahead of it.
+	re, err := regexp.Compile(args[0])
+	var hit []string
+	if err == nil {
 		for _, pr := range res.Redirects {
 			for _, src := range redirects.ExactSources(pr) {
 				if re.MatchString(src) {
@@ -235,11 +249,28 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 				}
 			}
 		}
-		if len(hit) > 0 {
-			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s; %d in all) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))+
-				rawRecipe(args[0], false, fmt.Sprintf("return %d %s;", code, args[1]), args[1]))
-			return
+	}
+	reason := ""
+	switch {
+	case len(hit) > 0:
+		reason = fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s; %d in all) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))
+	case st.matchDemoted:
+		reason = "an earlier RedirectMatch was left for Raw directives, and Apache tries them in file order — not converted either; add it after that one"
+	case err != nil && len(res.Redirects) > 0:
+		reason = "this RedirectMatch's regex can't be checked against the earlier Redirect lines, which win in Apache — not converted"
+	}
+	if reason != "" {
+		st.matchDemoted = true
+		if err == nil {
+			st.demotedMatch = append(st.demotedMatch, re)
 		}
+		// mod_alias appends the request's query unless the target has one.
+		ret := args[1]
+		if !strings.Contains(ret, "?") {
+			ret += "$is_args$args"
+		}
+		res.warn(ln.num, ln.text, reason+rawRecipe(args[0], false, fmt.Sprintf("return %d %s;", code, ret), args[1]))
+		return
 	}
 	flag := "redirect"
 	if code == 301 {
