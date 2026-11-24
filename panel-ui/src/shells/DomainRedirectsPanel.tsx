@@ -70,6 +70,9 @@ const REDIRECT_TYPE_OPTIONS = [
   { value: "308", label: "Permanent (308) - preserves method" },
 ];
 
+// 303 is a page-redirect code only (the API's whole-domain set has no 303).
+const WHOLE_DOMAIN_TYPE_OPTIONS = REDIRECT_TYPE_OPTIONS.filter((o) => o.value !== "303");
+
 // Sortable card item for drag-reorder
 interface SortableCardProps {
   idx: number;
@@ -411,7 +414,7 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
                 <Select
                   value={wholeType}
                   onChange={setWholeType}
-                  options={REDIRECT_TYPE_OPTIONS}
+                  options={WHOLE_DOMAIN_TYPE_OPTIONS}
                   style={{ width: "100%" }}
                 />
               </Col>

@@ -2189,7 +2189,7 @@ func ValidateRedirectURL(s string) error {
 
 func IsValidRedirectType(s string) bool {
 	switch s {
-	case "301", "302", "303", "307", "308":
+	case "301", "302", "307", "308":
 		return true
 	default:
 		return false
@@ -2262,7 +2262,9 @@ func validatePageRedirects(prs models.PageRedirects) error {
 		if err := validatePageRedirectDestination(pr.Destination); err != nil {
 			return fmt.Errorf("entry %d: invalid page redirect destination: %w", i, err)
 		}
-		if !IsValidRedirectType(pr.Type) {
+		// 303 (Apache's "seeother") is a page-redirect code only; the
+		// whole-domain redirect keeps IsValidRedirectType's set.
+		if !IsValidRedirectType(pr.Type) && pr.Type != "303" {
 			return fmt.Errorf("entry %d: invalid type for page redirect: %s", i, pr.Type)
 		}
 		// Wildcard only supports 301 and 302
