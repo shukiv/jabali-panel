@@ -233,10 +233,11 @@ func newDomainSetCmd() *cobra.Command {
 		nginxDirs     string
 		sslMode       string
 		cache         string
+		www           string
 	)
 	cmd := &cobra.Command{
 		Use:     "set <domain-name|domain-id>",
-		Short:   "Set advanced domain settings (redirect / nginx directives / index / ssl mode / cache)",
+		Short:   "Set advanced domain settings (redirect / nginx directives / index / ssl mode / cache / www)",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: requireDB,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -331,8 +332,18 @@ func newDomainSetCmd() *cobra.Command {
 				d.CacheEnabled = b
 				changed = true
 			}
+			wwwChanged := false
+			if cmd.Flags().Changed("www") {
+				b, perr := parseBool(www)
+				if perr != nil {
+					return perr
+				}
+				wwwChanged = b != d.CreateWWW
+				d.CreateWWW = b
+				changed = true
+			}
 			if !changed {
-				return fmt.Errorf("no settings specified (--redirect-all-to/--redirect-type/--index-priority/--nginx-directives/--ssl-mode/--cache)")
+				return fmt.Errorf("no settings specified (--redirect-all-to/--redirect-type/--index-priority/--nginx-directives/--ssl-mode/--cache/--www)")
 			}
 			// JAB-318 AC4: apply the general Update and the dedicated ssl_mode /
 			// cache_enabled writers as ONE transaction. Before this the three
@@ -367,6 +378,12 @@ func newDomainSetCmd() *cobra.Command {
 						return fmt.Errorf("persist cache setting: %w", err)
 					}
 				}
+				// create_www is likewise outside the allowlist (own writer).
+				if wwwChanged {
+					if err := tx.UpdateCreateWWW(ctx, d.ID, d.CreateWWW); err != nil {
+						return fmt.Errorf("persist www setting: %w", err)
+					}
+				}
 				return nil
 			}); err != nil {
 				return err
@@ -374,6 +391,16 @@ func newDomainSetCmd() *cobra.Command {
 			cliAuditOK(ctx, "domain.settings_update", "domain", d.ID, &d.UserID)
 			fmt.Fprintf(cmd.OutOrStdout(), "Updated %s. Converges on the next reconcile pass (≤60s): nginx re-render/reload%s.\n",
 				d.Name, map[bool]string{true: " + SSL re-issue", false: ""}[cmd.Flags().Changed("ssl-mode")])
+			if wwwChanged && d.CreateWWW {
+				added, werr := api.EnsureWWWRecord(ctx, dnsZoneRepoFromDB(), dnsRecordRepoFromDB(), repository.NewServerSettingsRepository(sharedDB), d)
+				switch {
+				case werr != nil:
+					fmt.Fprintf(cmd.OutOrStdout(), "www is on, but adding the www DNS record failed: %v\n", werr)
+				case added:
+					fmt.Fprintf(cmd.OutOrStdout(), "Added the www CNAME to the %s zone.\n", d.Name)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "www.%s goes into the certificate at the next certificate pass (within the hour) once it resolves to this server.\n", d.Name)
+			}
 			return nil
 		},
 	}
@@ -383,6 +410,7 @@ func newDomainSetCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nginxDirs, "nginx-directives", "", "raw custom nginx directives for the server block")
 	cmd.Flags().StringVar(&sslMode, "ssl-mode", "", "le|self|none (custom = install a cert)")
 	cmd.Flags().StringVar(&cache, "cache", "", "on|off — nginx fastcgi page cache")
+	cmd.Flags().StringVar(&www, "www", "", "on|off — put www.<domain> in the certificate; on also adds a www CNAME to a zone served here that has none")
 	return cmd
 }
 

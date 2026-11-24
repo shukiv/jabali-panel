@@ -35,6 +35,8 @@ type mockDomainRepo struct {
 	// sslModeErr, when set, is returned by UpdateSSLMode — lets a test exercise
 	// a dedicated-writer failure inside the domain-apply transaction (JAB-318).
 	sslModeErr error
+	// createWWWCalls records UpdateCreateWWW writes (the dedicated writer).
+	createWWWCalls []bool
 	// txCalls counts Transaction invocations so a handler test can prove the
 	// PATCH apply routes its writes THROUGH Domains.Transaction (atomic) rather
 	// than issuing them directly (JAB-318 AC4).
@@ -281,6 +283,14 @@ func (m *mockDomainRepo) SetRateLimits(ctx context.Context, id string, rps, conn
 }
 
 func (m *mockDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error {
+	return nil
+}
+
+func (m *mockDomainRepo) UpdateCreateWWW(_ context.Context, id string, on bool) error {
+	m.createWWWCalls = append(m.createWWWCalls, on)
+	if d, ok := m.domains[id]; ok {
+		d.CreateWWW = on
+	}
 	return nil
 }
 

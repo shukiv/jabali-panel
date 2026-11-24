@@ -96,18 +96,48 @@ func TestSANDriftCooldown(t *testing.T) {
 	r := &Reconciler{}
 	now := time.Now().UTC()
 
-	if !r.sanDriftCooldownPassed("c1", now) {
+	mail := []string{"mail.example.com"}
+	if !r.sanDriftCooldownPassed("c1", mail, now) {
 		t.Error("first check should pass (never attempted)")
 	}
-	r.markSANDriftAttempt("c1", now)
-	if r.sanDriftCooldownPassed("c1", now.Add(time.Hour)) {
+	r.markSANDriftAttempt("c1", mail, now)
+	if r.sanDriftCooldownPassed("c1", mail, now.Add(time.Hour)) {
 		t.Error("within cooldown should NOT pass")
 	}
-	if !r.sanDriftCooldownPassed("c1", now.Add(sslSANDriftCooldown+time.Minute)) {
+	if !r.sanDriftCooldownPassed("c1", mail, now.Add(sslSANDriftCooldown+time.Minute)) {
 		t.Error("after cooldown should pass again")
 	}
 	// A different cert is independent.
-	if !r.sanDriftCooldownPassed("c2", now.Add(time.Hour)) {
+	if !r.sanDriftCooldownPassed("c2", mail, now.Add(time.Hour)) {
 		t.Error("unrelated cert should pass")
 	}
+}
+
+// www switched on (or an alias added) after an attempt for other names: the
+// new name must not wait out a cooldown it was never part of. Only growth
+// resets it — a name dropped from the set still waits.
+func TestSANDriftCooldownNewNamePasses(t *testing.T) {
+	r := &Reconciler{}
+	now := time.Now().UTC()
+	r.markSANDriftAttempt("c1", []string{"mail.example.com", "autodiscover.example.com"}, now)
+	if !r.sanDriftCooldownPassed("c1", []string{"mail.example.com", "www.example.com"}, now.Add(time.Minute)) {
+		t.Error("a newly missing www must pass the cooldown")
+	}
+	if r.sanDriftCooldownPassed("c1", []string{"mail.example.com"}, now.Add(time.Minute)) {
+		t.Error("a shrunk set must still wait")
+	}
+	r.markSANDriftAttempt("c1", []string{"mail.example.com", "www.example.com"}, now.Add(time.Minute))
+	if r.sanDriftCooldownPassed("c1", []string{"www.example.com"}, now.Add(time.Hour)) {
+		t.Error("an attempted www must wait out its own cooldown")
+	}
+}
+
+func TestKickSANDriftCoalesces(t *testing.T) {
+	r := &Reconciler{sanDriftKick: make(chan struct{}, 1)}
+	r.KickSANDrift()
+	r.KickSANDrift() // must not block
+	if len(r.sanDriftKick) != 1 {
+		t.Fatalf("want one pending kick, got %d", len(r.sanDriftKick))
+	}
+	(&Reconciler{}).KickSANDrift() // nil channel: no-op, no block
 }

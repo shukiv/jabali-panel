@@ -328,6 +328,11 @@ type updateDomainRequest struct {
 	WebmailEnabled        *bool                    `json:"webmail_enabled,omitempty"`
 	// TempURLEnabled toggles the preview URL vhost block. Owner or admin.
 	TempURLEnabled *bool `json:"temp_url_enabled,omitempty"`
+	// CreateWWW puts www.<domain> in the certificate (and, when switched on,
+	// adds the www CNAME to a zone served here that has no www yet). The
+	// vhost serves www either way. Owner or admin — the same choice the
+	// owner makes at create, which before this could not be changed after.
+	CreateWWW *bool `json:"create_www,omitempty"`
 	// AllowSubdomainDelegation (GH #1812) — the owner's opt-in for other tenants
 	// to self-service strict subdomains of this domain. Owner-settable on their
 	// own row (not admin-only): it only ever WIDENS access to the owner's own
@@ -1339,9 +1344,19 @@ func (h *domainHandler) update(c *gin.Context) {
 	// invariants keep reading the mail switch's post-write email_enabled (a
 	// same-request mail-off + ssl-none must see mail already disabled). The
 	// reconcile below is scheduled only after a clean commit.
+	// www: create_www has its own writer (not in Update's allowlist).
+	wwwChanged := req.CreateWWW != nil && *req.CreateWWW != domain.CreateWWW
+	wwwSwitchedOn := wwwChanged && *req.CreateWWW
 	txErr := h.cfg.Domains.Transaction(ctx, func(tx repository.DomainRepository) error {
 		if err := tx.Update(ctx, domain); err != nil {
 			return err
+		}
+
+		if wwwChanged {
+			if err := tx.UpdateCreateWWW(ctx, domain.ID, *req.CreateWWW); err != nil {
+				return err
+			}
+			domain.CreateWWW = *req.CreateWWW
 		}
 
 		if rateLimits != nil {
@@ -1458,6 +1473,20 @@ func (h *domainHandler) update(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
+	}
+
+	// www switched on: add the www record a zone served here lacks, then get
+	// the name into the certificate. With a record just added, the hourly
+	// SAN-drift pass picks it up once DNS has converged (a pass now would find
+	// www unresolvable and stamp the cooldown); otherwise run a pass now.
+	if wwwSwitchedOn {
+		created, werr := EnsureWWWRecord(ctx, h.cfg.DNSZones, h.cfg.DNSRecords, h.cfg.ServerSettings, domain)
+		if werr != nil {
+			slog.Warn("domain www: adding the www record failed", "domain", domain.Name, "err", werr)
+		}
+		if !created && h.cfg.Reconciler != nil {
+			h.cfg.Reconciler.KickSANDrift()
+		}
 	}
 
 	// Schedule reconciliation to sync the domain state with the agent — only

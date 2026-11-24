@@ -113,22 +113,55 @@ func (r *Reconciler) acmeStaging(rowStaging bool) bool {
 	return rowStaging || (r.cfg != nil && r.cfg.ACME.StagingOnly)
 }
 
-// sanDriftCooldownPassed reports whether this cert may be attempted again, and
-// (when true) is expected to be paired with markSANDriftAttempt by the caller.
-func (r *Reconciler) sanDriftCooldownPassed(certID string, now time.Time) bool {
+// sanDriftStamp is one cert's last SAN-drift attempt: when, and which
+// missing names it tried.
+type sanDriftStamp struct {
+	at    time.Time
+	names map[string]bool
+}
+
+// sanDriftCooldownPassed reports whether this cert may be attempted again for
+// these missing names, and (when true) is expected to be paired with
+// markSANDriftAttempt by the caller. A missing name the last attempt didn't
+// try (www switched on, an alias added) passes at once: the cooldown is for
+// names that were already found unreachable, and only growth resets it, so a
+// shrinking set (a name dropped or obtained) still waits.
+func (r *Reconciler) sanDriftCooldownPassed(certID string, missing []string, now time.Time) bool {
 	r.sanDriftMu.Lock()
 	defer r.sanDriftMu.Unlock()
 	last, ok := r.sanDriftAttempt[certID]
-	return !ok || now.Sub(last) >= sslSANDriftCooldown
+	if !ok || now.Sub(last.at) >= sslSANDriftCooldown {
+		return true
+	}
+	for _, n := range missing {
+		if !last.names[n] {
+			return true
+		}
+	}
+	return false
 }
 
-func (r *Reconciler) markSANDriftAttempt(certID string, now time.Time) {
+func (r *Reconciler) markSANDriftAttempt(certID string, missing []string, now time.Time) {
 	r.sanDriftMu.Lock()
 	defer r.sanDriftMu.Unlock()
 	if r.sanDriftAttempt == nil {
-		r.sanDriftAttempt = map[string]time.Time{}
+		r.sanDriftAttempt = map[string]sanDriftStamp{}
 	}
-	r.sanDriftAttempt[certID] = now
+	names := make(map[string]bool, len(missing))
+	for _, n := range missing {
+		names[n] = true
+	}
+	r.sanDriftAttempt[certID] = sanDriftStamp{at: now, names: names}
+}
+
+// KickSANDrift asks the reconcile loop for a SAN-drift pass now instead of at
+// the next hourly tick (a domain's desired names just grew). Non-blocking;
+// kicks coalesce. The pass itself still applies the per-cert cooldown.
+func (r *Reconciler) KickSANDrift() {
+	select {
+	case r.sanDriftKick <- struct{}{}:
+	default:
+	}
 }
 
 // ReconcileSSLSANDrift finds issued LE certs missing a reachable desired SAN and
@@ -166,7 +199,7 @@ func (r *Reconciler) ReconcileSSLSANDrift(ctx context.Context) {
 		if len(missing) == 0 {
 			continue // cert already complete (or wildcard) — cheap skip, no IO/LE
 		}
-		if !r.sanDriftCooldownPassed(c.ID, now) {
+		if !r.sanDriftCooldownPassed(c.ID, missing, now) {
 			continue
 		}
 		// Expensive work (DNS + HTTP-01 reachability probes, maybe certbot) begins
@@ -174,7 +207,7 @@ func (r *Reconciler) ReconcileSSLSANDrift(ctx context.Context) {
 		// so even a cert whose missing SAN turns out unreachable is not re-probed
 		// until the cooldown elapses.
 		attempted++
-		r.markSANDriftAttempt(c.ID, now)
+		r.markSANDriftAttempt(c.ID, missing, now)
 		r.expandCertSANsForDrift(ctx, c, certSANs, missing)
 	}
 	if attempted > 0 {

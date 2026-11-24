@@ -826,6 +826,9 @@ paths:
             schema:
               type: object
               properties:
+                create_www:
+                  type: boolean
+                  description: "Owner or admin. www.<domain> goes into the site's certificate (the site answers on www either way). Switching it on also adds a www CNAME to a zone this server hosts when the zone has no www record yet, and the name joins the certificate once it resolves to this server. Off leaves an issued certificate and the DNS record as they are. A DNS-01 certificate includes www either way."
                 block_ai_crawlers:
                   type: boolean
                   description: "Owner or admin. The site answers 403 to AI crawlers and assistants that name themselves (GPTBot, ClaudeBot, CCBot, PerplexityBot and others). Search engines are not blocked."
