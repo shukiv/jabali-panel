@@ -78,7 +78,7 @@ By default only you (and the administrator) can add a subdomain of a domain you 
 
 ## The www address
 
-A site always answers on `www.example.com` as well as `example.com`. Whether `www.example.com` is in the site's HTTPS certificate is set by the **www.example.com** switch on the domain's **Overview** tab. A new domain such as `example.com` starts with it on. A subdomain such as `blog.example.com` starts with it off, and so does a domain under a two-part suffix such as `example.co.il`; turn the switch on to add www.
+A site always answers on `www.example.com` as well as `example.com`. Whether `www.example.com` is in the site's HTTPS certificate is set by the **www.example.com** switch on the domain's **Overview** tab. A new main domain, such as `example.com` or `example.co.il`, starts with it on. A subdomain such as `blog.example.com` starts with it off; turn the switch on to add www.
 
 - Turning it on adds a `www` CNAME record when this server hosts the domain's DNS and the zone has no `www` record yet. A `www` record you already have is left as it is.
 - `www.example.com` joins the certificate once it points at this server, usually within the hour.

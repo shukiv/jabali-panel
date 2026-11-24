@@ -16,7 +16,7 @@ Edit a domain via `/jabali-admin/domains/edit/:id` (admin) or `/jabali-panel/dom
 | **Listen IP** | Pick from the admin's managed IP pool. Default: server's primary IP. Apex DNS records auto-update. |
 | **Redirects** | HTTP → HTTPS (always emitted when SSL is on); per-path redirects (planned). |
 | **Aliases** | Additional `server_name` values that resolve to the same vhost + same docroot. |
-| **www** | Whether `www.<domain>` is in the certificate (the vhost answers on www either way). Owner or admin, on the domain's Overview (admins: Edit Domain), or `jabali domain set <domain> --www on\|off`. On also adds a `www` CNAME to a zone hosted here that has none. Picked up by the hourly certificate pass once www resolves to this server; a DNS-01 certificate includes www either way. |
+| **www** | Whether `www.<domain>` is in the certificate (the vhost answers on www either way). At create it is on for a main domain (`example.com`, `example.co.il`) and off for a subdomain, unless the admin's Add Domain form or the API (`create_www`) says otherwise. Later: owner or admin, on the domain's Overview (admins: Edit Domain), or `jabali domain set <domain> --www on\|off`. On also adds a `www` CNAME to a zone hosted here that has none. Picked up by the hourly certificate pass once www resolves to this server; a DNS-01 certificate includes www either way. |
 | **Cache** | Per-domain opt-in FastCGI micro-cache, with a safe-bypass for cart / admin / authenticated cookies and a manual purge. Default off. |
 | **Document root** | Set the docroot when adding the domain, confined to the owner's home tree. |
 | **Environment variables** | Per-domain env vars passed to the FPM pool. |

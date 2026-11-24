@@ -318,7 +318,8 @@ func createDomainDirect(ctx context.Context, in cliDomainInput) (*models.Domain,
 // cliCreateInput is the create request `jabali domain create` makes. The CLI
 // acts as an admin (see createDomainDirect) and has no flag for an SSL mode, a
 // web template, a preview URL, www, apex IPs or the M365 / Google tokens, so
-// those stay at their defaults.
+// those stay at their defaults (www: on for a main domain, as in the panel;
+// `jabali domain set --www` changes it).
 func cliCreateInput(in cliDomainInput) domainops.CreateInput {
 	return domainops.CreateInput{
 		OwnerID:          in.UserID,
@@ -331,6 +332,7 @@ func cliCreateInput(in cliDomainInput) domainops.CreateInput {
 		ReverseProxyPort: in.ReverseProxyPort,
 		WebDisabled:      in.WebDisabled,
 		DNSDisabled:      in.DNSDisabled,
+		CreateWWW:        domainops.DefaultCreateWWW(in.Name),
 	}
 }
 

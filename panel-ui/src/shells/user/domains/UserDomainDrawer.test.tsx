@@ -113,7 +113,7 @@ describe("UserDomainDrawer web create payload (GH #1541)", () => {
     const body = mutate.mock.calls[0][0];
     expect(body.mail_provider).toBe("jabali");
     expect(body.manage_dns).toBe(true);
-    expect(body.create_www).toBe(true); // example.com is an apex (two labels)
+    expect(body).not.toHaveProperty("create_www"); // the server picks www for a main domain
     // Drawer-only / dropped fields never reach POST /domains.
     expect(body).not.toHaveProperty("add_mail");
     expect(body).not.toHaveProperty("enable_webmail");
@@ -132,7 +132,7 @@ describe("UserDomainDrawer web create payload (GH #1541)", () => {
     await waitFor(() => expect(mutate).toHaveBeenCalled());
     const body = mutate.mock.calls[0][0];
     expect(body.mail_provider).toBe("none"); // DNS Template default
-    expect(body.create_www).toBe(false); // blog.example.com is a subdomain (three labels)
+    expect(body).not.toHaveProperty("create_www"); // the server leaves www off a subdomain
   });
 
   it("forces manage_dns false when the DNS module is off (no Add DNS Zone checkbox)", async () => {

@@ -21,6 +21,9 @@ export type DomainCreateInput = {
   mail_provider?: string;
   m365_onmicrosoft?: string;
   google_dkim?: string;
+  // "auto" (the default) leaves create_www out: the server adds www for a
+  // main domain (example.com, example.co.il) and not for a subdomain.
+  www_mode?: "auto" | "on" | "off";
   create_www?: boolean;
   temp_url_enabled?: boolean;
   ssl_mode?: string;
@@ -79,7 +82,10 @@ export const DomainCreate = () => {
 
   const handleFinish = async (values: DomainCreateInput) => {
     try {
-      const created = await createMutation.mutateAsync(values);
+      const { www_mode, ...rest } = values;
+      const created = await createMutation.mutateAsync(
+        www_mode === "on" || www_mode === "off" ? { ...rest, create_www: www_mode === "on" } : rest,
+      );
       feedback.message.success("Domain created");
       // GH #1175: the assigned loopback port is the one thing the operator
       // must act on, so surface it in a modal that stays until dismissed.
@@ -229,12 +235,18 @@ export const DomainCreate = () => {
         </Form.Item>
 
         <Form.Item
-          name="create_www"
-          valuePropName="checked"
-          initialValue={false}
-          tooltip={t("domaincreate.adds_a_www_cname_pointing_at_the_domain_apex")}
+          name="www_mode"
+          label="www address"
+          initialValue="auto"
+          tooltip={t("domaincreate.www_address_automatic_main_domain")}
         >
-          <Checkbox>Create www record</Checkbox>
+          <Select
+            options={[
+              { value: "auto", label: "Automatic (on for a main domain, off for a subdomain)" },
+              { value: "on", label: "Yes" },
+              { value: "off", label: "No" },
+            ]}
+          />
         </Form.Item>
 
         <Form.Item
