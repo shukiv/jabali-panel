@@ -122,3 +122,23 @@ describe("OverviewTab AI-crawler block", () => {
     expect(screen.getByText(/Only bots that name themselves are stopped/)).toBeInTheDocument();
   });
 });
+
+describe("OverviewTab www switch", () => {
+  it("PATCHes create_www when the owner turns www on", async () => {
+    const { apiClient } = await import("../../../../apiClient");
+    const patch = vi.mocked(apiClient.patch);
+    patch.mockClear();
+    renderTab({ ...base, create_www: false } as Domain);
+    const sw = screen.getByRole("switch", { name: "www address" });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(sw);
+    await vi.waitFor(() => expect(patch).toHaveBeenCalledWith("/domains/d1", { create_www: true }));
+  });
+
+  it("is absent for a web-off domain and a www. name", () => {
+    renderTab({ ...base, web_disabled: true } as Domain);
+    expect(screen.queryByRole("switch", { name: "www address" })).toBeNull();
+    renderTab({ ...base, name: "www.site.tld" } as Domain);
+    expect(screen.queryByRole("switch", { name: "www address" })).toBeNull();
+  });
+});

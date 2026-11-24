@@ -122,10 +122,14 @@ type Reconciler struct {
 	// names with no domain row (pruneSnippetDirs), so it runs once per process.
 	snippetDirsPruned atomic.Bool
 	// sanDriftAttempt gates the JAB-226 SAN-drift reissue pass: cert ID -> last
-	// attempt, so a cert whose missing SAN isn't reachable yet isn't re-probed
-	// (or re-issued) more than once per sslSANDriftCooldown.
+	// attempt and the names it tried, so a cert whose missing SAN isn't
+	// reachable yet isn't re-probed (or re-issued) more than once per
+	// sslSANDriftCooldown — unless a name it never tried becomes missing.
 	sanDriftMu      sync.Mutex
-	sanDriftAttempt map[string]time.Time
+	sanDriftAttempt map[string]sanDriftStamp
+	// sanDriftKick asks the loop for a SAN-drift pass now (KickSANDrift).
+	// Buffered 1, written non-blocking: kicks coalesce.
+	sanDriftKick chan struct{}
 	// dirtyMu guards the coalescing dirty set of out-of-band reconcile
 	// requests (JAB-369).
 	dirtyMu sync.Mutex
@@ -729,6 +733,7 @@ func New(domains repository.DomainRepository, users repository.UserRepository, a
 		interval:     cfg.Interval,
 		dirty:        make(map[ResourceKey]struct{}),
 		wake:         make(chan struct{}, 1),
+		sanDriftKick: make(chan struct{}, 1),
 	}
 	// Initialize default socketReady function
 	r.socketReady = r.waitSocketReady
@@ -909,6 +914,10 @@ func (r *Reconciler) Start(ctx context.Context) {
 		case <-ctx.Done():
 			r.log.Info("reconciler stopping")
 			return
+		case <-r.sanDriftKick:
+			if !r.IsPaused() {
+				r.ReconcileSSLSANDrift(ctx)
+			}
 		case <-r.wake:
 			// Pop exactly ONE key per wake; popDirty re-signals while the set is
 			// non-empty, so the loop drains it one key per iteration without

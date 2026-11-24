@@ -364,6 +364,8 @@ func (f *fakeDomainRepo) UpdateCacheEnabled(ctx context.Context, id string, enab
 	return nil
 }
 
+func (f *fakeDomainRepo) UpdateCreateWWW(_ context.Context, _ string, _ bool) error { return nil }
+
 func (f *fakeDomainRepo) UpdateCachePath(_ context.Context, _, _ string) error { return nil }
 
 func (f *fakeDomainRepo) UpdateSkipAutoSAN(ctx context.Context, id string, enabled bool) error {

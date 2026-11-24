@@ -197,6 +197,10 @@ type DomainRepository interface {
 	// UpdateCacheEnabled writes domains.cache_enabled (ADR-0108).
 	// Dedicated method: cache_enabled is not in Update()'s allowlist.
 	UpdateCacheEnabled(ctx context.Context, id string, enabled bool) error
+	// UpdateCreateWWW writes domains.create_www (whether www.<domain> is in
+	// the certificate). Dedicated method, not in Update()'s allowlist, so a
+	// caller holding a partly loaded row never switches www off by accident.
+	UpdateCreateWWW(ctx context.Context, id string, on bool) error
 	// UpdateCachePath writes domains.cache_path (Gitea #420).
 	UpdateCachePath(ctx context.Context, id, path string) error
 	UpdateCacheTTL(ctx context.Context, id string, seconds int) error
@@ -1181,6 +1185,20 @@ func (r *domainRepo) AttachDockerApp(ctx context.Context, id string, dockerAppID
 			"docker_app_id": dockerAppID,
 			"updated_at":    time.Now().UTC(),
 		})
+	if res.Error != nil {
+		return translate(res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateCreateWWW writes domains.create_www.
+func (r *domainRepo) UpdateCreateWWW(ctx context.Context, id string, on bool) error {
+	res := r.db.WithContext(ctx).Model(&models.Domain{}).
+		Where("id = ?", id).
+		Update("create_www", on)
 	if res.Error != nil {
 		return translate(res.Error)
 	}

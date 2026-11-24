@@ -2496,7 +2496,7 @@ jabali domain prune-orphans [flags]
 
 #### `jabali domain set`
 
-Set advanced domain settings (redirect / nginx directives / index / ssl mode / cache)
+Set advanced domain settings (redirect / nginx directives / index / ssl mode / cache / www)
 
 ```
 jabali domain set <domain-name|domain-id> [flags]
@@ -2510,6 +2510,7 @@ jabali domain set <domain-name|domain-id> [flags]
 - `--redirect-all-to` — redirect the whole domain to this URL ('' clears)
 - `--redirect-type` — 301|302|307|308 (permanent=301, temporary=302)
 - `--ssl-mode` — le|self|none (custom = install a cert)
+- `--www` — on|off — put www.<domain> in the certificate; on also adds a www CNAME to a zone served here that has none
 
 #### `jabali domain show`
 

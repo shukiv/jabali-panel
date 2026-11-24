@@ -247,6 +247,13 @@ func (r wsOverwriteDomains) UpdateCacheEnabled(_ context.Context, id string, on 
 	return nil
 }
 
+func (r wsOverwriteDomains) UpdateCreateWWW(_ context.Context, id string, on bool) error {
+	d := r.rows[id]
+	d.CreateWWW = on
+	r.rows[id] = d
+	return nil
+}
+
 func (r wsOverwriteDomains) UpdateCachePath(_ context.Context, id, p string) error {
 	d := r.rows[id]
 	d.CachePath = p

@@ -40,6 +40,7 @@ export type DomainEditInput = {
   is_enabled?: boolean;
   doc_root?: string;
   temp_url_enabled?: boolean;
+  create_www?: boolean;
   bot_challenge_exempt?: boolean;
   bot_challenge_include?: boolean;
   block_ai_crawlers?: boolean;
@@ -73,6 +74,7 @@ export const DomainEdit = () => {
         is_enabled: domain.is_enabled,
         doc_root: domain.doc_root,
         temp_url_enabled: domain.temp_url_enabled,
+        create_www: domain.create_www,
         bot_challenge_exempt: domain.bot_challenge_exempt,
         bot_challenge_include: domain.bot_challenge_include,
         block_ai_crawlers: domain.block_ai_crawlers,
@@ -169,6 +171,20 @@ export const DomainEdit = () => {
           Preview URL (&lt;slug&gt;.preview.&lt;panel-hostname&gt; serves this docroot)
         </Typography.Text>
       </div>
+
+      {!domain.web_disabled && !domain.name.startsWith("www.") ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item name="create_www" valuePropName="checked" noStyle>
+            <Switch
+              checkedChildren={<CheckOutlined />}
+              unCheckedChildren={<CloseOutlined />}
+            />
+          </Form.Item>
+          <Typography.Text>
+            www.{domain.name} in the certificate (on also adds a www record when this server hosts the DNS)
+          </Typography.Text>
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
         <Form.Item name="bot_challenge_exempt" valuePropName="checked" noStyle>

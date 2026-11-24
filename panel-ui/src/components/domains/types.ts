@@ -92,6 +92,9 @@ export type Domain = {
   bytes_30d?: number;
   temp_url_enabled?: boolean;
   temp_url?: string | null;
+  // www.<domain> goes into the certificate (switching it on also adds the www
+  // record to a zone this server hosts). The site answers on www either way.
+  create_www?: boolean;
   bot_challenge_include?: boolean;
   // The vhost refuses (403) AI crawlers that name themselves.
   block_ai_crawlers?: boolean;

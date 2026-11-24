@@ -76,11 +76,20 @@ Subdomains are first-class domains in the panel. Add a subdomain by creating a n
 
 By default only you (and the administrator) can add a subdomain of a domain you own. If another account on the server needs one — for example a client who runs `shop.example.com` from their own account — open the domain, and on its **Overview** tab turn on **Allow subdomains by other accounts**. Any account on the server can then add subdomains of that domain without asking you. Turning it off stops new ones; subdomains already created by other accounts stay. Each parent domain needs its own consent: allowing it on `b.example.com` does not let another account create `c.b.example.com` if `example.com` belongs to a third account that has not allowed it.
 
+## The www address
+
+A site always answers on `www.example.com` as well as `example.com`. Whether `www.example.com` is in the site's HTTPS certificate is set by the **www.example.com** switch on the domain's **Overview** tab. A new domain such as `example.com` starts with it on. A subdomain such as `blog.example.com` starts with it off, and so does a domain under a two-part suffix such as `example.co.il`; turn the switch on to add www.
+
+- Turning it on adds a `www` CNAME record when this server hosts the domain's DNS and the zone has no `www` record yet. A `www` record you already have is left as it is.
+- `www.example.com` joins the certificate once it points at this server, usually within the hour.
+- Turning it off leaves the current certificate and the DNS record as they are; www is left out of the next certificate.
+- From the command line, an administrator runs `jabali domain set example.com --www on` (or `off`).
+
 ## Aliases
 
 An alias is another name for the same site: `example.net` serves the same files as `example.com`. Open the domain, go to the **Aliases** tab, enter the name and click **Add alias**. A domain without web hosting has no Aliases tab.
 
-- For `www.example.com`, use the domain's www option; the panel refuses it as an alias.
+- For `www.example.com`, use the domain's www switch on its **Overview** tab (see [The www address](#the-www-address)); the panel refuses it as an alias.
 - A name that is already a domain or an alias on this server is refused, and so are the panel's own hostnames and the `www.`, `mail.` and similar names of other domains here.
 - An alias under a domain you have already verified (for example `shop.example.com` under a verified `example.com`) is live at once. Any other name is **Unverified** until you prove you control it, the same way as a [new domain](#verifying-a-new-domain): the tab shows its TXT record, and **Verify now** checks it. An alias that is never verified is removed after 14 days.
 - A live alias is added to the domain's certificate once its A or AAAA record points directly at this server. Until then the tab shows **Certificate pending**, and browsers warn on HTTPS for that name. A name behind a CDN is not added to the certificate.

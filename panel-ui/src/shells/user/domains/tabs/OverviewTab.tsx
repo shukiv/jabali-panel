@@ -30,11 +30,11 @@ const stripHomePrefix = (path: string): string => {
 export const OverviewTab = ({ domain }: { domain: Domain }) => {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation" | "ai">(null);
+  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation" | "ai" | "www">(null);
   const [viewCert, setViewCert] = useState(false);
 
   const patch = async (
-    field: "preview" | "bot" | "delegation" | "ai",
+    field: "preview" | "bot" | "delegation" | "ai" | "www",
     body: Record<string, unknown>,
     success: string,
     errorPrefix: string,
@@ -92,6 +92,16 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
 
   // Refuses (403) the AI crawlers and assistants that name themselves in the
   // User-Agent header. Search engines are not on the list.
+  const toggleWWW = (next: boolean) =>
+    patch(
+      "www",
+      { create_www: next },
+      next
+        ? `www.${domain.name} will be added to the certificate once it points at this server`
+        : `www.${domain.name} will be left out of the next certificate`,
+      "Failed to change www",
+    );
+
   const toggleAICrawlers = (next: boolean) =>
     patch(
       "ai",
@@ -168,6 +178,24 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
             </Typography.Paragraph>
           </div>
         </Space>
+
+        {!domain.web_disabled && !domain.name.startsWith("www.") ? (
+          <Space align="center">
+            <Switch
+              checked={!!domain.create_www}
+              loading={busy === "www"}
+              onChange={toggleWWW}
+              aria-label="www address"
+            />
+            <div>
+              <Typography.Text strong>www.{domain.name}</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+                Include www.{domain.name} in the site&apos;s certificate. Turning it on also adds a
+                www record when this server hosts the DNS.
+              </Typography.Paragraph>
+            </div>
+          </Space>
+        ) : null}
 
         <Space align="center">
           <Switch
