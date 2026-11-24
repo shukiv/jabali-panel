@@ -85,6 +85,18 @@ server {
     location = /jabali-err-403.html { internal; root /var/www/jabali-errors; }
     location = /jabali-err-500.html { internal; root /var/www/jabali-errors; }
 
+    # WordPress plugin folders that keep themselves private on Apache with a
+    # .htaccess "deny from all", which nginx never reads: WooCommerce's paid
+    # downloads and its logs (order and customer data), FunnelKit's data and
+    # All-in-One WP Migration's full-site backups. Regex, so a WordPress in a
+    # subfolder is covered too, and listed before every other regex location
+    # (static cache, PHP), so it wins over them. woocommerce_uploads is
+    # internal rather than denied: a store using the X-Accel-Redirect download
+    # method still gets the file served. An administrator can override one
+    # with a ^~ prefix location in the domain's raw directives.
+    location ~ /wp-content/uploads/woocommerce_uploads/ { internal; }
+    location ~ /wp-content/(?:uploads/(?:wc-logs|funnelkit)|ai1wm-backups)/ { deny all; }
+
 
 
     # Long-cache static assets (immutable content; 30 days).
