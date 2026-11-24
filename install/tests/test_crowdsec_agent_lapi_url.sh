@@ -77,9 +77,9 @@ fi
 
 # --- static: both call sites ---
 mig=$(awk '/^configure_crowdsec_mariadb\(\)/{f=1} f{print} f&&/^\}/{exit}' install.sh)
-add=$(grep -n 'cscli machines add' <<<"$mig" | head -1 | cut -d: -f1)
-fix=$(grep -n 'ensure_crowdsec_agent_lapi_url norestart' <<<"$mig" | head -1 | cut -d: -f1)
-rst=$(grep -n 'systemctl restart crowdsec' <<<"$mig" | tail -1 | cut -d: -f1)
+add=$(grep -n 'cscli machines add' <<<"$mig" | head -1 | cut -d: -f1 || true)
+fix=$(grep -n 'ensure_crowdsec_agent_lapi_url norestart' <<<"$mig" | head -1 | cut -d: -f1 || true)
+rst=$(grep -n 'systemctl restart crowdsec' <<<"$mig" | tail -1 | cut -d: -f1 || true)
 if [[ -z "$add" || -z "$fix" || -z "$rst" ]] || (( fix < add || fix > rst )); then
   echo "FAIL: configure_crowdsec_mariadb must call ensure_crowdsec_agent_lapi_url norestart after cscli machines add and before its restart"; fail=1
 fi
