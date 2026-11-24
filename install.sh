@@ -18080,6 +18080,33 @@ ensure_crowdsec_agent_lapi_url() {
     || _warn "restart crowdsec failed after the LAPI url fix; check journalctl -u crowdsec"
 }
 
+# check_crowdsec_appsec_auth — warn when CrowdSec AppSec refuses the nginx
+# bouncer's key (401). Pages still load (APPSEC_FAILURE_ACTION=passthrough), so
+# nothing else shows that the WAF inspects no request. The LAPI url fix above
+# heals the known cause; this names any other. The key reaches curl on stdin,
+# never on its command line. Only warns: an install or update never stops here.
+check_crowdsec_appsec_auth() {
+  local conf=/etc/crowdsec/bouncers/crowdsec-nginx-bouncer.conf key code="" _i
+  grep -q '^APPSEC_URL=http://127.0.0.1:7422' "$conf" 2>/dev/null || return 0
+  key="$(grep -oP '^API_KEY=\K.*' "$conf" 2>/dev/null || true)"
+  [[ -n "$key" ]] || return 0
+  # crowdsec may have just restarted: give AppSec a few seconds to listen.
+  for _i in $(seq 1 15); do
+    code="$(printf 'header = "X-Crowdsec-Appsec-Api-Key: %s"\n' "$key" \
+      | curl -s -o /dev/null -w '%{http_code}' --max-time 5 --config - \
+          -H 'X-Crowdsec-Appsec-Ip: 192.0.2.10' -H 'X-Crowdsec-Appsec-Uri: /' \
+          -H 'X-Crowdsec-Appsec-Host: localhost' -H 'X-Crowdsec-Appsec-Verb: GET' \
+          http://127.0.0.1:7422/ 2>/dev/null || true)"
+    [[ -n "$code" && "$code" != 000 ]] && break
+    sleep 1
+  done
+  case "$code" in
+    401) _warn "CrowdSec AppSec refuses the nginx bouncer's key (401), so the WAF inspects no request. Check that url in /etc/crowdsec/local_api_credentials.yaml is http://127.0.0.1:8081/ and that 'cscli bouncers list' shows jabali-nginx, then: systemctl restart crowdsec" ;;
+    ""|000) _log "CrowdSec AppSec did not answer on 127.0.0.1:7422; skipped its bouncer-key check" ;;
+  esac
+  return 0
+}
+
 # ensure_crowdsec_bouncer_poll_frequency — bump both bouncer
 # update_frequency values to 60s on existing hosts. Default 10s burns
 # steady CPU on the LAPI process once CAPI has ~30k decisions loaded
@@ -18981,6 +19008,9 @@ EOF
   if declare -f ensure_crowdsec_agent_lapi_url >/dev/null 2>&1; then
     ensure_crowdsec_agent_lapi_url
   fi
+  if declare -f check_crowdsec_appsec_auth >/dev/null 2>&1; then
+    check_crowdsec_appsec_auth
+  fi
 
   # crowdsec bouncer poll-frequency heal (10s default -> 60s; cuts
   # sustained LAPI CPU when CAPI has many decisions loaded).
@@ -19619,6 +19649,7 @@ main() {
   set_release_channel_from_install
   seed_last_built_sha
   jh_first_checkin
+  check_crowdsec_appsec_auth
   _ok "jabali-panel + jabali-agent installed. Status:"
   _ok "  systemctl status $AGENT_SERVICE_NAME"
   _ok "  systemctl status $SERVICE_NAME"
