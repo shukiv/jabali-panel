@@ -60,22 +60,8 @@ type loginAllowlistConf struct {
 var sshAcceptedRe = regexp.MustCompile(
 	`^Accepted (?:publickey|password|keyboard-interactive(?:/pam)?) for (\S+) from (\S+) port \d+ ssh2(?:: .*)?$`)
 
-// sshAcceptedSyslogRe is the same line in /var/log/auth.log: a syslog
-// timestamp (traditional or RFC 3339), the host, sshd's own tag, then the
-// message. Only that position counts; the username comes after the tag.
-var sshAcceptedSyslogRe = regexp.MustCompile(
-	`^(?:[A-Z][a-z]{2} +\d{1,2} \d{2}:\d{2}:\d{2}|\d{4}-\d{2}-\d{2}T\S+) \S+ sshd(?:-session)?\[\d+\]: (Accepted .*)$`)
-
-// parseSSHAccepted returns the user and IP of an sshd success line, read as a
-// bare journal message (journal) or an auth.log line.
-func parseSSHAccepted(line string, journal bool) (user, ip string, ok bool) {
-	if !journal {
-		m := sshAcceptedSyslogRe.FindStringSubmatch(line)
-		if m == nil {
-			return "", "", false
-		}
-		line = m[1]
-	}
+// parseSSHAccepted returns the user and IP of an sshd success message.
+func parseSSHAccepted(line string) (user, ip string, ok bool) {
 	m := sshAcceptedRe.FindStringSubmatch(line)
 	if m == nil {
 		return "", "", false
@@ -177,7 +163,12 @@ func StartLoginAllowlistWatcher(ctx context.Context, log *slog.Logger) {
 // dispatching each matching Accepted line. Returns when the child exits or ctx
 // is cancelled.
 func runLoginAllowlistTail(ctx context.Context, dedup *loginDedup, log *slog.Logger) error {
-	cmd, journal := loginTailCmd(ctx)
+	cmd := loginTailCmd(ctx)
+	if cmd == nil {
+		log.Warn("login-allowlist: journalctl not found; ssh logins are not auto-allowlisted")
+		<-ctx.Done()
+		return nil
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
@@ -188,35 +179,34 @@ func runLoginAllowlistTail(ctx context.Context, dedup *loginDedup, log *slog.Log
 	sc := bufio.NewScanner(stdout)
 	sc.Buffer(make([]byte, 0, 64*1024), 256*1024)
 	for sc.Scan() {
-		handleSSHLogLine(ctx, sc.Text(), journal, dedup, log, time.Now())
+		handleSSHLogLine(ctx, sc.Text(), dedup, log, time.Now())
 	}
 	// Kill the child if we broke out via ctx; reap it either way.
 	_ = cmd.Process.Kill()
 	return cmd.Wait()
 }
 
-// loginTailCmd builds the log-follow command. Prefer journald (Debian default);
-// try both ssh.service and sshd.service unit names (distro-dependent). If
-// journalctl is absent, fall back to `tail -F /var/log/auth.log`. The bool
-// reports the journal form (bare messages).
-func loginTailCmd(ctx context.Context) (*exec.Cmd, bool) {
-	if _, err := exec.LookPath("journalctl"); err == nil {
-		// --since now avoids re-scanning historical log on every restart (a busy
-		// host would otherwise re-allowlist churn on each boot). _UID=0: only
-		// sshd's own root processes, never a process that lands in the unit
-		// and logs through syslog.
-		return execCommandContext(ctx, "journalctl",
-			"-u", "ssh.service", "-u", "sshd.service", "_UID=0",
-			"-f", "-n", "0", "--since", "now", "-o", "cat"), true
+// loginTailCmd builds the log-follow command: journald only, both unit
+// names (distro-dependent), sshd's root processes only (_UID=0). A plain
+// syslog file is not read: its "sshd[pid]:" tag is whatever the sender wrote
+// (`logger -t`), so any local account could forge an Accepted line there.
+// Nil when journalctl is absent.
+func loginTailCmd(ctx context.Context) *exec.Cmd {
+	if _, err := exec.LookPath("journalctl"); err != nil {
+		return nil
 	}
-	return execCommandContext(ctx, "tail", "-F", "/var/log/auth.log"), false
+	// --since now avoids re-scanning historical log on every restart (a busy
+	// host would otherwise re-allowlist churn on each boot).
+	return execCommandContext(ctx, "journalctl",
+		"-u", "ssh.service", "-u", "sshd.service", "_UID=0",
+		"-f", "-n", "0", "--since", "now", "-o", "cat")
 }
 
 // handleSSHLogLine parses one log line and, on a successful-login match for a
 // routable IP not seen within the dedup window, allowlists it per the pushed
 // policy. Exported-package-internal for the unit test.
-func handleSSHLogLine(ctx context.Context, line string, journal bool, dedup *loginDedup, log *slog.Logger, now time.Time) {
-	user, ip, ok := parseSSHAccepted(line, journal)
+func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *slog.Logger, now time.Time) {
+	user, ip, ok := parseSSHAccepted(line)
 	if !ok {
 		return
 	}

@@ -152,44 +152,28 @@ func TestCSLoginAllowlistApplyHandler_WritesConf(t *testing.T) {
 // in either log form — before the anchoring, one failed pre-auth connection
 // put an arbitrary IP on the allowlist.
 func TestParseSSHAccepted_NoUsernameInjection(t *testing.T) {
-	ok := []struct {
-		line    string
-		journal bool
-		user    string
-		ip      string
-	}{
-		{"Accepted publickey for root from 203.0.113.7 port 51234 ssh2: ED25519 SHA256:abc", true, "root", "203.0.113.7"},
-		{"Accepted password for root from 2606:4700:4700::1111 port 22 ssh2", true, "root", "2606:4700:4700::1111"},
-		{"Nov 24 20:29:40 host1 sshd[123]: Accepted publickey for root from 203.0.113.7 port 5 ssh2: RSA SHA256:x", false, "root", "203.0.113.7"},
-		{"Nov  4 01:02:03 host1 sshd-session[9]: Accepted password for root from 203.0.113.8 port 5 ssh2", false, "root", "203.0.113.8"},
-		{"2026-11-24T20:29:40.146973+00:00 host1 sshd[1]: Accepted keyboard-interactive/pam for root from 203.0.113.9 port 5 ssh2", false, "root", "203.0.113.9"},
+	ok := []struct{ line, user, ip string }{
+		{"Accepted publickey for root from 203.0.113.7 port 51234 ssh2: ED25519 SHA256:abc", "root", "203.0.113.7"},
+		{"Accepted password for root from 2606:4700:4700::1111 port 22 ssh2", "root", "2606:4700:4700::1111"},
 	}
 	for _, c := range ok {
-		u, ip, got := parseSSHAccepted(c.line, c.journal)
+		u, ip, got := parseSSHAccepted(c.line)
 		if !got || u != c.user || ip != c.ip {
-			t.Errorf("%q (journal=%v) => %q %q %v, want %q %q", c.line, c.journal, u, ip, got, c.user, c.ip)
+			t.Errorf("%q => %q %q %v, want %q %q", c.line, u, ip, got, c.user, c.ip)
 		}
 	}
-	bad := []struct {
-		line    string
-		journal bool
-	}{
+	bad := []string{
 		// What sshd 10.0 logged on .13 for one failed connection.
-		{"Invalid user Accepted password for root from 198.51.100.9 port 22 x from 127.0.0.1 port 55850", true},
-		{"Connection closed by invalid user Accepted password for root from 198.51.100.9 port 22 x 127.0.0.1 port 55850 [preauth]", true},
-		{"Invalid user Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", true},
-		{"Invalid user sshd[1]: Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", true},
-		{"Nov 24 20:29:40 host1 sshd[123]: Invalid user sshd[1]: Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", false},
-		{"2026-11-24T20:29:40+00:00 host1 sshd[123]: Invalid user Accepted password for root from 198.51.100.9 port 22 ssh2", false},
-		// A journal message read as an auth.log line, and the other way round.
-		{"Accepted publickey for root from 198.51.100.9 port 22 ssh2", false},
-		{"Nov 24 20:29:40 host1 sshd[123]: Accepted publickey for root from 198.51.100.9 port 22 ssh2", true},
-		// Another program's tag in auth.log.
-		{"Nov 24 20:29:40 host1 logger[5]: Accepted publickey for root from 198.51.100.9 port 22 ssh2", false},
+		"Invalid user Accepted password for root from 198.51.100.9 port 22 x from 127.0.0.1 port 55850",
+		"Connection closed by invalid user Accepted password for root from 198.51.100.9 port 22 x 127.0.0.1 port 55850 [preauth]",
+		"Invalid user Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1",
+		"Invalid user sshd[1]: Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1",
+		// A syslog-style line is not a journal message.
+		"Nov 24 20:29:40 host1 sshd[123]: Accepted publickey for root from 198.51.100.9 port 22 ssh2",
 	}
-	for _, c := range bad {
-		if u, ip, got := parseSSHAccepted(c.line, c.journal); got {
-			t.Errorf("%q (journal=%v) must not parse, got %q %q", c.line, c.journal, u, ip)
+	for _, l := range bad {
+		if u, ip, got := parseSSHAccepted(l); got {
+			t.Errorf("%q must not parse, got %q %q", l, u, ip)
 		}
 	}
 }
