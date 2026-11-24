@@ -2535,7 +2535,7 @@ const BouncerModeCard = () => {
 // /admin/settings; lists and removes the IPs via /login-ips.
 type LoginBanExemptIP = { value: string; reason: string; expires_at: string };
 
-const LoginAllowlistCard = () => {
+export const LoginAllowlistCard = () => {
   const { t } = useTranslation();
   const qc = useQueryClient();
   const settings = useQuery({

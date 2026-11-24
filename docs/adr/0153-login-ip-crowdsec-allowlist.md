@@ -77,8 +77,8 @@ trusted component.
 ## Amendment (2026-11-24): ban-only, not allowlisted
 
 A CrowdSec allowlist entry also makes AppSec skip the request entirely, so a
-login IP was exempt from the WAF as well as from bans, and so was everyone
-sharing that address (a NAT or tailnet exit). Login IPs now only skip bans:
+login IP was exempt from the WAF as well as from bans. Login IPs now only skip
+bans:
 
 - The agent keeps them in `/var/lib/jabali/login-ban-exempt.json` and renders
   them into a postoverflow whitelist,
