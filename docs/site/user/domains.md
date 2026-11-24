@@ -144,6 +144,18 @@ You may change PHP version (from the subset your package allows), SSL on/off, DN
 
 The admin controls listen IP (selected from the [IP Manager](../admin/ip-addresses.md) pool), maximum domain count, and quota-related suspension. The admin may also pin SSL on or force a specific PHP version on a domain; in that case the relevant control is read-only on your side.
 
+## Redirects
+
+A domain's **Redirects** tab sends the whole domain, or single paths, elsewhere.
+
+- **Page redirects**: up to 2,000 per domain. Each one sends a path (`/old-page`) to a full URL or to another path on the same site (`/new-page`), with a 301, 302, 303, 307 or 308 status. A long list shows 50 at a time, with a filter.
+- **Keep the query string** carries the request's query over: `/go?ref=x` to `https://shop.example/p?aid=1` arrives as `https://shop.example/p?aid=1&ref=x`.
+- **Also match the path ending in /** makes `/old-page/` redirect too.
+- **Wildcard matching** redirects everything under a path, keeping the rest of it (301 and 302 only).
+- Two redirects can't share a path. Saving such a list is refused; an import or a restore keeps the first.
+
+Importing an `.htaccess` (on the domain's nginx settings) turns its `Redirect` lines into page redirects with both options on, the way Apache treats them. An `ErrorDocument` line is listed for you to add by hand as `error_page 404 /path;` under raw directives; a domain's own `error_page` takes priority over the panel's branded error pages.
+
 ## Nginx options and rewrite rules
 
 Three extra per-domain tabs — **Domain options**, **Rewrite rules**, and **Advanced directives** — appear only when your administrator has enabled *tenant domain options* for the server. Until then the tabs are hidden, and the domain's Overview shows a short note that your administrator can turn these controls on.

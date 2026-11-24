@@ -41,6 +41,9 @@ type htaccessPreviewResponse struct {
 	Rules    models.NginxRules  `json:"rules"`
 	Warnings []htaccess.Warning `json:"warnings"`
 	Notes    []string           `json:"notes"`
+	// Redirects go to the domain's Redirects list (page_redirects), not the
+	// Rule Builder.
+	Redirects models.PageRedirects `json:"redirects"`
 	// Invalid lists any converted rule the API would reject on apply. Should
 	// be empty (the converter emits only typed, valid rules); surfaced so a
 	// converter/validator drift never silently strips a rule on save.
@@ -49,7 +52,7 @@ type htaccessPreviewResponse struct {
 
 // maxHtaccessBytes caps the input so a pathological paste can't tie up the
 // converter. Real .htaccess files are a few KB; 256 KiB is generous.
-const maxHtaccessBytes = 256 * 1024
+const maxHtaccessBytes = 768 * 1024 // a migrated site can carry ~1,000 Redirect lines; the request body cap is 1 MiB
 
 func (h *domainHtaccessHandler) preview(c *gin.Context) {
 	claims := ginctx.Claims(c)
@@ -96,6 +99,9 @@ func (h *domainHtaccessHandler) preview(c *gin.Context) {
 	if err := validateNginxRules(models.NginxRules(res.Rules)); err != nil {
 		invalid = append(invalid, err.Error())
 	}
+	if err := validatePageRedirects(models.PageRedirects(res.Redirects)); err != nil {
+		invalid = append(invalid, err.Error())
+	}
 
 	// Always emit arrays (never JSON null) so the SPA can read .length/.filter
 	// without a null guard — a no-rule conversion is {rules:[],...}, not null.
@@ -111,11 +117,16 @@ func (h *domainHtaccessHandler) preview(c *gin.Context) {
 	if notes == nil {
 		notes = []string{}
 	}
+	redirs := models.PageRedirects(res.Redirects)
+	if redirs == nil {
+		redirs = models.PageRedirects{}
+	}
 
 	c.JSON(http.StatusOK, htaccessPreviewResponse{
-		Rules:    models.NginxRules(rules),
-		Warnings: warnings,
-		Notes:    notes,
-		Invalid:  invalid,
+		Rules:     models.NginxRules(rules),
+		Warnings:  warnings,
+		Notes:     notes,
+		Redirects: redirs,
+		Invalid:   invalid,
 	})
 }

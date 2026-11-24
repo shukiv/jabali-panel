@@ -7,7 +7,7 @@
 // 1. Whole-domain redirect toggle + URL + type selector
 // 2. Page-level redirects list with add/delete, drag-reorder, active toggle,
 //    wildcard matching.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   CheckOutlined,
   CloseOutlined,
@@ -15,7 +15,7 @@ import {
   PlusOutlined,
   DragOutlined,
 } from "@icons";
-import { Button, Switch, Row, Col, Input, Select, Card, Typography } from "antd";
+import { Button, Switch, Row, Col, Input, Select, Card, Typography, Pagination } from "antd";
 import { feedback } from "../lib/feedback"; // GH #970: themed toasts
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -41,10 +41,18 @@ import { apiClient } from "../apiClient";
 export type PageRedirect = {
   source: string;
   destination: string;
-  type: "301" | "302" | "307" | "308";
+  type: "301" | "302" | "303" | "307" | "308";
   active?: boolean;
   wildcard?: boolean;
+  // Exact redirects only (an .htaccess `Redirect` imports with both on):
+  // carry the request's query string over, and also answer the path + "/".
+  keep_query?: boolean;
+  trailing_slash?: boolean;
 };
+
+// Mirrors maxPageRedirects in panel-api/internal/api/domains.go.
+export const MAX_PAGE_REDIRECTS = 2000;
+const PAGE_SIZE = 50;
 
 export type DomainRedirectsTarget = {
   id: string;
@@ -57,6 +65,7 @@ export type DomainRedirectsTarget = {
 const REDIRECT_TYPE_OPTIONS = [
   { value: "301", label: "Permanent (301) - SEO friendly" },
   { value: "302", label: "Temporary (302)" },
+  { value: "303", label: "See other (303)" },
   { value: "307", label: "Temporary (307) - preserves method" },
   { value: "308", label: "Permanent (308) - preserves method" },
 ];
@@ -158,7 +167,7 @@ const SortableCard = ({
                   onChange={(e) => onUpdate(idx, "destination", e.target.value)}
                 />
                 <Typography.Text type="secondary" style={{ display: "block", marginTop: 4 }}>
-                  Full URL to redirect to
+                  Full URL, or a path on this site (e.g., /new-page)
                 </Typography.Text>
               </Col>
             </Row>
@@ -191,6 +200,27 @@ const SortableCard = ({
                 </Typography.Text>
               </Col>
             </Row>
+
+            {!pr.wildcard && (
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
+                    checked={pr.keep_query ?? false}
+                    onChange={(checked) => onUpdate(idx, "keep_query", checked)}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Typography.Text type="secondary">Keep the query string</Typography.Text>
+                </Col>
+                <Col span={12}>
+                  <Switch checkedChildren={<CheckOutlined />} unCheckedChildren={<CloseOutlined />}
+                    checked={pr.trailing_slash ?? false}
+                    onChange={(checked) => onUpdate(idx, "trailing_slash", checked)}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Typography.Text type="secondary">Also match the path ending in /</Typography.Text>
+                </Col>
+              </Row>
+            )}
         </>
       </Card>
     </div>
@@ -210,6 +240,10 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
     domain.page_redirects ?? []
   );
   const [isSaving, setIsSaving] = useState(false);
+  // A migrated site can carry hundreds of redirects: show them a page at a
+  // time, with a filter, instead of rendering every card at once.
+  const [filter, setFilter] = useState("");
+  const [page, setPage] = useState(1);
   const qc = useQueryClient();
 
   const sensors = useSensors(
@@ -241,7 +275,21 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
     }
   };
 
+  // Indexes into pageRedirects, so edit/remove/drag keep using the full list.
+  const shown = useMemo(() => {
+    const f = filter.trim().toLowerCase();
+    const all = pageRedirects.map((_, i) => i);
+    return f
+      ? all.filter((i) => `${pageRedirects[i].source} ${pageRedirects[i].destination}`.toLowerCase().includes(f))
+      : all;
+  }, [pageRedirects, filter]);
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const curPage = Math.min(page, pageCount);
+  const onPage = shown.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
+
   const addPageRedirect = () => {
+    setFilter("");
+    setPage(Math.ceil((pageRedirects.length + 1) / PAGE_SIZE));
     setPageRedirects([
       ...pageRedirects,
       { source: "", destination: "", type: "301", active: true, wildcard: false },
@@ -259,6 +307,11 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
   ) => {
     const updated = [...pageRedirects];
     updated[idx] = { ...updated[idx], [key]: value };
+    // The API refuses both options on a wildcard redirect (it already
+    // carries the query and every path below the prefix).
+    if (key === "wildcard" && value) {
+      updated[idx] = { ...updated[idx], keep_query: false, trailing_slash: false };
+    }
     setPageRedirects(updated);
   };
 
@@ -292,6 +345,8 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
         type: pr.type,
         active: pr.active ?? true,
         wildcard: pr.wildcard ?? false,
+        keep_query: !pr.wildcard && !!pr.keep_query,
+        trailing_slash: !pr.wildcard && !!pr.trailing_slash,
       }));
       // Don't send half-filled rows — drop blank ones silently
       body.page_redirects = clean.filter((pr) => pr.source && pr.destination);
@@ -303,10 +358,10 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
       onSaved?.();
     } catch (err) {
       const e = err as {
-        response?: { data?: { detail?: string } };
+        response?: { data?: { error?: string; detail?: string } };
         message?: string;
       };
-      feedback.message.error(`Failed to save: ${e.response?.data?.detail ?? e.message ?? "Unknown error"}`);
+      feedback.message.error(`Failed to save: ${e.response?.data?.error ?? e.response?.data?.detail ?? e.message ?? "Unknown error"}`);
     } finally {
       setIsSaving(false);
     }
@@ -375,8 +430,23 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
           pointerEvents: wholeToggle ? "none" : "auto",
         }}
       >
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <Typography.Text strong>Page Redirects</Typography.Text>
+          <Typography.Text type="secondary">
+            {pageRedirects.length} / {MAX_PAGE_REDIRECTS}
+          </Typography.Text>
+          {pageRedirects.length > PAGE_SIZE && (
+            <Input.Search
+              allowClear
+              placeholder="Filter by path or URL"
+              value={filter}
+              onChange={(e) => {
+                setFilter(e.target.value);
+                setPage(1);
+              }}
+              style={{ maxWidth: 280 }}
+            />
+          )}
         </div>
 
         <div style={{ marginBottom: 16 }}>
@@ -387,14 +457,14 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
               onDragEnd={handleDragEnd}
             >
               <SortableContext
-                items={pageRedirects.map((_, idx) => idx)}
+                items={onPage}
                 strategy={verticalListSortingStrategy}
               >
-                {pageRedirects.map((pr, idx) => (
+                {onPage.map((idx) => (
                   <SortableCard
                     key={idx}
                     idx={idx}
-                    pr={pr}
+                    pr={pageRedirects[idx]}
                     onRemove={removePageRedirect}
                     onUpdate={updatePageRedirect}
                   />
@@ -402,10 +472,24 @@ export const DomainRedirectsPanel = ({ domain, onSaved }: DomainRedirectsPanelPr
               </SortableContext>
             </DndContext>
           )}
+          {shown.length > PAGE_SIZE && (
+            <Pagination
+              current={curPage}
+              pageSize={PAGE_SIZE}
+              total={shown.length}
+              onChange={setPage}
+              showSizeChanger={false}
+              style={{ textAlign: "center" }}
+            />
+          )}
         </div>
 
         <div style={{ textAlign: "center", marginBottom: 16 }}>
-          <Button icon={<PlusOutlined />} onClick={addPageRedirect}>
+          <Button
+            icon={<PlusOutlined />}
+            onClick={addPageRedirect}
+            disabled={pageRedirects.length >= MAX_PAGE_REDIRECTS}
+          >
             Add Page Redirect
           </Button>
         </div>

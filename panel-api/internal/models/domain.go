@@ -22,6 +22,12 @@ type PageRedirect struct {
 	Type        string `json:"type"`
 	Active      *bool  `json:"active,omitempty"`
 	Wildcard    bool   `json:"wildcard,omitempty"`
+	// KeepQuery (exact entries) carries the request's query string over to
+	// the destination, merged with '&' when the destination has its own.
+	// Prefix (Wildcard) entries always keep it.
+	KeepQuery bool `json:"keep_query,omitempty"`
+	// TrailingSlash (exact entries) also matches Source + "/".
+	TrailingSlash bool `json:"trailing_slash,omitempty"`
 }
 
 // PageRedirects implements driver.Valuer / sql.Scanner so GORM can

@@ -38,6 +38,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 
 import { apiClient } from "../apiClient";
+import { MAX_PAGE_REDIRECTS, type PageRedirect } from "./DomainRedirectsPanel";
 
 // Nginx rule type definitions
 export type NginxRule =
@@ -86,6 +87,7 @@ export type DomainSettingsTarget = {
   // Phase 4a backend column (#1691) lands, so the mirror stays hidden till then.
   nginx_tenant_directives?: string | null;
   nginx_rules?: NginxRule[] | null;
+  page_redirects?: PageRedirect[] | null;
 };
 
 // compileRules mirrors panel-api/internal/nginxrules/Compile (Go) so the
@@ -1178,21 +1180,37 @@ type PreviewResponse = {
   warnings: PreviewWarning[];
   notes: string[];
   invalid?: string[];
+  // .htaccess `Redirect` lines: entries for the domain's Redirects list.
+  redirects?: PageRedirect[];
+};
+
+// The nginx locations a redirect takes, as the API's validator compares them:
+// two active entries on one location are refused (nginx -t would fail).
+const redirectLocations = (pr: PageRedirect): string[] => {
+  if (pr.active === false) return [];
+  if (pr.wildcard) return [`^~ ${pr.source}`];
+  const paths = [pr.source];
+  if (pr.trailing_slash && !pr.source.endsWith("/")) paths.push(`${pr.source}/`);
+  return paths.map((p) => `= ${p}`);
 };
 
 const HtaccessImport = ({
   domainId,
   rules,
   onRulesChange,
+  pageRedirects,
 }: {
   domainId: string;
   rules: NginxRule[];
   onRulesChange: (rules: NginxRule[]) => void;
+  pageRedirects: PageRedirect[];
 }) => {
   const [content, setContent] = useState("");
   const [basePath, setBasePath] = useState("/");
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  const [savingRedirects, setSavingRedirects] = useState(false);
+  const qc = useQueryClient();
 
   const handleConvert = async () => {
     setLoading(true);
@@ -1209,6 +1227,7 @@ const HtaccessImport = ({
         warnings: res.data.warnings ?? [],
         notes: res.data.notes ?? [],
         invalid: res.data.invalid ?? [],
+        redirects: res.data.redirects ?? [],
       });
     } catch (err) {
       const e = err as {
@@ -1231,15 +1250,53 @@ const HtaccessImport = ({
     setContent("");
   };
 
+  // Redirects go straight to the domain's Redirects list (saved now; the
+  // Rule Builder never holds them). An entry on a path the list already
+  // redirects is skipped, as Apache would use the first one.
+  const handleAddRedirects = async () => {
+    const incoming = preview?.redirects ?? [];
+    if (incoming.length === 0) return;
+    const taken = new Set(pageRedirects.flatMap(redirectLocations));
+    const fresh = incoming.filter((pr) => !redirectLocations(pr).some((l) => taken.has(l)));
+    const skipped = incoming.length - fresh.length;
+    if (pageRedirects.length + fresh.length > MAX_PAGE_REDIRECTS) {
+      feedback.message.error(
+        `A domain can have at most ${MAX_PAGE_REDIRECTS} redirects: it has ${pageRedirects.length}, and this adds ${fresh.length}.`,
+      );
+      return;
+    }
+    setSavingRedirects(true);
+    try {
+      await apiClient.patch(`/domains/${domainId}`, { page_redirects: [...pageRedirects, ...fresh] });
+      qc.invalidateQueries({ queryKey: ["list", "domains"] });
+      qc.invalidateQueries({ queryKey: ["one", "domains", domainId] });
+      feedback.message.success(
+        `Saved ${fresh.length} redirect(s) to the Redirects list` +
+          (skipped > 0 ? `; ${skipped} skipped: the list already redirects those paths` : ""),
+      );
+      setPreview((p) => (p ? { ...p, redirects: [] } : p));
+    } catch (err) {
+      const e = err as {
+        response?: { data?: { error?: string } };
+        message?: string;
+      };
+      feedback.message.error(`Could not save the redirects: ${e.response?.data?.error ?? e.message ?? "Unknown error"}`);
+    } finally {
+      setSavingRedirects(false);
+    }
+  };
+  const previewRedirects = preview?.redirects ?? [];
+
   const securityWarnings = preview?.warnings.filter((w) => w.security) ?? [];
   const otherWarnings = preview?.warnings.filter((w) => !w.security) ?? [];
 
   return (
     <div>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 8 }}>
-        Paste an Apache <code>.htaccess</code> to convert its redirects,
-        rewrites, headers, PHP settings and access rules into typed Rule
-        Builder entries. The front-controller block used by WordPress / Laravel
+        Paste an Apache <code>.htaccess</code> to convert its rewrites,
+        headers, PHP settings and access rules into typed Rule Builder
+        entries, and its <code>Redirect</code> lines into the domain&apos;s
+        Redirects list. The front-controller block used by WordPress / Laravel
         is recognized and skipped (the default routing already handles it).
         Anything that can&apos;t be safely converted is listed below — never
         applied silently.
@@ -1276,6 +1333,38 @@ const HtaccessImport = ({
 
       {preview && (
         <div>
+          {(preview.invalid ?? []).length > 0 && (
+            <Alert
+              type="error"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message="The converted result would not save"
+              description={
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {(preview.invalid ?? []).map((m, i) => (
+                    <li key={i}>{m}</li>
+                  ))}
+                </ul>
+              }
+            />
+          )}
+
+          {previewRedirects.length > 0 && (
+            <Alert
+              type="success"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={`${previewRedirects.length} redirect(s) ready for the Redirects list`}
+              description="Adding saves them to the domain's Redirects list now."
+              action={
+                <Button size="small" type="primary" loading={savingRedirects} onClick={handleAddRedirects}>
+                  Add to Redirects
+                </Button>
+              }
+            />
+          )}
+
+          {(preview.rules.length > 0 || previewRedirects.length === 0) && (
           <Alert
             type={preview.rules.length > 0 ? "success" : "info"}
             showIcon
@@ -1293,6 +1382,7 @@ const HtaccessImport = ({
               ) : undefined
             }
           />
+          )}
 
           {securityWarnings.length > 0 && (
             <Alert
@@ -1679,6 +1769,7 @@ export const DomainSettingsButton = ({
                   domainId={domain.id}
                   rules={rules}
                   onRulesChange={setRules}
+                  pageRedirects={domain.page_redirects ?? []}
                 />
               ),
             },
@@ -1804,6 +1895,7 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
                 domainId={domain.id}
                 rules={rules}
                 onRulesChange={setRules}
+                pageRedirects={domain.page_redirects ?? []}
               />
             ),
           },

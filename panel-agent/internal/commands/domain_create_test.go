@@ -833,6 +833,15 @@ func TestVhostBrandedErrorPages(t *testing.T) {
 		t.Errorf("static vhost must not emit the index.php guard")
 	}
 
+	// A domain's own error_page comes first, so it wins for its code: nginx
+	// uses the first error_page listed for a code at one level.
+	own := render(vhostData{Domain: "own.com", DocRoot: "/home/u/o", HasPHP: true, Username: "u", IsEnabled: true,
+		CustomDirectives: "error_page 404 /he/404/index.html;"})
+	ownAt, brandedAt := strings.Index(own, "error_page 404 /he/404/index.html;"), strings.Index(own, "error_page 404 /jabali-err-404.html;")
+	if ownAt < 0 || brandedAt < 0 || ownAt > brandedAt {
+		t.Errorf("domain error_page (at %d) must precede the branded one (at %d)", ownAt, brandedAt)
+	}
+
 	// Reverse-proxy / RootOverridden: opts out of jabali error pages.
 	rp := render(vhostData{Domain: "rp.com", DocRoot: "/home/u/r", HasPHP: true, Username: "u", IsEnabled: true, RootOverridden: true})
 	if strings.Contains(rp, "jabali-err-404.html") {
