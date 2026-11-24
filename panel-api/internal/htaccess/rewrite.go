@@ -60,10 +60,8 @@ func convertRewriteRule(res *Result, st *state, args []string, ln line) {
 	if flags.redirect && (flags.redirectCode < 300 || flags.redirectCode > 399) {
 		code := strconv.Itoa(flags.redirectCode)
 		reason := "RewriteRule [R=" + code + "] answers " + code + " and has no typed-rule equivalent — not converted"
-		if p, ok := rebasePattern(pattern, st.base); ok {
-			reason += "; an administrator can add it under Raw directives: " + rawLocation(p, flags.nocase, "return "+code+";")
-		}
-		res.warnSec(ln.num, ln.text, reason)
+		p, _ := rebasePattern(pattern, st.base)
+		res.warnSec(ln.num, ln.text, reason+rawRecipe(p, flags.nocase, "return "+code+";", ""))
 		return
 	}
 	if sub == "-" && flags.redirect {
@@ -238,8 +236,8 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 			}
 		}
 		if len(hit) > 0 {
-			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s, %d paths) win in Apache, but a rewrite rule would run before them — not converted. An administrator can add it under Raw directives, where those redirects still win: %s",
-				hit[0], len(hit), rawLocation(args[0], false, fmt.Sprintf("return %d %s;", code, quoteRawToken(args[1])))))
+			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s, %d paths) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))+
+				rawRecipe(args[0], false, fmt.Sprintf("return %d %s;", code, args[1]), args[1]))
 			return
 		}
 	}
@@ -255,31 +253,48 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 	})
 }
 
-// rawLocation is the raw-directive location block for an nginx regex: an
-// exact `location =` when the regex is one anchored literal path (it then
-// also beats the vhost's own regex locations, e.g. the .php handler), else a
-// regex `location ~` (`~*` for a case-insensitive [NC] rule).
-func rawLocation(pattern string, nocase bool, body string) string {
-	if nocase {
-		return "location ~* " + quoteRawToken(pattern) + " { " + body + " }"
+// rawRecipe is the "; an administrator can add …" tail of a warning, naming
+// the raw-directive location block for an nginx regex: an exact `location =`
+// when the regex is one anchored literal path (it then also beats the vhost's
+// own regex locations, e.g. the .php handler), else `location ~` (`~*` for
+// [NC]). The .htaccess is the tenant's, and an administrator may paste the
+// recipe into the unrestricted raw directives, so it is only spelled out when
+// neither the pattern nor the target can end a token or open a block there.
+func rawRecipe(pattern string, nocase bool, body, target string) string {
+	const generic = "; an administrator can add it under Raw directives as a location block"
+	if pattern == "" || !rawTokenSafe(pattern) || !rawTokenSafe(target) || strings.Contains(target, `\`) || rawTargetVar.MatchString(target) {
+		return generic
 	}
-	if strings.HasPrefix(pattern, "^/") && strings.HasSuffix(pattern, "$") && !strings.HasSuffix(pattern, `\$`) {
+	loc := "location ~ " + pattern
+	if nocase {
+		loc = "location ~* " + pattern
+	} else if strings.HasPrefix(pattern, "^/") && strings.HasSuffix(pattern, "$") && !strings.HasSuffix(pattern, `\$`) {
 		if re, err := regexp.Compile(pattern[1 : len(pattern)-1]); err == nil {
 			if lit, complete := re.LiteralPrefix(); complete {
-				return "location = " + quoteRawToken(lit) + " { " + body + " }"
+				loc = "location = " + lit
 			}
 		}
 	}
-	return "location ~ " + quoteRawToken(pattern) + " { " + body + " }"
+	return "; an administrator can add it under Raw directives: " + loc + " { " + body + " }"
 }
 
-// quoteRawToken double-quotes s for an nginx directive when it holds a
-// character that would end or open a token.
-func quoteRawToken(s string) string {
-	if !strings.ContainsAny(s, " \t;{}#\"'") {
-		return s
+// rawTargetVar finds an nginx variable other than a regex capture ($1..$9)
+// in a return target.
+var rawTargetVar = regexp.MustCompile(`\$([^0-9]|$)`)
+
+// rawTokenSafe reports whether s can sit unquoted in an nginx directive
+// without ending the token, the directive or the block (a trailing `\`
+// would escape the space after it).
+func rawTokenSafe(s string) bool {
+	if strings.HasSuffix(s, `\`) {
+		return false
 	}
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f || strings.ContainsRune(";{}\"'#`", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // convertHeader handles `Header [always] set Name value`. Only the set/add

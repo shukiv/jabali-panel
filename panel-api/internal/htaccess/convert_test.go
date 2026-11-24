@@ -536,8 +536,8 @@ func TestRedirectMatchBeforeExactRedirectsStaysRule(t *testing.T) {
 func TestRewriteRuleStatus4xxWarns(t *testing.T) {
 	for line, want := range map[string]string{
 		`RewriteRule ^wp-admin/admin-ajax\.php$ - [R=410,L]`: "location = /wp-admin/admin-ajax.php { return 410; }",
-		`RewriteRule ^old/ - [R=403,NC]`:                      "location ~* ^/old/ { return 403; }",
-		`RewriteRule ^gone$ /new [R=404]`:                     "location = /gone { return 404; }",
+		`RewriteRule ^old/ - [R=403,NC]`:                     "location ~* ^/old/ { return 403; }",
+		`RewriteRule ^gone$ /new [R=404]`:                    "location = /gone { return 404; }",
 	} {
 		r := Convert(line, "/")
 		if len(r.Rules) != 0 || len(r.Warnings) != 1 || !r.Warnings[0].Security || !strings.Contains(r.Warnings[0].Reason, want) {
@@ -547,5 +547,28 @@ func TestRewriteRuleStatus4xxWarns(t *testing.T) {
 	r := Convert(`RewriteRule ^a$ - [R=301]`, "/")
 	if len(r.Rules) != 0 || len(r.Warnings) != 1 {
 		t.Errorf("- [R=301]: want one warning, got %+v", r)
+	}
+}
+
+// The .htaccess is the tenant's; the recipe is for an administrator to paste
+// into unrestricted raw directives, so it must never carry a token or block
+// break from the file.
+func TestRawRecipeNeverCarriesInjection(t *testing.T) {
+	for _, in := range []string{
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 ^/product/ \"/shop/; } location /x { return 200 pwn\"",
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 \"^/product/(;})?\" /shop/",
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 ^/product/ /shop/$host",
+		`RewriteRule "^a b$" - [R=410]`,
+		`RewriteRule ^a\ - [R=410]`,
+		"RewriteRule ^a#{ - [R=410]",
+	} {
+		r := Convert(in, "/")
+		if len(r.Rules) != 0 || len(r.Warnings) != 1 {
+			t.Errorf("%q: want no rule and one warning, got rules %+v warnings %+v", in, r.Rules, r.Warnings)
+			continue
+		}
+		if w := r.Warnings[0].Reason; strings.Contains(w, "location ~") || strings.Contains(w, "location =") || strings.Contains(w, "pwn") {
+			t.Errorf("%q: recipe must be withheld, got %q", in, w)
+		}
 	}
 }
