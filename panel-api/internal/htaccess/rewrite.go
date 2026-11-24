@@ -236,7 +236,7 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 			}
 		}
 		if len(hit) > 0 {
-			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s, %d paths) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))+
+			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s; %d in all) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))+
 				rawRecipe(args[0], false, fmt.Sprintf("return %d %s;", code, args[1]), args[1]))
 			return
 		}
