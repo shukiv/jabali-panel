@@ -494,3 +494,58 @@ php_value memory_limit 256M`
 		t.Errorf("rule order not preserved: %v", []string{r.Rules[0].Type, r.Rules[1].Type, r.Rules[2].Type})
 	}
 }
+
+// Apache runs Redirect and RedirectMatch as one first-match pass, so the
+// earlier exact Redirect lines beat a later catch-all RedirectMatch. A typed
+// rewrite rule would run before their exact locations and shadow them all.
+func TestRedirectMatchAfterExactRedirectsNotTyped(t *testing.T) {
+	in := `Redirect 301 /product/mug/ https://academy.example/product/mug/
+Redirect 301 /he/product/cup/ https://academy.example/he/product/cup/
+RedirectMatch 301 "^/product(-category)?/" "/shop/"
+RedirectMatch 301 "^/he/product(-category)?/" "/he/shop/"
+RedirectMatch 301 ^/blog/(.*)$ https://new.example/$1`
+	r := Convert(in, "/")
+	if len(r.Redirects) != 2 {
+		t.Fatalf("want the 2 exact redirects, got %+v", r.Redirects)
+	}
+	if len(r.Rules) != 1 || r.Rules[0].Pattern != `^/blog/(.*)$` {
+		t.Fatalf("want only the non-overlapping RedirectMatch as a rule, got %+v", r.Rules)
+	}
+	if len(r.Warnings) != 2 {
+		t.Fatalf("want a warning per shadowing RedirectMatch, got %+v", r.Warnings)
+	}
+	for i, want := range []string{
+		"location ~ ^/product(-category)?/ { return 301 /shop/; }",
+		"location ~ ^/he/product(-category)?/ { return 301 /he/shop/; }",
+	} {
+		if w := r.Warnings[i].Reason; !strings.Contains(w, want) || !strings.Contains(w, "/product/") {
+			t.Errorf("warning %d: want the raw recipe %q and an example path, got %q", i, want, w)
+		}
+	}
+}
+
+// A RedirectMatch before the exact lines wins in Apache too: still a rule.
+func TestRedirectMatchBeforeExactRedirectsStaysRule(t *testing.T) {
+	r := Convert("RedirectMatch 301 ^/product/ /shop/\nRedirect 301 /product/mug/ https://academy.example/product/mug/", "/")
+	if len(r.Rules) != 1 || len(r.Redirects) != 1 || len(r.Warnings) != 0 {
+		t.Fatalf("want 1 rule + 1 redirect, no warning, got rules %+v redirects %+v warnings %+v", r.Rules, r.Redirects, r.Warnings)
+	}
+}
+
+// [R=4xx] answers that status: dropping it silently would open the URL.
+func TestRewriteRuleStatus4xxWarns(t *testing.T) {
+	for line, want := range map[string]string{
+		`RewriteRule ^wp-admin/admin-ajax\.php$ - [R=410,L]`: "location = /wp-admin/admin-ajax.php { return 410; }",
+		`RewriteRule ^old/ - [R=403,NC]`:                      "location ~* ^/old/ { return 403; }",
+		`RewriteRule ^gone$ /new [R=404]`:                     "location = /gone { return 404; }",
+	} {
+		r := Convert(line, "/")
+		if len(r.Rules) != 0 || len(r.Warnings) != 1 || !r.Warnings[0].Security || !strings.Contains(r.Warnings[0].Reason, want) {
+			t.Errorf("%s: want no rule and one security warning with %q, got rules %+v warnings %+v", line, want, r.Rules, r.Warnings)
+		}
+	}
+	r := Convert(`RewriteRule ^a$ - [R=301]`, "/")
+	if len(r.Rules) != 0 || len(r.Warnings) != 1 {
+		t.Errorf("- [R=301]: want one warning, got %+v", r)
+	}
+}

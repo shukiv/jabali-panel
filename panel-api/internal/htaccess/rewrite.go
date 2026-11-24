@@ -1,12 +1,15 @@
 package htaccess
 
 import (
+	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/nginxrules"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/redirects"
 )
 
 // convertRewriteRule handles `RewriteRule pattern substitution [flags]`,
@@ -49,6 +52,22 @@ func convertRewriteRule(res *Result, st *state, args []string, ln line) {
 	}
 	if flags.gone {
 		res.warnSec(ln.num, ln.text, "RewriteRule [G] (gone/410) has no typed-rule equivalent — not converted")
+		return
+	}
+	// [R=4xx/5xx] answers that status (Apache drops the substitution), like
+	// [G]: an access denial with no typed-rule equivalent. Checked before the
+	// "-" no-op below, which would otherwise drop it without a word.
+	if flags.redirect && (flags.redirectCode < 300 || flags.redirectCode > 399) {
+		code := strconv.Itoa(flags.redirectCode)
+		reason := "RewriteRule [R=" + code + "] answers " + code + " and has no typed-rule equivalent — not converted"
+		if p, ok := rebasePattern(pattern, st.base); ok {
+			reason += "; an administrator can add it under Raw directives: " + rawLocation(p, flags.nocase, "return "+code+";")
+		}
+		res.warnSec(ln.num, ln.text, reason)
+		return
+	}
+	if sub == "-" && flags.redirect {
+		res.warn(ln.num, ln.text, "RewriteRule - [R] redirects to the same URL — not converted")
 		return
 	}
 
@@ -204,6 +223,26 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 		res.warn(ln.num, ln.text, "RedirectMatch with status "+strconv.Itoa(code)+" can't be a rewrite rule (only 301/302) — not converted")
 		return
 	}
+	// Redirect and RedirectMatch are one mod_alias pass in Apache: the first
+	// line that matches wins. A rewrite rule runs before every location, so
+	// it would beat the exact page redirects of EARLIER Redirect lines that
+	// it also matches (a later Redirect loses in Apache too). Such a
+	// RedirectMatch is left to a regex location, which the exact ones beat.
+	if re, err := regexp.Compile(args[0]); err == nil {
+		var hit []string
+		for _, pr := range res.Redirects {
+			for _, src := range redirects.ExactSources(pr) {
+				if re.MatchString(src) {
+					hit = append(hit, src)
+				}
+			}
+		}
+		if len(hit) > 0 {
+			res.warn(ln.num, ln.text, fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s, %d paths) win in Apache, but a rewrite rule would run before them — not converted. An administrator can add it under Raw directives, where those redirects still win: %s",
+				hit[0], len(hit), rawLocation(args[0], false, fmt.Sprintf("return %d %s;", code, quoteRawToken(args[1])))))
+			return
+		}
+	}
 	flag := "redirect"
 	if code == 301 {
 		flag = "permanent"
@@ -214,6 +253,33 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 		Replacement: args[1],
 		Flag:        flag,
 	})
+}
+
+// rawLocation is the raw-directive location block for an nginx regex: an
+// exact `location =` when the regex is one anchored literal path (it then
+// also beats the vhost's own regex locations, e.g. the .php handler), else a
+// regex `location ~` (`~*` for a case-insensitive [NC] rule).
+func rawLocation(pattern string, nocase bool, body string) string {
+	if nocase {
+		return "location ~* " + quoteRawToken(pattern) + " { " + body + " }"
+	}
+	if strings.HasPrefix(pattern, "^/") && strings.HasSuffix(pattern, "$") && !strings.HasSuffix(pattern, `\$`) {
+		if re, err := regexp.Compile(pattern[1 : len(pattern)-1]); err == nil {
+			if lit, complete := re.LiteralPrefix(); complete {
+				return "location = " + quoteRawToken(lit) + " { " + body + " }"
+			}
+		}
+	}
+	return "location ~ " + quoteRawToken(pattern) + " { " + body + " }"
+}
+
+// quoteRawToken double-quotes s for an nginx directive when it holds a
+// character that would end or open a token.
+func quoteRawToken(s string) string {
+	if !strings.ContainsAny(s, " \t;{}#\"'") {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
 }
 
 // convertHeader handles `Header [always] set Name value`. Only the set/add
@@ -365,6 +431,7 @@ type rewriteFlags struct {
 	forbidden    bool
 	gone         bool
 	qsa          bool
+	nocase       bool
 }
 
 func parseRewriteFlags(toks []string) rewriteFlags {
@@ -387,6 +454,8 @@ func parseRewriteFlags(toks []string) rewriteFlags {
 			f.gone = true
 		case part == "QSA", part == "qsappend":
 			f.qsa = true
+		case part == "NC", part == "nocase":
+			f.nocase = true
 		case part == "R", strings.HasPrefix(part, "R="), part == "redirect":
 			f.redirect = true
 			f.redirectCode = 302
