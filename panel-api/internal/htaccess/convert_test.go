@@ -494,3 +494,141 @@ php_value memory_limit 256M`
 		t.Errorf("rule order not preserved: %v", []string{r.Rules[0].Type, r.Rules[1].Type, r.Rules[2].Type})
 	}
 }
+
+// Apache runs Redirect and RedirectMatch as one first-match pass, so the
+// earlier exact Redirect lines beat a later catch-all RedirectMatch. A typed
+// rewrite rule would run before their exact locations and shadow them all.
+func TestRedirectMatchAfterExactRedirectsNotTyped(t *testing.T) {
+	in := `Redirect 301 /product/mug/ https://academy.example/product/mug/
+Redirect 301 /he/product/cup/ https://academy.example/he/product/cup/
+RedirectMatch 301 "^/product(-category)?/" "/shop/"
+RedirectMatch 301 "^/he/product(-category)?/" "/he/shop/"
+RedirectMatch 301 ^/blog/(.*)$ https://new.example/$1`
+	r := Convert(in, "/")
+	if len(r.Redirects) != 2 {
+		t.Fatalf("want the 2 exact redirects, got %+v", r.Redirects)
+	}
+	// The later ^/blog/ one follows the demoted ones: a rule would jump ahead.
+	if len(r.Rules) != 0 {
+		t.Fatalf("want no rule, got %+v", r.Rules)
+	}
+	if len(r.Warnings) != 3 {
+		t.Fatalf("want a warning per RedirectMatch, got %+v", r.Warnings)
+	}
+	for i, want := range []string{
+		"(/product/mug/; 1 in all)",
+		"(/he/product/cup/; 1 in all)",
+		"an earlier RedirectMatch was left for Raw directives",
+	} {
+		if w := r.Warnings[i].Reason; !strings.Contains(w, want) {
+			t.Errorf("warning %d: want %q, got %q", i, want, w)
+		}
+	}
+	for i, want := range []string{
+		"location ~ ^/product(-category)?/ { return 301 /shop/$is_args$args; }",
+		"location ~ ^/he/product(-category)?/ { return 301 /he/shop/$is_args$args; }",
+		"location ~ ^/blog/(.*)$ { return 301 https://new.example/$1$is_args$args; }",
+	} {
+		if w := r.Warnings[i].Reason; !strings.Contains(w, want) {
+			t.Errorf("warning %d: want the raw recipe %q, got %q", i, want, w)
+		}
+	}
+}
+
+// A RedirectMatch before the exact lines wins in Apache too: still a rule.
+func TestRedirectMatchBeforeExactRedirectsStaysRule(t *testing.T) {
+	r := Convert("RedirectMatch 301 ^/product/ /shop/\nRedirect 301 /product/mug/ https://academy.example/product/mug/", "/")
+	if len(r.Rules) != 1 || len(r.Redirects) != 1 || len(r.Warnings) != 0 {
+		t.Fatalf("want 1 rule + 1 redirect, no warning, got rules %+v redirects %+v warnings %+v", r.Rules, r.Redirects, r.Warnings)
+	}
+}
+
+// [R=4xx] answers that status: dropping it silently would open the URL.
+func TestRewriteRuleStatus4xxWarns(t *testing.T) {
+	for line, want := range map[string]string{
+		`RewriteRule ^wp-admin/admin-ajax\.php$ - [R=410,L]`: "location = /wp-admin/admin-ajax.php { return 410; }",
+		`RewriteRule ^old/ - [R=403,NC]`:                     "location ~* ^/old/ { return 403; }",
+		`RewriteRule ^gone$ /new [R=404]`:                    "location = /gone { return 404; }",
+	} {
+		r := Convert(line, "/")
+		if len(r.Rules) != 0 || len(r.Warnings) != 1 || !r.Warnings[0].Security || !strings.Contains(r.Warnings[0].Reason, want) {
+			t.Errorf("%s: want no rule and one security warning with %q, got rules %+v warnings %+v", line, want, r.Rules, r.Warnings)
+		}
+	}
+	r := Convert(`RewriteRule ^a$ - [R=301]`, "/")
+	if len(r.Rules) != 0 || len(r.Warnings) != 1 {
+		t.Errorf("- [R=301]: want one warning, got %+v", r)
+	}
+}
+
+// The .htaccess is the tenant's; the recipe is for an administrator to paste
+// into unrestricted raw directives, so it must never carry a token or block
+// break from the file.
+func TestRawRecipeNeverCarriesInjection(t *testing.T) {
+	for _, in := range []string{
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 ^/product/ \"/shop/; } location /x { return 200 pwn\"",
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 \"^/product/(;})?\" /shop/",
+		"Redirect 301 /product/a/ https://x.example/\nRedirectMatch 301 ^/product/ /shop/$host",
+		`RewriteRule "^a b$" - [R=410]`,
+		`RewriteRule ^a\ - [R=410]`,
+		"RewriteRule ^a#{ - [R=410]",
+	} {
+		r := Convert(in, "/")
+		if len(r.Rules) != 0 || len(r.Warnings) != 1 {
+			t.Errorf("%q: want no rule and one warning, got rules %+v warnings %+v", in, r.Rules, r.Warnings)
+			continue
+		}
+		if w := r.Warnings[0].Reason; strings.Contains(w, "location ~") || strings.Contains(w, "location =") || strings.Contains(w, "pwn") {
+			t.Errorf("%q: recipe must be withheld, got %q", in, w)
+		}
+	}
+}
+
+// An escape the regex decodes into a literal (`\x3b` is ";") must not reach
+// a `location =` recipe; the escaped regex itself is safe as `location ~`.
+func TestRawRecipeDecodedLiteralStaysRegex(t *testing.T) {
+	r := Convert(`RewriteRule ^a\x3b\x7d$ - [R=410]`, "/")
+	if len(r.Warnings) != 1 {
+		t.Fatalf("want one warning, got %+v", r.Warnings)
+	}
+	if w := r.Warnings[0].Reason; !strings.Contains(w, `location ~ ^/a\x3b\x7d$ { return 410; }`) {
+		t.Errorf("want the regex recipe, got %q", w)
+	}
+}
+
+// After a RedirectMatch is left for raw directives, Apache still tries it
+// before every later line: a later RedirectMatch can't become a rule that
+// runs first, and a later Redirect it covers is never reached.
+func TestDemotedRedirectMatchKeepsApacheOrder(t *testing.T) {
+	in := `Redirect 301 /product/mug/ https://x.example/mug/
+RedirectMatch 301 ^/product/ /shop/
+RedirectMatch 301 ^/product/special/(.*)$ /y/$1
+Redirect 301 /product/late/ https://x.example/late/
+Redirect 301 /about https://x.example/about`
+	r := Convert(in, "/")
+	if len(r.Rules) != 0 {
+		t.Fatalf("want no rule, got %+v", r.Rules)
+	}
+	if len(r.Redirects) != 2 || r.Redirects[0].Source != "/product/mug/" || r.Redirects[1].Source != "/about" {
+		t.Fatalf("want /product/mug/ and /about only, got %+v", r.Redirects)
+	}
+	if len(r.Warnings) != 3 || !strings.Contains(r.Warnings[2].Reason, "(^/product/) left for Raw directives already redirects this path") {
+		t.Fatalf("want 3 warnings, the last for /product/late/, got %+v", r.Warnings)
+	}
+}
+
+// A target with its own query keeps it; mod_alias appends none then.
+func TestRedirectMatchRecipeTargetQuery(t *testing.T) {
+	r := Convert("Redirect 301 /p/a https://x.example/\nRedirectMatch 301 ^/p/ /shop/?from=p", "/")
+	if len(r.Warnings) != 1 || !strings.Contains(r.Warnings[0].Reason, "{ return 301 /shop/?from=p; }") {
+		t.Fatalf("want the target unchanged, got %+v", r.Warnings)
+	}
+}
+
+// Only an error status gets a return recipe.
+func TestRewriteRuleOddStatusNoRecipe(t *testing.T) {
+	r := Convert(`RewriteRule ^a$ - [R=200]`, "/")
+	if len(r.Warnings) != 1 || strings.Contains(r.Warnings[0].Reason, "{ return") {
+		t.Fatalf("want a warning without a recipe, got %+v", r.Warnings)
+	}
+}

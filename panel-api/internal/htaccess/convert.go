@@ -1,6 +1,7 @@
 package htaccess
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -133,6 +134,10 @@ type state struct {
 	pendingConds     []condLine
 	access           []accessLine
 	noted            map[string]bool // dedup keys for noteOnce
+	// matchDemoted: a RedirectMatch was left for raw directives, so every
+	// later one is too; demotedMatch holds those that compiled.
+	matchDemoted bool
+	demotedMatch []*regexp.Regexp
 }
 
 type condLine struct {
