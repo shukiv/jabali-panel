@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -47,13 +48,26 @@ type loginAllowlistConf struct {
 	TTL     string `json:"ttl"` // Go duration, e.g. "168h"
 }
 
-// sshAcceptedRe matches sshd's success line (journald `-o cat` or auth.log),
-// capturing the login user and source IP. Covers publickey / password /
-// keyboard-interactive[/pam]. Example:
+// sshAcceptedRe matches the MESSAGE of sshd's success line, as `journalctl
+// -o cat` prints it, capturing the login user and source IP. Covers publickey /
+// password / keyboard-interactive[/pam]. Example:
 //
 //	Accepted publickey for alice from 203.0.113.7 port 51234 ssh2: RSA SHA256:...
+//
+// Anchored at both ends: sshd logs a client-chosen username verbatim
+// ("Invalid user <name> from <ip> ..."), so an unanchored match let a
+// pre-auth client spell out an Accepted line in its username.
 var sshAcceptedRe = regexp.MustCompile(
-	`Accepted (?:publickey|password|keyboard-interactive(?:/pam)?) for (\S+) from (\S+) port \d+`)
+	`^Accepted (?:publickey|password|keyboard-interactive(?:/pam)?) for (\S+) from (\S+) port \d+ ssh2(?:: .*)?$`)
+
+// parseSSHAccepted returns the user and IP of an sshd success message.
+func parseSSHAccepted(line string) (user, ip string, ok bool) {
+	m := sshAcceptedRe.FindStringSubmatch(line)
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
+}
 
 // readLoginAllowlistConf returns the pushed policy, defaulting to enabled with
 // the 7d TTL when the file is absent/unreadable (fresh host before first push,
@@ -127,6 +141,7 @@ func StartLoginAllowlistWatcher(ctx context.Context, log *slog.Logger) {
 		log = slog.Default()
 	}
 	dedup := newLoginDedup()
+	go dropSSHAllowlistEntriesUntilDone(ctx, log)
 	go func() {
 		for {
 			if ctx.Err() != nil {
@@ -149,6 +164,11 @@ func StartLoginAllowlistWatcher(ctx context.Context, log *slog.Logger) {
 // is cancelled.
 func runLoginAllowlistTail(ctx context.Context, dedup *loginDedup, log *slog.Logger) error {
 	cmd := loginTailCmd(ctx)
+	if cmd == nil {
+		log.Warn("login-allowlist: journalctl not found; ssh logins are not auto-allowlisted")
+		<-ctx.Done()
+		return nil
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("stdout pipe: %w", err)
@@ -166,29 +186,30 @@ func runLoginAllowlistTail(ctx context.Context, dedup *loginDedup, log *slog.Log
 	return cmd.Wait()
 }
 
-// loginTailCmd builds the log-follow command. Prefer journald (Debian default);
-// try both ssh.service and sshd.service unit names (distro-dependent). If
-// journalctl is absent, fall back to `tail -F /var/log/auth.log`.
+// loginTailCmd builds the log-follow command: journald only, both unit
+// names (distro-dependent), sshd's root processes only (_UID=0). A plain
+// syslog file is not read: its "sshd[pid]:" tag is whatever the sender wrote
+// (`logger -t`), so any local account could forge an Accepted line there.
+// Nil when journalctl is absent.
 func loginTailCmd(ctx context.Context) *exec.Cmd {
-	if _, err := exec.LookPath("journalctl"); err == nil {
-		// --since now avoids re-scanning historical log on every restart (a busy
-		// host would otherwise re-allowlist churn on each boot).
-		return execCommandContext(ctx, "journalctl",
-			"-u", "ssh.service", "-u", "sshd.service",
-			"-f", "-n", "0", "--since", "now", "-o", "cat")
+	if _, err := exec.LookPath("journalctl"); err != nil {
+		return nil
 	}
-	return execCommandContext(ctx, "tail", "-F", "/var/log/auth.log")
+	// --since now avoids re-scanning historical log on every restart (a busy
+	// host would otherwise re-allowlist churn on each boot).
+	return execCommandContext(ctx, "journalctl",
+		"-u", "ssh.service", "-u", "sshd.service", "_UID=0",
+		"-f", "-n", "0", "--since", "now", "-o", "cat")
 }
 
 // handleSSHLogLine parses one log line and, on a successful-login match for a
 // routable IP not seen within the dedup window, allowlists it per the pushed
 // policy. Exported-package-internal for the unit test.
 func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *slog.Logger, now time.Time) {
-	m := sshAcceptedRe.FindStringSubmatch(line)
-	if m == nil {
+	user, ip, ok := parseSSHAccepted(line)
+	if !ok {
 		return
 	}
-	user, ip := m[1], m[2]
 	// GH #709: only the operator's root SSH is auto-allowlisted. A TENANT SSH
 	// login (their own OS username via jabali-ssh-shell) must NOT add a
 	// server-wide CrowdSec allowlist entry — a compromised tenant key would
@@ -211,7 +232,7 @@ func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *
 	if !dedup.allow(ip, now) {
 		return
 	}
-	reason := "auto-whitelist: ssh " + truncateReason(user, 120)
+	reason := sshAllowlistReasonPrefix + truncateReason(user, 120)
 	addCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	if err := addToJabaliAllowlist(addCtx, ip, reason, conf.TTL); err != nil {
@@ -219,6 +240,65 @@ func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *
 		return
 	}
 	log.Info("login-allowlist: ssh login allowlisted", "ip", ip, "user", user, "ttl", conf.TTL)
+}
+
+// sshAllowlistReasonPrefix marks the entries this watcher adds.
+const sshAllowlistReasonPrefix = "auto-whitelist: ssh "
+
+// dropSSHAllowlistEntries removes every entry this watcher added to the jabali
+// allowlist. Run once per agent start: an older watcher matched an Accepted
+// line anywhere in a log line, so entries it added may not be real root logins.
+// A genuine root login adds its IP again. Entries the admin added by hand (any
+// other description) stay. Returns done=false when cscli could not be asked,
+// so the caller retries.
+func dropSSHAllowlistEntries(ctx context.Context) (removed int, done bool) {
+	out, err := runCscliJSON(ctx, "allowlists", "inspect", jabaliAllowlistName)
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return 0, true // no CrowdSec on this box
+		}
+		if msg := strings.ToLower(err.Error()); strings.Contains(msg, "not found") || strings.Contains(msg, "does not exist") || strings.Contains(msg, "no such") {
+			return 0, true // no such allowlist yet: nothing to drop
+		}
+		return 0, false // LAPI not up yet: retry
+	}
+	var raw rawAllowlistInspect
+	if json.Unmarshal(out, &raw) != nil {
+		return 0, false
+	}
+	for _, it := range raw.Items {
+		if !strings.HasPrefix(it.Description, sshAllowlistReasonPrefix) {
+			continue
+		}
+		if execCommandContext(ctx, "cscli", "allowlists", "remove", jabaliAllowlistName, it.Value).Run() == nil {
+			removed++
+		}
+	}
+	if removed > 0 {
+		requestListsRerender()
+	}
+	return removed, true
+}
+
+// dropSSHAllowlistEntriesUntilDone retries dropSSHAllowlistEntries every five
+// minutes until cscli answers (CrowdSec may start after the agent).
+func dropSSHAllowlistEntriesUntilDone(ctx context.Context, log *slog.Logger) {
+	for {
+		c, cancel := context.WithTimeout(ctx, 30*time.Second)
+		removed, done := dropSSHAllowlistEntries(c)
+		cancel()
+		if done {
+			if removed > 0 {
+				log.Info("login-allowlist: dropped ssh auto-allowlist entries; real root logins add their IP again", "removed", removed)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Minute):
+		}
+	}
 }
 
 func truncateReason(s string, max int) string {
