@@ -742,6 +742,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		res, err := auth.BootstrapAdmin(ctx, userRepo, auth.BootstrapOptions{
 			Email:      os.Getenv("JABALI_BOOTSTRAP_ADMIN_EMAIL"),
+			Username:   os.Getenv("JABALI_BOOTSTRAP_ADMIN_USERNAME"),
 			Password:   os.Getenv("JABALI_BOOTSTRAP_ADMIN_PASSWORD"),
 			BcryptCost: bcrypt.DefaultCost,
 			Kratos:     bootstrapKratos,

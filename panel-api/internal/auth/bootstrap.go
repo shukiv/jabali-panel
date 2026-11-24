@@ -29,6 +29,10 @@ type BootstrapOptions struct {
 	Email      string
 	Password   string
 	BcryptCost int
+	// Username is the login username the installer was given
+	// (JABALI_BOOTSTRAP_ADMIN_USERNAME). Empty, or not a valid username:
+	// derived from Email's local part, as before.
+	Username string
 
 	// Kratos, when non-nil, makes BootstrapAdmin atomically create a Kratos
 	// identity alongside the panel user row. On any failure the created side
@@ -103,6 +107,15 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 	// bootstrap admin must have one (derived from the email local-part).
 	// Harmless under the old schema where username is optional.
 	adminUsername := deriveBootstrapUsername(opt.Email)
+	if opt.Username != "" {
+		if bootstrapUsernameValid.MatchString(opt.Username) {
+			adminUsername = opt.Username
+		} else {
+			// Never fail the boot over it: a panel that can't start has no admin.
+			slog.Warn("bootstrap: admin username is not a valid username; using the one derived from the email",
+				"given", opt.Username, "using", adminUsername)
+		}
+	}
 	u := &models.User{
 		ID:           ids.NewULID(),
 		Email:        opt.Email,
@@ -166,6 +179,9 @@ func BootstrapAdmin(ctx context.Context, users repository.UserRepository, opt Bo
 }
 
 var bootstrapUsernameInvalid = regexp.MustCompile(`[^a-z0-9_-]`)
+
+// bootstrapUsernameValid is the users API's username rule (api.usernameRe).
+var bootstrapUsernameValid = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
 
 // deriveBootstrapUsername turns the admin email into a schema-valid username
 // (local-part, lowercased, non [a-z0-9_-] -> _, starts [a-z_], max 32). Same

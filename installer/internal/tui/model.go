@@ -624,9 +624,12 @@ func (m Model) handleConfigKey(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.fields[m.focus].env == "JABALI_HOSTNAME" {
 			// Hostname edited → refresh the untouched derived fields.
 			applyDerived(m.fields, m.fields[m.focus].input.Value())
-		} else if m.fields[m.focus].derive != nil {
+		} else if m.fields[m.focus].derive != nil || m.fields[m.focus].fromEmail {
 			// Operator typed into a derivable field → stop auto-deriving it.
 			m.fields[m.focus].touched = true
+		}
+		if m.fields[m.focus].env == "JABALI_ADMIN_EMAIL" {
+			applyUsernameFromEmail(m.fields)
 		}
 		return m, cmd
 	}
@@ -798,7 +801,13 @@ func (m Model) body() string {
 	case screenConfig:
 		b.WriteString(titleStyle.Render("Configuration"))
 		b.WriteString("\n\n")
-		tightCfg := m.tightRows(len(visibleFields(m.fields, m.selected["dns"]))*2 + 12)
+		want := len(visibleFields(m.fields, m.selected["dns"]))*2 + 12
+		for _, i := range visibleFields(m.fields, m.selected["dns"]) {
+			if m.fields[i].phpSelect { // the chips wrap onto more rows when narrow
+				want += strings.Count(phpChips(m.fields[i], false, m.contentWidth()), "\n")
+			}
+		}
+		tightCfg := m.tightRows(want)
 		for _, i := range visibleFields(m.fields, m.selected["dns"]) {
 			f := m.fields[i]
 			cur := "  "
@@ -827,8 +836,11 @@ func (m Model) body() string {
 		if m.configErr != "" {
 			b.WriteString("\n" + errStyle.Render(m.configErr) + "\n")
 		}
-		b.WriteString("\n" + helpStyle.Render(m.wrap("tab/↑↓: move fields   ←→+space: toggle PHP   "+
-			"enter: continue   esc: back")))
+		help := "tab/↑↓: move fields   ←→+space: toggle PHP   enter: continue   esc: back"
+		if tightCfg {
+			help = "tab/↑↓: fields  ←→ space: PHP  enter: next  esc: back" // one row at 60 columns
+		}
+		b.WriteString("\n" + helpStyle.Render(m.wrap(help)))
 	case screenHostname:
 		b.WriteString(titleStyle.Render("Panel hostname"))
 		b.WriteString("\n\n")

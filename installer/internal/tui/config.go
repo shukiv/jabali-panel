@@ -21,6 +21,9 @@ type configField struct {
 	derive  func(host string) string
 	touched bool
 	input   textinput.Model
+	// fromEmail: defaults to a username derived from the admin email (as
+	// the panel does without one), until the operator edits it.
+	fromEmail bool
 
 	// PHP version multi-select (phpSelect=true): available versions + which are
 	// checked + the horizontal cursor. Same list the panel offers.
@@ -38,6 +41,31 @@ var availablePHPVersions = []string{"7.4", "8.0", "8.1", "8.2", "8.3", "8.4", "8
 // hostnameRe takes a letters-only TLD or an IDN TLD in punycode (xn--p1ai = .рф).
 var hostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([-a-zA-Z0-9]*[a-zA-Z0-9])?\.)+(?:[a-zA-Z]{2,}|[xX][nN]--[a-zA-Z0-9-]{1,59})$`)
 var emailRe = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
+// usernameRe is the panel's username rule (panel-api usernameRe).
+var usernameRe = regexp.MustCompile(`^[a-z_][a-z0-9_-]{0,31}$`)
+var usernameInvalidRe = regexp.MustCompile(`[^a-z0-9_-]`)
+
+// deriveAdminUsername mirrors panel-api auth.deriveBootstrapUsername: the
+// email's local part, lowercased, other characters -> _, trimmed of -, starting
+// with a letter or _, at most 32 characters; "admin" when nothing is left.
+func deriveAdminUsername(email string) string {
+	local := email
+	if i := strings.IndexByte(email, '@'); i > 0 {
+		local = email[:i]
+	}
+	local = strings.Trim(usernameInvalidRe.ReplaceAllString(strings.ToLower(local), "_"), "-")
+	if local == "" {
+		local = "admin"
+	}
+	if c := local[0]; !(c == '_' || (c >= 'a' && c <= 'z')) {
+		local = "u" + local
+	}
+	if len(local) > 32 {
+		local = local[:32]
+	}
+	return local
+}
 
 // newConfigFields builds the ordered config inputs. The panel hostname is
 // pre-seedable from the environment (JABALI_HOSTNAME) so a half-headless run
@@ -57,6 +85,8 @@ func newConfigFields(seedHostname string) []configField {
 		{env: "JABALI_HOSTNAME", label: "Panel hostname (FQDN)", ph: "panel.example.com", required: true, input: mk("JABALI_HOSTNAME", "", "panel.example.com", seedHostname)},
 		{env: "JABALI_ADMIN_EMAIL", label: "Admin login email", ph: "admin@example.com", required: true,
 			derive: func(h string) string { return "admin@" + h }, input: mk("", "", "admin@example.com", "")},
+		{env: "JABALI_ADMIN_USERNAME", label: "Admin login username", ph: "admin", required: true, fromEmail: true,
+			input: mk("", "", "admin", "")},
 		{env: "JABALI_NS1_NAME", label: "Primary nameserver (DNS)", ph: "ns1.example.com", dnsOnly: true,
 			derive: func(h string) string { return "ns1." + h }, input: mk("", "", "ns1.example.com", "")},
 		{env: "JABALI_NS2_NAME", label: "Secondary nameserver (DNS)", ph: "ns2.example.com", dnsOnly: true,
@@ -74,12 +104,29 @@ func newConfigFields(seedHostname string) []configField {
 // hostname unless the operator overrode them.
 func applyDerived(fields []configField, host string) {
 	host = strings.TrimSpace(host)
-	if host == "" {
-		return
+	if host != "" {
+		for i := range fields {
+			if fields[i].derive != nil && !fields[i].touched {
+				fields[i].input.SetValue(fields[i].derive(host))
+			}
+		}
+	}
+	applyUsernameFromEmail(fields)
+}
+
+// applyUsernameFromEmail fills the untouched admin username from the admin
+// email. Called after the email changes (directly, or derived from the
+// hostname).
+func applyUsernameFromEmail(fields []configField) {
+	email := ""
+	for _, f := range fields {
+		if f.env == "JABALI_ADMIN_EMAIL" {
+			email = strings.TrimSpace(f.input.Value())
+		}
 	}
 	for i := range fields {
-		if fields[i].derive != nil && !fields[i].touched {
-			fields[i].input.SetValue(fields[i].derive(host))
+		if fields[i].fromEmail && !fields[i].touched {
+			fields[i].input.SetValue(deriveAdminUsername(email))
 		}
 	}
 }
@@ -119,6 +166,10 @@ func validateConfig(fields []configField, dnsOn bool) string {
 		case "JABALI_ADMIN_EMAIL":
 			if v != "" && !emailRe.MatchString(v) {
 				return f.label + ": not a valid email"
+			}
+		case "JABALI_ADMIN_USERNAME":
+			if v != "" && !usernameRe.MatchString(v) {
+				return f.label + ": lowercase letters, digits, _ and -, starting with a letter or _ (max 32)"
 			}
 		}
 	}
