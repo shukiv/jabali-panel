@@ -148,14 +148,10 @@ export const UserDomainDrawer = ({ open, onClose, mode = "web" }: UserDomainDraw
           // Add DNS Zone. Forced off when the DNS module isn't running (the
           // checkbox is hidden then) → external DNS.
           manage_dns: dnsEnabled ? (values.manage_dns ?? true) : false,
-          // GH #1541: auto-create the www record for an apex domain (exactly two
-          // labels, e.g. example.com), never for a subdomain (blog.example.com).
-          // Replaces the old manual "Create www record" checkbox. Heuristic, not
-          // a public-suffix lookup: it under-creates www for multi-part-TLD
-          // apexes (example.co.uk → 3 labels → skipped) but never creates a wrong
-          // www.<subdomain> record. create_www also drives the cert SAN, so it
-          // stays independent of manage_dns.
-          create_www: values.name.split(".").length === 2,
+          // GH #1541: no www choice here. Left out, the server adds www for a
+          // main domain (example.com, example.co.il, by the public suffix
+          // list) and not for a subdomain (blog.example.com). The Overview
+          // tab switches it later.
           // Advanced: reverse proxy stays a create-time option (no later path to
           // convert a plain web domain into one). Document root is not set here.
           reverse_proxy: isReverse,

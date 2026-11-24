@@ -56,8 +56,10 @@ type createDomainInput struct {
 	// snapshot-copied onto the new domain's NginxCustomDirectives. Empty for every
 	// non-template create.
 	WebTemplateID  string
-	SSLMode        string // "" → le
-	CreateWWW      bool
+	SSLMode string // "" → le
+	// CreateWWW nil = domainops.DefaultCreateWWW: on for a main domain
+	// (example.com, example.co.il), off for a subdomain.
+	CreateWWW      *bool
 	TempURLEnabled bool
 	// ReverseProxy (GH #1175): make this a reverse-proxy domain — the panel
 	// allocates a loopback port and the vhost proxies `/` to it. No DocRoot/PHP.
@@ -276,7 +278,7 @@ func createDomainOp(ctx context.Context, h *domainHandler, in createDomainInput)
 		DNSTemplateID:    in.DNSTemplateID,
 		WebTemplateID:    in.WebTemplateID,
 		SSLMode:          in.SSLMode,
-		CreateWWW:        in.CreateWWW,
+		CreateWWW:        createWWWOrDefault(in.CreateWWW, in.Name),
 		TempURLEnabled:   in.TempURLEnabled,
 		ReverseProxy:     in.ReverseProxy,
 		ReverseProxyPort: int(in.ReverseProxyPort),
@@ -354,4 +356,13 @@ func (h *domainHandler) createDomainHooks(skipInlineSSL bool) domainops.CreateHo
 		}
 	}
 	return hooks
+}
+
+// createWWWOrDefault is the caller's www choice, or the default for name when
+// it made none.
+func createWWWOrDefault(choice *bool, name string) bool {
+	if choice != nil {
+		return *choice
+	}
+	return domainops.DefaultCreateWWW(name)
 }

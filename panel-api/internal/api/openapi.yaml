@@ -805,6 +805,9 @@ paths:
               required: [name]
               properties:
                 name: { type: string, example: example.com }
+                create_www:
+                  type: boolean
+                  description: "Add a www CNAME to the domain's zone and put www.<domain> in its certificate. Left out: on for a main domain (example.com, example.co.il; the public suffix list decides), off for a subdomain (blog.example.com). PATCH /domains/{id} changes it later."
       responses:
         "201": { description: Created, content: { application/json: { schema: { $ref: "#/components/schemas/Domain" } } } }
 

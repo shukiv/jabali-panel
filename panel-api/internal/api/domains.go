@@ -174,9 +174,11 @@ type createDomainRequest struct {
 	MailProvider    string `json:"mail_provider"`
 	M365Onmicrosoft string `json:"m365_onmicrosoft"`
 	GoogleDKIM      string `json:"google_dkim"`
-	// CreateWWW (GH #225) opts the domain into the bootstrap www CNAME.
-	// Omitted/false => no www record (the new default).
-	CreateWWW bool `json:"create_www"`
+	// CreateWWW (GH #225) opts the domain into the bootstrap www CNAME and
+	// www.<domain> in the certificate. Omitted => on for a main domain
+	// (example.com, example.co.il), off for a subdomain
+	// (domainops.DefaultCreateWWW).
+	CreateWWW *bool `json:"create_www"`
 	// TempURLEnabled (migration 000243) opts the domain into a preview
 	// URL (<slug>.preview.<hostname>). Off by default.
 	TempURLEnabled bool `json:"temp_url_enabled"`

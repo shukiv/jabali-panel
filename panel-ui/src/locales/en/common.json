@@ -529,7 +529,6 @@
     "volumes": "Volumes"
   },
   "domaincreate": {
-    "adds_a_www_cname_pointing_at_the_domain_apex": "Adds a www CNAME pointing at the domain apex. Off by default — leave unchecked for subdomains or domains that don't serve a www host.",
     "doc_root": "Doc Root",
     "google_dkim_value": "Google DKIM value",
     "leave_empty_for_auto_generated_path": "Leave empty for auto-generated path",
@@ -542,7 +541,8 @@
     "select_a_user": "Select a user",
     "tls_certificate": "TLS certificate",
     "user": "User",
-    "where_this_domain_s_email_is_hosted_none_and": "Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs."
+    "where_this_domain_s_email_is_hosted_none_and": "Where this domain's email is hosted. 'None' and the external providers skip Jabali's mail DNS records and mail certificate SANs.",
+    "www_address_automatic_main_domain": "Automatic adds a www CNAME and puts www.<domain> in the certificate for a main domain (example.com, example.co.il), not for a subdomain (blog.example.com). You can switch it later on the domain."
   },
   "domaindeliverabilitysection": {
     "deliverability_score": "Deliverability score",
