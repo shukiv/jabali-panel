@@ -2366,6 +2366,29 @@ paths:
       security: [ { KratosSession: [] } ]
       responses: { "200": { description: OK } }
 
+  /admin/security/crowdsec/login-ips:
+    get:
+      tags: [CrowdSec]
+      summary: Login IPs CrowdSec never bans
+      description: |
+        The source IPs of recent admin panel logins and root SSH logins, kept
+        off CrowdSec's bans for the login allowlist window
+        (crowdsec_login_allowlist_ttl_hours). They are not allowlisted: the
+        AppSec WAF still inspects their requests. Empty while
+        crowdsec_login_allowlist_enabled is off.
+      security: [ { KratosSession: [] } ]
+      responses: { "200": { description: "{ items: [{value, reason, expires_at}] }" } }
+    delete:
+      tags: [CrowdSec]
+      summary: Let CrowdSec ban a login IP again
+      parameters:
+        - { name: value, in: query, required: true, schema: { type: string } }
+      security: [ { KratosSession: [] } ]
+      responses:
+        "204": { description: Removed }
+        "400": { description: value_required }
+        "404": { description: Not on the list }
+
   /admin/security/crowdsec/blocklists:
     get:
       tags: [CrowdSec]

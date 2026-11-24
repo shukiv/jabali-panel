@@ -69,6 +69,9 @@ func TestLoginWhitelistableIP(t *testing.T) {
 		"10.0.3.14":            false,
 		"192.168.1.1":          false,
 		"169.254.0.1":          false,
+		"100.64.0.1":           false, // CGNAT / tailnet
+		"100.127.255.254":      false,
+		"100.128.0.1":          true,
 		"":                     false,
 		"garbage":              false,
 	}
@@ -114,10 +117,8 @@ func TestReadLoginAllowlistConf_DefaultsWhenAbsent(t *testing.T) {
 }
 
 func TestCSLoginAllowlistApplyHandler_WritesConf(t *testing.T) {
-	orig := loginAllowlistConfPath
-	defer func() { loginAllowlistConfPath = orig }()
-	p := filepath.Join(t.TempDir(), "login-allowlist.conf")
-	loginAllowlistConfPath = p
+	withLoginBanExemptEnv(t) // switching off clears the login IP list
+	p := loginAllowlistConfPath
 
 	out, err := csLoginAllowlistApplyHandler(nil, json.RawMessage(`{"enabled":true,"ttl_hours":48}`))
 	if err != nil {
@@ -179,7 +180,7 @@ func TestParseSSHAccepted_NoUsernameInjection(t *testing.T) {
 }
 
 // The one-shot cleanup drops only the entries the SSH watcher added.
-func TestDropSSHAllowlistEntries(t *testing.T) {
+func TestDropAutoAllowlistEntries(t *testing.T) {
 	inspect := `{"items":[` +
 		`{"value":"198.51.100.9","description":"auto-whitelist: ssh root"},` +
 		`{"value":"203.0.113.5","description":"auto-whitelist: login admin@example.com"},` +
@@ -197,8 +198,9 @@ func TestDropSSHAllowlistEntries(t *testing.T) {
 	}
 	t.Cleanup(func() { execCommandContext = prev })
 
-	n, done := dropSSHAllowlistEntries(context.Background())
-	if !done || n != 1 || len(removed) != 1 || removed[0] != jabaliAllowlistName+" 198.51.100.9" {
-		t.Fatalf("done=%v n=%d removed=%v, want only the ssh entry", done, n, removed)
+	n, done := dropAutoAllowlistEntries(context.Background())
+	want := []string{jabaliAllowlistName + " 198.51.100.9", jabaliAllowlistName + " 203.0.113.5"}
+	if !done || n != 2 || strings.Join(removed, ",") != strings.Join(want, ",") {
+		t.Fatalf("done=%v n=%d removed=%v, want both login entries and not the office one", done, n, removed)
 	}
 }

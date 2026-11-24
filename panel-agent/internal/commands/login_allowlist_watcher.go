@@ -2,9 +2,10 @@ package commands
 
 // login_allowlist_watcher.go — GH #598 SSH half of auto-allowlist-on-login.
 //
-// A root-side background worker tails sshd's own success log (journald, with an
-// auth.log fallback) and time-boxes the source IP of every successful SSH login
-// into the jabali CrowdSec allowlist. This is the trusted, zero-auth-path-risk
+// A root-side background worker tails sshd's own success log (journald) and
+// keeps the source IP of every successful root SSH login off CrowdSec's bans
+// for the configured window (login_ban_exempt.go; the WAF still inspects it).
+// This is the trusted, zero-auth-path-risk
 // capture point: the tenant login shell (jabali-ssh-shell) is unprivileged and
 // forgeable, and a PAM hook would sit in the auth path (lockout risk). Failure
 // here degrades to "no allowlist entry", never a lockout.
@@ -91,9 +92,9 @@ func readLoginAllowlistConf() loginAllowlistConf {
 	return c
 }
 
-// loginWhitelistableIP mirrors the panel's whitelistableIP: only routable
-// public addresses are worth allowlisting (a CrowdSec public-IP decision never
-// targets loopback/private/link-local).
+// loginWhitelistableIP: only a routable public address is worth exempting (a
+// CrowdSec public-IP decision never targets loopback/private/link-local), and
+// never carrier-grade NAT, which many unrelated clients share.
 func loginWhitelistableIP(s string) bool {
 	ip := net.ParseIP(s)
 	if ip == nil {
@@ -102,7 +103,8 @@ func loginWhitelistableIP(s string) bool {
 	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsPrivate() {
 		return false
 	}
-	return true
+	_, ok := loginBanExemptIP(s)
+	return ok
 }
 
 // loginDedup is a small mutex-guarded IP→lastSeen map, pruned on access so it
@@ -141,7 +143,8 @@ func StartLoginAllowlistWatcher(ctx context.Context, log *slog.Logger) {
 		log = slog.Default()
 	}
 	dedup := newLoginDedup()
-	go dropSSHAllowlistEntriesUntilDone(ctx, log)
+	go dropAutoAllowlistEntriesUntilDone(ctx, log)
+	go runLoginBanExemptMaintenance(ctx, log)
 	go func() {
 		for {
 			if ctx.Err() != nil {
@@ -202,9 +205,9 @@ func loginTailCmd(ctx context.Context) *exec.Cmd {
 		"-f", "-n", "0", "--since", "now", "-o", "cat")
 }
 
-// handleSSHLogLine parses one log line and, on a successful-login match for a
-// routable IP not seen within the dedup window, allowlists it per the pushed
-// policy. Exported-package-internal for the unit test.
+// handleSSHLogLine parses one log line and, on a successful root login from a
+// routable IP not seen within the dedup window, keeps that IP off CrowdSec's
+// bans per the pushed policy. Exported-package-internal for the unit test.
 func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *slog.Logger, now time.Time) {
 	user, ip, ok := parseSSHAccepted(line)
 	if !ok {
@@ -232,26 +235,23 @@ func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *
 	if !dedup.allow(ip, now) {
 		return
 	}
-	reason := sshAllowlistReasonPrefix + truncateReason(user, 120)
-	addCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
-	if err := addToJabaliAllowlist(addCtx, ip, reason, conf.TTL); err != nil {
-		log.Warn("login-allowlist: ssh allowlist add failed", "ip", ip, "user", user, "err", err)
+	ttl, _ := time.ParseDuration(conf.TTL) // readLoginAllowlistConf checked it
+	if err := addLoginBanExempt(ip, "ssh login "+truncateReason(user, 120), ttl, now); err != nil {
+		log.Warn("login-allowlist: ssh login IP not exempted from bans", "ip", ip, "user", user, "err", err)
 		return
 	}
-	log.Info("login-allowlist: ssh login allowlisted", "ip", ip, "user", user, "ttl", conf.TTL)
+	log.Info("login-allowlist: ssh login IP exempted from bans (WAF still applies)", "ip", ip, "user", user, "ttl", conf.TTL)
 }
 
-// sshAllowlistReasonPrefix marks the entries this watcher adds.
-const sshAllowlistReasonPrefix = "auto-whitelist: ssh "
-
-// dropSSHAllowlistEntries removes every entry this watcher added to the jabali
-// allowlist. Run once per agent start: an older watcher matched an Accepted
-// line anywhere in a log line, so entries it added may not be real root logins.
-// A genuine root login adds its IP again. Entries the admin added by hand (any
+// dropAutoAllowlistEntries removes every login entry older agents and panels
+// added to the jabali allowlist ("auto-whitelist: ssh …" / "auto-whitelist:
+// login …"). An allowlisted IP skips the WAF too; login IPs now only skip
+// bans (login_ban_exempt.go), and an older watcher matched an Accepted line
+// anywhere in a log line, so its entries may not be real root logins. A
+// genuine login exempts its IP again. Entries the admin added by hand (any
 // other description) stay. Returns done=false when cscli could not be asked,
 // so the caller retries.
-func dropSSHAllowlistEntries(ctx context.Context) (removed int, done bool) {
+func dropAutoAllowlistEntries(ctx context.Context) (removed int, done bool) {
 	out, err := runCscliJSON(ctx, "allowlists", "inspect", jabaliAllowlistName)
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
@@ -267,7 +267,7 @@ func dropSSHAllowlistEntries(ctx context.Context) (removed int, done bool) {
 		return 0, false
 	}
 	for _, it := range raw.Items {
-		if !strings.HasPrefix(it.Description, sshAllowlistReasonPrefix) {
+		if !strings.HasPrefix(it.Description, loginAutoReasonPrefix) {
 			continue
 		}
 		if execCommandContext(ctx, "cscli", "allowlists", "remove", jabaliAllowlistName, it.Value).Run() == nil {
@@ -280,16 +280,16 @@ func dropSSHAllowlistEntries(ctx context.Context) (removed int, done bool) {
 	return removed, true
 }
 
-// dropSSHAllowlistEntriesUntilDone retries dropSSHAllowlistEntries every five
-// minutes until cscli answers (CrowdSec may start after the agent).
-func dropSSHAllowlistEntriesUntilDone(ctx context.Context, log *slog.Logger) {
+// dropAutoAllowlistEntriesUntilDone retries dropAutoAllowlistEntries every
+// five minutes until cscli answers (CrowdSec may start after the agent).
+func dropAutoAllowlistEntriesUntilDone(ctx context.Context, log *slog.Logger) {
 	for {
 		c, cancel := context.WithTimeout(ctx, 30*time.Second)
-		removed, done := dropSSHAllowlistEntries(c)
+		removed, done := dropAutoAllowlistEntries(c)
 		cancel()
 		if done {
 			if removed > 0 {
-				log.Info("login-allowlist: dropped ssh auto-allowlist entries; real root logins add their IP again", "removed", removed)
+				log.Info("login-allowlist: dropped login entries from the allowlist; logins now only exempt their IP from bans", "removed", removed)
 			}
 			return
 		}
@@ -342,6 +342,12 @@ func csLoginAllowlistApplyHandler(_ context.Context, params json.RawMessage) (an
 	if err := os.Rename(tmp, loginAllowlistConfPath); err != nil {
 		_ = os.Remove(tmp)
 		return nil, csInternal("rename conf", err)
+	}
+	if !p.Enabled {
+		// Off means no login IP stays exempt from bans.
+		if err := clearLoginBanExempt(); err != nil {
+			return nil, csInternal("clear login IPs", err)
+		}
 	}
 	return map[string]any{"enabled": p.Enabled, "ttl_hours": ttlHours}, nil
 }

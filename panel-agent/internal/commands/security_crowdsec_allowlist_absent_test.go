@@ -14,7 +14,7 @@ func allowlistAddParams(t *testing.T) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
 		"value":      "203.0.113.7",
-		"reason":     "auto-whitelist: login admin@example.com",
+		"reason":     "office",
 		"expiration": "168h",
 	})
 	if err != nil {

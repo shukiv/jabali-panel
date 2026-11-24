@@ -702,6 +702,7 @@ func parseProtected(in []string) ([]netip.Prefix, error) {
 func listProtected(ctx context.Context, fromPanel []string) ([]netip.Prefix, error) {
 	out, _ := parseProtected(fromPanel)
 	out = append(out, listOwnAddrs()...)
+	out = append(out, loginBanExemptPrefixes(time.Now())...)
 	raw, err := runCscliJSON(ctx, "allowlists", "list")
 	if err != nil {
 		return out, fmt.Errorf("read the CrowdSec allowlists: %v", err)

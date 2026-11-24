@@ -1124,6 +1124,11 @@ func csAllowlistsAddHandler(ctx context.Context, params json.RawMessage) (any, e
 	if l := len(p.Reason); l < 3 || l > 200 {
 		return nil, csInvalidArg("reason length must be 3..200")
 	}
+	// A panel older than this agent still sends its admin-login IPs here.
+	// They go on the ban-only list: an allowlisted IP also skips the WAF.
+	if strings.HasPrefix(p.Reason, loginAutoReasonPrefix) {
+		return loginBanExemptAdd(value, p.Reason, p.Expiration)
+	}
 	expArg := ""
 	if exp := strings.TrimSpace(p.Expiration); exp != "" {
 		_, norm, derr := parseCrowdsecDuration(exp)

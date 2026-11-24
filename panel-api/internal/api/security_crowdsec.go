@@ -288,6 +288,27 @@ func RegisterSecurityCrowdSecRoutes(rg *gin.RouterGroup, cli agent.AgentInterfac
 		c.Status(http.StatusNoContent)
 	})
 
+	// Login IPs CrowdSec never bans (ADR-0153): the admin-login and root-SSH
+	// source IPs the agent keeps on its ban-only list. The WAF still inspects
+	// them. GET → {items:[{value, reason, expires_at}]}; DELETE ?value=…
+	g.GET("/login-ips", agentPassthrough(cli, "security.crowdsec.login_ips.list", nil, csCallTimeout))
+
+	g.DELETE("/login-ips", func(c *gin.Context) {
+		value := strings.TrimSpace(c.Query("value"))
+		if value == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "value_required"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(c.Request.Context(), csCallTimeout)
+		defer cancel()
+		if _, err := cli.Call(ctx, "security.crowdsec.login_ips.remove", map[string]any{"value": value}); err != nil {
+			status, ebody := translateAgentError(err)
+			c.JSON(status, ebody)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+
 	// M27 Step 3 — alerts view (read-only). Alerts = scenario fires,
 	// decisions = active enforcement. Both overlap but alerts show the
 	// signal path (scenario hit → maybe decision → maybe expired).

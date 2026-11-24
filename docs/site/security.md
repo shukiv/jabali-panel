@@ -15,6 +15,7 @@ UFW is **demoted**: only port-open/port-close baseline. Old `ufw deny from <ip>`
 
 CrowdSec extensions:
 - **Per-IP allowlists** — admin-managed, persists across CrowdSec restarts.
+- **Login IPs are never banned** — after a successful admin panel login or root SSH login, CrowdSec does not ban the source IP for the configured window (default 7 days, refreshed on activity). The IP is not allowlisted: the AppSec WAF still inspects its requests, and bans from the community blocklist or added by hand still apply. Loopback, link-local and 100.64.0.0/10 addresses are skipped. Admin → Security → CrowdSec → "Never ban login IPs" lists the IPs, removes one, sets the window, or switches it off (which empties the list).
 - **Per-scenario override** — change a scenario's severity / leakspeed / capacity at admin level.
 - **Alert routing** — a burst of new bans fires the `crowdsec.ban.spike` notification.
 
