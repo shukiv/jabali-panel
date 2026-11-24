@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -15,7 +18,6 @@ func TestSSHAcceptedRe(t *testing.T) {
 		{"Accepted publickey for alice from 203.0.113.7 port 51234 ssh2: RSA SHA256:abc", "alice", "203.0.113.7"},
 		{"Accepted password for bob from 198.51.100.9 port 22 ssh2", "bob", "198.51.100.9"},
 		{"Accepted keyboard-interactive/pam for carol from 2606:4700:4700::1111 port 40000 ssh2", "carol", "2606:4700:4700::1111"},
-		{"sshd[123]: Accepted publickey for seed15 from 10.0.3.99 port 5000 ssh2", "seed15", "10.0.3.99"},
 	}
 	for _, c := range pos {
 		m := sshAcceptedRe.FindStringSubmatch(c.line)
@@ -142,5 +144,77 @@ func TestCSLoginAllowlistApplyHandler_WritesConf(t *testing.T) {
 	_ = json.Unmarshal(b, &c)
 	if c.Enabled || c.TTL != "168h" {
 		t.Fatalf("want disabled+168h default, got %+v", c)
+	}
+}
+
+// sshd logs a client-chosen username verbatim ("Invalid user <name> from
+// ..."). A username that spells out an Accepted line must never parse as one,
+// in either log form — before the anchoring, one failed pre-auth connection
+// put an arbitrary IP on the allowlist.
+func TestParseSSHAccepted_NoUsernameInjection(t *testing.T) {
+	ok := []struct {
+		line    string
+		journal bool
+		user    string
+		ip      string
+	}{
+		{"Accepted publickey for root from 203.0.113.7 port 51234 ssh2: ED25519 SHA256:abc", true, "root", "203.0.113.7"},
+		{"Accepted password for root from 2606:4700:4700::1111 port 22 ssh2", true, "root", "2606:4700:4700::1111"},
+		{"Nov 24 20:29:40 host1 sshd[123]: Accepted publickey for root from 203.0.113.7 port 5 ssh2: RSA SHA256:x", false, "root", "203.0.113.7"},
+		{"Nov  4 01:02:03 host1 sshd-session[9]: Accepted password for root from 203.0.113.8 port 5 ssh2", false, "root", "203.0.113.8"},
+		{"2026-11-24T20:29:40.146973+00:00 host1 sshd[1]: Accepted keyboard-interactive/pam for root from 203.0.113.9 port 5 ssh2", false, "root", "203.0.113.9"},
+	}
+	for _, c := range ok {
+		u, ip, got := parseSSHAccepted(c.line, c.journal)
+		if !got || u != c.user || ip != c.ip {
+			t.Errorf("%q (journal=%v) => %q %q %v, want %q %q", c.line, c.journal, u, ip, got, c.user, c.ip)
+		}
+	}
+	bad := []struct {
+		line    string
+		journal bool
+	}{
+		// What sshd 10.0 logged on .13 for one failed connection.
+		{"Invalid user Accepted password for root from 198.51.100.9 port 22 x from 127.0.0.1 port 55850", true},
+		{"Connection closed by invalid user Accepted password for root from 198.51.100.9 port 22 x 127.0.0.1 port 55850 [preauth]", true},
+		{"Invalid user Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", true},
+		{"Invalid user sshd[1]: Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", true},
+		{"Nov 24 20:29:40 host1 sshd[123]: Invalid user sshd[1]: Accepted publickey for root from 198.51.100.9 port 22 ssh2: RSA from 127.0.0.1 port 1", false},
+		{"2026-11-24T20:29:40+00:00 host1 sshd[123]: Invalid user Accepted password for root from 198.51.100.9 port 22 ssh2", false},
+		// A journal message read as an auth.log line, and the other way round.
+		{"Accepted publickey for root from 198.51.100.9 port 22 ssh2", false},
+		{"Nov 24 20:29:40 host1 sshd[123]: Accepted publickey for root from 198.51.100.9 port 22 ssh2", true},
+		// Another program's tag in auth.log.
+		{"Nov 24 20:29:40 host1 logger[5]: Accepted publickey for root from 198.51.100.9 port 22 ssh2", false},
+	}
+	for _, c := range bad {
+		if u, ip, got := parseSSHAccepted(c.line, c.journal); got {
+			t.Errorf("%q (journal=%v) must not parse, got %q %q", c.line, c.journal, u, ip)
+		}
+	}
+}
+
+// The one-shot cleanup drops only the entries the SSH watcher added.
+func TestDropSSHAllowlistEntries(t *testing.T) {
+	inspect := `{"items":[` +
+		`{"value":"198.51.100.9","description":"auto-whitelist: ssh root"},` +
+		`{"value":"203.0.113.5","description":"auto-whitelist: login admin@example.com"},` +
+		`{"value":"192.0.2.1","description":"office"}]}`
+	var removed []string
+	prev := execCommandContext
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if name == "cscli" && len(args) > 1 && args[1] == "inspect" {
+			return exec.CommandContext(ctx, "printf", "%s", inspect)
+		}
+		if name == "cscli" && len(args) > 1 && args[1] == "remove" {
+			removed = append(removed, strings.Join(args[2:], " "))
+		}
+		return exec.CommandContext(ctx, "true")
+	}
+	t.Cleanup(func() { execCommandContext = prev })
+
+	n, done := dropSSHAllowlistEntries(context.Background())
+	if !done || n != 1 || len(removed) != 1 || removed[0] != jabaliAllowlistName+" 198.51.100.9" {
+		t.Fatalf("done=%v n=%d removed=%v, want only the ssh entry", done, n, removed)
 	}
 }
