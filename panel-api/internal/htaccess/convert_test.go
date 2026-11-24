@@ -572,3 +572,15 @@ func TestRawRecipeNeverCarriesInjection(t *testing.T) {
 		}
 	}
 }
+
+// An escape the regex decodes into a literal (`\x3b` is ";") must not reach
+// a `location =` recipe; the escaped regex itself is safe as `location ~`.
+func TestRawRecipeDecodedLiteralStaysRegex(t *testing.T) {
+	r := Convert(`RewriteRule ^a\x3b\x7d$ - [R=410]`, "/")
+	if len(r.Warnings) != 1 {
+		t.Fatalf("want one warning, got %+v", r.Warnings)
+	}
+	if w := r.Warnings[0].Reason; !strings.Contains(w, `location ~ ^/a\x3b\x7d$ { return 410; }`) {
+		t.Errorf("want the regex recipe, got %q", w)
+	}
+}

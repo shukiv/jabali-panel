@@ -270,7 +270,8 @@ func rawRecipe(pattern string, nocase bool, body, target string) string {
 		loc = "location ~* " + pattern
 	} else if strings.HasPrefix(pattern, "^/") && strings.HasSuffix(pattern, "$") && !strings.HasSuffix(pattern, `\$`) {
 		if re, err := regexp.Compile(pattern[1 : len(pattern)-1]); err == nil {
-			if lit, complete := re.LiteralPrefix(); complete {
+			// The literal is decoded (`\x3b` is ";"), so it is checked again.
+			if lit, complete := re.LiteralPrefix(); complete && rawTokenSafe(lit) {
 				loc = "location = " + lit
 			}
 		}
