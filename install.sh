@@ -11997,6 +11997,9 @@ SQL
     if [[ -n "$nb_key" ]]; then
       cscli bouncers add jabali-nginx -k "$nb_key" >/dev/null 2>&1 || true
     fi
+    # `cscli machines add` above rewrote local_api_credentials.yaml with the
+    # LAPI socket path as its url; put back the TCP url AppSec needs.
+    ensure_crowdsec_agent_lapi_url norestart
     if systemctl restart crowdsec; then
       _ok "CrowdSec LAPI DB → MariaDB (schema migrated; agent+bouncers re-registered)"
     else
@@ -18051,6 +18054,32 @@ ensure_crowdsec_nginx_bouncer_lapi_url() {
   fi
 }
 
+# ensure_crowdsec_agent_lapi_url — the agent's LAPI client URL in
+# local_api_credentials.yaml must stay the TCP loopback install_crowdsec pins
+# (M27): the AppSec engine validates every bouncer key through it, and a raw
+# socket path is no URL to it, so every nginx-bouncer → AppSec call answers
+# 401 ("Unauthenticated request to APPSEC") and AppSec inspects nothing.
+# configure_crowdsec_mariadb's `cscli machines add` rewrites the file with the
+# socket path right after install_crowdsec patched it, so fresh installs came
+# out that way. Called there (norestart: it restarts crowdsec itself) and from
+# provision_new_software, which heals boxes already installed like that.
+ensure_crowdsec_agent_lapi_url() {
+  local creds=/etc/crowdsec/local_api_credentials.yaml cfg=/etc/crowdsec/config.yaml
+  local want="http://127.0.0.1:8081/"
+  [[ -f "$creds" && -f "$cfg" ]] || return 0
+  # Only where install_crowdsec put LAPI on that TCP listener.
+  [[ "$(yq -r '.api.server.listen_uri // ""' "$cfg" 2>/dev/null)" == "127.0.0.1:8081" ]] || return 0
+  [[ "$(yq -r '.url // ""' "$creds" 2>/dev/null)" == "$want" ]] && return 0
+  _log "patching $creds: url = $want (AppSec checks bouncer keys through it)"
+  if ! yq -y -i ".url = \"$want\"" "$creds"; then
+    _warn "could not patch the url in $creds — AppSec will refuse bouncer keys"
+    return 0
+  fi
+  [[ "${1:-}" == norestart ]] && return 0
+  systemctl restart crowdsec 2>/dev/null \
+    || _warn "restart crowdsec failed after the LAPI url fix; check journalctl -u crowdsec"
+}
+
 # ensure_crowdsec_bouncer_poll_frequency — bump both bouncer
 # update_frequency values to 60s on existing hosts. Default 10s burns
 # steady CPU on the LAPI process once CAPI has ~30k decisions loaded
@@ -18945,6 +18974,12 @@ EOF
   # bouncer heartbeats to console).
   if declare -f ensure_crowdsec_nginx_bouncer_lapi_url >/dev/null 2>&1; then
     ensure_crowdsec_nginx_bouncer_lapi_url
+  fi
+
+  # crowdsec agent LAPI url heal (socket path -> TCP loopback; without it
+  # AppSec answers every bouncer 401 and inspects nothing).
+  if declare -f ensure_crowdsec_agent_lapi_url >/dev/null 2>&1; then
+    ensure_crowdsec_agent_lapi_url
   fi
 
   # crowdsec bouncer poll-frequency heal (10s default -> 60s; cuts
