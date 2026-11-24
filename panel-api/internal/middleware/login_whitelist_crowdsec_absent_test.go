@@ -44,7 +44,7 @@ func adminRequest(r *gin.Engine) {
 func allowlistAdds(m *agent.MockClient) int {
 	n := 0
 	for _, c := range m.Calls() {
-		if c.Command == "security.crowdsec.allowlists.add" {
+		if c.Command == "security.crowdsec.login_ips.add" {
 			n++
 		}
 	}
@@ -53,7 +53,7 @@ func allowlistAdds(m *agent.MockClient) int {
 
 func dedupKeyPresent(mr *miniredis.Miniredis) bool {
 	for _, k := range mr.Keys() {
-		if strings.HasPrefix(k, "jabali:login-wl-seen:") {
+		if strings.HasPrefix(k, "jabali:login-ban-exempt-seen:") {
 			return true
 		}
 	}
@@ -75,7 +75,7 @@ func eventually(cond func() bool, d time.Duration) bool {
 // and the agent says so. The panel asks once per dedup window, not on every
 // admin request.
 func TestWhitelistLoginIP_CrowdSecNotInstalledAsksOnce(t *testing.T) {
-	ag := agent.NewMockClient().OnError("security.crowdsec.allowlists.add",
+	ag := agent.NewMockClient().OnError("security.crowdsec.login_ips.add",
 		&agent.AgentError{Code: agent.CodeFailedPrecondition, Message: agentwire.MsgCrowdSecNotInstalled})
 	r, mr := loginWhitelistRouter(t, ag)
 
@@ -94,6 +94,31 @@ func TestWhitelistLoginIP_CrowdSecNotInstalledAsksOnce(t *testing.T) {
 	}
 }
 
+// An agent older than the panel has no login_ips verb: ask once per window,
+// and never fall back to allowlists.add (an allowlisted IP skips the WAF).
+func TestWhitelistLoginIP_OldAgentAsksOnceNoAllowlist(t *testing.T) {
+	ag := agent.NewMockClient()
+	r, mr := loginWhitelistRouter(t, ag)
+
+	adminRequest(r)
+	if !eventually(func() bool { return allowlistAdds(ag) == 1 }, 2*time.Second) {
+		t.Fatalf("login_ips adds = %d, want 1", allowlistAdds(ag))
+	}
+	if eventually(func() bool { return !dedupKeyPresent(mr) }, 300*time.Millisecond) {
+		t.Fatal("dedup key dropped after unknown_command: every request would ask again")
+	}
+	adminRequest(r)
+	time.Sleep(100 * time.Millisecond)
+	for _, c := range ag.Calls() {
+		if c.Command == "security.crowdsec.allowlists.add" {
+			t.Fatal("fell back to the allowlist")
+		}
+	}
+	if n := allowlistAdds(ag); n != 1 {
+		t.Fatalf("login_ips adds after two requests = %d, want 1", n)
+	}
+}
+
 // Any other failure is retried on the next request, as before.
 func TestWhitelistLoginIP_OtherFailuresRetry(t *testing.T) {
 	cases := map[string]error{
@@ -104,7 +129,7 @@ func TestWhitelistLoginIP_OtherFailuresRetry(t *testing.T) {
 	}
 	for name, failure := range cases {
 		t.Run(name, func(t *testing.T) {
-			ag := agent.NewMockClient().OnError("security.crowdsec.allowlists.add", failure)
+			ag := agent.NewMockClient().OnError("security.crowdsec.login_ips.add", failure)
 			r, mr := loginWhitelistRouter(t, ag)
 
 			adminRequest(r)

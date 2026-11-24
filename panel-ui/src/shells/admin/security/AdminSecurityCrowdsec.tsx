@@ -2528,11 +2528,13 @@ const BouncerModeCard = () => {
   );
 };
 
-// LoginAllowlistCard — GH #598. Auto-allowlist successful panel + SSH login
-// source IPs in CrowdSec, time-boxed, so a logged-in admin/user is never
-// bounced from the IP they're working from. Writes crowdsec_login_allowlist_*
-// on /admin/settings; the panel middleware reads it directly and the agent SSH
-// watcher gets it pushed via security.crowdsec.login_allowlist.apply.
+// LoginAllowlistCard — GH #598, ADR-0153. After a successful admin panel or
+// root SSH login, CrowdSec does not ban the source IP for the window. The IP
+// is not allowlisted: the agent keeps it on a ban-only list, so the AppSec WAF
+// still inspects its requests. Writes crowdsec_login_allowlist_* on
+// /admin/settings; lists and removes the IPs via /login-ips.
+type LoginBanExemptIP = { value: string; reason: string; expires_at: string };
+
 const LoginAllowlistCard = () => {
   const { t } = useTranslation();
   const qc = useQueryClient();
@@ -2544,6 +2546,13 @@ const LoginAllowlistCard = () => {
         crowdsec_login_allowlist_ttl_hours: number;
       }>("/admin/settings");
       return r.data;
+    },
+  });
+  const loginIPs = useQuery({
+    queryKey: ["crowdsec-login-ips"],
+    queryFn: async () => {
+      const r = await apiClient.get<{ items: LoginBanExemptIP[] | null }>("/admin/security/crowdsec/login-ips");
+      return r.data.items ?? [];
     },
   });
   const [enabled, setEnabled] = useState<boolean>(true);
@@ -2565,11 +2574,25 @@ const LoginAllowlistCard = () => {
       });
     },
     onSuccess: () => {
-      feedback.message.success("Login allowlist policy applied");
+      feedback.message.success("Login IP policy applied");
       qc.invalidateQueries({ queryKey: ["admin-settings"] });
+      qc.invalidateQueries({ queryKey: ["crowdsec-login-ips"] });
     },
     onError: (e: unknown) => {
       feedback.message.error(e instanceof Error ? e.message : "Failed to apply");
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: async (value: string) => {
+      await apiClient.delete("/admin/security/crowdsec/login-ips", { params: { value } });
+    },
+    onSuccess: (_d, value) => {
+      feedback.message.success(`CrowdSec can ban ${value} again`);
+      qc.invalidateQueries({ queryKey: ["crowdsec-login-ips"] });
+    },
+    onError: (e: unknown) => {
+      feedback.message.error(e instanceof Error ? e.message : "Failed to remove");
     },
   });
 
@@ -2578,33 +2601,36 @@ const LoginAllowlistCard = () => {
     ttlHours !== settings.data?.crowdsec_login_allowlist_ttl_hours;
 
   return (
-    <Card size="small" title={t("adminsecuritycrowdsec.auto_allowlist_login_ips_server_wide")} loading={settings.isLoading}>
+    <Card size="small" title={t("adminsecuritycrowdsec.never_ban_login_ips_server_wide")} loading={settings.isLoading}>
       <Space direction="vertical" size="middle" style={{ width: "100%" }}>
         <Typography.Paragraph type="secondary" style={{ marginBottom: 0 }}>
-          After a successful panel or SSH login, add the source IP to the CrowdSec
-          allowlist for the configured window (refreshed on activity), so a
-          legitimate operator is never locked out by a later false positive.
-          Private/loopback addresses are always skipped.
+          After a successful admin panel login or root SSH login, CrowdSec does not
+          ban the source IP for the configured window (refreshed on activity), so an
+          operator is not locked out by a later false positive. The IP is not
+          allowlisted: the WAF still inspects its requests, and bans from the
+          community blocklist or added by hand still apply. Loopback, link-local and
+          100.64.0.0/10 addresses are always skipped.
         </Typography.Paragraph>
         <CollapsibleAlert
-          storageKey="security.crowdsec.exemption-trade-off"
+          storageKey="security.crowdsec.login-ban-exempt-trade-off"
           defaultOpen
           type="warning"
           showIcon
           message={t("adminsecuritycrowdsec.security_trade_off")}
-          description={t("adminsecuritycrowdsec.this_is_a_broad_crowdsec_exemption_a_success")}
+          description={t("adminsecuritycrowdsec.login_ip_ban_exemption_trade_off")}
         />
         <Space align="center">
-          <Switch checked={enabled} onChange={setEnabled} />
+          <Switch checked={enabled} onChange={setEnabled} aria-label="Never ban login IPs" />
           <Typography.Text>{enabled ? "Enabled" : "Disabled"}</Typography.Text>
         </Space>
-        <Space align="center">
-          <Typography.Text>Allowlist TTL (hours):</Typography.Text>
+        <Space align="center" wrap>
+          <Typography.Text>Window (hours):</Typography.Text>
           <InputNumber
             min={1}
             max={8760}
             value={ttlHours}
             disabled={!enabled}
+            aria-label="Window in hours"
             onChange={(v) => setTtlHours(typeof v === "number" ? v : 168)}
           />
           <Typography.Text type="secondary">1–8760 (default 168 = 7 days)</Typography.Text>
@@ -2617,6 +2643,48 @@ const LoginAllowlistCard = () => {
         >
           Apply
         </Button>
+        <Table<LoginBanExemptIP>
+          size="small"
+          rowKey="value"
+          dataSource={loginIPs.data ?? []}
+          loading={loginIPs.isLoading}
+          pagination={{ pageSize: 10, showSizeChanger: false }}
+          scroll={{ x: true }}
+          locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No login IP is exempt from bans right now" /> }}
+        >
+          <Table.Column<LoginBanExemptIP>
+            dataIndex="value"
+            title="IP"
+            key="value"
+            render={(v: string) => <Typography.Text code>{v}</Typography.Text>}
+          />
+          <Table.Column<LoginBanExemptIP> dataIndex="reason" title={t("adminsecuritycrowdsec.reason")} key="reason" />
+          <Table.Column<LoginBanExemptIP>
+            dataIndex="expires_at"
+            title="Until"
+            key="expires_at"
+            render={(s: string) => fmtTime(s)}
+          />
+          <Table.Column<LoginBanExemptIP>
+            title=""
+            key="delete"
+            width={90}
+            render={(_, row) => (
+              <Popconfirm
+                title="Let CrowdSec ban this IP again?"
+                description={`${row.value} can be banned again; its next login exempts it again.`}
+                okText={t("adminsecuritycrowdsec.remove")}
+                okButtonProps={{ danger: true }}
+                cancelText={t("adminsecuritycrowdsec.cancel")}
+                onConfirm={() => remove.mutate(row.value)}
+              >
+                <Button danger type="text" size="small" aria-label={`Remove ${row.value}`}>
+                  Remove
+                </Button>
+              </Popconfirm>
+            )}
+          />
+        </Table>
       </Space>
     </Card>
   );

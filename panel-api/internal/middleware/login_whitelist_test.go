@@ -15,6 +15,10 @@ func TestWhitelistableIP(t *testing.T) {
 		{"192.168.1.10", true},         // private LAN/VPN — now allowlisted
 		{"172.16.4.2", true},           // private LAN/VPN — now allowlisted
 		{"169.254.1.1", false},         // link-local
+		{"100.64.0.1", false},          // CGNAT / tailnet
+		{"100.127.255.254", false},     // CGNAT upper edge
+		{"100.128.0.1", true},          // just past CGNAT
+		{"::ffff:100.64.0.1", false},   // CGNAT, v4-mapped
 		{"0.0.0.0", false},             // unspecified
 		{"", false},                    // empty
 		{"not-an-ip", false},           // garbage

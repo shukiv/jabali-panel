@@ -29,12 +29,14 @@ const (
 	loginWhitelistDedup           = 24 * time.Hour
 )
 
-// WhitelistLoginIP adds an authenticated user's client IP to the jabali
-// CrowdSec allowlist (time-boxed) the first time a session is seen within the
-// dedup window, so a logged-in admin or user is never bounced by CrowdSec from
-// the IP they're actively working from. Best-effort and fully out-of-band: the
-// add runs in a background goroutine and any missing dependency (Redis, agent)
-// downgrades to a no-op — it must never block or fail the request.
+// WhitelistLoginIP keeps an authenticated admin's client IP off CrowdSec's
+// bans (time-boxed) the first time a session is seen within the dedup window,
+// so a logged-in admin is not banned from the IP they're working from. The
+// agent puts it on a ban-only list (security.crowdsec.login_ips.add): the
+// AppSec WAF still inspects its requests, unlike an allowlisted IP's.
+// Best-effort and fully out-of-band: the add runs in a background goroutine
+// and any missing dependency (Redis, agent) downgrades to a no-op — it must
+// never block or fail the request.
 //
 // Mounted after RequireKratosSession (needs claims). Sibling to
 // TrackAdminLogin; fires for ADMIN logins only (GH #709 — a tenant login must
@@ -72,8 +74,11 @@ func WhitelistLoginIP(rdb *redis.Client, agentCli agent.AgentInterface, settings
 
 		// Dedup per (session, IP) so we don't shell out to cscli on every
 		// request — once per dedup window is enough to keep the TTL fresh.
+		// The key was renamed when logins moved off the allowlist, so an
+		// active session is exempted again on its next request rather than
+		// within 24h of the agent dropping its old allowlist entry.
 		digest := sha256.Sum256([]byte(cookie + "|" + ip))
-		key := "jabali:login-wl-seen:" + hex.EncodeToString(digest[:16])
+		key := "jabali:login-ban-exempt-seen:" + hex.EncodeToString(digest[:16])
 		setCtx, cancel := context.WithTimeout(c.Request.Context(), 500*time.Millisecond)
 		defer cancel()
 		ok, err := rdb.SetNX(setCtx, key, "1", loginWhitelistDedup).Result()
@@ -117,9 +122,9 @@ func WhitelistLoginIP(rdb *redis.Client, agentCli agent.AgentInterface, settings
 		go func() {
 			addCtx, addCancel := context.WithTimeout(context.Background(), 8*time.Second)
 			defer addCancel()
-			_, err := agentCli.Call(addCtx, "security.crowdsec.allowlists.add", map[string]any{
+			_, err := agentCli.Call(addCtx, "security.crowdsec.login_ips.add", map[string]any{
 				"value":      ip,
-				"reason":     "auto-whitelist: login " + truncate(email, 120),
+				"reason":     "panel login " + truncate(email, 120),
 				"expiration": ttl,
 			})
 			if err != nil {
@@ -133,11 +138,18 @@ func WhitelistLoginIP(rdb *redis.Client, agentCli agent.AgentInterface, settings
 					logger.Debug("login-whitelist: crowdsec not installed; skipped", "ip", ip)
 					return
 				}
+				// An agent older than this panel has no login_ips verb. Ask
+				// again next window; never fall back to the allowlist, which
+				// would let the IP skip the WAF.
+				if errors.As(err, &ae) && ae.Code == agent.CodeUnknownCommand {
+					logger.Debug("login-whitelist: agent has no login_ips verb yet; skipped", "ip", ip)
+					return
+				}
 				// Roll back the dedup guard so the next request retries.
 				delCtx, delCancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 				defer delCancel()
 				_ = rdb.Del(delCtx, key).Err()
-				logger.Warn("login-whitelist: allowlist add failed", "ip", ip, "err", err)
+				logger.Warn("login-whitelist: login IP ban exemption failed", "ip", ip, "err", err)
 			}
 		}()
 	}
@@ -159,6 +171,11 @@ func whitelistableIP(s string) bool {
 	// CrowdSec will never ban an allowlisted LAN IP; bounded because only
 	// authenticated ADMIN logins reach here (#709).
 	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return false
+	}
+	// Carrier-grade NAT (100.64/10, also tailnet addresses) is shared by
+	// unrelated clients; the agent refuses it too.
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 64 {
 		return false
 	}
 	return true

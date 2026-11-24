@@ -73,3 +73,35 @@ trusted component.
   Self-heals on the next settings save; we accept this rather than add a
   boot-time reconcile. `install.sh` only seeds the conf when absent, so it never
   clobbers a pushed override on re-install/update.
+
+## Amendment (2026-11-24): ban-only, not allowlisted
+
+A CrowdSec allowlist entry also makes AppSec skip the request entirely, so a
+login IP was exempt from the WAF as well as from bans, and so was everyone
+sharing that address (a NAT or tailnet exit). Login IPs now only skip bans:
+
+- The agent keeps them in `/var/lib/jabali/login-ban-exempt.json` and renders
+  them into a postoverflow whitelist,
+  `/etc/crowdsec/postoverflows/s01-whitelist/zz-jabali-login-ips.yaml`. An
+  alert a scenario raises for one of them is dropped before it becomes a ban;
+  the WAF still inspects every request. Bans that do not come from this
+  server's scenarios (the community blocklist, a ban added by hand) still
+  apply. The extra blocklists leave these IPs out, as they did when
+  allowlisted.
+- Verbs `security.crowdsec.login_ips.{add,list,remove}`; the panel's admin
+  login calls `add`, the SSH watcher adds directly. `allowlists.add` with an
+  `auto-whitelist:` reason (an older panel) goes to the same list.
+- `crowdsec -t` runs before every reload and a file it rejects is put back,
+  so the reload's restart fallback never meets a config CrowdSec cannot start
+  with. CrowdSec reloads only when the IP set changes, not on a refresh.
+- 100.64.0.0/10 is never exempted.
+- Switching the setting off empties the list; hourly upkeep drops expired IPs
+  and keeps the list empty while the pushed conf says off.
+- At agent start every `auto-whitelist:` entry is removed from the jabali
+  allowlist. The panel's Redis dedup key was renamed so an active admin
+  session is exempted again on its next request.
+- Admin → Security → CrowdSec lists the exempt IPs and removes one
+  (`GET`/`DELETE /admin/security/crowdsec/login-ips`).
+
+The trade-off above narrows: a stolen key still buys its IP up to the window
+without bans, but no longer a WAF bypass.
