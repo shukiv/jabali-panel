@@ -255,7 +255,7 @@ func convertRedirectMatch(res *Result, st *state, args []string, ln line) {
 	case len(hit) > 0:
 		reason = fmt.Sprintf("earlier Redirect lines that this RedirectMatch also matches (%s; %d in all) win in Apache, but a rewrite rule would run before them — not converted", hit[0], len(hit))
 	case st.matchDemoted:
-		reason = "an earlier RedirectMatch was left for Raw directives, and Apache tries them in file order — not converted either; add it after that one"
+		reason = "an earlier RedirectMatch was left for Raw directives, and Apache tries them in file order — not converted either (add it after that one)"
 	case err != nil && len(res.Redirects) > 0:
 		reason = "this RedirectMatch's regex can't be checked against the earlier Redirect lines, which win in Apache — not converted"
 	}
