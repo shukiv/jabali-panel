@@ -154,6 +154,9 @@ server {                          # :443 — HTTPS (when SSL is configured)
     # an invalid value renders the default above.
 
     # Error pages (M28)
+    # WordPress plugin private folders (first regex locations, any depth):
+    #   .../wp-content/uploads/woocommerce_uploads/  internal (X-Accel only)
+    #   .../wp-content/uploads/{wc-logs,funnelkit}/, .../wp-content/ai1wm-backups/  deny
     # Static asset caching (if cache_enabled; on a PHP domain a file not on
     #   disk falls back to the front controller, as location / does)
     # PHP handler: location = /index.php { … }
