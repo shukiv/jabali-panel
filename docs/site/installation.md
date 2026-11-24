@@ -43,6 +43,8 @@ It installs the release's code at the commit the release was built from. On a se
 | `JABALI_DNS_FORWARDER=<ip>` | Force pdns-recursor to forward `.` to this resolver (use when outbound :53/udp is blocked). Installer also rewrites `/etc/resolv.conf` to point at the same IP and masks systemd-resolved. |
 | `JABALI_RELEASE_CHANNEL=development` | Install the newest main build instead of the stable release, and set the server's release channel to development. The default is `stable`. |
 | `JABALI_HOSTNAME=<fqdn>` | The server's hostname, same as `--hostname <fqdn>`; skips the prompt. The installer sets the system hostname to it and uses it for the server's own DNS zone and the panel's primary mail domain. |
+| `JABALI_ADMIN_EMAIL=<email>` | The panel admin's email; skips the prompt. Defaults to `admin@<hostname>`. |
+| `JABALI_ADMIN_USERNAME=<name>` | The panel admin's login username (lowercase letters, digits, `_` and `-`, starting with a letter or `_`, up to 32). Defaults to the admin email's part before the `@`, so `admin`. The installer's configuration screen has the same two fields. |
 | `JABALI_SKIP_*` (various) | Skip individual install steps. Generally avoid — supported only for debugging. |
 
 ## Choosing modules

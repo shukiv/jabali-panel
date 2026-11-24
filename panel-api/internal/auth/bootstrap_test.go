@@ -27,6 +27,31 @@ func TestBootstrapAdmin_CreatesWhenMissing(t *testing.T) {
 	assert.True(t, auth.VerifyPassword(u.PasswordHash, "strongpass"))
 }
 
+// TestBootstrapAdmin_Username: the installer's admin username is the login
+// username; without one, or with an invalid one, it comes from the email.
+func TestBootstrapAdmin_Username(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ given, email, want string }{
+		{"", "admin@example.com", "admin"},
+		{"", "Shuki.V@example.com", "shuki_v"},
+		{"ops_lead", "admin@example.com", "ops_lead"},
+		{"Bad Name", "admin@example.com", "admin"},
+		{"9lives", "boss@example.com", "boss"},
+		{"averyveryveryveryveryverylongname1", "admin@example.com", "admin"},
+	} {
+		users := newFakeUserRepo()
+		res, err := auth.BootstrapAdmin(context.Background(), users, auth.BootstrapOptions{
+			Email: tc.email, Username: tc.given, Password: "strongpass", BcryptCost: testCost,
+		})
+		require.NoError(t, err)
+		require.True(t, res.Created)
+		u, err := users.FindByEmail(context.Background(), tc.email)
+		require.NoError(t, err)
+		require.NotNil(t, u.Username)
+		assert.Equal(t, tc.want, *u.Username, "given %q email %q", tc.given, tc.email)
+	}
+}
+
 func TestBootstrapAdmin_SkipsWhenEnvEmpty(t *testing.T) {
 	t.Parallel()
 	users := newFakeUserRepo()

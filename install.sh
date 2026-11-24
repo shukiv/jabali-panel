@@ -8209,15 +8209,25 @@ seed_admin_env() {
     _warn "admin email '$admin_email' looks invalid — using admin@${_def_host}"
     admin_email="admin@${_def_host}"
   fi
+  # Login username: the installer's (JABALI_ADMIN_USERNAME, set by the TUI)
+  # when it is a valid username, else the one derived from the email. Always
+  # written, so the panel creates exactly the name the banner shows.
+  local admin_user="${JABALI_BOOTSTRAP_ADMIN_USERNAME:-${JABALI_ADMIN_USERNAME:-}}"
+  if [[ -n "$admin_user" && ! "$admin_user" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then
+    _warn "admin username '$admin_user' is not a valid username (lowercase letters, digits, _ and -, starting with a letter or _) — using the one derived from the email"
+    admin_user=""
+  fi
+  [[ -n "$admin_user" ]] || admin_user="$(_derive_admin_username "$admin_email")"
   local admin_pass
   admin_pass="$(openssl rand -base64 18)"
 
-  _log "seeding panel admin bootstrap credentials (login username: $(_derive_admin_username "$admin_email"), contact email: $admin_email)"
+  _log "seeding panel admin bootstrap credentials (login username: $admin_user, contact email: $admin_email)"
   cat >>"$ENV_FILE" <<EOF
 
 # Admin bootstrap, read on first boot. The installer removes the password once
 # the admin exists (scrub_bootstrap_passwords).
 JABALI_BOOTSTRAP_ADMIN_EMAIL=$admin_email
+JABALI_BOOTSTRAP_ADMIN_USERNAME=$admin_user
 JABALI_BOOTSTRAP_ADMIN_PASSWORD=$admin_pass
 EOF
   # Drop the marker so no future re-provision re-prompts, even if
@@ -8227,6 +8237,7 @@ EOF
 
   # Store the generated password so the final banner can display it.
   JABALI_SEED_EMAIL="$admin_email"
+  JABALI_SEED_USERNAME="$admin_user"
   JABALI_SEED_PASS="$admin_pass"
 }
 
@@ -19640,7 +19651,7 @@ main() {
     echo "============================================================"
     echo ""
     printf "  URL:       %s\n" "$panel_url"
-    printf "  Username:  %s\n" "$(_derive_admin_username "$JABALI_SEED_EMAIL")"
+    printf "  Username:  %s\n" "${JABALI_SEED_USERNAME:-$(_derive_admin_username "$JABALI_SEED_EMAIL")}"
     printf "  Password:  %s\n" "$JABALI_SEED_PASS"
     if [[ -n "${JABALI_TENANT_SEED_EMAIL:-}" ]]; then
       local tenant_login
