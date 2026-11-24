@@ -102,7 +102,7 @@ func Convert(htaccess, basePath string) Result {
 			// domain's Raw directives accept (and, rendered before the
 			// template's branded pages, override them).
 			if len(args) == 2 && strings.HasPrefix(args[1], "/") && !strings.ContainsAny(args[1], " \t;{}\"'") {
-				res.warn(ln.num, ln.text, "not a Rule Builder entry: add `error_page "+args[0]+" "+args[1]+";` under Raw directives")
+				res.warn(ln.num, ln.text, "not a Rule Builder entry: an administrator can add `error_page "+args[0]+" "+args[1]+";` under Raw directives")
 			} else {
 				res.warn(ln.num, ln.text, "directive not supported by the Rule Builder; configure it in the panel instead")
 			}

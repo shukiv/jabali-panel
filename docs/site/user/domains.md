@@ -154,7 +154,7 @@ A domain's **Redirects** tab sends the whole domain, or single paths, elsewhere.
 - **Wildcard matching** redirects everything under a path, keeping the rest of it (301 and 302 only).
 - Two redirects can't share a path. Saving such a list is refused; an import or a restore keeps the first.
 
-Importing an `.htaccess` (on the domain's nginx settings) turns its `Redirect` lines into page redirects with both options on, the way Apache treats them. An `ErrorDocument` line is listed for you to add by hand as `error_page 404 /path;` under raw directives; a domain's own `error_page` takes priority over the panel's branded error pages.
+When an administrator imports a site's `.htaccess` (the domain's Nginx settings), its `Redirect` lines become page redirects with both options on. Apache also redirects the deeper paths below each one (`/old-page/more`); a page redirect doesn't, so add a wildcard redirect where those matter. A `Redirect` of `/` is left for the whole-domain redirect. An `ErrorDocument` line is listed for the administrator to add as `error_page 404 /path;` in the domain's raw nginx directives, where it takes priority over the panel's branded error pages.
 
 ## Nginx options and rewrite rules
 

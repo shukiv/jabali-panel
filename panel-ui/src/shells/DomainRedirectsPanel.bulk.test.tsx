@@ -14,13 +14,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DomainRedirectsPanel, type PageRedirect } from "./DomainRedirectsPanel";
 import { DomainNginxSection } from "./DomainSettingsButton";
 
-vi.mock("../apiClient", () => ({ apiClient: { patch: vi.fn(), post: vi.fn() } }));
+vi.mock("../apiClient", () => ({ apiClient: { patch: vi.fn(), post: vi.fn(), get: vi.fn() } }));
 
 import { apiClient } from "../apiClient";
 
 const mocked = apiClient as unknown as {
   patch: ReturnType<typeof vi.fn>;
   post: ReturnType<typeof vi.fn>;
+  get: ReturnType<typeof vi.fn>;
 };
 
 const wrap = (node: ReactNode) =>
@@ -44,6 +45,7 @@ describe("page redirects at scale", () => {
   beforeEach(() => {
     mocked.patch.mockReset().mockResolvedValue({ data: {} });
     mocked.post.mockReset();
+    mocked.get.mockReset();
   });
 
   it("saves keep_query and trailing_slash back", async () => {
@@ -64,13 +66,16 @@ describe("page redirects at scale", () => {
     expect(shown.map((i) => i.value)).toEqual(["/s119"]);
   });
 
-  it("adds imported redirects to the list, skipping a path it already redirects", async () => {
+  it("adds imported redirects to the list it reads fresh, skipping a path it already redirects", async () => {
+    // The domain row the section got has no page_redirects (a list row); the
+    // import must merge into the stored list, never replace it.
+    mocked.get.mockResolvedValue({ data: { id: "d1", page_redirects: [entry("/a")] } });
     mocked.post.mockResolvedValue({
       data: { rules: [], warnings: [], notes: [], redirects: [entry("/a/"), entry("/b")] },
     });
     wrap(
       <DomainNginxSection
-        domain={{ id: "d1", name: "x.example", nginx_rules: [], page_redirects: [entry("/a")] }}
+        domain={{ id: "d1", name: "x.example", nginx_rules: [] }}
       />,
     );
     fireEvent.click(screen.getByText("Import .htaccess"));
@@ -81,6 +86,7 @@ describe("page redirects at scale", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Add to Redirects/i }));
 
     await waitFor(() => expect(mocked.patch).toHaveBeenCalled());
+    expect(mocked.get).toHaveBeenCalledWith("/domains/d1");
     const [url, body] = mocked.patch.mock.calls[0];
     expect(url).toBe("/domains/d1");
     // "/a" with trailing_slash already answers "/a/".

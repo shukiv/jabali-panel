@@ -43,6 +43,7 @@ func TestValidatePageRedirects_BulkRules(t *testing.T) {
 		"same wildcard":          {{Source: "/w", Destination: "https://ok.example", Type: "301", Wildcard: true}, {Source: "/w", Destination: "https://ok.example/2", Type: "302", Wildcard: true}},
 		"protocol-relative path": {{Source: "/x", Destination: "//evil.example/", Type: "301"}},
 		"path with space":        {{Source: "/x", Destination: "/a b", Type: "301"}},
+		"path with $":            {{Source: "/x", Destination: "/a$host", Type: "301"}},
 		"wildcard 307":           {{Source: "/x", Destination: "https://ok.example", Type: "307", Wildcard: true}},
 		"wildcard keep query":    {{Source: "/x", Destination: "https://ok.example", Type: "301", Wildcard: true, KeepQuery: true}},
 		"wildcard slash":         {{Source: "/x", Destination: "https://ok.example", Type: "301", Wildcard: true, TrailingSlash: true}},

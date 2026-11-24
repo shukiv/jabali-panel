@@ -138,6 +138,12 @@ func convertRedirect(res *Result, st *state, directive string, args []string, ln
 		res.warn(ln.num, ln.text, "Redirect path contains a space or control character — not converted")
 		return
 	}
+	// Apache's `Redirect /` sends every path of the site; one exact entry
+	// would move only the home page.
+	if urlPath == "/" {
+		res.warn(ln.num, ln.text, "Redirect of / moves the whole site: set the domain's whole-domain redirect instead — not converted")
+		return
+	}
 	// nginx would read a literal $ in the destination as a variable.
 	target = strings.ReplaceAll(target, "$", "%24")
 	if !isRedirectTarget(target) {

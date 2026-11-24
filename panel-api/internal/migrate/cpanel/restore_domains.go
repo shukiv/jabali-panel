@@ -383,6 +383,10 @@ func applyMigratedHtaccess(path, domainName string, d *models.Domain, res *Domai
 	if len(redirs) > 0 {
 		d.PageRedirects = models.PageRedirects(redirs)
 		res.HtaccessRulesImported += len(redirs)
+		// Apache's Redirect also moves the paths below each one; the page
+		// redirects match the path and path/ only.
+		res.HtaccessWarnings = append(res.HtaccessWarnings,
+			fmt.Sprintf("%s: %d .htaccess Redirect lines became page redirects; deeper paths below them (/path/more) are no longer redirected — review the domain's Redirects list", domainName, len(redirs)))
 	}
 	for _, w := range conv.Warnings {
 		res.HtaccessWarnings = append(res.HtaccessWarnings,

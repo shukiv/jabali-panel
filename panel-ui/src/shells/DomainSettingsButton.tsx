@@ -87,7 +87,6 @@ export type DomainSettingsTarget = {
   // Phase 4a backend column (#1691) lands, so the mirror stays hidden till then.
   nginx_tenant_directives?: string | null;
   nginx_rules?: NginxRule[] | null;
-  page_redirects?: PageRedirect[] | null;
 };
 
 // compileRules mirrors panel-api/internal/nginxrules/Compile (Go) so the
@@ -1198,12 +1197,10 @@ const HtaccessImport = ({
   domainId,
   rules,
   onRulesChange,
-  pageRedirects,
 }: {
   domainId: string;
   rules: NginxRule[];
   onRulesChange: (rules: NginxRule[]) => void;
-  pageRedirects: PageRedirect[];
 }) => {
   const [content, setContent] = useState("");
   const [basePath, setBasePath] = useState("/");
@@ -1251,23 +1248,26 @@ const HtaccessImport = ({
   };
 
   // Redirects go straight to the domain's Redirects list (saved now; the
-  // Rule Builder never holds them). An entry on a path the list already
-  // redirects is skipped, as Apache would use the first one.
+  // Rule Builder never holds them). The list is read fresh first, so a stale
+  // or partial domain row can't overwrite it. An entry on a path the list
+  // already redirects is skipped, as Apache would use the first one.
   const handleAddRedirects = async () => {
     const incoming = preview?.redirects ?? [];
     if (incoming.length === 0) return;
-    const taken = new Set(pageRedirects.flatMap(redirectLocations));
-    const fresh = incoming.filter((pr) => !redirectLocations(pr).some((l) => taken.has(l)));
-    const skipped = incoming.length - fresh.length;
-    if (pageRedirects.length + fresh.length > MAX_PAGE_REDIRECTS) {
-      feedback.message.error(
-        `A domain can have at most ${MAX_PAGE_REDIRECTS} redirects: it has ${pageRedirects.length}, and this adds ${fresh.length}.`,
-      );
-      return;
-    }
     setSavingRedirects(true);
     try {
-      await apiClient.patch(`/domains/${domainId}`, { page_redirects: [...pageRedirects, ...fresh] });
+      const cur = await apiClient.get<{ page_redirects?: PageRedirect[] | null }>(`/domains/${domainId}`);
+      const existing = cur.data.page_redirects ?? [];
+      const taken = new Set(existing.flatMap(redirectLocations));
+      const fresh = incoming.filter((pr) => !redirectLocations(pr).some((l) => taken.has(l)));
+      const skipped = incoming.length - fresh.length;
+      if (existing.length + fresh.length > MAX_PAGE_REDIRECTS) {
+        feedback.message.error(
+          `A domain can have at most ${MAX_PAGE_REDIRECTS} redirects: it has ${existing.length}, and this adds ${fresh.length}.`,
+        );
+        return;
+      }
+      await apiClient.patch(`/domains/${domainId}`, { page_redirects: [...existing, ...fresh] });
       qc.invalidateQueries({ queryKey: ["list", "domains"] });
       qc.invalidateQueries({ queryKey: ["one", "domains", domainId] });
       feedback.message.success(
@@ -1769,7 +1769,6 @@ export const DomainSettingsButton = ({
                   domainId={domain.id}
                   rules={rules}
                   onRulesChange={setRules}
-                  pageRedirects={domain.page_redirects ?? []}
                 />
               ),
             },
@@ -1895,7 +1894,6 @@ export const DomainNginxSection = ({ domain }: { domain: DomainSettingsTarget })
                 domainId={domain.id}
                 rules={rules}
                 onRulesChange={setRules}
-                pageRedirects={domain.page_redirects ?? []}
               />
             ),
           },

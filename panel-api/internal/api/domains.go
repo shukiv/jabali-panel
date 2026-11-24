@@ -2206,8 +2206,9 @@ const maxPageRedirects = 2000
 // same site ("/he/new-page"); "//host" is a URL without a scheme, not a path.
 func validatePageRedirectDestination(d string) error {
 	if strings.HasPrefix(d, "/") && !strings.HasPrefix(d, "//") {
-		if strings.ContainsAny(d, " \t\r\n\x00") {
-			return fmt.Errorf("destination path must not contain spaces or control characters")
+		// nginx would read a $ as a variable in the rendered return.
+		if strings.ContainsAny(d, " \t\r\n\x00$") {
+			return fmt.Errorf("destination path must not contain spaces, control characters or $ (write it as %%24)")
 		}
 		return nil
 	}

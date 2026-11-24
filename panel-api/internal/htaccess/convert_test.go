@@ -130,6 +130,16 @@ func TestRedirectStatusesAndTargets(t *testing.T) {
 
 // Apache uses the first Redirect for a path; a second would also be a
 // duplicate nginx location and fail the whole vhost.
+func TestRedirectOfRootPointsAtWholeDomain(t *testing.T) {
+	res := Convert("Redirect 301 / https://new.example/", "/")
+	if len(res.Redirects) != 0 {
+		t.Fatalf("a Redirect of / must not become an exact entry: %+v", res.Redirects)
+	}
+	if len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0].Reason, "whole-domain redirect") {
+		t.Fatalf("warnings %+v", res.Warnings)
+	}
+}
+
 func TestRedirectDuplicatePathKeepsFirst(t *testing.T) {
 	r := Convert("Redirect 301 /a https://one.example/\nRedirect 307 /a/ https://two.example/", "/")
 	if len(r.Redirects) != 1 || r.Redirects[0].Destination != "https://one.example/" {

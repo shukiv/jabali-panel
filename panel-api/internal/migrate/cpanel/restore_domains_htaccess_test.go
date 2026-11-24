@@ -38,9 +38,10 @@ Require valid-user`
 	if len(d.PageRedirects) != 1 || d.PageRedirects[0].Source != "/old" || d.PageRedirects[0].Type != "301" {
 		t.Fatalf("domain should carry the Redirect as a page redirect, got %+v", d.PageRedirects)
 	}
-	// Require valid-user is auth → a warning, not a rule.
-	if len(res.HtaccessWarnings) == 0 {
-		t.Errorf("expected a warning for Require valid-user")
+	// Require valid-user is auth → a warning, not a rule; the Redirect's
+	// narrower match (no deeper paths) is a warning too.
+	if len(res.HtaccessWarnings) < 2 {
+		t.Errorf("expected warnings for Require valid-user and the Redirect match, got %q", res.HtaccessWarnings)
 	}
 }
 
