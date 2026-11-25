@@ -418,7 +418,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         # never stored and served cross-visitor (the old denylist was fail-open).
         set $jabali_skip 1;
         if ($http_cookie = "") { set $jabali_skip 0; }
-        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|__cf_bm|_cfuvid|cf_clearance|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
         if ($request_method = POST) { set $jabali_skip 1; }
         # Gitea #610: bypass only when the query has a non-tracking (content-
         # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
@@ -526,7 +526,7 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         # never stored and served cross-visitor (the old denylist was fail-open).
         set $jabali_skip 1;
         if ($http_cookie = "") { set $jabali_skip 0; }
-        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
+        if ($http_cookie ~* "^(?:\s*(?:_ga[\w-]*|_gid|_gat[\w-]*|_gcl[\w-]*|__utm[\w-]*|__gads|__gpi|_fbp|_fbc|_pk_[\w-]*|_hj[\w-]*|_clck|_clsk|_dc_gtm[\w-]*|cookie_consent[\w-]*|cookie_?notice[\w-]*|cookielawinfo[\w-]*|euconsent[\w-]*|sbjs_[\w-]*|__cf_bm|_cfuvid|cf_clearance|wordpress_test_cookie)=[^;]*;?\s*)+$") { set $jabali_skip 0; }
         if ($request_method = POST) { set $jabali_skip 1; }
         # Gitea #610: bypass only when the query has a non-tracking (content-
         # affecting) param. Tracking-only (utm_*/gclid/fbclid/…) and empty query
