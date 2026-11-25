@@ -33,7 +33,7 @@ if ( defined( 'JABALI_CACHE_LIB_LOADED' ) ) {
 define( 'JABALI_CACHE_LIB_LOADED', true );
 
 if ( ! defined( 'JABALI_CACHE_VERSION' ) ) {
-	define( 'JABALI_CACHE_VERSION', '1.3.0' );
+	define( 'JABALI_CACHE_VERSION', '1.3.1' );
 }
 
 /**
@@ -281,6 +281,15 @@ class Jabali_Cache_Client {
 	 * JAB-94.
 	 */
 	private $last_count_approx = false;
+
+	/**
+	 * @var bool Set by count_keys() when Redis refused the SCAN (an ACL user
+	 * without SCAN, as on Jabali since 1.2.0): the returned 0 is not a count.
+	 */
+	private $last_count_failed = false;
+
+	/** What the status views show when Redis refuses to let the site count its keys. */
+	const KEY_COUNT_UNAVAILABLE = 'not available (this site\'s Redis user may not run SCAN; the Jabali panel shows the count)';
 
 	/** Stats-cache TTL (seconds) + scan-step ceiling for the UI/stats path. */
 	const STATS_CACHE_TTL   = 45;
@@ -1117,7 +1126,10 @@ class Jabali_Cache_Client {
 		if ( 'phpredis' === $this->driver ) {
 			try {
 				$info = $this->redis->info();
-				$out  = '';
+				if ( ! is_array( $info ) ) {
+					return ''; // an error reply, e.g. INFO refused by the Redis ACL.
+				}
+				$out = '';
 				// phpredis 6.x can return nested section arrays; flatten one level
 				// so keyspace_hits / used_memory etc. are always top-level lines.
 				foreach ( (array) $info as $k => $v ) {
@@ -1160,6 +1172,7 @@ class Jabali_Cache_Client {
 	 */
 	public function count_keys( $prefix, $max_steps = 0 ) {
 		$this->last_count_approx = false;
+		$this->last_count_failed = false;
 		if ( ! $this->is_connected() ) {
 			return 0;
 		}
@@ -1173,6 +1186,9 @@ class Jabali_Cache_Client {
 				// and the loop exits early with an undercount. (pconnect pools the
 				// handle, so never rely on another method having set this option.)
 				$this->redis->setOption( \Redis::OPT_SCAN, \Redis::SCAN_RETRY );
+				// scan() returns false both when the keyspace is done and on an
+				// error reply (NOPERM); only the last error tells them apart.
+				$this->redis->clearLastError();
 				$it = null;
 				while ( false !== ( $keys = $this->redis->scan( $it, $pattern, 1000 ) ) ) {
 					$count += count( $keys );
@@ -1187,7 +1203,11 @@ class Jabali_Cache_Client {
 						break;
 					}
 				}
+				if ( null !== $this->redis->getLastError() ) {
+					$this->last_count_failed = true;
+				}
 			} catch ( \Throwable $e ) {
+				$this->last_count_failed = true;
 				$this->fail( $e->getMessage() );
 			}
 			return $count;
@@ -1195,6 +1215,7 @@ class Jabali_Cache_Client {
 		do {
 			$res = $this->cmd( array( 'SCAN', $cursor, 'MATCH', $pattern, 'COUNT', '1000' ) );
 			if ( ! is_array( $res ) || count( $res ) < 2 ) {
+				$this->last_count_failed = true; // an error reply (NOPERM) or a lost connection.
 				break;
 			}
 			$cursor = (string) $res[0];
@@ -1215,14 +1236,20 @@ class Jabali_Cache_Client {
 		return $this->last_count_approx;
 	}
 
+	/** @return bool whether Redis refused the last count_keys(), so its 0 is not a count. */
+	public function last_count_failed() {
+		return $this->last_count_failed;
+	}
+
 	/**
 	 * Key count for the UI/stats path: short-TTL cached + bounded scan (JAB-94).
 	 * Repeated UI polls read the cached value instead of re-scanning the whole
 	 * shared keyspace each time; a cold read is capped at STATS_SCAN_STEPS.
-	 * Returns array( 'count' => int, 'approx' => bool, 'cached' => bool ).
+	 * Returns array( 'count' => int|null, 'approx' => bool, 'cached' => bool );
+	 * count is null when Redis refused the SCAN.
 	 *
 	 * @param string $prefix
-	 * @return array{count:int,approx:bool,cached:bool}
+	 * @return array{count:int|null,approx:bool,cached:bool}
 	 */
 	public function stats_key_count( $prefix ) {
 		$ck  = 'jabali_cache_kc:' . md5( (string) $prefix );
@@ -1231,6 +1258,10 @@ class Jabali_Cache_Client {
 			return array( 'count' => (int) $hit['count'], 'approx' => ! empty( $hit['approx'] ), 'cached' => true );
 		}
 		$count  = $this->count_keys( $prefix, self::STATS_SCAN_STEPS );
+		if ( $this->last_count_failed() ) {
+			// Not cached: a refused SCAN costs one round trip.
+			return array( 'count' => null, 'approx' => false, 'cached' => false );
+		}
 		$approx = $this->last_count_was_approx();
 		$this->shared_set( $ck, array( 'count' => $count, 'approx' => $approx ), self::STATS_CACHE_TTL );
 		return array( 'count' => $count, 'approx' => $approx, 'cached' => false );

@@ -8,6 +8,11 @@ project adheres to [Semantic Versioning](https://semver.org/).
 
 Nothing yet.
 
+## [1.3.1] — 2026-11-25
+
+### Fixed
+- `wp jabali-cache status`, `diagnose` and `stats`, and the settings page, no longer report 0 keys when Redis refuses to let the site count them. On Jabali the site's Redis user may not run `SCAN` (since 1.2.0), so the count was always 0; it now reads "not available", and the Jabali panel shows the count. `wp jabali-cache stats` prints `null` for `keys`, and for `hits`, `misses`, `hit_ratio` and `used_memory` when Redis refuses `INFO`, instead of 0.
+
 ## [1.3.0] — 2026-11-18
 
 ### Fixed
