@@ -105,6 +105,40 @@ func TestPoolTemplateSlowlog(t *testing.T) {
 	}
 }
 
+// A pool the panel sends with request_terminate_timeout 0 must still end a
+// request nginx gave up on (on .124 every worker sat 17+ min on such requests,
+// so the site had none left); a pool's own value is kept.
+func TestPoolTemplateRequestTerminateTimeout(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "install", "php", "jabali-php-pool.conf.tmpl")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read repo pool template: %v", err)
+	}
+	tmpl, err := template.New("pool").Parse(string(b))
+	if err != nil {
+		t.Fatalf("parse template: %v", err)
+	}
+	for stored, want := range map[uint32]string{
+		0:    "request_terminate_timeout = 330s\n",
+		90:   "request_terminate_timeout = 90s\n",
+		3600: "request_terminate_timeout = 3600s\n",
+	} {
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, phpPoolSpecTemplate{
+			PoolName: "jabali-alice", User: "alice", Group: "alice",
+			SocketPath: "/run/php/jabali-alice/fpm.sock", PmMode: "static",
+			PmMaxChildren: 5, ProcessIdleTimeoutSeconds: 60,
+			RequestTerminateTimeoutSeconds: requestTerminateTimeout(stored),
+			DisableFunctions:               "exec",
+		}); err != nil {
+			t.Fatalf("execute template: %v", err)
+		}
+		if got := strings.Count(sb.String(), want); got != 1 {
+			t.Errorf("stored %d: want one %q, got %d in:\n%s", stored, want, got, sb.String())
+		}
+	}
+}
+
 // TestPoolTemplateSessionUploadProgressOff pins session upload progress off in
 // every tenant pool (CVE-2026-115560: php.net's interim advice, 2026-10-23).
 // php_admin_flag, so a tenant's .user.ini or ini_set cannot turn it back on,

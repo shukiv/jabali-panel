@@ -964,7 +964,7 @@
     "php_version": "PHP Version",
     "process_idle_timeout_seconds": "Process Idle Timeout (seconds)",
     "process_mode": "Process Mode",
-    "request_terminate_timeout_seconds_0_no_limit": "Request Terminate Timeout (seconds, 0 = no limit)",
+    "request_terminate_timeout_seconds_0_default": "Request Terminate Timeout (seconds, 0 = default: 330)",
     "select_process_manager_mode": "Select process manager mode",
     "start_servers_dynamic": "Start Servers (dynamic)",
     "value": "Value"

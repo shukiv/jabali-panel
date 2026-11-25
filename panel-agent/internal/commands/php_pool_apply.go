@@ -85,6 +85,23 @@ type phpPoolApplyResponse struct {
 	PoolName   string `json:"pool_name"`
 }
 
+// defaultRequestTerminateTimeoutSeconds is what a pool's request_terminate_timeout
+// of 0 renders as. nginx gives up on a PHP request after fastcgi_read_timeout
+// (60 s, 300 s on Nextcloud vhosts), but FPM keeps running it, and
+// max_execution_time counts only CPU time, so a worker blocked on a lock or the
+// network never ends; enough of them leave the site with no free worker. This
+// ends such a request a little after the longest nginx wait.
+const defaultRequestTerminateTimeoutSeconds = 330
+
+// requestTerminateTimeout is the pool's request_terminate_timeout: its own value,
+// or the default when the panel sends 0.
+func requestTerminateTimeout(seconds uint32) uint32 {
+	if seconds == 0 {
+		return defaultRequestTerminateTimeoutSeconds
+	}
+	return seconds
+}
+
 // phpPoolSpecTemplate represents the template data for rendering the pool config.
 type phpPoolSpecTemplate struct {
 	PoolName                       string
@@ -771,7 +788,7 @@ func phpPoolApplyHandler(ctx context.Context, params json.RawMessage) (any, erro
 		PmMinSpareServers:              p.PmMinSpareServers,
 		PmMaxSpareServers:              p.PmMaxSpareServers,
 		PmMaxRequests:                  p.PmMaxRequests,
-		RequestTerminateTimeoutSeconds: p.RequestTerminateTimeoutSeconds,
+		RequestTerminateTimeoutSeconds: requestTerminateTimeout(p.RequestTerminateTimeoutSeconds),
 		SlowlogTimeoutSeconds:          slowlogTimeout,
 		SlowlogPath:                    slowlogPath,
 		AdminValues:                    poolValues,

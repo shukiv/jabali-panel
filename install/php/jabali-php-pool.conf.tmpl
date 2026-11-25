@@ -24,7 +24,8 @@ pm.max_spare_servers = {{.PmMaxSpareServers}}
 pm.max_requests = {{.PmMaxRequests}}
 {{- end }}
 {{- if gt .RequestTerminateTimeoutSeconds 0 }}
-; Kill a request stuck longer than this (0 = no limit).
+; Kill a request still running after this (the panel's 0 is the agent's
+; 330 s default, a little above the longest nginx fastcgi_read_timeout).
 request_terminate_timeout = {{.RequestTerminateTimeoutSeconds}}s
 {{- end }}
 {{- if gt .SlowlogTimeoutSeconds 0 }}
