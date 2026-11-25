@@ -4,16 +4,12 @@ import "strings"
 
 import "testing"
 
-// CRSPluginBefore must stay SURGICAL: drop only rule 933120's inspection
-// of only the _wp_http_referer arg, only under /wp-admin/. A broadening
-// to ruleRemoveById or a path-allow would silently open a WAF hole.
+// CRSPluginBefore must stay SURGICAL: every rule drop is scoped to a narrow
+// path. A broadening to a path-allow would silently open a WAF hole.
 func TestCRSPluginBefore_Surgical(t *testing.T) {
 	body := CRSPluginBefore()
 
 	mustContain := []string{
-		`SecRule REQUEST_URI "@beginsWith /wp-admin/"`,
-		`id:9599100`,
-		`ctl:ruleRemoveById=933120`, // was target-scoped (silent no-op); now cookie-gated
 		// WooCommerce checkout: order-attribution field name contains
 		// "user_agent" (a php-config-directives.data entry) — 933120 FP on
 		// every checkout. Target-scoped drop on wc-ajax endpoints only.
@@ -61,12 +57,10 @@ func TestCRSPluginBefore_Surgical(t *testing.T) {
 	// GH #404 allowed three builder rules. JAB-227 adds two more, because the
 	// target-scoped construct that used to express these narrowly turned out to
 	// be a silent no-op — see CRSPluginBefore's header. Anything outside the
-	// original trio must be CONTAINED: either a tight URI match or a logged-in
-	// cookie chain, asserted separately below.
+	// original trio must be CONTAINED by a tight URI match.
 	allowedDrops := map[string]bool{
 		"911100": true, "942550": true, "932370": true,
-		"933120": true, // wp-admin referer FP + WooCommerce checkout FP
-		"942100": true, // libinjection vs wp-admin/admin-ajax.php
+		"933120": true, // WooCommerce checkout FP
 		"932120": true, // DokuWiki sprintdoc svg.php icons (GH #1641): Windows-PowerShell RCE FP on a Linux static-icon path
 	}
 	// Rules whose ctl sits on a chain's second line are URI-scoped by the
@@ -143,27 +137,15 @@ func TestCRSPluginBefore_NoDeadRemovalConstructsInRules(t *testing.T) {
 	}
 }
 
-// Widening from per-argument to whole-rule removal is only acceptable because
-// the match compensates. Pin the containment: exclusions on authenticated
-// surfaces stay chained on the logged-in cookie, so an UNAUTHENTICATED request
-// to the same endpoint keeps full CRS scoring.
-func TestCRSPluginBefore_WholeRuleDropsStayContained(t *testing.T) {
+// A built-in applies to every site on every server. Whether a site's editors
+// need a rule off is a per-site call (an operator exclusion, optionally
+// --wp-login-only), so no built-in depends on a request cookie, and the two
+// WordPress admin drops that did (9599100, 9599230) stay gone.
+func TestCRSPluginBefore_NoCookieScopedBuiltins(t *testing.T) {
 	body := CRSPluginBefore()
-	for _, tc := range []struct{ id, why string }{
-		{"9599100", "/wp-admin/ is authenticated; unauth traffic must keep 933120"},
-		{"9599230", "admin-ajax.php is reachable unauthenticated via nopriv_ actions"},
-	} {
-		idx := strings.Index(body, "id:"+tc.id)
-		if idx < 0 {
-			t.Errorf("rule %s missing", tc.id)
-			continue
-		}
-		seg := body[idx:]
-		if end := strings.Index(seg, "\n#"); end > 0 {
-			seg = seg[:end]
-		}
-		if !strings.Contains(seg, "chain") || !strings.Contains(seg, "wordpress_logged_in_") {
-			t.Errorf("rule %s drops a whole rule without a logged-in cookie gate — %s", tc.id, tc.why)
+	for _, s := range []string{"REQUEST_COOKIES", "id:9599100", "id:9599230", "ctl:ruleRemoveById=942100"} {
+		if strings.Contains(body, s) {
+			t.Errorf("built-in before-plugin contains %q", s)
 		}
 	}
 }

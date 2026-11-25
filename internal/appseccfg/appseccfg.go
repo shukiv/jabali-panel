@@ -235,9 +235,9 @@ const CRSPluginOperatorBeforePath = "/var/lib/crowdsec/data/crs-plugins/jabali/j
 //
 // ctl:ruleRemoveById is the only removal that works, and it drops the rule for
 // the WHOLE matched request. Narrowness therefore has to come from the MATCH:
-// scope the URI tightly, and chain on a wordpress_logged_in_ cookie where the
-// endpoint is authenticated, so unauthenticated traffic keeps full scoring.
-// (ctl: does propagate from a chain — verified.) A path-allow remains banned.
+// scope the URI tightly. (ctl: does propagate from a chain — verified.) No
+// built-in depends on a request cookie; a site that needs a rule off for its
+// editors gets a per-site exclusion. A path-allow remains banned.
 func CRSPluginBefore() string {
 	return `# Managed by jabali — CRS "before" exclusion plugin.
 # DO NOT hand-edit. Written by ` + "`jabali appsec render-config`" + `.
@@ -309,18 +309,11 @@ SecAction "id:9599001,phase:1,nolog,pass,setvar:'tx.allowed_request_content_type
 # and for a proxied app that decodes again) and refuses the exclusion while a
 # ".." segment is left. A ".." inside a name ("a..b") is not a segment.
 #
-# 933120 vs WordPress admin search: editing a custom post type issues
-# /wp-admin/edit.php?...&_wp_http_referer=<double-URL-encoded URL>. The
-# nested URL-inside-a-URL trips CRS 933120 (PHP injection) → php_injection
-# score 10 >= anomaly threshold 5 → 949110 blocks → CrowdSec AppSec 4h
-# ban. False positive on legit logged-in admin traffic.
-#
-# Drop ONLY 933120's inspection of ONLY the _wp_http_referer arg, ONLY
-# under /wp-admin/. Body inspection, every other rule, and 933120 on
-# every other arg/path all stay active.
-SecRule REQUEST_URI "@beginsWith /wp-admin/" "id:9599100,phase:1,pass,nolog,chain"
-    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,chain"
-    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=933120"
+# WordPress admin false positives that depend on a site's content or plugins
+# (933120 on an admin list search, 942100 on content posted to admin-ajax.php)
+# are per-site exclusions, not built-ins: a built-in turns the rule off on every
+# WordPress site of every server. Add one with 'jabali appsec exclusion add',
+# limited to logged-in WordPress saves with --wp-login-only where it fits.
 #
 # 911100 / 942550 / 932370 vs WordPress page builders (GH #404). Saving an
 # Elementor page POSTs arbitrary HTML/CSS/JSON markup that trips method-
@@ -378,32 +371,6 @@ SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599201,phase:1,pass,no
 #     other family (SQLi, XSS, LFI, traversal, scanner detection) stays fully
 #     active on this path.
 #   - v[0-9]+ so a future API version can't silently re-break saves.
-# 942100 vs wp-admin/admin-ajax.php (a production box, observed 2026-08-02..03).
-# admin-ajax.php is WordPress's general-purpose AJAX endpoint: every plugin
-# and the block editor POST arbitrary user-authored content through it —
-# post bodies, meta values, saved queries, form-builder field definitions.
-# CRS 942100 is libinjection, which scores on SQL-shaped text rather than a
-# fixed pattern, so ordinary editorial content ("... 1 or 2 items", quoted
-# fragments, anything resembling a boolean clause) reads as SQLi. Measured on
-# That box: 26 denies across 5 source addresses, including a consumer ISP
-# address repeatedly locked out of the site's own wp-admin.
-#
-# 9599201 above already drops 911100/942550/932370 here unconditionally, but
-# not 942100 — libinjection is a far more valuable detector and admin-ajax.php
-# is reachable UNAUTHENTICATED for plugins that register nopriv_ actions, which
-# is precisely where WordPress SQLi is exploited. So this is scoped on identity
-# rather than widened on the path:
-#   - Chained on a wordpress_logged_in_* cookie. An unauthenticated request to
-#     the same endpoint keeps FULL libinjection scoring. A forged cookie buys
-#     nothing on its own: admin-ajax dispatches to capability- and
-#     nonce-checked handlers, so the cookie only decides whether CRS scores the
-#     body, never whether the action runs.
-#   - Only 942100, and only on ARGS + REQUEST_BODY. Every other SQLi rule, and
-#     every other family, stays fully active on this path — a real injection in
-#     these args is still caught by the rest of the 942 group.
-SecRule REQUEST_URI "@rx ^/wp-admin/admin-ajax\.php" "id:9599230,phase:1,pass,nolog,chain"
-    SecRule REQUEST_URI "!@rx (?:^|/)\.\.(?:[/;?#]|$)" "t:none,t:urlDecodeUni,t:urlDecodeUni,chain"
-    SecRule REQUEST_COOKIES_NAMES "@rx ^wordpress_logged_in_" "t:none,ctl:ruleRemoveById=942100"
 # 933120 vs WooCommerce checkout (arizot-e.com incident, 2026-08-02).
 # WooCommerce 8.5+ order attribution submits a field literally named
 # wc_order_attribution_user_agent with every checkout AJAX call — and

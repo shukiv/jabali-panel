@@ -345,8 +345,6 @@ func TestCRSPluginBefore_WordPressBuilderExclusions(t *testing.T) {
 	mustContain(t, out, `^/wp-admin/post`, "scoped to post.php")
 	// wp/v2 is deliberately NOT excluded — public read surface stays fully inspected.
 	mustNotContain(t, out, `^/wp-json/wp/v2/`, "public wp/v2 REST must keep full CRS coverage")
-	// The original narrow 933120 exclusion is still present.
-	mustContain(t, out, "ctl:ruleRemoveById=933120", "933120 wp-admin exclusion intact (now cookie-gated; the target-scoped form was a no-op)")
 	// GH #594: the upstream WordPress CRS-exclusion plugin is activated, which
 	// covers admin-ajax/builder false positives (incl. 942151) comprehensively.
 	mustContain(t, out, "tx.wordpress-rule-exclusions-plugin_enabled=1", "WP exclusion plugin activated")
@@ -379,43 +377,4 @@ func TestCRSPluginBefore_CodeSnippetsExclusionRemoved(t *testing.T) {
 	mustNotContain(t, out, "id:9599220", "no-op-only rule must not be resurrected")
 	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-rce", "dead construct must not return")
 	mustNotContain(t, out, "ctl:ruleRemoveTargetByTag=attack-injection-php", "dead construct must not return")
-}
-
-func TestCRSPluginBefore_AdminAjaxLibinjectionIsCookieGated(t *testing.T) {
-	out := CRSPluginBefore()
-
-	mustContain(t, out, "ctl:ruleRemoveById=942100", "942100 dropped (ruleRemoveById — the target-scoped form is a silent no-op)")
-
-	// The drop must be chained on the logged-in cookie. Locate the rule and
-	// assert the chain, rather than trusting that the cookie appears anywhere
-	// in the file (it also appears in the code-snippets rule).
-	idx := strings.Index(out, "id:9599230")
-	if idx < 0 {
-		t.Fatal("admin-ajax 942100 rule (id:9599230) missing")
-	}
-	// Start at the beginning of that SecRule's line — the URI match sits
-	// before the id: on the same line.
-	if nl := strings.LastIndex(out[:idx], "\n"); nl >= 0 {
-		idx = nl + 1
-	}
-	rule := out[idx:]
-	if end := strings.Index(rule, "\n# "); end > 0 {
-		rule = rule[:end]
-	}
-	if !strings.Contains(rule, "chain") {
-		t.Error("942100 drop is not chained — it would apply to unauthenticated requests")
-	}
-	if !strings.Contains(rule, "wordpress_logged_in_") {
-		t.Error("942100 drop is not gated on the wordpress_logged_in_ cookie")
-	}
-	if !strings.Contains(rule, `^/wp-admin/admin-ajax`) {
-		t.Error("942100 drop is not scoped to admin-ajax.php")
-	}
-
-	// Narrowness: only 942100 is dropped by ID here. Removing the whole
-	// attack-sqli tag on this path would surrender libinjection everywhere on
-	// the endpoint, which is the thing this scoping exists to avoid.
-	if strings.Contains(rule, "ruleRemoveTargetByTag=attack-sqli") {
-		t.Error("admin-ajax rule removes the whole SQLi tag — too broad")
-	}
 }
