@@ -152,15 +152,21 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 	return nil
 }
 
+// Delete removes the package and, in the same transaction, clears the server's
+// default package for migrations when it was this one, so the setting never
+// names a package that is gone.
 func (r *packageRepo) Delete(ctx context.Context, id string) error {
-	res := r.db.WithContext(ctx).Delete(&models.HostingPackage{}, "id = ?", id)
-	if res.Error != nil {
-		return res.Error
-	}
-	if res.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Delete(&models.HostingPackage{}, "id = ?", id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return tx.Model(&models.ServerSettings{}).Where("default_package_id = ?", id).
+			Update("default_package_id", nil).Error
+	})
 }
 
 // defaultPackages are the Tier 1/2/3 starter plans seeded on first boot

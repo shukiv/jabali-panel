@@ -240,7 +240,7 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
   );
 }
 
-const PackageSelect = (props: {
+export const PackageSelect = (props: {
   value?: string | null;
   onChange?: (v: string | null) => void;
 }) => {

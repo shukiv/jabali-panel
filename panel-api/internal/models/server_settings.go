@@ -667,6 +667,12 @@ type ServerSettings struct {
 	SupportChatClients         bool `gorm:"column:support_chat_clients;type:tinyint(1);not null;default:0" json:"support_chat_clients"`
 	SupportChatNoticeDismissed bool `gorm:"column:support_chat_notice_dismissed;type:tinyint(1);not null;default:0" json:"support_chat_notice_dismissed"`
 
+	// DefaultPackageID (migration 000355) is the hosting package a migration
+	// gives the destination user it creates when no target package is named.
+	// nil = none (the user gets no package). Seeded to "Tier 3"; deleting the
+	// package clears it. TEXT for the row-size ceiling (GH #1766).
+	DefaultPackageID *string `gorm:"column:default_package_id;type:text" json:"default_package_id"`
+
 	UpdatedAt time.Time `gorm:"type:datetime(6);not null"             json:"updated_at"`
 }
 

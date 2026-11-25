@@ -42,6 +42,14 @@ type ServerSettingsHandlerConfig struct {
 	// Webmail (optional) sends a changed brand text to webmail at once
 	// (GH #2502); without it the reconciler's next pass sends it.
 	Webmail WebmailBrandingSender
+	// Packages checks that a default_package_id names a package. Nil refuses
+	// any change to it (503).
+	Packages SettingsPackageFinder
+}
+
+// SettingsPackageFinder is the one package lookup the settings PATCH needs.
+type SettingsPackageFinder interface {
+	FindByID(ctx context.Context, id string) (*models.HostingPackage, error)
 }
 
 // RegisterServerSettingsRoutes mounts server settings endpoints under the
@@ -171,6 +179,9 @@ type updateServerSettingsRequest struct {
 	FTPLocalMaxRateKBs         *uint32 `json:"ftp_local_max_rate_kbs,omitempty"`
 	TenantDomainOptionsEnabled *bool   `json:"tenant_domain_options_enabled,omitempty"`
 	TenantDocrootEditable      *bool   `json:"tenant_docroot_editable,omitempty"`
+	// The package a migration gives a user it creates without a target
+	// package; "" clears it (no default).
+	DefaultPackageID *string `json:"default_package_id,omitempty"`
 	// GH #860: opt-in branded page on the default catch-all for unknown
 	// hosts (default off = keep the 444 drop).
 	UnconfiguredPageEnabled *bool `json:"unconfigured_page_enabled,omitempty"`
@@ -648,6 +659,25 @@ func (h *serverSettingsHandler) update(c *gin.Context) {
 	}
 	if req.TenantDocrootEditable != nil {
 		current.TenantDocrootEditable = *req.TenantDocrootEditable
+	}
+	if req.DefaultPackageID != nil {
+		id := strings.TrimSpace(*req.DefaultPackageID)
+		if id == "" {
+			current.DefaultPackageID = nil
+		} else {
+			if h.cfg.Packages == nil {
+				c.JSON(http.StatusServiceUnavailable, gin.H{"error": "packages_unavailable"})
+				return
+			}
+			if _, err := h.cfg.Packages.FindByID(ctx, id); errors.Is(err, repository.ErrNotFound) {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_failed", "detail": "default_package_id: no such hosting package"})
+				return
+			} else if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
+				return
+			}
+			current.DefaultPackageID = &id
+		}
 	}
 	if req.UnconfiguredPageEnabled != nil {
 		current.UnconfiguredPageEnabled = *req.UnconfiguredPageEnabled

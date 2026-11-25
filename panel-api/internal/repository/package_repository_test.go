@@ -254,3 +254,35 @@ func TestDefaultPackages_NoGitDeploy(t *testing.T) {
 		require.False(t, p.GitDeployEnabled, "seeded package %s must not deploy from Git", p.Name)
 	}
 }
+
+// Deleting the server's default package for migrations clears that setting in
+// the same transaction, so a migration never names a package that is gone.
+func TestPackage_Delete_ClearsTheDefaultPackage(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewPackageRepository(db)
+	const id = "01HXPKG0000000000000000000"
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM .hosting_packages. WHERE id = ").
+		WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE .server_settings. SET .default_package_id.=.*WHERE default_package_id = ").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	require.NoError(t, repo.Delete(context.Background(), id))
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPackage_Delete_MissingPackageTouchesNothing(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewPackageRepository(db)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("DELETE FROM .hosting_packages.").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	require.ErrorIs(t, repo.Delete(context.Background(), "01HXPKGMISSING0000000000000"), ErrNotFound)
+	require.NoError(t, mock.ExpectationsWereMet())
+}

@@ -890,6 +890,15 @@ func runServe(cmd *cobra.Command, args []string) error {
 			// 000078 already bumps debian-12-v1 → debian-13-v1, but only
 			// matches that exact value; this catches NULL/"" too.
 			fillIfEmpty(&row.DefaultNspawnImageVersion, "debian-13-v1")
+			// Default package for migrated accounts: "Tier 3". Migration 000355
+			// sets it on servers that already have packages; on a fresh install
+			// the packages are seeded above, after the migrations ran, so it is
+			// set here, once, when the row is first created.
+			if created {
+				if p, perr := packageRepo.FindByName(seedCtx, "Tier 3"); perr == nil {
+					row.DefaultPackageID = &p.ID
+				}
+			}
 
 			if mutated {
 				if err := serverSettingsRepo.Upsert(seedCtx, row); err != nil {

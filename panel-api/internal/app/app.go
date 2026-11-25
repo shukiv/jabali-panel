@@ -1243,8 +1243,9 @@ func NewWithDeps(cfg *config.Config, deps Deps) *gin.Engine {
 				Repo:    deps.ServerSettings,
 				Agent:   deps.Agent,
 				Log:     deps.Log,
-				SSOKey:  deps.SSOKey,
-				Webmail: webmailBrandingSender(deps.Reconciler),
+				SSOKey:   deps.SSOKey,
+				Webmail:  webmailBrandingSender(deps.Reconciler),
+				Packages: deps.Packages,
 			})
 			// GH #2056: website mail through the local mail server or a smarthost.
 			api.RegisterWebsiteMailRoutes(v1, api.WebsiteMailHandlerConfig{
