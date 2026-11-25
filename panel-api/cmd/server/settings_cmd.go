@@ -308,6 +308,12 @@ type settingDef struct {
 	apply func(s *models.ServerSettings, raw string) error
 }
 
+// lookupSettingsPackage resolves a package name or ID for default_package (a
+// var so tests can stand in for the database).
+var lookupSettingsPackage = func(ctx context.Context, nameOrID string) (*models.HostingPackage, error) {
+	return resolvePackage(ctx, packageRepoFromDB(), nameOrID)
+}
+
 func parseBool(raw string) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "true", "1", "yes", "on", "enable", "enabled":
@@ -388,6 +394,22 @@ var settableKeys = map[string]settingDef{
 				return fmt.Errorf("hostname cannot be empty")
 			}
 			s.Hostname = v
+			return nil
+		},
+	},
+	"default_package": settingDef{
+		help: "hosting package (name or ID) a migration gives a user it creates without a target package; empty = none",
+		apply: func(s *models.ServerSettings, raw string) error {
+			v := strings.TrimSpace(raw)
+			if v == "" {
+				s.DefaultPackageID = nil
+				return nil
+			}
+			p, err := lookupSettingsPackage(context.Background(), v)
+			if err != nil {
+				return err
+			}
+			s.DefaultPackageID = &p.ID
 			return nil
 		},
 	},

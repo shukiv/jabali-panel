@@ -40,7 +40,9 @@ Actions: Edit, Delete, Duplicate.
 
 ## Default package
 
-The installer creates a `default` package suitable for small VPS scale (10 GiB disk, 1 GiB RAM cap, 50% CPU, 5 domains, 25 mailboxes, 5 databases). Edit it freely; the row identity is the slug `default`, so do not rename it if you rely on the auto-assignment to "default" when creating users without an explicit package.
+A new server starts with three packages, **Tier 1**, **Tier 2** and **Tier 3**. Edit, rename or delete them freely.
+
+A user you create by hand without a package has no package. A [migration](./migration.md) that creates its account without a package picked gives it the **Default package for migrations** from [Server Settings → General](./server-settings.md#general), Tier 3 on a new server. Deleting that package clears the setting.
 
 ## CLI
 

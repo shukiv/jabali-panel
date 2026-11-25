@@ -300,8 +300,15 @@ failed stage. Already-done stages are skipped.`,
 					Username: &targetUser,
 					IsAdmin:  false,
 				}
-				if targetPackageID != "" {
-					cu.PackageID = &targetPackageID
+				pkgID, fromDefault, pErr := migrationPackageID(ctx, targetPackageID, repository.NewServerSettingsRepository(sharedDB))
+				if pErr != nil {
+					return failJob(pErr)
+				}
+				if pkgID != "" {
+					cu.PackageID = &pkgID
+					if fromDefault {
+						fmt.Printf("  → no target package given; using the default package %s (Server Settings → General)\n", pkgID)
+					}
 				}
 				// GH #327 (johnnyq): carry the HestiaCP Contact Name onto the
 				// created user's name. Read it from the STAGED tarball, not the
@@ -2728,4 +2735,26 @@ func fixImportedUploadPath(ctx context.Context, out io.Writer, ag agent.AgentInt
 	case "kept":
 		fmt.Fprintf(out, "  wordpress %s: upload_path %s left as is (%s); check that media uploads work\n", site, res.Before, res.Reason)
 	}
+}
+
+// migrationPackageID is the package a migration gives the user it creates:
+// the target package when one is named, else the server's default package
+// (Server Settings → General), else none. fromDefault reports the second case.
+func migrationPackageID(ctx context.Context, target string, settings interface {
+	Get(context.Context) (*models.ServerSettings, error)
+}) (id string, fromDefault bool, err error) {
+	if target != "" {
+		return target, false, nil
+	}
+	s, err := settings.Get(ctx)
+	if errors.Is(err, repository.ErrNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read the default package for migrations: %w", err)
+	}
+	if s.DefaultPackageID == nil || *s.DefaultPackageID == "" {
+		return "", false, nil
+	}
+	return *s.DefaultPackageID, true, nil
 }

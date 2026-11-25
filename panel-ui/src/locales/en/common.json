@@ -2037,6 +2037,8 @@
   "settings": {
     "admin_email": "Admin email",
     "default_nspawn_image": "Default nspawn Image",
+    "default_package": "Default package for migrations",
+    "default_package_extra": "A migration that creates its account without a package picked gives it this package. No package means no resource limits, and features a package must allow (FTP sub-accounts, Docker apps, Git deploy and others) stay off. Creating a user by hand is not affected.",
     "default_record_ttl_seconds": "Default record TTL (seconds)",
     "disk_quotas": "Disk Quotas",
     "disk_size_matters": "Disk size matters",
@@ -2048,6 +2050,7 @@
     "identity": "Identity",
     "kernel_posix_quota_must_be_active_on_the_filesys": "Kernel POSIX quota must be active on the filesystem holding /home",
     "maximum_upload_size_mb": "Maximum Upload Size (MB)",
+    "migrations": "Migrations",
     "off_by_default_opt_in_feature": "Off by default — opt-in feature",
     "potential_lockout_risk": "Potential Lockout Risk",
     "public_ipv4": "Public IPv4",

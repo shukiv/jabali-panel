@@ -84,6 +84,7 @@ import { TenantNotificationsCard } from "./TenantNotificationsCard";
 import { NginxSettingsCard } from "./NginxSettingsCard";
 import { LogRetentionCard } from "./LogRetentionCard";
 import { SupportChatCard } from "./SupportChatCard";
+import { PackageSelect } from "../users/UserDrawer";
 import { CollapsibleAlert } from "../../../components/CollapsibleAlert";
 
 type ServerSettings = {
@@ -114,6 +115,7 @@ type ServerSettings = {
   postgres_enabled: boolean;
   postgres_max_connections_per_user: number;
   migration_allow_private_hosts: boolean;
+  default_package_id?: string | null;
   working_folder: string;
   updated_at: string;
 };
@@ -182,6 +184,8 @@ export const GeneralSettingsTab = () => {
         // missing it under the Storage tab where it logically didn't
         // fit. Storage tab no longer PATCHes this field.
         root_terminal_enabled: values.root_terminal_enabled || false,
+        // "" clears the default package for migrations.
+        default_package_id: values.default_package_id ?? "",
       });
       notify({ type: "success", message: "Settings saved" });
       form.setFieldsValue(resp.data);
@@ -354,6 +358,16 @@ export const GeneralSettingsTab = () => {
               value: p.dateTime,
             }))}
           />
+        </Form.Item>
+      </Card>
+
+      <Card title={t("settings.migrations")} style={{ marginBottom: 16 }}>
+        <Form.Item
+          label={t("settings.default_package")}
+          name="default_package_id"
+          extra={t("settings.default_package_extra")}
+        >
+          <PackageSelect />
         </Form.Item>
       </Card>
 

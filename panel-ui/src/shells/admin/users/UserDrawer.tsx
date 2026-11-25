@@ -240,7 +240,8 @@ export function UserDrawer({ open, onClose, editingId }: UserDrawerProps) {
   );
 }
 
-const PackageSelect = (props: {
+export const PackageSelect = (props: {
+  id?: string; // Form.Item's id, so its label points at the select
   value?: string | null;
   onChange?: (v: string | null) => void;
 }) => {
@@ -252,6 +253,7 @@ const PackageSelect = (props: {
 
   return (
     <Select
+      id={props.id}
       placeholder="Select a package (optional)"
       allowClear
       loading={isLoading}
