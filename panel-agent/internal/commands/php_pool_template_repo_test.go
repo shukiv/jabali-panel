@@ -106,8 +106,8 @@ func TestPoolTemplateSlowlog(t *testing.T) {
 }
 
 // A pool the panel sends with request_terminate_timeout 0 must still end a
-// request nginx gave up on (on .124 every worker sat 17+ min on such requests,
-// so the site had none left); a pool's own value is kept.
+// request nginx gave up on (on a production store every worker sat 17+ min on
+// such requests, so the site had none left); a pool's own value is kept.
 func TestPoolTemplateRequestTerminateTimeout(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "install", "php", "jabali-php-pool.conf.tmpl")
 	b, err := os.ReadFile(path)
