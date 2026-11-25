@@ -497,10 +497,13 @@ func applyInstallACL(ctx context.Context, rdb *redis.Client, osUser, installID, 
 	// Explicit command ALLOWLIST (Gitea #413) instead of the broad +@keyspace
 	// category — @keyspace included RANDOMKEY/DBSIZE, which Redis ACLs do NOT
 	// pattern-scope, so a tenant could enumerate other tenants' key names /
-	// total key count past the ~jc:<osuser>:* fence. This is exactly the set the
+	// total key count past the ~jc:<osuser>:* fence. This is the set the
 	// bundled object cache issues (GET/SET/SETEX/DEL/MGET/INCRBY/DECRBY/SELECT/
 	// PING/AUTH) plus a little headroom — no RANDOMKEY, DBSIZE, KEYS, SCAN, or
-	// FLUSH. SCAN went with jabali-cache 1.2.0: a flush bumps a generation
+	// FLUSH. ECHO reads no key: phpredis sends it to check a pooled persistent
+	// connection before reusing it (redis.pconnect.echo_check_liveness, on by
+	// default), and a refused ECHO makes it open a new connection on every
+	// request. SCAN went with jabali-cache 1.2.0: a flush bumps a generation
 	// counter, and the panel's WP-cache cleanup removes old keys, enforces the
 	// key budget and counts the site's keys (ADR-0173). `jabali app
 	// refresh-cache-plugin` re-applies this rule to sites provisioned earlier.
@@ -513,7 +516,7 @@ func applyInstallACL(ctx context.Context, rdb *redis.Client, osUser, installID, 
 		"+GET", "+SET", "+SETEX", "+PSETEX", "+SETNX", "+DEL", "+UNLINK",
 		"+MGET", "+MSET", "+INCR", "+INCRBY", "+DECR", "+DECRBY",
 		"+EXPIRE", "+PEXPIRE", "+TTL", "+PTTL", "+PERSIST", "+TYPE", "+EXISTS",
-		"+SELECT", "+PING", "+AUTH", "+HELLO",
+		"+SELECT", "+PING", "+ECHO", "+AUTH", "+HELLO",
 	); err != nil {
 		return err
 	}

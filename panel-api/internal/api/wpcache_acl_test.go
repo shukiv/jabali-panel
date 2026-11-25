@@ -60,6 +60,11 @@ func TestProvisionInstallACL_RuleHasNoScan(t *testing.T) {
 			t.Errorf("rule lacks %s, which the plugin issues", c)
 		}
 	}
+	// phpredis checks a pooled persistent connection with ECHO before reusing
+	// it; without ECHO every request opens a new connection.
+	if !hasArg(set, "+ECHO") {
+		t.Error("rule lacks +ECHO, so phpredis never reuses a persistent connection")
+	}
 	for _, c := range []string{"+SCAN", "+KEYS", "+RANDOMKEY", "+DBSIZE", "+FLUSHDB", "+FLUSHALL", "+@all", "+@keyspace"} {
 		if hasArg(set, c) {
 			t.Errorf("rule grants %s", c)
