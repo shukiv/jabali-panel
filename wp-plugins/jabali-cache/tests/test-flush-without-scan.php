@@ -88,6 +88,10 @@ fs_assert( $probe->connect(), 'connected as the test user' );
 $probe->set( $prefix . 'probe', '1', 60 );
 $swept = $probe->delete_by_pattern( $prefix . '*' );
 fs_assert( 0 === $swept && '1' === $probe->get( $prefix . 'probe' ), 'precondition: this user cannot SCAN (a pattern delete removed nothing)' );
+// The status views must not show the refused count as 0 keys.
+$probe->count_keys( $prefix );
+fs_assert( true === $probe->last_count_failed(), 'a refused SCAN is reported as a failed count (' . $probe->driver() . ')' );
+fs_assert( null === $probe->stats_key_count( $prefix )['count'], 'stats_key_count() has no count when SCAN is refused' );
 $probe->del( $prefix . 'probe' );
 
 $raw = new Jabali_Cache_Client( $cfg );
