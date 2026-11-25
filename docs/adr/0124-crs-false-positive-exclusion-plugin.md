@@ -144,3 +144,14 @@ once.
 A `# SKIPPED` breadcrumb for an invalid row now `%q`-quotes the row's
 fields. A raw newline in one of them would end the comment and load the
 rest as a live directive.
+
+## Amendment (2026-11-25): WordPress admin drops move to per-site exclusions
+
+The first rule (9599100: 933120 under `/wp-admin/`) and the later 942100 drop
+on `/wp-admin/admin-ajax.php` (9599230) are removed from the built-in plugin.
+Both false positives depend on a site's content and plugins, and a built-in
+turns the rule off on every WordPress site of every server. A site that hits
+one gets an operator exclusion instead (`jabali appsec exclusion add`),
+limited to logged-in WordPress saves with `--wp-login-only` where it fits.
+Replayed on the test VM: a nested-referer admin list search and classic-editor
+autosaves with SQL-like wording passed the WAF with and without the two rules.
