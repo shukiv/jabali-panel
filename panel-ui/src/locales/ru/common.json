@@ -971,7 +971,7 @@
     "php_version": "Версия PHP",
     "process_idle_timeout_seconds": "Тайм-аут простоя процесса (секунды)",
     "process_mode": "Режим процессов",
-    "request_terminate_timeout_seconds_0_no_limit": "Тайм-аут завершения запроса (секунды, 0 = без ограничения)",
+    "request_terminate_timeout_seconds_0_default": "Тайм-аут завершения запроса (секунды, 0 = по умолчанию: 330)",
     "select_process_manager_mode": "Выберите режим менеджера процессов",
     "start_servers_dynamic": "Процессов при запуске (dynamic)",
     "value": "Значение"

@@ -198,7 +198,7 @@ export const PHPPoolEdit = () => {
           <InputNumber min={0} placeholder="pm.max_requests" />
         </Form.Item>
 
-        <Form.Item label={t("phppooledit.request_terminate_timeout_seconds_0_no_limit")} name="request_terminate_timeout_seconds">
+        <Form.Item label={t("phppooledit.request_terminate_timeout_seconds_0_default")} name="request_terminate_timeout_seconds">
           <InputNumber min={0} placeholder="request_terminate_timeout" />
         </Form.Item>
 

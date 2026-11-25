@@ -805,7 +805,7 @@
     "php_version": "",
     "process_idle_timeout_seconds": "",
     "process_mode": "",
-    "request_terminate_timeout_seconds_0_no_limit": "",
+    "request_terminate_timeout_seconds_0_default": "",
     "select_process_manager_mode": "",
     "start_servers_dynamic": "",
     "value": "Valoare"
