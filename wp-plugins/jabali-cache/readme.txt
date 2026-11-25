@@ -4,7 +4,7 @@ Tags: redis, object cache, cache, performance, page cache
 Requires at least: 5.6
 Tested up to: 7.0
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -127,6 +127,9 @@ Only if your host does not already have one. On Jabali, nginx serves a FastCGI m
 Deactivating removes the `object-cache.php` drop-in cleanly, so WordPress reverts to its built-in non-persistent cache. Uninstalling removes the plugin's options. Your Redis data is just a cache and is safe to discard.
 
 == Changelog ==
+
+= 1.3.1 =
+* When Redis refuses to let the site count its keys (on Jabali the site's Redis user may not run `SCAN`), `wp jabali-cache status`, `diagnose` and `stats` and the settings page say the count is not available instead of showing 0. `wp jabali-cache stats` prints `null` for values Redis refused.
 
 = 1.3.0 =
 * Sites running Jetpack with its Subscriptions module now get their pages cached on Jabali servers. Jetpack marks every page as varying by `Accept` and `Content-Type`, which the Jabali page cache never stores. On a Jabali server the plugin removes that pair from pages sent to browsers; JSON and XML requests keep it and are never cached. Other `Vary` values are kept. The `jabali_cache_strip_jetpack_vary` filter turns this off.

@@ -174,6 +174,34 @@ jc_assert( 0 === $sc1['count'] && false === $sc1['cached'], 'stats: cold key-cou
 $sc2 = $cb1->stats_key_count( 'jc:sctest:' );
 jc_assert( true === $sc2['cached'], 'stats: second key-count read is served from the cache' );
 
+// Redis refuses SCAN / INFO (an ACL user without them, as on Jabali since
+// 1.2.0): the count is unknown, not 0. A pure-PHP client on a socket pair reads
+// canned replies.
+function jc_canned_client( $cfg, $replies ) {
+	$pair = stream_socket_pair( STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP );
+	fwrite( $pair[1], $replies );
+	$c = new Jabali_Cache_Client( $cfg );
+	foreach ( array( 'stream' => $pair[0], 'connected' => true, 'driver' => 'pure-php' ) as $prop => $val ) {
+		$rp = new ReflectionProperty( 'Jabali_Cache_Client', $prop );
+		$rp->setAccessible( true );
+		$rp->setValue( $c, $val );
+	}
+	return array( $c, $pair );
+}
+$noperm = "-NOPERM User wp_x has no permissions to run the 'scan' command\r\n";
+list( $rc, $rc_pair ) = jc_canned_client( $cfg, $noperm );
+jc_assert( 0 === $rc->count_keys( 'jc:refused:' ) && true === $rc->last_count_failed(), 'refused SCAN: count_keys flags the count as failed' );
+list( $rc, $rc_pair ) = jc_canned_client( $cfg, "*2\r\n\$1\r\n0\r\n*2\r\n\$5\r\njc:ra\r\n\$5\r\njc:rb\r\n" );
+jc_assert( 2 === $rc->count_keys( 'jc:' ) && false === $rc->last_count_failed(), 'allowed SCAN: counts the keys, not flagged' );
+list( $rc, $rc_pair ) = jc_canned_client( $cfg, "*2\r\n\$1\r\n0\r\n*0\r\n" );
+jc_assert( 0 === $rc->count_keys( 'jc:none:' ) && false === $rc->last_count_failed(), 'allowed SCAN, no keys: a real 0, not flagged' );
+list( $rc, $rc_pair ) = jc_canned_client( $cfg, $noperm . $noperm );
+$rs1 = $rc->stats_key_count( 'jc:refusedstats:' );
+$rs2 = $rc->stats_key_count( 'jc:refusedstats:' );
+jc_assert( null === $rs1['count'] && null === $rs2['count'] && false === $rs2['cached'], 'refused SCAN: stats count is null and never cached' );
+list( $rc, $rc_pair ) = jc_canned_client( $cfg, "-NOPERM User wp_x has no permissions to run the 'info' command\r\n" );
+jc_assert( '' === $rc->info(), 'refused INFO: info() is empty' );
+
 // Cleanup temp breaker artifacts.
 $cb_glob = glob( $cb_root . '/cache/jabali-cache/*' );
 if ( is_array( $cb_glob ) ) {

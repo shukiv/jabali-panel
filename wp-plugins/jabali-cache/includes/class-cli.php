@@ -55,6 +55,9 @@ class Jabali_Cache_CLI {
 		// a UI-polled path); an exact full scan stays in `diagnose`.
 		$kc           = $ok ? $c->stats_key_count( $cfg['prefix'] ) : array( 'count' => 0, 'approx' => false );
 		$keys_display = $ok ? ( ( ! empty( $kc['approx'] ) ? '~' : '' ) . (int) $kc['count'] ) : '-';
+		if ( $ok && null === $kc['count'] ) {
+			$keys_display = Jabali_Cache_Client::KEY_COUNT_UNAVAILABLE;
+		}
 
 		$rows = array(
 			array( 'field' => 'managed_by', 'value' => $managed ? 'jabali panel (wp-config constants)' : 'plugin options' ),
@@ -213,7 +216,8 @@ class Jabali_Cache_CLI {
 		// JAB-89: diagnose forces a live probe too (bypass the breaker).
 		$c = ( new Jabali_Cache_Client( $cfg ) )->force_probe();
 		if ( $c->connect() ) {
-			\WP_CLI::success( 'Connected via ' . $c->driver() . '. Keys for this site: ' . $c->count_keys( $cfg['prefix'] ) );
+			$n = $c->count_keys( $cfg['prefix'] );
+			\WP_CLI::success( 'Connected via ' . $c->driver() . '. Keys for this site: ' . ( $c->last_count_failed() ? Jabali_Cache_Client::KEY_COUNT_UNAVAILABLE : $n ) );
 			$c->close();
 			return;
 		}
@@ -248,15 +252,23 @@ class Jabali_Cache_CLI {
 			// JAB-94: cached + bounded (stats is polled); `keys_approx` flags a
 			// capped count so the panel can render "~N".
 			$kc                = $c->stats_key_count( $cfg['prefix'] );
-			$out['keys']       = (int) $kc['count'];
+			// null, not 0, when Redis refused the count (or INFO below): unknown.
+			$out['keys']       = null === $kc['count'] ? null : (int) $kc['count'];
 			$out['keys_approx'] = ! empty( $kc['approx'] );
 			$info             = $c->info();
-			$h                = $this->info_int( $info, 'keyspace_hits' );
-			$m                = $this->info_int( $info, 'keyspace_misses' );
-			$out['hits']      = $h;
-			$out['misses']    = $m;
-			$out['hit_ratio'] = ( $h + $m ) > 0 ? round( 100 * $h / ( $h + $m ), 1 ) : 0.0;
-			$out['used_memory'] = $this->info_int( $info, 'used_memory' );
+			if ( '' === $info ) {
+				$out['hits']        = null;
+				$out['misses']      = null;
+				$out['hit_ratio']   = null;
+				$out['used_memory'] = null;
+			} else {
+				$h                  = $this->info_int( $info, 'keyspace_hits' );
+				$m                  = $this->info_int( $info, 'keyspace_misses' );
+				$out['hits']        = $h;
+				$out['misses']      = $m;
+				$out['hit_ratio']   = ( $h + $m ) > 0 ? round( 100 * $h / ( $h + $m ), 1 ) : 0.0;
+				$out['used_memory'] = $this->info_int( $info, 'used_memory' );
+			}
 			$c->close();
 		}
 		\WP_CLI::log( wp_json_encode( $out ) );

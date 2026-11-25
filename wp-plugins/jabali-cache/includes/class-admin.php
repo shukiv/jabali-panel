@@ -241,7 +241,14 @@ class Jabali_Cache_Admin {
 		$this->kv( 'Serializer', esc_html( $health['serializer'] ) );
 		$this->kv( 'Target', '<code>' . esc_html( $health['target'] ) . '</code> (db ' . (int) $s['database'] . ')' );
 		$this->kv( 'Key prefix', '<code class="jc-ellipsis">' . esc_html( $health['prefix'] ) . '</code>' );
-		$this->kv( 'Keys for this site', $health['connected'] ? ( (int) $health['keys'] . ( ! empty( $health['keys_approx'] ) ? '+' : '' ) ) : '—' );
+		if ( ! $health['connected'] ) {
+			$keys_label = '—';
+		} elseif ( null === $health['keys'] ) {
+			$keys_label = '<span class="jc-muted">' . esc_html( Jabali_Cache_Client::KEY_COUNT_UNAVAILABLE ) . '</span>';
+		} else {
+			$keys_label = (int) $health['keys'] . ( ! empty( $health['keys_approx'] ) ? '+' : '' );
+		}
+		$this->kv( 'Keys for this site', $keys_label );
 		if ( null !== $hits ) {
 			$this->kv( 'Cache hits (this request)', esc_html( $hits['h'] . ' hits / ' . $hits['m'] . ' misses (' . $hits['rate'] . '%)' ) );
 		}
@@ -574,7 +581,7 @@ class Jabali_Cache_Admin {
 			$out['connected']  = true;
 			$out['driver']     = $client->driver();
 			$kc                 = $client->stats_key_count( $cfg['prefix'] );
-			$out['keys']        = (int) $kc['count'];
+			$out['keys']        = null === $kc['count'] ? null : (int) $kc['count'];
 			$out['keys_approx'] = ! empty( $kc['approx'] );
 			$out['server']     = $this->parse_info( $client->info() );
 			$client->close();
