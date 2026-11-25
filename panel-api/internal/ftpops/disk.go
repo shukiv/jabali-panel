@@ -164,7 +164,10 @@ func agentExecute(ctx context.Context, d Deps, plan limits.LimitsPlan, username 
 	}
 	callCtx, cancel := context.WithTimeout(ctx, AgentTimeout)
 	defer cancel()
-	return plan.Execute(callCtx, d.Agent, username)
+	// A running slice that still differs is the limits reconciler's to report;
+	// the disk quota this converges is set either way.
+	_, err := plan.Execute(callCtx, d.Agent, username)
+	return err
 }
 
 func logWarn(d Deps, msg string, args ...any) {

@@ -43,7 +43,7 @@ func TestTenantDiskQuotaMB(t *testing.T) {
 func TestLimitsPlan_ExecuteSendsTheTenantsOwnLimit(t *testing.T) {
 	ag := &recPlanAgent{}
 	p := PlanFor(pkgLimits(), nil, true, "/home", IsolatedShares{SharesMB: 30})
-	if err := p.Execute(context.Background(), ag, "alice"); err != nil {
+	if _, err := p.Execute(context.Background(), ag, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	if ag.params["disk_quota_mb"] != uint32(70) {

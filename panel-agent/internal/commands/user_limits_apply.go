@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,8 +29,8 @@ var killProcess = func(pid int, sig os.Signal) error {
 
 // user.limits.apply — writes /etc/systemd/system/jabali-user-<u>.slice.d/limits.conf
 // with the effective cgroups v2 directives, calls setquota for the disk
-// quota, reloads systemd, and verifies the kernel picked up the new
-// cgroup values.
+// quota, reloads systemd, and puts the values on the user's running slice
+// (convergeLiveLimits), checking the kernel took them.
 //
 // Zero = unlimited for every field — no directive emitted, and setquota
 // is called with 0 0 0 0 which clears the quota on the target mount.
@@ -168,46 +169,31 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		quotaApplied = true
 	}
 
-	// Skip only the SIGHUP + kernel-state verify when the cgroup drop-in
-	// is unchanged — the reconciler calls this every tick (~60s) per
-	// user, so on a 3-user host the previous always-reload path fired 180
-	// daemon-reloads per hour for steady state. The kernel still matches
-	// what we last wrote, so a no-op verify gains nothing. Drift
-	// detection still works on the next REAL cgroup change (forced via
-	// content diff). Tradeoff: external kernel forget of a *cgroup* limit
-	// (someone edited the slice by hand) won't auto-heal until the
-	// operator triggers a real change. The disk quota above is re-asserted
-	// on every call, so it does not carry that caveat.
+	// Unchanged drop-in: no daemon-reload (the reconciler calls this every
+	// ~60 s per user), only a read of the running slice's cgroup files. When
+	// the kernel differs from the drop-in (a limit that never went live, or a
+	// hand edit), convergeLiveLimits puts the drop-in's values on it.
 	if noChange {
-		return &userLimitsApplyResponse{
+		resp := &userLimitsApplyResponse{
 			Username:      p.Username,
 			DropinPath:    dropinPath,
 			CgroupApplied: true,
 			QuotaApplied:  quotaApplied,
 			NoChange:      true,
-		}, nil
+		}
+		if root == "/etc/systemd/system" {
+			if mismatch := convergeLiveLimits(ctx, runCmdFn, p.Username, effective, false); mismatch != "" {
+				resp.KernelMismatch = mismatch
+				resp.CgroupApplied = false
+			}
+		}
+		return resp, nil
 	}
 
-	// Reload: always when content changed, so newly-written drop-ins
-	// take effect AND any idempotent retry also triggers the kernel-
-	// state verification below. Cheap operation — milliseconds on a
-	// quiet host.
-	// Direct \`systemctl daemon-reload\` from jabali-agent fails with
-	// 'Failed to connect to bus: Permission denied' — the agent's
-	// PrivateTmp + ProtectKernel* combo breaks libdbus's auth
-	// handshake (loginuid/audit visibility). Nor does systemd-run
-	// help: it also speaks DBus from the same broken namespace.
-	// Escape via \`nsenter -t 1 -a\` which joins PID 1's full
-	// namespace set (mnt + ipc + uts + cgroup + pid + net) so the
-	// systemctl call runs as if from the host root shell.
-	// systemctl daemon-reload from inside the agent fails with
-	// 'Failed to connect to bus: Permission denied' — libdbus auth
-	// breaks under PrivateTmp + ProtectKernel*. nsenter into PID 1
-	// also fails because ProtectKernelTunables blocks
-	// /proc/<pid>/ns/. The kernel-level reload signal is SIGHUP to
-	// PID 1, which systemd handles as a daemon-reload — no DBus
-	// auth, no namespace gymnastics. CAP_KILL is in the agent's
-	// capability set so the signal lands.
+	// SIGHUP to PID 1 is systemd's daemon-reload: it loads the changed
+	// drop-in, which is what a slice gets when it next starts (a reboot).
+	// It does not re-apply limits to a slice that is already running;
+	// convergeLiveLimits below does that.
 	if err := killProcess(1, syscall.SIGHUP); err != nil {
 		return nil, &agentwire.AgentError{
 			Code:    agentwire.CodeInternal,
@@ -227,18 +213,82 @@ func userLimitsApplyHandler(ctx context.Context, params json.RawMessage) (any, e
 		NoChange:      noChange,
 	}
 
-	// Verify the in-kernel state matches what we wrote (review M10).
-	// Skipped when running against a test JABALI_SYSTEMD_ROOT because
-	// the kernel doesn't know about fake slice files. Detected via the
-	// cgroup root path — only real systemd roots have /sys/fs/cgroup.
+	// Put the new values on the running slice and check the kernel took
+	// them (review M10). Skipped against a test JABALI_SYSTEMD_ROOT: the
+	// kernel and systemd know nothing of fake slice files.
 	if root == "/etc/systemd/system" {
-		if mismatch := verifyCgroupState(p.Username, effective); mismatch != "" {
+		if mismatch := convergeLiveLimits(ctx, runCmdFn, p.Username, effective, true); mismatch != "" {
 			resp.KernelMismatch = mismatch
 			resp.CgroupApplied = false
 		}
 	}
 
 	return resp, nil
+}
+
+// limitsCgroupParent is where systemd realizes jabali-user-<u>.slice (a var
+// so tests can point it at a temp dir).
+var limitsCgroupParent = "/sys/fs/cgroup/jabali.slice/jabali-user.slice"
+
+// liveLimitsProps renders the `systemctl set-property` assignments for every
+// directive buildLimitsDropinContent can write, with systemd's reset value for
+// a field that is 0 (unlimited), so the runtime values never keep a limit the
+// drop-in no longer has. IO comes back separately (see convergeLiveLimits).
+func liveLimitsProps(e limits.EffectiveLimits) (props, ioProps []string) {
+	cpu, mem, high, tasks := "CPUQuota=", "MemoryMax=infinity", "MemoryHigh=infinity", "TasksMax=infinity"
+	if e.CPUQuotaPercent > 0 {
+		cpu = fmt.Sprintf("CPUQuota=%d%%", e.CPUQuotaPercent)
+	}
+	if e.MemoryLimitMB > 0 {
+		mem = fmt.Sprintf("MemoryMax=%dM", e.MemoryLimitMB)
+		high = fmt.Sprintf("MemoryHigh=%dM", limits.MemoryHighMB(e.MemoryLimitMB))
+	}
+	if e.MaxTasks > 0 {
+		tasks = fmt.Sprintf("TasksMax=%d", e.MaxTasks)
+	}
+	rd, wr := "IOReadBandwidthMax=", "IOWriteBandwidthMax="
+	if e.IOReadMbps > 0 {
+		rd = fmt.Sprintf("IOReadBandwidthMax=/ %dM", e.IOReadMbps)
+	}
+	if e.IOWriteMbps > 0 {
+		wr = fmt.Sprintf("IOWriteBandwidthMax=/ %dM", e.IOWriteMbps)
+	}
+	return []string{cpu, mem, high, tasks}, []string{rd, wr}
+}
+
+// convergeLiveLimits makes a running user slice's cgroup match want. A
+// daemon-reload loads a changed drop-in but leaves a slice that is already
+// running on its old limits until it restarts, which in practice is the next
+// reboot. `systemctl set-property --runtime` applies them now; systemd keeps
+// those values under /run/systemd/system.control until reboot, when the
+// drop-in alone applies again (both carry every property, so they agree).
+//
+// force runs set-property after a drop-in change; otherwise it runs only when
+// the kernel differs from want. Returns "" when the kernel matches or the slice
+// is not running (its drop-in applies when it starts), else what still differs.
+func convergeLiveLimits(ctx context.Context, run func(context.Context, string, ...string) ([]byte, []byte, error), username string, want limits.EffectiveLimits, force bool) string {
+	cgroupDir := filepath.Join(limitsCgroupParent, fmt.Sprintf("jabali-user-%s.slice", username))
+	if _, err := os.Stat(cgroupDir); err != nil {
+		return ""
+	}
+	if !force && verifyCgroupState(cgroupDir, want) == "" {
+		return ""
+	}
+	unit := fmt.Sprintf("jabali-user-%s.slice", username)
+	props, ioProps := liveLimitsProps(want)
+	var notes []string
+	if _, stderr, err := run(ctx, "systemctl", append([]string{"set-property", "--runtime", unit}, props...)...); err != nil {
+		notes = append(notes, fmt.Sprintf("set-property: %v (%s)", err, strings.TrimSpace(string(stderr))))
+	}
+	// IO in its own call: where "/" resolves to no block device, the IO
+	// assignment must not keep the CPU, memory and task limits from applying.
+	if _, stderr, err := run(ctx, "systemctl", append([]string{"set-property", "--runtime", unit}, ioProps...)...); err != nil {
+		notes = append(notes, fmt.Sprintf("set-property io: %v (%s)", err, strings.TrimSpace(string(stderr))))
+	}
+	if mismatch := verifyCgroupState(cgroupDir, want); mismatch != "" {
+		notes = append(notes, mismatch)
+	}
+	return strings.Join(notes, "; ")
 }
 
 // buildLimitsDropinContent renders the [Slice] drop-in body. Returns
@@ -278,61 +328,67 @@ func buildLimitsDropinContent(e limits.EffectiveLimits) string {
 	return b.String()
 }
 
-// verifyCgroupState reads the cgroup v2 property files after
-// daemon-reload and checks they match what we asked for. Returns a
-// diagnostic string on mismatch (empty string on success). Non-fatal
-// to the caller — reconciler retries next pass.
-//
-// Why this exists: systemd `daemon-reload` on a slice that has no
-// running processes still updates the unit file registration, but the
-// cgroup won't exist under /sys/fs/cgroup until the slice has at
-// least one live process. If the user hasn't logged in or spawned
-// anything, the drop-in is authoritative but invisible to the kernel.
-// We treat that case as success (no cgroup dir → no mismatch).
-func verifyCgroupState(username string, want limits.EffectiveLimits) string {
-	cgroupDir := fmt.Sprintf("/sys/fs/cgroup/jabali.slice/jabali-user.slice/jabali-user-%s.slice", username)
-	if _, err := os.Stat(cgroupDir); err != nil {
-		// Slice not active (no processes yet). Drop-in is on disk;
-		// first process that lands in the slice will inherit the
-		// right limits via the unit's config. Not a mismatch.
-		return ""
+// verifyCgroupState compares a running slice's cgroup v2 files with want,
+// unlimited fields included ("max"), and returns what differs ("" when all
+// match). A file that is missing (its controller is not enabled for the slice)
+// is not a mismatch. IO is not compared: io.max is keyed by device numbers.
+func verifyCgroupState(cgroupDir string, want limits.EffectiveLimits) string {
+	var diffs []string
+	check := func(file, wantVal string) {
+		data, err := os.ReadFile(filepath.Join(cgroupDir, file))
+		if err != nil {
+			return
+		}
+		if got := strings.TrimSpace(string(data)); got != wantVal {
+			diffs = append(diffs, fmt.Sprintf("%s=%s want=%s", file, got, wantVal))
+		}
 	}
-	// memory.max — "max" string means unlimited, numeric is bytes.
+	mib := func(mb uint32) string {
+		if mb == 0 {
+			return "max"
+		}
+		return fmt.Sprintf("%d", uint64(mb)*1024*1024)
+	}
+	check("memory.max", mib(want.MemoryLimitMB))
 	if want.MemoryLimitMB > 0 {
-		data, err := os.ReadFile(filepath.Join(cgroupDir, "memory.max"))
-		if err == nil {
-			wantBytes := uint64(want.MemoryLimitMB) * 1024 * 1024
-			got := strings.TrimSpace(string(data))
-			if got != fmt.Sprintf("%d", wantBytes) {
-				return fmt.Sprintf("memory.max=%s want=%d", got, wantBytes)
-			}
-		}
+		check("memory.high", mib(limits.MemoryHighMB(want.MemoryLimitMB)))
+	} else {
+		check("memory.high", "max")
 	}
-	// pids.max — "max" or numeric.
 	if want.MaxTasks > 0 {
-		data, err := os.ReadFile(filepath.Join(cgroupDir, "pids.max"))
-		if err == nil {
-			got := strings.TrimSpace(string(data))
-			if got != fmt.Sprintf("%d", want.MaxTasks) {
-				return fmt.Sprintf("pids.max=%s want=%d", got, want.MaxTasks)
-			}
+		check("pids.max", fmt.Sprintf("%d", want.MaxTasks))
+	} else {
+		check("pids.max", "max")
+	}
+	if data, err := os.ReadFile(filepath.Join(cgroupDir, "cpu.max")); err == nil {
+		if got := strings.TrimSpace(string(data)); !cpuMaxMatches(got, want.CPUQuotaPercent) {
+			diffs = append(diffs, fmt.Sprintf("cpu.max=%q want=%d%%", got, want.CPUQuotaPercent))
 		}
 	}
-	// cpu.max format: "<quota> <period>" — period default 100000us.
-	// CPUQuota=200% → 200000 quota / 100000 period = 2.0 cores.
-	if want.CPUQuotaPercent > 0 {
-		data, err := os.ReadFile(filepath.Join(cgroupDir, "cpu.max"))
-		if err == nil {
-			fields := strings.Fields(strings.TrimSpace(string(data)))
-			if len(fields) >= 1 && fields[0] != "max" {
-				// Accept any period; just check the quota is roughly right.
-				// We don't strict-eq here because systemd may slightly round.
-			} else if fields[0] == "max" {
-				return fmt.Sprintf("cpu.max=max want=%d%%", want.CPUQuotaPercent)
-			}
-		}
+	return strings.Join(diffs, " ")
+}
+
+// cpuMaxMatches reports whether cpu.max ("<quota> <period>" or "max <period>")
+// holds percent of one CPU (0 = no quota). systemd turns CPUQuota=150% into
+// "150000 100000"; a difference under 1% is rounding, not a mismatch.
+func cpuMaxMatches(cpuMax string, percent uint32) bool {
+	f := strings.Fields(cpuMax)
+	if len(f) != 2 {
+		return true // not a format we know: leave it alone rather than re-apply every pass
 	}
-	return ""
+	if percent == 0 {
+		return f[0] == "max"
+	}
+	quota, err1 := strconv.ParseInt(f[0], 10, 64)
+	period, err2 := strconv.ParseInt(f[1], 10, 64)
+	if err1 != nil || err2 != nil || period <= 0 {
+		return false
+	}
+	diff := quota*100 - int64(percent)*period
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff < period
 }
 
 func init() {

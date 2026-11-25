@@ -1,17 +1,18 @@
 package commands
 
 import (
-	"strings"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/limits"
 )
 
 // user.limits.clear — removes the M18 limits drop-in and clears the
@@ -25,14 +26,17 @@ type userLimitsClearParams struct {
 }
 
 type userLimitsClearResponse struct {
-	Username           string `json:"username"`
-	DropinRemoved      bool   `json:"dropin_removed"`
-	QuotaCleared       bool   `json:"quota_cleared"`
+	Username      string `json:"username"`
+	DropinRemoved bool   `json:"dropin_removed"`
+	QuotaCleared  bool   `json:"quota_cleared"`
 	// QuotaSkippedReason: empty on success; "quota_disabled_on_fs"
 	// when the host's filesystem doesn't have quotas enabled (the
 	// common operator-disabled-disk_quota_enabled case). Lets the
 	// panel surface state in diagnostics without re-deriving it.
 	QuotaSkippedReason string `json:"quota_skipped_reason,omitempty"`
+	// KernelMismatch: the running slice still holds a limit after the
+	// clear (see convergeLiveLimits). Empty when it is unlimited or idle.
+	KernelMismatch string `json:"kernel_mismatch,omitempty"`
 }
 
 func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, error) {
@@ -84,6 +88,12 @@ func userLimitsClearHandler(ctx context.Context, params json.RawMessage) (any, e
 			}
 		}
 		time.Sleep(250 * time.Millisecond)
+	}
+	// The reload above leaves a running slice on its old limits; reset them
+	// now after a removal, and on every other call only when the kernel
+	// still holds one.
+	if root == "/etc/systemd/system" {
+		resp.KernelMismatch = convergeLiveLimits(ctx, runCmdFn, p.Username, limits.EffectiveLimits{}, resp.DropinRemoved)
 	}
 
 	if p.QuotaMount != "" {

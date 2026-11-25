@@ -10,12 +10,34 @@ type recPlanAgent struct {
 	method string
 	params map[string]any
 	err    error
+	reply  string // the agent's JSON reply; "{}" when empty
 }
 
 func (a *recPlanAgent) Call(_ context.Context, method string, params any) (json.RawMessage, error) {
 	a.method = method
 	a.params, _ = params.(map[string]any)
+	if a.reply != "" {
+		return json.RawMessage(a.reply), a.err
+	}
 	return json.RawMessage(`{}`), a.err
+}
+
+// The CLI used to say nothing when the agent stored the limits but the user's
+// running slice kept others: Execute must hand the agent's note back.
+func TestLimitsPlan_ExecuteReturnsKernelMismatch(t *testing.T) {
+	for _, plan := range []LimitsPlan{
+		PlanFor(pkgLimits(), nil, true, "/home", IsolatedShares{}),
+		PlanFor(nil, nil, true, "/home", IsolatedShares{}),
+	} {
+		ag := &recPlanAgent{reply: `{"username":"alice","kernel_mismatch":"pids.max=max want=200"}`}
+		got, err := plan.Execute(context.Background(), ag, "alice")
+		if err != nil || got != "pids.max=max want=200" {
+			t.Errorf("%s: got (%q, %v), want the agent's kernel_mismatch", ag.method, got, err)
+		}
+	}
+	if got, err := PlanFor(pkgLimits(), nil, true, "/home", IsolatedShares{}).Execute(context.Background(), &recPlanAgent{}, "alice"); err != nil || got != "" {
+		t.Errorf("no mismatch in the reply: got (%q, %v)", got, err)
+	}
 }
 
 func pkgLimits() *PackageLimits {
@@ -80,7 +102,7 @@ func TestPlanFor_MountGate(t *testing.T) {
 
 func TestLimitsPlan_Execute(t *testing.T) {
 	ag := &recPlanAgent{}
-	if err := PlanFor(pkgLimits(), nil, true, "/home", IsolatedShares{}).Execute(context.Background(), ag, "alice"); err != nil {
+	if _, err := PlanFor(pkgLimits(), nil, true, "/home", IsolatedShares{}).Execute(context.Background(), ag, "alice"); err != nil {
 		t.Fatalf("apply execute: %v", err)
 	}
 	if ag.method != "user.limits.apply" || ag.params["username"] != "alice" ||
@@ -89,7 +111,7 @@ func TestLimitsPlan_Execute(t *testing.T) {
 	}
 
 	ag = &recPlanAgent{}
-	if err := PlanFor(nil, nil, false, "/home", IsolatedShares{}).Execute(context.Background(), ag, "bob"); err != nil {
+	if _, err := PlanFor(nil, nil, false, "/home", IsolatedShares{}).Execute(context.Background(), ag, "bob"); err != nil {
 		t.Fatalf("clear execute: %v", err)
 	}
 	if ag.method != "user.limits.clear" || ag.params["username"] != "bob" || ag.params["quota_mount"] != "/home" {
