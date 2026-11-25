@@ -195,7 +195,8 @@ allows caching (sets to 0) when:
    analytics/consent tokens (exhaustive allowlist:
    `_ga*`, `_gid`, `_gat*`, `_gcl*`, `__utm*`, `_fbp`, `_fbc`,
    `_pk_*`, `_hj*`, `cookie_consent*`, WooCommerce's order-attribution
-   `sbjs_*`, `wordpress_test_cookie`, …)
+   `sbjs_*`, Cloudflare's `__cf_bm`, `_cfuvid` and `cf_clearance`,
+   `wordpress_test_cookie`, …)
 2. **Request method is GET** (POST always skips)
 3. **Query string is empty or tracking-only** (`utm_*`, `gclid`,
    `fbclid`, … — strict map in `jabali-fastcgi-cache.conf`)

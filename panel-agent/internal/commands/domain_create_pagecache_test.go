@@ -141,6 +141,36 @@ func TestVhostTemplate_CookieGateAllowsWooAttributionCookies(t *testing.T) {
 	}
 }
 
+// Cloudflare sets __cf_bm, _cfuvid and cf_clearance on visitors of a proxied
+// site; WordPress never reads them and the page doesn't vary by them. They
+// must not make every such visitor a bypass. Only those exact names: a cart,
+// session or login cookie next to them still bypasses.
+func TestVhostTemplate_CookieGateAllowsCloudflareCookies(t *testing.T) {
+	t.Parallel()
+	out := renderQAllowVhost(t, canonicalCacheVhostData())
+	m := regexp.MustCompile(`if \(\$http_cookie ~\* "([^"]+)"\) \{ set \$jabali_skip 0; \}`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatal("cookie gate not found in the rendered vhost")
+	}
+	gate := regexp.MustCompile("(?i)" + m[1])
+	for cookie, cacheable := range map[string]bool{
+		"__cf_bm=Xy.z-1764100000-1.0.1.1-AbC":                           true,
+		"_cfuvid=AbC.dEf-1764100000000-0.0.1.1-604800000":               true,
+		"cf_clearance=AbC-1764100000-1.2.1.1-dEf; _ga=GA1.1.1.1":        true,
+		"__cf_bm=a; _cfuvid=b; cf_clearance=c; sbjs_first=typ%3Dtypein": true,
+		"__cf_bm=a; woocommerce_items_in_cart=1":                        false,
+		"_cfuvid=b; wp_woocommerce_session_abc=1%7C%7C2":                false,
+		"cf_clearance=c; wordpress_logged_in_abc=u%7C1%7Ct%7Ch":         false,
+		"__cf_bmx=1":           false,
+		"cf_clearance_extra=1": false,
+		"x_cfuvid=1":           false,
+	} {
+		if got := gate.MatchString(cookie); got != cacheable {
+			t.Errorf("cookie %q: cacheable=%v, want %v", cookie, got, cacheable)
+		}
+	}
+}
+
 // With the cache on, the static-asset and .html locations win over location /.
 // A file that isn't on disk must still reach the app, as with the cache off:
 // plugin-served virtual .js/.ico/images and .html permalinks are real URLs.
