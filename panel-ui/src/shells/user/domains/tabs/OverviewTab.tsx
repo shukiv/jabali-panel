@@ -30,11 +30,11 @@ const stripHomePrefix = (path: string): string => {
 export const OverviewTab = ({ domain }: { domain: Domain }) => {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation" | "ai" | "www">(null);
+  const [busy, setBusy] = useState<null | "preview" | "bot" | "delegation" | "ai" | "www" | "wwwredirect">(null);
   const [viewCert, setViewCert] = useState(false);
 
   const patch = async (
-    field: "preview" | "bot" | "delegation" | "ai" | "www",
+    field: "preview" | "bot" | "delegation" | "ai" | "www" | "wwwredirect",
     body: Record<string, unknown>,
     success: string,
     errorPrefix: string,
@@ -100,6 +100,17 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
         ? `www.${domain.name} will be added to the certificate once it points at this server`
         : `www.${domain.name} will be left out of the next certificate`,
       "Failed to change www",
+    );
+
+  // GH #2591: www.<name> answers 301 to <name>, keeping path and query.
+  const toggleRedirectWWW = (next: boolean) =>
+    patch(
+      "wwwredirect",
+      { redirect_www: next },
+      next
+        ? `www.${domain.name} now redirects to ${domain.name} — live within a minute`
+        : `www.${domain.name} serves the site again`,
+      "Failed to change the www redirect",
     );
 
   const toggleAICrawlers = (next: boolean) =>
@@ -192,6 +203,24 @@ export const OverviewTab = ({ domain }: { domain: Domain }) => {
               <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
                 Include www.{domain.name} in the site&apos;s certificate. Turning it on also adds a
                 www record when this server hosts the DNS.
+              </Typography.Paragraph>
+            </div>
+          </Space>
+        ) : null}
+
+        {!domain.web_disabled && !domain.name.startsWith("www.") ? (
+          <Space align="center">
+            <Switch
+              checked={!!domain.redirect_www}
+              loading={busy === "wwwredirect"}
+              onChange={toggleRedirectWWW}
+              aria-label={`Redirect www.${domain.name} to ${domain.name}`}
+            />
+            <div>
+              <Typography.Text strong>Redirect www.{domain.name} to {domain.name}</Typography.Text>
+              <Typography.Paragraph type="secondary" style={{ margin: 0, fontSize: 13 }}>
+                A permanent (301) redirect that keeps the path and query string, so search
+                engines index one name.
               </Typography.Paragraph>
             </div>
           </Space>

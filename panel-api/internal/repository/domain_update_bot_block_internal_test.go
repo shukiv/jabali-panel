@@ -35,7 +35,7 @@ func TestDomainRepository_UpdateWritesBlockAICrawlers(t *testing.T) {
 	mock.ExpectExec("UPDATE").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	d := &models.Domain{ID: "d1", Name: "example.com", BlockAICrawlers: true, RateLimitRPS: 9}
+	d := &models.Domain{ID: "d1", Name: "example.com", BlockAICrawlers: true, RedirectWWW: true, RateLimitRPS: 9}
 	require.NoError(t, NewDomainRepository(db).Update(context.Background(), d))
 
 	var q string
@@ -45,5 +45,6 @@ func TestDomainRepository_UpdateWritesBlockAICrawlers(t *testing.T) {
 		}
 	}
 	require.Contains(t, q, "`block_ai_crawlers`=", "Update drops block_ai_crawlers: %s", q)
+	require.Contains(t, q, "`redirect_www`=", "Update drops redirect_www (GH #2591): %s", q)
 	require.NotContains(t, q, "rate_limit_rps", "request limits are written by SetRateLimits only")
 }

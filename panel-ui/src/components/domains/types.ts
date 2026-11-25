@@ -98,6 +98,7 @@ export type Domain = {
   bot_challenge_include?: boolean;
   // The vhost refuses (403) AI crawlers that name themselves.
   block_ai_crawlers?: boolean;
+  redirect_www?: boolean; // GH #2591: www.<name> answers 301 to <name>
   // Per visitor IP; 0 = off. Admin-only to change.
   rate_limit_rps?: number;
   connection_limit?: number;

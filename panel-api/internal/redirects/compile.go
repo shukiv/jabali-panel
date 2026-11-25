@@ -59,6 +59,13 @@ func Compile(d *models.Domain) string {
 		fmt.Fprintf(&b, "    return %s %s;\n", code, quoteNginxURL(*d.RedirectAllTo))
 		return b.String()
 	}
+	// GH #2591: www.<domain> → <domain>, same scheme, before any page redirect
+	// (so a page redirect hit on www lands on the main name first). An ACME
+	// challenge on www follows it to the same docroot, so issuance still works.
+	if d.RedirectWWW && d.Name != "" && !strings.HasPrefix(d.Name, "www.") {
+		fmt.Fprintf(&b, "    if ($host = %s) {\n        return 301 %s;\n    }\n",
+			quoteNginxURL("www."+d.Name), quoteNginxURL("$scheme://"+d.Name+"$request_uri"))
+	}
 	for _, pr := range d.PageRedirects {
 		// Skip inactive entries
 		if !isActive(pr) {

@@ -36,6 +36,20 @@ func TestDomainPatch_OwnerSetsBlockAICrawlers(t *testing.T) {
 	}
 }
 
+// GH #2591: the owner turns the www → main-name redirect on and off.
+func TestDomainPatch_OwnerSetsRedirectWWW(t *testing.T) {
+	repo, patch := botBlockHarness(t, false)
+	if code := patch(`{"redirect_www": true}`); code != http.StatusOK || !repo.domains["d1"].RedirectWWW {
+		t.Fatalf("turning it on: code %d, saved %v", code, repo.domains["d1"].RedirectWWW)
+	}
+	if code := patch(`{"block_ai_crawlers": true}`); code != http.StatusOK || !repo.domains["d1"].RedirectWWW {
+		t.Fatalf("a PATCH without redirect_www must keep it: code %d, saved %v", code, repo.domains["d1"].RedirectWWW)
+	}
+	if code := patch(`{"redirect_www": false}`); code != http.StatusOK || repo.domains["d1"].RedirectWWW {
+		t.Fatalf("turning it off: code %d, saved %v", code, repo.domains["d1"].RedirectWWW)
+	}
+}
+
 // Request limits are admin-only: a tenant's values are ignored, like the
 // other admin fields, and an admin's are written.
 func TestDomainPatch_RateLimitsAreAdminOnly(t *testing.T) {
