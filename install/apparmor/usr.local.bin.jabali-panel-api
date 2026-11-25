@@ -257,9 +257,10 @@ profile jabali-panel flags=(attach_disconnected) {
   /tmp/**                      rwlk,
 
   # M25 unix-socket layout (ADR-0050).
-  # Bind own listener sockets.
+  # Bind own listener sockets. k: the mail scan's flock on
+  # mail-scan.lock (EACCES in enforce mode without it).
   /run/jabali-panel/           rw,
-  /run/jabali-panel/**         rw,
+  /run/jabali-panel/**         rwk,
   # Connect upstreams.
   /run/jabali/                 r,
   /run/jabali/agent.sock       rw,
