@@ -204,3 +204,33 @@ func TestDropAutoAllowlistEntries(t *testing.T) {
 		t.Fatalf("done=%v n=%d removed=%v, want both login entries and not the office one", done, n, removed)
 	}
 }
+
+// A remove that fails (a slow cscli, LAPI restarting) leaves the job undone,
+// so the caller tries again; one that finds the entry already gone does not.
+func TestDropAutoAllowlistEntries_RetriesFailedRemove(t *testing.T) {
+	inspect := `{"items":[` +
+		`{"value":"198.51.100.9","description":"auto-whitelist: ssh root"},` +
+		`{"value":"203.0.113.5","description":"auto-whitelist: login admin@example.com"}]}`
+	prev := execCommandContext
+	t.Cleanup(func() { execCommandContext = prev })
+	run := func(removeOut map[string]string) (int, bool) {
+		execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			if name == "cscli" && len(args) > 1 && args[1] == "inspect" {
+				return exec.CommandContext(ctx, "printf", "%s", inspect)
+			}
+			if name == "cscli" && len(args) > 3 && args[1] == "remove" {
+				if o, bad := removeOut[args[3]]; bad {
+					return exec.CommandContext(ctx, "sh", "-c", `printf '%s' "$1"; exit 1`, "sh", o)
+				}
+			}
+			return exec.CommandContext(ctx, "true")
+		}
+		return dropAutoAllowlistEntries(context.Background())
+	}
+	if n, done := run(map[string]string{"203.0.113.5": "context deadline exceeded"}); done || n != 1 {
+		t.Fatalf("failed remove: n=%d done=%v, want 1 and not done", n, done)
+	}
+	if n, done := run(map[string]string{"203.0.113.5": "item 203.0.113.5 not found in allowlist"}); !done || n != 1 {
+		t.Fatalf("already gone: n=%d done=%v, want 1 and done", n, done)
+	}
+}
