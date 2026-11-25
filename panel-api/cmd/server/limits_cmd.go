@@ -167,7 +167,11 @@ func newLimitsApplyCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 			defer cancel()
-			return applyForUsername(ctx, args[0], diskQuotaEnabled(ctx))
+			if err := applyForUsername(ctx, args[0], diskQuotaEnabled(ctx)); err != nil {
+				return err
+			}
+			fmt.Printf("ok   %s\n", args[0])
+			return nil
 		},
 	}
 }
@@ -382,8 +386,12 @@ func applyForUsername(ctx context.Context, username string, quotaEnabled bool) e
 		share.Host = &d
 	}
 	plan := limits.PlanFor(pkgL, ovL, quotaEnabled, quotaMountOrEmpty(), share)
-	if err := plan.Execute(ctx, sharedAgent, posixUsername); err != nil {
+	mismatch, err := plan.Execute(ctx, sharedAgent, posixUsername)
+	if err != nil {
 		return fmt.Errorf("agent: %w", err)
+	}
+	if mismatch != "" {
+		return fmt.Errorf("limits saved, but %s's running processes still have other limits: %s", posixUsername, mismatch)
 	}
 	return nil
 }

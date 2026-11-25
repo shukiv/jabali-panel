@@ -58,16 +58,11 @@ func PlanFor(pkg *PackageLimits, override *OverrideLimits, quotaEnabled bool, qu
 }
 
 // Execute dispatches the plan to the agent: user.limits.apply with the effective
-// values, or user.limits.clear. Both handlers are idempotent.
-func (p LimitsPlan) Execute(ctx context.Context, ag AgentCaller, username string) error {
-	if p.Kind == PlanClear {
-		_, err := ag.Call(ctx, "user.limits.clear", map[string]any{
-			"username":    username,
-			"quota_mount": p.QuotaMount,
-		})
-		return err
-	}
-	_, err := ag.Call(ctx, "user.limits.apply", map[string]any{
+// values, or user.limits.clear. Both handlers are idempotent. kernelMismatch is
+// the agent's note when the limits are stored but the user's running slice
+// still differs from them; "" when it matches or is not running.
+func (p LimitsPlan) Execute(ctx context.Context, ag AgentCaller, username string) (kernelMismatch string, err error) {
+	method, params := "user.limits.apply", map[string]any{
 		"username":          username,
 		"disk_quota_mb":     p.TenantDiskQuotaMB(),
 		"cpu_quota_percent": p.Effective.CPUQuotaPercent,
@@ -76,8 +71,22 @@ func (p LimitsPlan) Execute(ctx context.Context, ag AgentCaller, username string
 		"io_write_mbps":     p.Effective.IOWriteMbps,
 		"max_tasks":         p.Effective.MaxTasks,
 		"quota_mount":       p.QuotaMount,
-	})
-	return err
+	}
+	if p.Kind == PlanClear {
+		method, params = "user.limits.clear", map[string]any{
+			"username":    username,
+			"quota_mount": p.QuotaMount,
+		}
+	}
+	raw, err := ag.Call(ctx, method, params)
+	if err != nil {
+		return "", err
+	}
+	var resp struct {
+		KernelMismatch string `json:"kernel_mismatch"`
+	}
+	_ = json.Unmarshal(raw, &resp) // a reply without the field reports no mismatch
+	return resp.KernelMismatch, nil
 }
 
 // Describe renders the plan for a dry-run, without dispatching.

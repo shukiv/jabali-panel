@@ -85,14 +85,14 @@ func stubRunCmd(t *testing.T) *[][]string {
 
 func TestBuildLimitsDropinContent(t *testing.T) {
 	tests := []struct {
-		name    string
-		in      limits.EffectiveLimits
-		want    string
+		name      string
+		in        limits.EffectiveLimits
+		want      string
 		wantEmpty bool
 	}{
 		{
-			name: "all zero → empty",
-			in:   limits.EffectiveLimits{},
+			name:      "all zero → empty",
+			in:        limits.EffectiveLimits{},
 			wantEmpty: true,
 		},
 		{

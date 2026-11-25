@@ -173,9 +173,12 @@ func (r *Reconciler) ReconcileUserLimits(ctx context.Context) {
 			continue
 		}
 		ctxCall, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if err := plan.Execute(ctxCall, r.agent, *u.Username); err != nil {
+		if mismatch, err := plan.Execute(ctxCall, r.agent, *u.Username); err != nil {
 			r.log.Warn("reconcile user-limits: dispatch failed",
 				"username", *u.Username, "plan", plan.Describe(*u.Username), "err", err)
+		} else if mismatch != "" {
+			r.log.Warn("reconcile user-limits: running slice still differs",
+				"username", *u.Username, "plan", plan.Describe(*u.Username), "kernel", mismatch)
 		}
 		cancel()
 		unlock()
