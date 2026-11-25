@@ -53,6 +53,7 @@ func newAppSecExclusionCmd() *cobra.Command {
 
 func newAppSecExclusionAddCmd() *cobra.Command {
 	var host, uriPrefix, ruleID, note string
+	var wpLoginOnly bool
 	cmd := &cobra.Command{
 		Use:     "add",
 		Short:   "Add an exclusion (host + path + rule are all required)",
@@ -63,25 +64,30 @@ func newAppSecExclusionAddCmd() *cobra.Command {
 
 			// Stored as the panel stores it (GH #1649), so a duplicate check
 			// compares like with like.
-			e := appseccfg.NormalizeExclusion(appseccfg.Exclusion{Host: host, URIPrefix: uriPrefix, RuleID: ruleID, Note: note})
+			e := appseccfg.NormalizeExclusion(appseccfg.Exclusion{Host: host, URIPrefix: uriPrefix, RuleID: ruleID, Note: note, WPLoginOnly: wpLoginOnly})
 			if err := appseccfg.ValidateExclusion(e); err != nil {
 				return err
 			}
 			host, uriPrefix, ruleID = e.Host, e.URIPrefix, e.RuleID
 			row := &models.CRSRuleExclusion{
 				ID: ids.NewULID(), Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
+				WPLoginOnly: e.WPLoginOnly,
 			}
 			if err := crsExclRepo().Create(ctx, row); err != nil {
 				return fmt.Errorf("save exclusion: %w", err)
 			}
 			cliAuditOK(ctx, "appsec.exclusion_add", "crs_rule_exclusion", row.ID, nil)
 			if jsonOutput {
-				return printJSON(map[string]any{"id": row.ID, "host": host, "uri_prefix": uriPrefix, "rule_id": ruleID})
+				return printJSON(map[string]any{"id": row.ID, "host": host, "uri_prefix": uriPrefix, "rule_id": ruleID, "wp_login_only": row.WPLoginOnly})
+			}
+			when := ""
+			if row.WPLoginOnly {
+				when = " (only POSTs with a WordPress login cookie)"
 			}
 			fmt.Fprintf(cmd.OutOrStdout(),
-				"added %s — rule %s excluded for %s%s\n"+
+				"added %s — rule %s excluded for %s%s%s\n"+
 					"  apply with: jabali appsec render-config --reconcile --reload\n",
-				row.ID, ruleID, host, uriPrefix)
+				row.ID, ruleID, host, uriPrefix, when)
 			return nil
 		},
 	}
@@ -89,6 +95,8 @@ func newAppSecExclusionAddCmd() *cobra.Command {
 	cmd.Flags().StringVar(&uriPrefix, "uri-prefix", "", "URI prefix the exclusion applies to, e.g. /wp-json/x/ (required)")
 	cmd.Flags().StringVar(&ruleID, "rule", "", "CRS rule ID or AppSec rule name to exclude, e.g. 942100 or crowdsecurity/vpatch-CVE-2025-29927 (required)")
 	cmd.Flags().StringVar(&note, "note", "", "why this exclusion exists")
+	cmd.Flags().BoolVar(&wpLoginOnly, "wp-login-only", false,
+		"exclude the rule only for POSTs that carry a WordPress login cookie (wordpress_logged_in_*), e.g. an editor saving HTML; CRS rule ids only")
 	_ = cmd.MarkFlagRequired("host")
 	_ = cmd.MarkFlagRequired("uri-prefix")
 	_ = cmd.MarkFlagRequired("rule")
@@ -131,13 +139,17 @@ func listAppSecExclusions(ctx context.Context, d appsecops.Deps, out io.Writer, 
 		return nil
 	}
 	w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tHOST\tURI PREFIX\tRULE\tMANAGED BY\tNOTE")
+	fmt.Fprintln(w, "ID\tHOST\tURI PREFIX\tRULE\tMANAGED BY\tWHEN\tNOTE")
 	for _, r := range rows {
 		managedBy := "-"
 		if r.ManagedApp != "" {
 			managedBy = r.ManagedApp + " install " + r.ManagedInstallID
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Host, r.URIPrefix, r.RuleID, managedBy, r.Note)
+		when := "always"
+		if r.WPLoginOnly {
+			when = "wp-login POST"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", r.ID, r.Host, r.URIPrefix, r.RuleID, managedBy, when, r.Note)
 	}
 	return w.Flush()
 }

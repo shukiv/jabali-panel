@@ -1229,6 +1229,8 @@
     "field_path_help": "Requests whose path starts with this. The blocked path itself is the narrowest choice.",
     "field_rule": "Rule",
     "field_rule_help": "The CRS rule id that scored, or the name of a CrowdSec virtual patch as its alert gives it (crowdsecurity/vpatch-…). 901340, 949110 and 980170 are never the one to exclude. For a name, the path is matched without the query string.",
+    "field_wp_login_only": "Only for logged-in WordPress saves",
+    "field_wp_login_only_help": "The rule stays on except for POST requests that carry a WordPress login cookie, such as an editor saving a page or settings that contain HTML. Visitors and other requests are still checked. CRS rule ids only.",
     "host_invalid": "Use letters, digits, dots and hyphens only, with no port",
     "host_required": "Host required",
     "inline_help": "These 403s never became a ban, so CrowdSec keeps no rule id and no path for them. Match the IP and time against the site's access log to find the request.",
@@ -1258,7 +1260,9 @@
     "rule_required": "Rule required",
     "search_placeholder": "Search host, path, rule or note…",
     "summary": "{{events}} block(s) in the last {{alerts}} alert(s), {{patterns}} pattern(s)",
-    "timeout_hint": "The server took too long. Inspect fewer alerts and try again."
+    "timeout_hint": "The server took too long. Inspect fewer alerts and try again.",
+    "wp_login_only_tag": "WordPress login POST",
+    "wp_login_only_tip": "Applies only to POST requests that carry a WordPress login cookie"
   },
   "crowdsectestipcard": {
     "drops_every_active_crowdsec_decision_targeti": "Drops every active CrowdSec decision targeting this IP.",

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
 
@@ -298,9 +299,7 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, list []appseccfg.Ex
 		default:
 			list = make([]appseccfg.Exclusion, 0, len(excl))
 			for _, e := range excl {
-				list = append(list, appseccfg.Exclusion{
-					Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
-				})
+				list = append(list, appsecops.ExclusionOf(e))
 			}
 			modes = make([]appseccfg.HostMode, 0, len(hm))
 			for _, m := range hm {

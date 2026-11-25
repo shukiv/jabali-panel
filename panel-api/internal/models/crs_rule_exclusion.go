@@ -15,6 +15,11 @@ type CRSRuleExclusion struct {
 	Note      string    `gorm:"column:note;type:varchar(512);not null"     json:"note"`
 	CreatedAt time.Time `gorm:"column:created_at"                          json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at"                          json:"updated_at"`
+
+	// WPLoginOnly limits the drop to POSTs carrying a WordPress login cookie
+	// (appseccfg.Exclusion.WPLoginOnly). No gorm default tag: a default on a
+	// bool makes GORM skip writing false.
+	WPLoginOnly bool `gorm:"column:wp_login_only;not null" json:"wp_login_only"`
 }
 
 func (CRSRuleExclusion) TableName() string { return "crs_rule_exclusions" }

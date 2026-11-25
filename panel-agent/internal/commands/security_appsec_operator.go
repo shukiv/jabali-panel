@@ -59,15 +59,16 @@ func appsecOperatorApplyHandler(ctx context.Context, params json.RawMessage) (an
 		return appseccfg.OperatorApplyResult{Skipped: "crowdsec is not installed"}, nil
 	}
 
+	all := p.AllExclusions()
 	appsecConfigMu.Lock()
 	defer appsecConfigMu.Unlock()
 	prevBefore, _ := readFileOK(appsecOperatorBeforePath)
 	beforeChanged, err := writeOperatorBeforeFile(appsecOperatorBeforePath,
-		appseccfg.RenderOperatorBeforeFile(p.Exclusions, p.HostModes))
+		appseccfg.RenderOperatorBeforeFile(all, p.HostModes))
 	if err != nil {
 		return nil, csInternal("write operator before-plugin", err)
 	}
-	appsecChanged, prevAppsec, err := writeAppsecRuleExclusions(appseccfg.RuleNameExclusions(p.Exclusions))
+	appsecChanged, prevAppsec, err := writeAppsecRuleExclusions(appseccfg.RuleNameExclusions(all))
 	if err != nil {
 		return nil, csInternal("write AppSec config", err)
 	}
@@ -75,7 +76,7 @@ func appsecOperatorApplyHandler(ctx context.Context, params json.RawMessage) (an
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	res := appseccfg.OperatorApplyResult{Changed: beforeChanged || appsecChanged}
-	if named := appseccfg.RuleNameExclusions(p.Exclusions); len(named) > 0 {
+	if named := appseccfg.RuleNameExclusions(all); len(named) > 0 {
 		res.UnknownRules = unknownAppsecRules(rctx, named)
 	}
 	if !res.Changed {

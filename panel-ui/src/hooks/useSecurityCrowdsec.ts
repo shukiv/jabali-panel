@@ -611,6 +611,8 @@ export type AppSecExclusion = {
   uri_prefix: string;
   rule_id: string;
   note: string;
+  /** Rule dropped only for POSTs carrying a WordPress login cookie. */
+  wp_login_only: boolean;
   created_at: string;
   updated_at: string;
   /** Set on a row the panel manages for an app install: Flarum (GH #1650),
@@ -632,6 +634,7 @@ export type AddAppSecExclusionInput = {
   uri_prefix: string;
   rule_id: string;
   note: string;
+  wp_login_only: boolean;
 };
 
 const APPSEC_EXCLUSIONS_KEY = ["security", "crowdsec", "appsec", "exclusions"];

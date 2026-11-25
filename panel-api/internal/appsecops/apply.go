@@ -86,7 +86,7 @@ func applyLocked(ctx context.Context, d Deps) (appseccfg.OperatorApplyResult, er
 
 	list := make([]appseccfg.Exclusion, 0, len(rows))
 	for _, r := range rows {
-		list = append(list, appseccfg.Exclusion{Host: r.Host, URIPrefix: r.URIPrefix, RuleID: r.RuleID, Note: r.Note})
+		list = append(list, ExclusionOf(r))
 	}
 	hm := make([]appseccfg.HostMode, 0, len(modes))
 	for _, m := range modes {
