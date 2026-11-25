@@ -50,7 +50,7 @@ func ApplyAppSecBeforePlugin(ctx context.Context, log *slog.Logger) {
 	log.Info("appsec before-plugin re-rendered on boot — reloading crowdsec", "path", path)
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if out, err := execCommandContext(rctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := crowdsecReload(rctx); err != nil {
 		if out2, err2 := execCommandContext(rctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			log.Warn("appsec before-plugin: crowdsec reload+restart failed",
 				"reload_err", err, "reload_out", string(out),

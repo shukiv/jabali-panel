@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/crowdsecctl"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/appsecops"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/repository"
 )
@@ -415,7 +416,26 @@ func reloadCrowdsec(cmd *cobra.Command) {
 			return
 		}
 	}
+	verifyAppsecAfterReload(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 	fmt.Fprintln(cmd.OutOrStdout(), "reloaded crowdsec")
+}
+
+// verifyAppsecAfterReload waits for AppSec to answer after a reload and
+// restarts a hung crowdsec (internal/crowdsecctl). It has its own deadline, so
+// a caller that gives up does not leave crowdsec hung.
+func verifyAppsecAfterReload(parent context.Context, out, errOut io.Writer) {
+	if !crowdsecctl.AppsecExpected() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 3*time.Minute)
+	defer cancel()
+	restarted, err := crowdsecctl.Default().AfterReload(ctx)
+	switch {
+	case err != nil:
+		fmt.Fprintf(errOut, "warn: AppSec is not answering after the crowdsec reload (restarted=%v): %v\n", restarted, err)
+	case restarted:
+		fmt.Fprintln(out, "! AppSec did not come back after the reload: crowdsec was hung and has been restarted")
+	}
 }
 
 // atomicWriteAppSec writes via tmpfile + rename in the same dir so the
