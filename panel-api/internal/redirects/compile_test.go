@@ -1,6 +1,7 @@
 package redirects
 
 import (
+	"strings"
 	"testing"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -306,5 +307,28 @@ func TestCompile_KeepQueryAndTrailingSlash(t *testing.T) {
 `
 	if got != want {
 		t.Errorf("Compile() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// GH #2591: www.<domain> answers 301 to <domain> when RedirectWWW is on, ahead
+// of the page redirects; a whole-domain redirect still wins, and a domain whose
+// own name starts with www. gets nothing (there is no www.www.).
+func TestCompile_RedirectWWW(t *testing.T) {
+	wwwBlock := "    if ($host = \"www.example.com\") {\n        return 301 \"$scheme://example.com$request_uri\";\n    }\n"
+	page := []models.PageRedirect{{Source: "/old", Destination: "/new", Type: "301"}}
+
+	got := Compile(&models.Domain{Name: "example.com", RedirectWWW: true, PageRedirects: page})
+	if !strings.HasPrefix(got, wwwBlock) || !strings.Contains(got, "location = /old") {
+		t.Fatalf("www block must come first, then the page redirects:\n%s", got)
+	}
+	if got := Compile(&models.Domain{Name: "example.com"}); strings.Contains(got, "$host") {
+		t.Fatalf("off must emit no www redirect:\n%s", got)
+	}
+	if got := Compile(&models.Domain{Name: "www.example.com", RedirectWWW: true}); got != "" {
+		t.Fatalf("a www. name must emit nothing:\n%s", got)
+	}
+	all := Compile(&models.Domain{Name: "example.com", RedirectWWW: true, RedirectAllTo: str("https://new.example")})
+	if strings.Contains(all, "$host") || !strings.Contains(all, "return 301 \"https://new.example\"") {
+		t.Fatalf("a whole-domain redirect wins:\n%s", all)
 	}
 }

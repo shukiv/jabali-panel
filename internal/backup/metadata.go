@@ -199,6 +199,7 @@ type MetadataDomain struct {
 	TempURLEnabled           bool    `json:"temp_url_enabled,omitempty"`
 	BotChallengeExempt       bool    `json:"bot_challenge_exempt,omitempty"`
 	BotChallengeInclude      bool    `json:"bot_challenge_include,omitempty"`
+	RedirectWWW              bool    `json:"redirect_www,omitempty"` // GH #2591
 	AllowSubdomainDelegation bool    `json:"allow_subdomain_delegation,omitempty"`
 	WebDisabled              bool    `json:"web_disabled,omitempty"`
 	DNSDisabled              bool    `json:"dns_disabled,omitempty"`

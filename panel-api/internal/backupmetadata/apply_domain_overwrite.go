@@ -163,6 +163,7 @@ func overwriteDomainWeb(ctx context.Context, d Deps, report func(string, ...any)
 			{&probe.TempURLEnabled, &backup.TempURLEnabled, &existing.TempURLEnabled, &next.TempURLEnabled},
 			{&probe.BotChallengeExempt, &backup.BotChallengeExempt, &existing.BotChallengeExempt, &next.BotChallengeExempt},
 			{&probe.BotChallengeInclude, &backup.BotChallengeInclude, &existing.BotChallengeInclude, &next.BotChallengeInclude},
+			{&probe.RedirectWWW, &backup.RedirectWWW, &existing.RedirectWWW, &next.RedirectWWW},
 			{&probe.AllowSubdomainDelegation, &backup.AllowSubdomainDelegation, &existing.AllowSubdomainDelegation, &next.AllowSubdomainDelegation},
 		} {
 			if *f.got == *f.want && *f.got != *f.have {

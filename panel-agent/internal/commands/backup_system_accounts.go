@@ -950,6 +950,7 @@ func insertDomain(ctx context.Context, userID string, d backup.MetadataDomain) e
 		{"temp_url_enabled", strconv.Itoa(boolToInt(d.TempURLEnabled))},
 		{"bot_challenge_exempt", strconv.Itoa(boolToInt(d.BotChallengeExempt))},
 		{"bot_challenge_include", strconv.Itoa(boolToInt(d.BotChallengeInclude))},
+		{"redirect_www", strconv.Itoa(boolToInt(d.RedirectWWW))},
 		{"allow_subdomain_delegation", strconv.Itoa(boolToInt(d.AllowSubdomainDelegation))},
 		{"web_disabled", strconv.Itoa(boolToInt(d.WebDisabled))},
 		{"dns_disabled", strconv.Itoa(boolToInt(d.DNSDisabled))},

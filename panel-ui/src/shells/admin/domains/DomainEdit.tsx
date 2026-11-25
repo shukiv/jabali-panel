@@ -44,6 +44,7 @@ export type DomainEditInput = {
   bot_challenge_exempt?: boolean;
   bot_challenge_include?: boolean;
   block_ai_crawlers?: boolean;
+  redirect_www?: boolean;
 };
 
 export const DomainEdit = () => {
@@ -78,6 +79,7 @@ export const DomainEdit = () => {
         bot_challenge_exempt: domain.bot_challenge_exempt,
         bot_challenge_include: domain.bot_challenge_include,
         block_ai_crawlers: domain.block_ai_crawlers,
+        redirect_www: domain.redirect_www,
       });
     }
   }, [domain, form]);
@@ -182,6 +184,24 @@ export const DomainEdit = () => {
           </Form.Item>
           <Typography.Text>
             www.{domain.name} in the certificate (on also adds a www record when this server hosts the DNS)
+          </Typography.Text>
+        </div>
+      ) : null}
+
+      {!domain.web_disabled && !domain.name.startsWith("www.") ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 24 }}>
+          <Form.Item name="redirect_www" valuePropName="checked" noStyle>
+            <Switch
+              aria-label={`Redirect www.${domain.name} to ${domain.name}`}
+              checkedChildren={<CheckOutlined />}
+              unCheckedChildren={<CloseOutlined />}
+            />
+          </Form.Item>
+          <Typography.Text>
+            Redirect www.{domain.name} to {domain.name}
+            <Typography.Text type="secondary" style={{ display: "block", fontSize: 12 }}>
+              Permanent 301, keeping the path and query string, so search engines index one name.
+            </Typography.Text>
           </Typography.Text>
         </div>
       ) : null}

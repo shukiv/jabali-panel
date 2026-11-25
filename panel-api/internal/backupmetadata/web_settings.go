@@ -38,6 +38,7 @@ func setMetadataWebSettings(dst *internalbackup.MetadataDomain, dom *models.Doma
 	dst.TempURLEnabled = dom.TempURLEnabled
 	dst.BotChallengeExempt = dom.BotChallengeExempt
 	dst.BotChallengeInclude = dom.BotChallengeInclude
+	dst.RedirectWWW = dom.RedirectWWW
 	dst.AllowSubdomainDelegation = dom.AllowSubdomainDelegation
 	dst.WebDisabled = dom.WebDisabled
 	dst.DNSDisabled = dom.DNSDisabled
@@ -103,6 +104,7 @@ func setRestoredWebSettings(row *models.Domain, dm internalbackup.MetadataDomain
 	row.TempURLEnabled = dm.TempURLEnabled
 	row.BotChallengeExempt = dm.BotChallengeExempt
 	row.BotChallengeInclude = dm.BotChallengeInclude
+	row.RedirectWWW = dm.RedirectWWW
 	row.AllowSubdomainDelegation = dm.AllowSubdomainDelegation
 	row.WebDisabled = dm.WebDisabled
 	row.DNSDisabled = dm.DNSDisabled
@@ -126,6 +128,7 @@ func copyOverwritableWebSettings(dst, src *models.Domain) {
 	dst.CacheTTLSeconds, dst.CacheQueryAllowlist = src.CacheTTLSeconds, src.CacheQueryAllowlist
 	dst.WebmailEnabled, dst.TempURLEnabled = src.WebmailEnabled, src.TempURLEnabled
 	dst.BotChallengeExempt, dst.BotChallengeInclude = src.BotChallengeExempt, src.BotChallengeInclude
+	dst.RedirectWWW = src.RedirectWWW
 	dst.AllowSubdomainDelegation = src.AllowSubdomainDelegation
 }
 

@@ -675,6 +675,9 @@ type Domain struct {
 	// from the agent's list in 00-jabali-bots.conf. Owner or admin: it only
 	// turns visitors away from the owner's own site. Off by default.
 	BlockAICrawlers bool `gorm:"column:block_ai_crawlers;type:tinyint(1);not null;default:0" json:"block_ai_crawlers"`
+	// RedirectWWW (migration 000356, GH #2591) — www.<domain> answers 301 to
+	// <domain> (same scheme, path and query). Owner or admin. Off by default.
+	RedirectWWW bool `gorm:"column:redirect_www;type:tinyint(1);not null;default:0" json:"redirect_www"`
 
 	// OwnershipState (GH #1816 / ADR-0170, migration 000311) is whether the
 	// owner has proven control of the name. A pending domain is kept off the

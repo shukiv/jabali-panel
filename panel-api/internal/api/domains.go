@@ -354,6 +354,9 @@ type updateDomainRequest struct {
 	// BlockAICrawlers — refuse AI crawlers that identify themselves. Owner or
 	// admin: it only turns visitors away from the owner's own site.
 	BlockAICrawlers *bool `json:"block_ai_crawlers,omitempty"`
+	// RedirectWWW — www.<domain> answers 301 to <domain> (GH #2591). Owner or
+	// admin: it only sends visitors of the owner's own site to its main name.
+	RedirectWWW *bool `json:"redirect_www,omitempty"`
 	// RateLimitRPS / ConnectionLimit — M18 per-domain nginx request rate
 	// (requests per second per client IP, burst twice that) and concurrent
 	// connections per client IP. 0 = no limit. ADMIN-ONLY, silently ignored
@@ -1043,6 +1046,9 @@ func (h *domainHandler) update(c *gin.Context) {
 	}
 	if req.BlockAICrawlers != nil {
 		domain.BlockAICrawlers = *req.BlockAICrawlers
+	}
+	if req.RedirectWWW != nil {
+		domain.RedirectWWW = *req.RedirectWWW
 	}
 
 	// Request limits: admin-only, written by their own repo method below
