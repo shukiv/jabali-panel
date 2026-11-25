@@ -13,6 +13,7 @@ import { sorterToParams } from "../../../utils/tableSorter";
 import { SearchableTableStringQ } from "../../../components/SearchableTable";
 import { EmptyWithCTA } from "../../../components/EmptyWithCTA";
 import { useDeleteMutation } from "../../../hooks/useQueries";
+import { feedback } from "../../../lib/feedback"; // GH #970: themed toasts
 import { useTableURL } from "../../../hooks/useTableURL";
 import { disabledFunctionsSummary } from "../../../components/packages/phpDisabledFunctions";
 import { Timestamp } from "../../../components/Timestamp";
@@ -208,7 +209,12 @@ export const PackageList = () => {
                     label: "Delete",
                     icon: <DeleteOutlined />,
                     danger: true,
-                    onClick: () => { void deleteMutation.mutateAsync({ id: r.id }); },
+                    // A package users are on is refused (409 package_in_use): show why.
+                    onClick: () => {
+                      deleteMutation.mutateAsync({ id: r.id }).catch((err: unknown) =>
+                        feedback.message.error(err instanceof Error ? err.message : "Delete failed"),
+                      );
+                    },
                     confirm: { title: `Delete package "${r.name}"?`, okText: "Delete" },
                   },
                 ]}

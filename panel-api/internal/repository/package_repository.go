@@ -3,9 +3,11 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/ids"
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -152,11 +154,32 @@ func (r *packageRepo) Update(ctx context.Context, p *models.HostingPackage) erro
 	return nil
 }
 
+// PackageInUseError: users are still on the package. users.package_id has no
+// foreign key, so Delete checks; a deleted package would leave them on an id
+// that no longer loads, and package-limited creates refuse on that.
+type PackageInUseError struct{ Users int64 }
+
+func (e *PackageInUseError) Error() string {
+	return fmt.Sprintf("%d user(s) are on this package; move them to another package first", e.Users)
+}
+
+func (e *PackageInUseError) Is(target error) bool { return target == ErrConflict }
+
 // Delete removes the package and, in the same transaction, clears the server's
 // default package for migrations when it was this one, so the setting never
-// names a package that is gone.
+// names a package that is gone. It refuses while any user is on the package.
 func (r *packageRepo) Delete(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var users int64
+		// FOR UPDATE locks the users' package_id index range until commit, so
+		// no user can be put on the package between this count and the delete.
+		if err := tx.Model(&models.User{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("package_id = ?", id).Count(&users).Error; err != nil {
+			return err
+		}
+		if users > 0 {
+			return &PackageInUseError{Users: users}
+		}
 		res := tx.Delete(&models.HostingPackage{}, "id = ?", id)
 		if res.Error != nil {
 			return res.Error
