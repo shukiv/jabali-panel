@@ -13,8 +13,9 @@ import (
 
 // fakeUpdRunRepo is a minimal UpdateHistoryRepository for the run reconciler.
 type fakeUpdRunRepo struct {
-	running []models.UpdateHistory
-	marked  map[string]string
+	running   []models.UpdateHistory
+	marked    map[string]string
+	summaries map[string]string
 }
 
 func (f *fakeUpdRunRepo) List(context.Context, int) ([]models.UpdateHistory, error) {
@@ -24,10 +25,14 @@ func (f *fakeUpdRunRepo) ListRunning(context.Context) ([]models.UpdateHistory, e
 	return f.running, nil
 }
 func (f *fakeUpdRunRepo) Insert(context.Context, *models.UpdateHistory) error { return nil }
-func (f *fakeUpdRunRepo) MarkFinished(_ context.Context, id, status, _, _ string) error {
+func (f *fakeUpdRunRepo) MarkFinished(_ context.Context, id, status, summary, _ string) error {
 	if f.marked == nil {
 		f.marked = map[string]string{}
 	}
+	if f.summaries == nil {
+		f.summaries = map[string]string{}
+	}
+	f.summaries[id] = summary
 	f.marked[id] = status
 	return nil
 }
@@ -113,5 +118,49 @@ func TestReconcileUpdateRuns_KeepsFreshPollableWhenAgentErrors(t *testing.T) {
 	newUpdRunReconcilerWithAgent(repo, ag).reconcileUpdateRuns(context.Background())
 	if _, ok := repo.marked["young"]; ok {
 		t.Fatalf("a fresh pollable row must NOT be reaped after a single agent error")
+	}
+}
+
+// The tail of an apt run that a broken grub-pc stopped (Debian 13, no GRUB
+// install device in debconf).
+const grubFailedAptLog = `Setting up grub-pc (2.12-9) ...
+You must correct your GRUB install devices before proceeding:
+
+  DEBIAN_FRONTEND=dialog dpkg --configure grub-pc
+  dpkg --configure -a
+dpkg: error processing package grub-pc (--configure):
+ installed grub-pc package post-installation script subprocess returned error exit status 1
+Processing triggers for man-db (2.13.1-1) ...
+Errors were encountered while processing:
+ grub-pc
+E: Sub-process /usr/bin/dpkg returned an error code (1)`
+
+func TestAptFailedPackages(t *testing.T) {
+	if got := aptFailedPackages(grubFailedAptLog); len(got) != 1 || got[0] != "grub-pc" {
+		t.Fatalf("got %v, want [grub-pc]", got)
+	}
+	two := "dpkg: error processing package libc-bin (--configure):\nErrors were encountered while processing:\n libc-bin\n nginx-common\nE: done"
+	if got := aptFailedPackages(two); len(got) != 2 || got[0] != "libc-bin" || got[1] != "nginx-common" {
+		t.Fatalf("got %v, want [libc-bin nginx-common]", got)
+	}
+	if got := aptFailedPackages("E: Could not get lock /var/lib/dpkg/lock-frontend"); got != nil {
+		t.Fatalf("no package named, got %v", got)
+	}
+	if got := aptFailedPackages("Errors were encountered while processing:\n $(rm -rf /)\n"); got != nil {
+		t.Fatalf("a line that is not a package name is skipped, got %v", got)
+	}
+}
+
+// A failed system-packages run says which package dpkg could not set up.
+func TestReconcileUpdateRuns_AptFailureNamesThePackage(t *testing.T) {
+	repo := &fakeUpdRunRepo{running: []models.UpdateHistory{{
+		ID: "apt1", Kind: models.UpdateKindApt, Unit: "jabali-apt-oneshot.service",
+		Status: models.UpdateStatusRunning, StartedAt: time.Now().Add(-5 * time.Minute),
+	}}}
+	reply, _ := json.Marshal(map[string]any{"status": "failed", "exit_code": 100, "log_tail": grubFailedAptLog})
+	ag := &fakeAgent{resultByMethod: map[string]json.RawMessage{"system.apt_status": reply}}
+	newUpdRunReconcilerWithAgent(repo, ag).reconcileUpdateRuns(context.Background())
+	if repo.marked["apt1"] != models.UpdateStatusFailed || repo.summaries["apt1"] != "failed: dpkg could not set up grub-pc" {
+		t.Fatalf("marked %v summary %q", repo.marked, repo.summaries["apt1"])
 	}
 }

@@ -3,6 +3,8 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
+	"regexp"
+	"strings"
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
@@ -122,6 +124,11 @@ func (r *Reconciler) reconcileUpdateRuns(ctx context.Context) {
 		if v.Status == "failed" || (v.ExitCode != nil && *v.ExitCode != 0) {
 			status = models.UpdateStatusFailed
 			summary = "failed"
+			if row.Kind == models.UpdateKindApt {
+				if pk := aptFailedPackages(v.LogTail); len(pk) > 0 {
+					summary = truncateSummary("failed: dpkg could not set up " + strings.Join(pk, ", "))
+				}
+			}
 		}
 		excerpt := v.LogTail
 		if len(excerpt) > 4000 {
@@ -159,4 +166,50 @@ func (r *Reconciler) publishUpdateCompleted(ctx context.Context, kind, status st
 	}); err != nil {
 		r.log.Warn("update-run reconcile: publish update.completed failed", "kind", kind, "error", err)
 	}
+}
+
+// dpkgErrorPkgRe is dpkg's own line for a package it could not install or
+// configure ("dpkg: error processing package grub-pc (--configure):").
+var dpkgErrorPkgRe = regexp.MustCompile(`dpkg: error processing package ([a-z0-9][a-z0-9.+:-]*) \(`)
+
+var dpkgPkgNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.+:-]*$`)
+
+// aptFailedPackages names the packages dpkg could not set up in an apt run's
+// log, from dpkg's error lines and apt's closing "Errors were encountered while
+// processing:" list, so a failed run says which package to look at (one broken
+// package, e.g. grub-pc with no install device, fails every later run). At
+// most five, in the order they appear.
+func aptFailedPackages(log string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if len(out) < 5 && dpkgPkgNameRe.MatchString(p) && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	lines := strings.Split(log, "\n")
+	for i, ln := range lines {
+		if m := dpkgErrorPkgRe.FindStringSubmatch(ln); m != nil {
+			add(m[1])
+		}
+		if strings.TrimSpace(ln) != "Errors were encountered while processing:" {
+			continue
+		}
+		for _, next := range lines[i+1:] {
+			if next == "" || (next[0] != ' ' && next[0] != '\t') {
+				break
+			}
+			add(strings.TrimSpace(next))
+		}
+	}
+	return out
+}
+
+// truncateSummary keeps a summary within the column's 255 bytes.
+func truncateSummary(s string) string {
+	if len(s) <= 255 {
+		return s
+	}
+	return s[:252] + "..."
 }
