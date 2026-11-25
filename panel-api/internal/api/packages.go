@@ -719,6 +719,11 @@ func (h *packageHandler) delete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found"})
 			return
 		}
+		var inUse *repository.PackageInUseError
+		if errors.As(err, &inUse) {
+			c.JSON(http.StatusConflict, gin.H{"error": "package_in_use", "detail": inUse.Error(), "users": inUse.Users})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal"})
 		return
 	}

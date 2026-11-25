@@ -264,6 +264,8 @@ func TestPackage_Delete_ClearsTheDefaultPackage(t *testing.T) {
 	const id = "01HXPKG0000000000000000000"
 
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT count.*FROM .users. WHERE package_id = .* FOR UPDATE").
+		WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec("DELETE FROM .hosting_packages. WHERE id = ").
 		WithArgs(id).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE .server_settings. SET .default_package_id.=.*WHERE default_package_id = ").
@@ -280,9 +282,32 @@ func TestPackage_Delete_MissingPackageTouchesNothing(t *testing.T) {
 	repo := NewPackageRepository(db)
 
 	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT count.*FROM .users. WHERE package_id = .* FOR UPDATE").
+		WithArgs("01HXPKGMISSING0000000000000").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 	mock.ExpectExec("DELETE FROM .hosting_packages.").WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectRollback()
 
 	require.ErrorIs(t, repo.Delete(context.Background(), "01HXPKGMISSING0000000000000"), ErrNotFound)
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+// users.package_id has no foreign key: a package that users are on is not
+// deleted (docs: "forbidden if any user is assigned").
+func TestPackage_Delete_RefusedWhileUsersAreOnIt(t *testing.T) {
+	db, mock, raw := newMockPackageDB(t)
+	defer raw.Close()
+	repo := NewPackageRepository(db)
+	const id = "01HXPKGINUSE00000000000000"
+
+	mock.ExpectBegin()
+	mock.ExpectQuery("SELECT count.*FROM .users. WHERE package_id = .* FOR UPDATE").
+		WithArgs(id).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectRollback()
+
+	err := repo.Delete(context.Background(), id)
+	require.ErrorIs(t, err, ErrConflict)
+	var inUse *PackageInUseError
+	require.ErrorAs(t, err, &inUse)
+	require.EqualValues(t, 2, inUse.Users)
+	require.NoError(t, mock.ExpectationsWereMet(), "nothing may be deleted or cleared")
 }

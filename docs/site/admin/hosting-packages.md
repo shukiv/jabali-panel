@@ -36,7 +36,7 @@ Actions: Edit, Delete, Duplicate.
 
 - **Create**: see [Create Package](./hosting-packages-create.md).
 - **Edit**: see [Edit Package](./hosting-packages-edit.md). Changes converge to every assigned user on the next reconciler tick (within 60 seconds).
-- **Delete**: forbidden if any user is assigned. Reassign users first.
+- **Delete**: refused while any user is on the package; the panel and `jabali package delete` say how many. Move those users to another package first.
 
 ## Default package
 
