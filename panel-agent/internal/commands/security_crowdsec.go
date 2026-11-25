@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 
 	"git.jabali-panel.com/shukivaknin/jabali2/agentwire"
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/appseccfg"
+	"git.jabali-panel.com/shukivaknin/jabali2/internal/crowdsecctl"
 )
 
 // M26 Step 2 (ADR-0053). CrowdSec LAPI surface for the admin Security
@@ -821,7 +823,7 @@ func csHubInstallHandler(ctx context.Context, params json.RawMessage) (any, erro
 	}
 	// GH #711: a failed reload means the newly-installed item is NOT live yet —
 	// don't report success, or the UI claims protection that isn't loaded.
-	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := crowdsecReload(ctx); err != nil {
 		return nil, csInternal(fmt.Sprintf("installed %s %s but crowdsec reload failed (item not live): %s", p.Type, p.Name, strings.TrimSpace(string(out))), err)
 	}
 	return map[string]any{"type": p.Type, "name": p.Name, "installed": true}, nil
@@ -843,7 +845,7 @@ func csHubRemoveHandler(ctx context.Context, params json.RawMessage) (any, error
 		return nil, csInternal(fmt.Sprintf("cscli %s remove: %s", p.Type, strings.TrimSpace(string(out))), err)
 	}
 	// GH #711: a failed reload means the removed item may STILL be loaded.
-	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := crowdsecReload(ctx); err != nil {
 		return nil, csInternal(fmt.Sprintf("removed %s %s but crowdsec reload failed (item may still be live): %s", p.Type, p.Name, strings.TrimSpace(string(out))), err)
 	}
 	return map[string]any{"type": p.Type, "name": p.Name, "installed": false}, nil
@@ -961,13 +963,68 @@ func csAppSecGeoblockSetHandler(ctx context.Context, params json.RawMessage) (an
 // when ExecReload is set (crowdsec.service ships that). If reload is not
 // wired (older packaging) fall back to restart.
 func reloadCrowdsec(ctx context.Context) error {
-	if out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := crowdsecReload(ctx); err != nil {
 		if out2, err2 := execCommandContext(ctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			return csInternal("systemctl reload/restart crowdsec",
 				fmt.Errorf("reload: %v %s; restart: %v %s", err, out, err2, out2))
 		}
 	}
 	return nil
+}
+
+// crowdsecReload runs `systemctl reload crowdsec` and hands the reload to the
+// AppSec watchdog. Every agent reload goes through here: a SIGHUP can leave
+// crowdsec hung with AppSec down until it is restarted (see
+// internal/crowdsecctl).
+func crowdsecReload(ctx context.Context) ([]byte, error) {
+	out, err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").CombinedOutput()
+	watchAppsecAfterReload()
+	return out, err
+}
+
+// The watchdog runs in the background so callers keep their own deadlines;
+// one pending kick covers reloads that land while a check is running.
+var (
+	appsecWatchKick     = make(chan struct{}, 1)
+	appsecWatchOnce     sync.Once
+	appsecWatchExpected = crowdsecctl.AppsecExpected // stubbed in tests
+)
+
+func watchAppsecAfterReload() {
+	if !appsecWatchExpected() {
+		return
+	}
+	appsecWatchOnce.Do(func() { go appsecWatchLoop() })
+	select {
+	case appsecWatchKick <- struct{}{}:
+	default:
+	}
+}
+
+func appsecWatchLoop() {
+	r := crowdsecctl.Default()
+	r.Run = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return execCommandContext(ctx, name, args...).CombinedOutput()
+	}
+	r.Again = func() bool { // a reload during the check restarts its wait
+		select {
+		case <-appsecWatchKick:
+			return true
+		default:
+			return false
+		}
+	}
+	for range appsecWatchKick {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		restarted, err := r.AfterReload(ctx)
+		cancel()
+		switch {
+		case err != nil:
+			slog.Error("crowdsec: AppSec is not answering after a reload", "restarted", restarted, "err", err)
+		case restarted:
+			slog.Warn("crowdsec: AppSec did not come back after a reload; crowdsec was hung and has been restarted")
+		}
+	}
 }
 
 // csCleanCountries uppercases, trims, dedupes and validates ISO 3166-1
@@ -1880,9 +1937,9 @@ func csProfilesSetHandler(ctx context.Context, params json.RawMessage) (any, err
 		_ = os.WriteFile(profilesPath, raw, 0o644)
 		return nil, csInternal(fmt.Sprintf("crowdsec -t: %s", strings.TrimSpace(string(out))), terr)
 	}
-	if err := execCommandContext(ctx, "systemctl", "reload", "crowdsec").Run(); err != nil {
+	if _, err := crowdsecReload(ctx); err != nil {
 		_ = os.WriteFile(profilesPath, raw, 0o644)
-		_ = execCommandContext(ctx, "systemctl", "reload", "crowdsec").Run()
+		_, _ = crowdsecReload(ctx)
 		return nil, csInternal("systemctl reload crowdsec after write", err)
 	}
 	return map[string]any{"overrides": p.Overrides}, nil

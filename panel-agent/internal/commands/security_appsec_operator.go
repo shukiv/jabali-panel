@@ -92,7 +92,7 @@ func appsecOperatorApplyHandler(ctx context.Context, params json.RawMessage) (an
 		}
 	}
 
-	if out, err := execCommandContext(rctx, "systemctl", "reload", "crowdsec").CombinedOutput(); err != nil {
+	if out, err := crowdsecReload(rctx); err != nil {
 		if out2, err2 := execCommandContext(rctx, "systemctl", "restart", "crowdsec").CombinedOutput(); err2 != nil {
 			// The file is written, so the next reload loads it. Report the
 			// failure so the panel can log it rather than assume it is live.

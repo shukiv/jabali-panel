@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -97,6 +98,9 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	// panel (which already logged the run via the API).
 	finishHistory := beginUpdateHistory()
 	defer func() { finishHistory(retErr) }()
+	// install.sh steps reload crowdsec too; check once at the end, whatever
+	// path the update took, that a reload did not leave AppSec down.
+	defer verifyAppsecAfterReload(context.Background(), os.Stdout, os.Stdout)
 
 	repoDir := os.Getenv("JABALI_REPO_DIR")
 	if repoDir == "" {
@@ -905,6 +909,7 @@ fi
 				if err := run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true"); err != nil {
 					fmt.Printf("  (crowdsec reload failed: %v — continuing)\n", err)
 				}
+				verifyAppsecAfterReload(context.Background(), os.Stdout, os.Stdout)
 			}
 			return nil
 		}},
@@ -1635,6 +1640,7 @@ fi
 			if string(yBefore) != string(yAfter) || string(cBefore) != string(cAfter) {
 				fmt.Println("  (appsec config changed post-build — reloading crowdsec)")
 				_ = run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true")
+				verifyAppsecAfterReload(context.Background(), os.Stdout, os.Stdout)
 			}
 			return nil
 		}},
