@@ -249,10 +249,14 @@ func handleSSHLogLine(ctx context.Context, line string, dedup *loginDedup, log *
 // bans (login_ban_exempt.go), and an older watcher matched an Accepted line
 // anywhere in a log line, so its entries may not be real root logins. A
 // genuine login exempts its IP again. Entries the admin added by hand (any
-// other description) stay. Returns done=false when cscli could not be asked,
-// so the caller retries.
+// other description) stay. Returns done=false when cscli could not be asked
+// or an entry could not be removed (a slow cscli, LAPI restarting), so the
+// caller tries again: an entry left behind would keep its address off the WAF
+// until it expires. Each cscli call gets its own time limit.
 func dropAutoAllowlistEntries(ctx context.Context) (removed int, done bool) {
-	out, err := runCscliJSON(ctx, "allowlists", "inspect", jabaliAllowlistName)
+	ictx, icancel := context.WithTimeout(ctx, 30*time.Second)
+	out, err := runCscliJSON(ictx, "allowlists", "inspect", jabaliAllowlistName)
+	icancel()
 	if err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return 0, true // no CrowdSec on this box
@@ -266,33 +270,42 @@ func dropAutoAllowlistEntries(ctx context.Context) (removed int, done bool) {
 	if json.Unmarshal(out, &raw) != nil {
 		return 0, false
 	}
+	failed := 0
 	for _, it := range raw.Items {
 		if !strings.HasPrefix(it.Description, loginAutoReasonPrefix) {
 			continue
 		}
-		if execCommandContext(ctx, "cscli", "allowlists", "remove", jabaliAllowlistName, it.Value).Run() == nil {
+		rctx, rcancel := context.WithTimeout(ctx, 30*time.Second)
+		out, err := execCommandContext(rctx, "cscli", "allowlists", "remove", jabaliAllowlistName, it.Value).CombinedOutput()
+		rcancel()
+		switch msg := strings.ToLower(string(out)); {
+		case err == nil:
 			removed++
+		case strings.Contains(msg, "not found") || strings.Contains(msg, "no such"):
+			// already gone (expired since the inspect)
+		default:
+			failed++
 		}
 	}
 	if removed > 0 {
 		requestListsRerender()
 	}
-	return removed, true
+	return removed, failed == 0
 }
 
 // dropAutoAllowlistEntriesUntilDone retries dropAutoAllowlistEntries every
-// five minutes until cscli answers (CrowdSec may start after the agent).
+// five minutes until every login entry is gone (CrowdSec may start after the
+// agent, or answer slowly).
 func dropAutoAllowlistEntriesUntilDone(ctx context.Context, log *slog.Logger) {
 	for {
-		c, cancel := context.WithTimeout(ctx, 30*time.Second)
-		removed, done := dropAutoAllowlistEntries(c)
-		cancel()
+		removed, done := dropAutoAllowlistEntries(ctx)
+		if removed > 0 {
+			log.Info("login-allowlist: dropped login entries from the allowlist; logins now only exempt their IP from bans", "removed", removed)
+		}
 		if done {
-			if removed > 0 {
-				log.Info("login-allowlist: dropped login entries from the allowlist; logins now only exempt their IP from bans", "removed", removed)
-			}
 			return
 		}
+		log.Warn("login-allowlist: login entries left on the allowlist; trying again in 5 minutes")
 		select {
 		case <-ctx.Done():
 			return
