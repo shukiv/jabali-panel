@@ -71,11 +71,13 @@ func validateRuleName(id string) error {
 	return nil
 }
 
-// crsExclusions returns the entries that target a CRS rule id.
+// crsExclusions returns the entries that target a CRS rule id, plus any
+// login-gated entry: a gated rule name is invalid, and RenderExclusions
+// reports it as SKIPPED where the YAML would have dropped the gate.
 func crsExclusions(list []Exclusion) []Exclusion {
 	var out []Exclusion
 	for _, e := range list {
-		if !IsRuleName(e.RuleID) {
+		if !IsRuleName(e.RuleID) || e.WPLoginOnly {
 			out = append(out, e)
 		}
 	}
@@ -86,7 +88,7 @@ func crsExclusions(list []Exclusion) []Exclusion {
 func RuleNameExclusions(list []Exclusion) []Exclusion {
 	var out []Exclusion
 	for _, e := range list {
-		if IsRuleName(e.RuleID) {
+		if IsRuleName(e.RuleID) && !e.WPLoginOnly {
 			out = append(out, e)
 		}
 	}

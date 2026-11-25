@@ -37,18 +37,41 @@ const MaxOperatorApplyRows = 5000
 type OperatorApplyParams struct {
 	Exclusions []Exclusion `json:"exclusions"`
 	HostModes  []HostMode  `json:"host_modes"`
+	// LoginGatedExclusions are the WPLoginOnly entries. They travel under
+	// their own key so that an agent from before the gate ignores them
+	// (unknown key) and the rule stays on, rather than reading them from
+	// Exclusions and dropping the rule for every request on the path.
+	LoginGatedExclusions []Exclusion `json:"login_gated_exclusions,omitempty"`
 }
 
 // NewOperatorApplyParams returns params whose lists are never nil, so they
-// marshal as [] rather than null.
+// marshal as [] rather than null. WPLoginOnly entries go to
+// LoginGatedExclusions, the rest to Exclusions.
 func NewOperatorApplyParams(list []Exclusion, modes []HostMode) OperatorApplyParams {
-	if list == nil {
-		list = []Exclusion{}
-	}
 	if modes == nil {
 		modes = []HostMode{}
 	}
-	return OperatorApplyParams{Exclusions: list, HostModes: modes}
+	p := OperatorApplyParams{Exclusions: []Exclusion{}, HostModes: modes}
+	for _, e := range list {
+		if e.WPLoginOnly {
+			p.LoginGatedExclusions = append(p.LoginGatedExclusions, e)
+		} else {
+			p.Exclusions = append(p.Exclusions, e)
+		}
+	}
+	return p
+}
+
+// AllExclusions returns every entry the request carries, the gated ones
+// marked WPLoginOnly again (the flag is not on the wire).
+func (p OperatorApplyParams) AllExclusions() []Exclusion {
+	out := make([]Exclusion, 0, len(p.Exclusions)+len(p.LoginGatedExclusions))
+	out = append(out, p.Exclusions...)
+	for _, e := range p.LoginGatedExclusions {
+		e.WPLoginOnly = true
+		out = append(out, e)
+	}
+	return out
 }
 
 // Check refuses a request whose shape is wrong. It does not validate the rows
@@ -57,7 +80,7 @@ func (p OperatorApplyParams) Check() error {
 	if p.Exclusions == nil || p.HostModes == nil {
 		return fmt.Errorf("exclusions and host_modes are both required (send [] for none)")
 	}
-	if n := len(p.Exclusions); n > MaxOperatorApplyRows {
+	if n := len(p.Exclusions) + len(p.LoginGatedExclusions); n > MaxOperatorApplyRows {
 		return fmt.Errorf("%d exclusions exceeds the limit of %d", n, MaxOperatorApplyRows)
 	}
 	if n := len(p.HostModes); n > MaxOperatorApplyRows {

@@ -71,6 +71,12 @@ type ExclusionView struct {
 	ManagedApp       string `json:"managed_app,omitempty"`
 }
 
+// ExclusionOf is the rendered form of a stored row. Every writer of the
+// operator file converts through it, so none can drop the login gate.
+func ExclusionOf(r models.CRSRuleExclusion) appseccfg.Exclusion {
+	return appseccfg.Exclusion{Host: r.Host, URIPrefix: r.URIPrefix, RuleID: r.RuleID, Note: r.Note, WPLoginOnly: r.WPLoginOnly}
+}
+
 func viewOf(r models.CRSRuleExclusion) ExclusionView {
 	v := ExclusionView{CRSRuleExclusion: r}
 	for _, a := range managedApps {
@@ -137,6 +143,7 @@ func AddExclusion(ctx context.Context, d Deps, in appseccfg.Exclusion) (Exclusio
 
 	row := models.CRSRuleExclusion{
 		ID: ids.NewULID(), Host: e.Host, URIPrefix: e.URIPrefix, RuleID: e.RuleID, Note: e.Note,
+		WPLoginOnly: e.WPLoginOnly,
 	}
 	if err := d.Exclusions.Create(ctx, &row); err != nil {
 		return ExclusionView{}, appseccfg.OperatorApplyResult{}, fmt.Errorf("save exclusion: %w", err)

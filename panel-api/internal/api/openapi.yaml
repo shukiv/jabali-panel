@@ -2606,6 +2606,14 @@ paths:
                   description: A CRS rule id, or crowdsecurity/vpatch-… / crowdsecurity/generic-…
                   example: "942100"
                 note: { type: string }
+                wp_login_only:
+                  type: boolean
+                  default: false
+                  description: |
+                    Drop the rule only for POST requests that carry a
+                    WordPress login cookie (wordpress_logged_in_*), e.g. an
+                    editor saving HTML. CRS rule ids only; refused with a rule
+                    name.
       responses:
         "201":
           description: Stored and applied

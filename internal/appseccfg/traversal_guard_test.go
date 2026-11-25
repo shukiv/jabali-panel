@@ -39,6 +39,7 @@ func TestTraversalGuard_EveryPathScopedExclusionHasIt(t *testing.T) {
 	operator := RenderExclusions([]Exclusion{
 		validExclusion(),
 		{Host: "cloud.example.com", URIPrefix: "/remote.php/dav/", RuleID: "911100"},
+		gatedExclusion(),
 	})
 	for name, body := range map[string]string{"built-in": CRSPluginBefore(), "operator": operator} {
 		checked := 0

@@ -182,7 +182,23 @@ describe("GH #1649 — AppSec exclusions panel", () => {
     await waitFor(() => expect(mocked.post).toHaveBeenCalledTimes(1));
     const [url, body] = mocked.post.mock.calls[0];
     expect(url).toBe(EXCLUSIONS);
-    expect(body).toMatchObject({ host: "shop.example.com", uri_prefix: "/cart/add", rule_id: "942100" });
+    expect(body).toMatchObject({ host: "shop.example.com", uri_prefix: "/cart/add", rule_id: "942100", wp_login_only: false });
+  });
+
+  it("posts the WordPress login gate only when it is ticked", async () => {
+    mocked.post.mockResolvedValue({
+      data: { exclusion: { id: "01HXD" }, apply: { changed: true, reloaded: true } },
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: /Add exclusion/i }));
+    fireEvent.change(await screen.findByLabelText("Host"), { target: { value: "www.example.co.il" } });
+    fireEvent.change(screen.getByLabelText("Path prefix"), { target: { value: "/wp-admin/admin-ajax.php" } });
+    fireEvent.change(screen.getByLabelText("Rule"), { target: { value: "941100" } });
+    fireEvent.click(screen.getByLabelText("Only for logged-in WordPress saves"));
+    fireEvent.click(screen.getByRole("button", { name: /^Add$/ }));
+
+    await waitFor(() => expect(mocked.post).toHaveBeenCalledTimes(1));
+    expect(mocked.post.mock.calls[0][1]).toMatchObject({ rule_id: "941100", wp_login_only: true });
   });
 
   it("keeps a server refusal visible in the drawer", async () => {

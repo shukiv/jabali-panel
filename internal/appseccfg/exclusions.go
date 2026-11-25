@@ -60,6 +60,12 @@ type Exclusion struct {
 	URIPrefix string `json:"uri_prefix"`
 	RuleID    string `json:"rule_id"`
 	Note      string `json:"note"`
+	// WPLoginOnly narrows the drop to POSTs that carry a WordPress login
+	// cookie (wordpress_logged_in_*), for editor saves that post HTML. Not a
+	// JSON field: on the agent wire a gated row travels only in
+	// OperatorApplyParams.LoginGatedExclusions, which an older agent ignores,
+	// so it drops the row instead of rendering it without the gate.
+	WPLoginOnly bool `json:"-"`
 }
 
 // NormalizeExclusion returns e as it should be stored: surrounding space
@@ -73,10 +79,11 @@ func NormalizeExclusion(e Exclusion) Exclusion {
 		id = strconv.Itoa(n)
 	}
 	return Exclusion{
-		Host:      strings.ToLower(strings.TrimSpace(e.Host)),
-		URIPrefix: strings.TrimSpace(e.URIPrefix),
-		RuleID:    id,
-		Note:      strings.TrimSpace(e.Note),
+		Host:        strings.ToLower(strings.TrimSpace(e.Host)),
+		URIPrefix:   strings.TrimSpace(e.URIPrefix),
+		RuleID:      id,
+		Note:        strings.TrimSpace(e.Note),
+		WPLoginOnly: e.WPLoginOnly,
 	}
 }
 
@@ -116,6 +123,9 @@ func ValidateExclusion(e Exclusion) error {
 
 	id := strings.TrimSpace(e.RuleID)
 	if IsRuleName(id) {
+		if e.WPLoginOnly {
+			return fmt.Errorf("the WordPress login gate applies to CRS rule ids only; an AppSec rule like %q is removed by name, with no request gate", id)
+		}
 		if err := validateRuleName(id); err != nil {
 			return err
 		}
@@ -210,7 +220,8 @@ func RenderExclusions(list []Exclusion) string {
 	b.WriteString("# matched request. Chained so the host is checked first: a URI prefix alone\n")
 	b.WriteString("# would apply the exclusion to every tenant that happens to use that path.\n")
 	b.WriteString("# The last link refuses a URI with a \"..\" segment, which nginx would serve\n")
-	b.WriteString("# outside the prefix (see TraversalGuard).\n")
+	b.WriteString("# outside the prefix (see TraversalGuard). A WordPress-login entry adds two\n")
+	b.WriteString("# more links: only a POST carrying a wordpress_logged_in_ cookie.\n")
 
 	id := OperatorExclusionIDBase
 	rendered := 0
@@ -235,7 +246,13 @@ func RenderExclusions(list []Exclusion) string {
 		}
 		fmt.Fprintf(&b, "SecRule REQUEST_HEADERS:Host \"@streq %s\" \"id:%d,phase:1,pass,nolog,chain\"\n", host, id)
 		fmt.Fprintf(&b, "    SecRule REQUEST_URI \"@beginsWith %s\" \"t:none,chain\"\n", uri)
-		fmt.Fprintf(&b, "    %s,ctl:ruleRemoveById=%s\"\n", TraversalGuard, strings.TrimSpace(e.RuleID))
+		if e.WPLoginOnly {
+			fmt.Fprintf(&b, "    %s,chain\"\n", TraversalGuard)
+			b.WriteString("    SecRule REQUEST_METHOD \"@streq POST\" \"t:none,chain\"\n")
+			fmt.Fprintf(&b, "    SecRule REQUEST_COOKIES_NAMES \"@rx ^wordpress_logged_in_\" \"t:none,ctl:ruleRemoveById=%s\"\n", strings.TrimSpace(e.RuleID))
+		} else {
+			fmt.Fprintf(&b, "    %s,ctl:ruleRemoveById=%s\"\n", TraversalGuard, strings.TrimSpace(e.RuleID))
+		}
 		id++
 		rendered++
 	}

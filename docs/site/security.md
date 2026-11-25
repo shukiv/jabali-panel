@@ -136,6 +136,15 @@ or the bot-detection challenge.
     new config is checked with `crowdsec -t` before the reload.
   - If no installed rule has the name, the exclusion is saved and the card says
     it does nothing until a rule of that name is installed.
+- **Only for logged-in WordPress saves** limits an exclusion by rule id to POST
+  requests that carry a WordPress login cookie (`wordpress_logged_in_…`). Use
+  it when an editor's save is blocked because the content is HTML, such as an
+  Elementor page or an ACF options page (`/wp-admin/admin-ajax.php`,
+  `/wp-admin/admin.php`, `/wp-admin/post.php`). Other requests to the path
+  are still checked by the rule. The WAF cannot tell a real login cookie from
+  a made-up one, so this narrows the exclusion but is not a login check: keep
+  the path as narrow as the block. On the CLI it is `--wp-login-only`. It
+  cannot be used with a rule name.
 - A row tagged with an app name is managed for that app's install:
   - **Flarum**: rule 920450 on the forum's API path. Removing it
     works, but the next change to that forum or `jabali appsec flarum-sync`

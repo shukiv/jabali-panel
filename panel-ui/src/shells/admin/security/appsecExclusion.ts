@@ -9,6 +9,8 @@ export type ExclusionFormValues = {
   uri_prefix: string;
   rule_id: string;
   note: string;
+  /** Only POSTs with a WordPress login cookie; unset in a prefill. */
+  wp_login_only?: boolean;
 };
 
 export type ExclusionPrefill = ExclusionFormValues & {

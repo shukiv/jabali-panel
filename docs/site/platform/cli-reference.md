@@ -356,6 +356,7 @@ jabali appsec exclusion add [flags]
 - `--note` — why this exclusion exists
 - `--rule` — CRS rule ID or AppSec rule name to exclude, e.g. 942100 or crowdsecurity/vpatch-CVE-2025-29927 (required)
 - `--uri-prefix` — URI prefix the exclusion applies to, e.g. /wp-json/x/ (required)
+- `--wp-login-only` — exclude the rule only for POSTs that carry a WordPress login cookie (wordpress_logged_in_*), e.g. an editor saving HTML; CRS rule ids only
 
 ##### `jabali appsec exclusion list`
 

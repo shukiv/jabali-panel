@@ -86,6 +86,9 @@ func RegisterSecurityAppSecExclusionRoutes(rg *gin.RouterGroup, cfg SecurityAppS
 			URIPrefix string `json:"uri_prefix"`
 			RuleID    string `json:"rule_id"`
 			Note      string `json:"note"`
+			// WPLoginOnly: drop the rule only for POSTs with a WordPress
+			// login cookie (an editor saving HTML).
+			WPLoginOnly bool `json:"wp_login_only"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid_json"})
@@ -94,6 +97,7 @@ func RegisterSecurityAppSecExclusionRoutes(rg *gin.RouterGroup, cfg SecurityAppS
 		extendWriteDeadline(c, appsecExclusionWriteBudget)
 		row, res, err := appsecops.AddExclusion(c.Request.Context(), d, appseccfg.Exclusion{
 			Host: body.Host, URIPrefix: body.URIPrefix, RuleID: body.RuleID, Note: body.Note,
+			WPLoginOnly: body.WPLoginOnly,
 		})
 		if err != nil {
 			writeAppSecExclusionError(c, err)

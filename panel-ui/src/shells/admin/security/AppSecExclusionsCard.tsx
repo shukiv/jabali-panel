@@ -18,6 +18,7 @@ import {
   AutoComplete,
   Button,
   Card,
+  Checkbox,
   Drawer,
   Empty,
   Form,
@@ -386,7 +387,16 @@ const ExclusionsCard = ({ onAdd }: { onAdd: () => void }) => {
           dataIndex="rule_id"
           key="rule_id"
           title={t("appsecexclusionscard.col_rule")}
-          render={(v: string) => <Tag color="orange">{v}</Tag>}
+          render={(v: string, r) => (
+            <Space size={4} wrap>
+              <Tag color="orange">{v}</Tag>
+              {r.wp_login_only ? (
+                <Tooltip title={t("appsecexclusionscard.wp_login_only_tip")}>
+                  <Tag>{t("appsecexclusionscard.wp_login_only_tag")}</Tag>
+                </Tooltip>
+              ) : null}
+            </Space>
+          )}
         />
         <Table.Column<AppSecExclusion>
           key="note"
@@ -455,6 +465,7 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
         uri_prefix: v.uri_prefix.trim(),
         rule_id: v.rule_id.trim(),
         note: (v.note ?? "").trim(),
+        wp_login_only: v.wp_login_only === true,
       });
       if (res.apply?.skipped) {
         feedback.message.warning(t("appsecexclusionscard.added_not_live", { reason: res.apply.skipped }));
@@ -565,6 +576,13 @@ const AddExclusionDrawer = ({ open, prefill, onClose }: AddExclusionDrawerProps)
           ) : (
             <Input placeholder="942100" autoComplete="off" />
           )}
+        </Form.Item>
+        <Form.Item
+          name="wp_login_only"
+          valuePropName="checked"
+          extra={t("appsecexclusionscard.field_wp_login_only_help")}
+        >
+          <Checkbox>{t("appsecexclusionscard.field_wp_login_only")}</Checkbox>
         </Form.Item>
         <Form.Item
           name="note"

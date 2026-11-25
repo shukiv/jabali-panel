@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -212,6 +213,64 @@ func TestApply_SendsBothTables(t *testing.T) {
 	p := e.agent.last(t)
 	if len(p.Exclusions) != 1 || p.Exclusions[0].Host != "a.example.com" || len(p.HostModes) != 1 {
 		t.Fatalf("unexpected params %+v", p)
+	}
+}
+
+// A login-gated row reaches the agent under its own key, gate intact, and an
+// added one is stored with the gate.
+func TestApply_LoginGatedRowKeepsItsGate(t *testing.T) {
+	e := newEnv()
+	e.excl.rows = []models.CRSRuleExclusion{
+		{ID: "x", Host: "a.example.com", URIPrefix: "/p/", RuleID: "942100"},
+		{ID: "y", Host: "a.example.com", URIPrefix: "/wp-admin/admin.php", RuleID: "941100", WPLoginOnly: true},
+	}
+	if _, err := Apply(context.Background(), e.deps); err != nil {
+		t.Fatal(err)
+	}
+	p := e.agent.last(t)
+	if len(p.Exclusions) != 1 || p.Exclusions[0].RuleID != "942100" ||
+		len(p.LoginGatedExclusions) != 1 || p.LoginGatedExclusions[0].RuleID != "941100" {
+		t.Fatalf("unexpected params %+v", p)
+	}
+
+	v, _, err := AddExclusion(context.Background(), e.deps, appseccfg.Exclusion{
+		Host: "b.example.com", URIPrefix: "/wp-admin/admin-ajax.php", RuleID: "941160", WPLoginOnly: true,
+	})
+	if err != nil || !v.WPLoginOnly {
+		t.Fatalf("add: %+v, %v", v, err)
+	}
+	if p := e.agent.last(t); len(p.LoginGatedExclusions) != 2 {
+		t.Fatalf("added gated row not sent gated: %+v", p)
+	}
+}
+
+// render-config (rows → ExclusionOf → render) and the agent (rows → wire →
+// AllExclusions → render) must write the same file for gated rows, or one
+// writer would undo the other's gate.
+func TestLoginGate_BothWritersRenderTheSameFile(t *testing.T) {
+	rows := []models.CRSRuleExclusion{
+		{ID: "x", Host: "a.example.com", URIPrefix: "/p/", RuleID: "942100"},
+		{ID: "y", Host: "a.example.com", URIPrefix: "/wp-admin/admin.php", RuleID: "941100", WPLoginOnly: true},
+	}
+	list := make([]appseccfg.Exclusion, 0, len(rows))
+	for _, r := range rows {
+		list = append(list, ExclusionOf(r))
+	}
+	local := appseccfg.RenderOperatorBeforeFile(list, nil)
+
+	raw, err := json.Marshal(appseccfg.NewOperatorApplyParams(list, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p appseccfg.OperatorApplyParams
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	if agent := appseccfg.RenderOperatorBeforeFile(p.AllExclusions(), p.HostModes); agent != local {
+		t.Fatalf("writers differ:\nrender-config:\n%s\nagent:\n%s", local, agent)
+	}
+	if !strings.Contains(local, "ctl:ruleRemoveById=941100") || !strings.Contains(local, "REQUEST_COOKIES_NAMES") {
+		t.Fatalf("gated row missing or ungated:\n%s", local)
 	}
 }
 
