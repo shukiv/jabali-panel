@@ -406,6 +406,33 @@ SecRule REQUEST_URI "@rx ^(/[^/?]+)?/lib/tpl/sprintdoc/svg\.php" "id:9599310,pha
 `
 }
 
+// CRSPluginAfterPath is the jabali-owned CRS "after" plugin file.
+// crowdsecurity/crs loads crs-plugins/*/*-after.conf LAST, after every
+// REQUEST-9xx rule is defined, so a config-time SecRuleUpdateTargetById there
+// has a rule to update. In the before file the same directive runs before the
+// rule exists and does nothing.
+const CRSPluginAfterPath = "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-after.conf"
+
+// CRSPluginAfter returns the body of the jabali CRS "after" plugin: targets a
+// CRS rule should not inspect, removed from that one rule only. Each line
+// stays as narrow as CRS's own exclusions (932230 already skips the __utm
+// analytics cookies). Verified on CrowdSec 1.8.2: the WooCommerce cookie
+// passes, the same value in any other cookie is still blocked by 932230, and
+// a command inside an sbjs_ cookie is still blocked by the other RCE rules.
+func CRSPluginAfter() string {
+	return `# Managed by jabali — CRS "after" plugin. DO NOT hand-edit.
+# Written by ` + "`jabali appsec render-config`" + ` and by jabali-agent at start.
+# Loaded by crowdsecurity/crs via the crs-plugins/*/*-after.conf glob, after the
+# CRS rules, so SecRuleUpdateTargetById finds the rule it narrows.
+#
+# WooCommerce (8.5+) Order Attribution sets the sourcebuster cookies sbjs_* on
+# every visitor, in the form "typ=typein|||src=(direct)|||...|||id=(none)". 932230
+# (Unix command injection, 2-3 chars) reads "|id" as a command, so a WooCommerce
+# shop's visitors were blocked. Only 932230 stops reading those cookies.
+SecRuleUpdateTargetById 932230 "!REQUEST_COOKIES:/^sbjs_/"
+`
+}
+
 // Render returns the full jabali-appsec.yaml body. Deterministic:
 // header(+inband) → on_match (ADR-0102) → pre_eval (geoblock, then the
 // operator rule exclusions by name).

@@ -34,20 +34,30 @@ func ApplyAppSecBeforePlugin(ctx context.Context, log *slog.Logger) {
 	if _, err := os.Stat("/var/lib/crowdsec/data"); err != nil {
 		return
 	}
-	body := appseccfg.CRSPluginBefore()
-	path := appseccfg.CRSPluginBeforePath
-	if existing, _ := os.ReadFile(path); string(existing) == body {
-		return // already current — clean-boot no-op
+	// The built-in after-plugin (CRSPluginAfter) is static too and written the
+	// same way; one reload covers both.
+	var changed []string
+	for _, f := range []struct{ path, body string }{
+		{appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginBefore()},
+		{appseccfg.CRSPluginAfterPath, appseccfg.CRSPluginAfter()},
+	} {
+		if existing, _ := os.ReadFile(f.path); string(existing) == f.body {
+			continue // already current — clean-boot no-op
+		}
+		if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
+			log.Warn("appsec crs-plugin: mkdir failed", "path", f.path, "err", err)
+			continue
+		}
+		if err := writeFileAtomically(f.path, []byte(f.body), 0o644); err != nil {
+			log.Warn("appsec crs-plugin: write failed", "path", f.path, "err", err)
+			continue
+		}
+		changed = append(changed, f.path)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		log.Warn("appsec before-plugin: mkdir failed", "err", err)
+	if len(changed) == 0 {
 		return
 	}
-	if err := writeFileAtomically(path, []byte(body), 0o644); err != nil {
-		log.Warn("appsec before-plugin: write failed", "path", path, "err", err)
-		return
-	}
-	log.Info("appsec before-plugin re-rendered on boot — reloading crowdsec", "path", path)
+	log.Info("appsec crs-plugins re-rendered on boot — reloading crowdsec", "paths", changed)
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if out, err := crowdsecReload(rctx); err != nil {
