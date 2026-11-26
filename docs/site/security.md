@@ -161,6 +161,12 @@ The same data is on the CLI: `jabali appsec explain` and
 `jabali appsec exclusion add|list|rm`. The CLI stores the row only; run
 `jabali appsec render-config --reconcile --reload` to apply it.
 
+WooCommerce shops (8.5 and later) set Order Attribution cookies named
+`sbjs_…` on every visitor. Their value contains `|||id=(none)`, which CRS rule
+932230 (Unix command injection) reads as a command. Rule 932230 does not check
+cookies named `sbjs_…`, on every server. It still checks every other cookie,
+and every other rule still checks the `sbjs_…` cookies.
+
 ## AppArmor
 
 `/jabali-admin/security` → AppArmor — per-profile status (enforce / complain / **missing**).

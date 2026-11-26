@@ -1629,15 +1629,18 @@ fi
 			}
 			yamlPath := "/etc/crowdsec/appsec-configs/jabali-appsec.yaml"
 			beforePath := "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-before.conf"
+			afterPluginPath := "/var/lib/crowdsec/data/crs-plugins/jabali/jabali-after.conf"
 			yBefore, _ := os.ReadFile(yamlPath)
 			cBefore, _ := os.ReadFile(beforePath)
+			aBefore, _ := os.ReadFile(afterPluginPath)
 			if err := run("", defaultPanelBinPath, "appsec", "render-config", "--reconcile"); err != nil {
 				fmt.Printf("  (post-build appsec render-config failed: %v — continuing)\n", err)
 				return nil
 			}
 			yAfter, _ := os.ReadFile(yamlPath)
 			cAfter, _ := os.ReadFile(beforePath)
-			if string(yBefore) != string(yAfter) || string(cBefore) != string(cAfter) {
+			aAfter, _ := os.ReadFile(afterPluginPath)
+			if string(yBefore) != string(yAfter) || string(cBefore) != string(cAfter) || string(aBefore) != string(aAfter) {
 				fmt.Println("  (appsec config changed post-build — reloading crowdsec)")
 				_ = run("", "bash", "-c", "systemctl reload crowdsec 2>/dev/null || systemctl restart crowdsec || true")
 				verifyAppsecAfterReload(context.Background(), os.Stdout, os.Stdout)

@@ -312,7 +312,21 @@ func writeCRSPluginBefore(cmd *cobra.Command) (changed bool, list []appseccfg.Ex
 
 	changed, err = reconcileCRSBeforeFiles(cmd.OutOrStdout(),
 		appseccfg.CRSPluginBeforePath, appseccfg.CRSPluginOperatorBeforePath, list, modes, operatorKnown)
-	return changed, list, operatorKnown, err
+	if err != nil {
+		return changed, list, operatorKnown, err
+	}
+	afterChanged, err := writeCRSPluginAfter(cmd.OutOrStdout(), appseccfg.CRSPluginAfterPath)
+	return changed || afterChanged, list, operatorKnown, err
+}
+
+// writeCRSPluginAfter writes the built-in CRS after-plugin verbatim: the same
+// bytes jabali-agent writes at start, so the two writers never undo each other.
+func writeCRSPluginAfter(out io.Writer, path string) (bool, error) {
+	wrote, err := writeOnDiff(path, appseccfg.CRSPluginAfter())
+	if err == nil && wrote {
+		fmt.Fprintf(out, "written %s (CRS after-plugin, built-in)\n", path)
+	}
+	return wrote, err
 }
 
 // reconcileCRSBeforeFiles writes the built-in before-plugin file verbatim and,

@@ -205,3 +205,24 @@ func TestReconcileCRSBeforeFiles(t *testing.T) {
 		}
 	})
 }
+
+// render-config writes the after-plugin byte-identical to what jabali-agent
+// writes at start, and a second run with nothing changed is a no-op (so
+// --reload does not reload crowdsec for nothing).
+func TestWriteCRSPluginAfter_VerbatimAndIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jabali", "jabali-after.conf")
+	wrote, err := writeCRSPluginAfter(&bytes.Buffer{}, path)
+	if err != nil || !wrote {
+		t.Fatalf("first write: wrote=%v err=%v", wrote, err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != appseccfg.CRSPluginAfter() {
+		t.Error("after-plugin file is not byte-identical to CRSPluginAfter()")
+	}
+	if wrote, err = writeCRSPluginAfter(&bytes.Buffer{}, path); err != nil || wrote {
+		t.Errorf("second write: wrote=%v err=%v, want a no-op", wrote, err)
+	}
+}
