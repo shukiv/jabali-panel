@@ -193,6 +193,8 @@ server {
         fastcgi_cache_background_update on;
         fastcgi_cache_revalidate on;
         access_log /var/log/nginx/jcache-example.com.log jcache buffer=8k flush=5s;
+        # A location's own access_log replaces the server's: keep the site log too.
+        access_log /var/log/nginx/example.com-access.log;
         add_header X-Jabali-Cache $upstream_cache_status always;
         # JAB-70: re-declare security headers (a location's add_header suppresses
         # server-scope ones).
@@ -268,6 +270,8 @@ server {
         fastcgi_cache_background_update on;
         fastcgi_cache_revalidate on;
         access_log /var/log/nginx/jcache-example.com.log jcache buffer=8k flush=5s;
+        # A location's own access_log replaces the server's: keep the site log too.
+        access_log /var/log/nginx/example.com-access.log;
         add_header X-Jabali-Cache $upstream_cache_status always;
         # JAB-70: re-declare security headers (a location's add_header suppresses
         # server-scope ones).
