@@ -475,6 +475,8 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         fastcgi_cache_background_update on;
         fastcgi_cache_revalidate on;
         access_log /var/log/nginx/jcache-{{.Domain}}.log jcache buffer=8k flush=5s;
+        # A location's own access_log replaces the server's: keep the site log too.
+        access_log /var/log/nginx/{{.Domain}}-access.log;
         add_header X-Jabali-Cache $upstream_cache_status always;
         # JAB-70: re-declare security headers (a location's add_header suppresses
         # server-scope ones).
@@ -583,6 +585,8 @@ const vhostTemplate = `{{define "ownershipgate"}}{{ if .OwnershipGate }}    # GH
         fastcgi_cache_background_update on;
         fastcgi_cache_revalidate on;
         access_log /var/log/nginx/jcache-{{.Domain}}.log jcache buffer=8k flush=5s;
+        # A location's own access_log replaces the server's: keep the site log too.
+        access_log /var/log/nginx/{{.Domain}}-access.log;
         add_header X-Jabali-Cache $upstream_cache_status always;
         # JAB-70: re-declare security headers (a location's add_header suppresses
         # server-scope ones).
