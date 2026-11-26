@@ -505,9 +505,7 @@ func fixGitPointer(ctx repairCtx) error {
 
 	// Fresh clone from the canonical URL, root-owned (see enforceRepoOwnership).
 	// Re-clone from canonicalRepoURL.
-	c := gitRootCmd("", recloneArgs(repo)...)
-	c.Stdout, c.Stderr = os.Stdout, os.Stderr
-	if err := c.Run(); err != nil {
+	if err := recloneAtBuild(repo); err != nil {
 		return err
 	}
 
@@ -519,11 +517,7 @@ func fixGitPointer(ctx repairCtx) error {
 	}
 	if _, err := enforceRepoOwnership(repo,
 		func(name string, args ...string) error { return run("", name, args...) },
-		func(dst string) error {
-			c := gitRootCmd("", recloneArgs(dst)...)
-			c.Stdout, c.Stderr = os.Stdout, os.Stderr
-			return c.Run()
-		}); err != nil {
+		recloneAtBuild); err != nil {
 		return err
 	}
 
@@ -566,11 +560,7 @@ func detectGitOwnership(ctx repairCtx) (bool, string, error) {
 func fixGitOwnership(ctx repairCtx) error {
 	_, err := enforceRepoOwnership(ctx.repoDir,
 		func(name string, args ...string) error { return run("", name, args...) },
-		func(dst string) error {
-			c := gitRootCmd("", recloneArgs(dst)...)
-			c.Stdout, c.Stderr = os.Stdout, os.Stderr
-			return c.Run()
-		})
+		recloneAtBuild)
 	return err
 }
 

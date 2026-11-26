@@ -3,10 +3,79 @@ package main
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// Every re-clone has to go through recloneAt, which puts the fresh clone back
+// on the running build. A clone left on main's tip was read by `jabali update`
+// as the build the server runs, so a stable server kept and built main.
+func TestRecloneOnlyThroughRecloneAt(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "update_repo_owner.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "recloneArgs(") {
+			t.Errorf("%s clones the checkout with recloneArgs directly; use recloneAtBuild", f)
+		}
+	}
+}
+
+func TestRecloneAt_RefusesBuildWithoutCommit(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "jabali-panel")
+	for _, c := range []string{"unknown", "", "a1f345aeb", "main"} {
+		if err := recloneAt(dst, c); err == nil {
+			t.Errorf("recloneAt(%q) = nil, want a refusal", c)
+		}
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Errorf("a refused re-clone created %s", dst)
+	}
+}
+
+func TestResetCloneToBuild(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "jabali-panel")
+	git := func(args ...string) string {
+		t.Helper()
+		full := append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid"}, args...)
+		out, err := exec.Command("git", full...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "build")
+	build := git("rev-parse", "HEAD")
+	git("commit", "-q", "--allow-empty", "-m", "main tip")
+
+	if err := resetCloneToBuild(dir, build); err != nil {
+		t.Fatal(err)
+	}
+	if head := git("rev-parse", "HEAD"); head != build {
+		t.Fatalf("HEAD = %s, want the build %s", head, build)
+	}
+
+	if err := resetCloneToBuild(dir, strings.Repeat("0", 40)); err == nil {
+		t.Fatal("reset to a commit the clone lacks succeeded")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("a clone that could not be put on the build was left in place")
+	}
+}
 
 func TestGitFailureLinePrefersTheFatalLine(t *testing.T) {
 	out := "error: open(\"CLAUDE.md\"): Permission denied\nfatal: cannot hash CLAUDE.md\n"
