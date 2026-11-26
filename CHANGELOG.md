@@ -30,6 +30,22 @@ Add a line by hand when servers do something on their first update with it:
 a data migration, a service restart, a new alert. The entry reaches stable
 servers with the next move.
 
+## 2026-11-25 — hotfix: `00a08131d`
+
+`stable` moved from `a1f345aeb` to `00a08131d`: 3 changes.
+
+No migrations.
+
+- `2dc8721cb` Login allowlist: only sshd's own success message counts ([#2581](https://github.com/shukiv/jabali-panel/pull/2581), copied from `adf3139ff`)
+- `4d1fded6f` CrowdSec: a fresh install's AppSec accepts the nginx bouncer's key again ([#2574](https://github.com/shukiv/jabali-panel/pull/2574), copied from `ab80eeb0b`)
+- `00a08131d` Install/update: warn when CrowdSec AppSec refuses the nginx bouncer's key ([#2578](https://github.com/shukiv/jabali-panel/pull/2578), copied from `1998ed21d`)
+
+On the first update with this build:
+
+- When the agent first starts, it removes every `auto-whitelist: ssh` entry from the CrowdSec allowlist. The SSH half of the login allowlist now counts only sshd's own success message, read from the journal, so the next root SSH login from an address adds it again. Entries added by hand stay.
+- If `url` in `/etc/crowdsec/local_api_credentials.yaml` is not `http://127.0.0.1:8081/`, the update sets it back and restarts CrowdSec. Until then AppSec refused the nginx bouncer's key and inspected no request, and pages loaded anyway. After the fix the WAF inspects requests again, so a request it blocks gets a 403 where it used to pass.
+- The update then checks AppSec with the bouncer's key and prints a warning if AppSec still refuses it.
+
 ## 2026-11-08 — hotfix: `a1f345aeb`
 
 `stable` moved from `5e6b69867` to `a1f345aeb`: 4 changes.
