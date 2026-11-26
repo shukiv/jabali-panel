@@ -5,9 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/api"
 )
 
 // Layout of the panel checkout.
@@ -56,9 +59,46 @@ func gitRootCmd(dir string, args ...string) *exec.Cmd {
 func gitOwnerWrong(owner string) bool { return owner != "root" }
 
 // recloneArgs are the git arguments that re-create the checkout at dst from
-// the canonical URL. Both the update path and repair use them.
+// the canonical URL. Both the update path and repair use them, through
+// recloneAtBuild.
 func recloneArgs(dst string) []string {
 	return []string{"clone", "--branch", "main", canonicalRepoURL, dst}
+}
+
+var fullCommitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// recloneAtBuild re-creates the checkout at dst and puts it on the commit this
+// binary was built from (api.Commit, set at link time by every build path).
+//
+// A fresh clone lands on main's tip, and `jabali update` reads HEAD as the
+// build the server runs: a stable server whose checkout was re-cloned took
+// main's tip for its own build, kept it as "newer than stable", and built and
+// migrated main.
+func recloneAtBuild(dst string) error { return recloneAt(dst, api.Commit) }
+
+func recloneAt(dst, commit string) error {
+	if !fullCommitRe.MatchString(commit) {
+		return fmt.Errorf("this build does not record its commit (%q), so a re-cloned checkout cannot be put on it", commit)
+	}
+	c := gitRootCmd("", recloneArgs(dst)...)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	if err := c.Run(); err != nil {
+		return err
+	}
+	return resetCloneToBuild(dst, commit)
+}
+
+// resetCloneToBuild moves a fresh clone to commit. When it cannot, it removes
+// the clone: one left on main's tip would be read as the running build by the
+// next update.
+func resetCloneToBuild(dst, commit string) error {
+	out, err := gitRootCmd(dst, "reset", "--hard", commit).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	_ = os.RemoveAll(dst)
+	return fmt.Errorf("put the re-cloned checkout on this build's commit %s: %v: %s (clone removed)",
+		commit, err, strings.TrimSpace(string(out)))
 }
 
 // gitRun runs a root git command with its output streamed to the terminal.

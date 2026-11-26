@@ -146,11 +146,7 @@ func runUpdate(cmd *cobra.Command, args []string) (retErr error) {
 	enforceLayout := func() (bool, error) {
 		return enforceRepoOwnership(repoDir,
 			func(name string, args ...string) error { return run("", name, args...) },
-			func(dst string) error {
-				c := gitRootCmd("", recloneArgs(dst)...)
-				c.Stdout, c.Stderr = os.Stdout, os.Stderr
-				return c.Run()
-			})
+			recloneAtBuild)
 	}
 
 	force, _ := cmd.Flags().GetBool("force")
