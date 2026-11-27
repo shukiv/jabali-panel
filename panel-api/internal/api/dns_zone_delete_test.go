@@ -112,8 +112,9 @@ func TestDeleteZone_HappyPath_KeepsWebMail(t *testing.T) {
 
 	assert.Equal(t, 1, dr.flipCalls, "dns_disabled flipped once")
 	assert.True(t, dr.flippedTo, "flipped to disabled")
-	assert.Equal(t, "dns.zone.delete", ag.lastCommand, "pdns zone deleted")
-	assert.Equal(t, 1, ag.callCount)
+	// The pdns zone is deleted, then the box recursor's forward to it.
+	assert.Equal(t, "pdns.recursor_remove_zone", ag.lastCommand, "forward removed after the zone")
+	assert.Equal(t, 2, ag.callCount)
 	assert.Equal(t, "z1", rr.deletedByZone, "records cleared")
 	assert.Equal(t, "z1", zr.deletedZone, "zone row cleared")
 }
@@ -221,7 +222,7 @@ func TestDeleteZone_TenantRestrictedByPolicy(t *testing.T) {
 		w := dzDo(h, "d1", "admin", true)
 		assert.Equal(t, http.StatusOK, w.Code)
 		assert.Equal(t, 1, dr.flipCalls, "admin tears down despite the locked policy")
-		assert.Equal(t, 1, ag.callCount)
+		assert.Equal(t, 2, ag.callCount, "zone delete + forward removal")
 	})
 }
 
@@ -234,7 +235,7 @@ func TestDeleteZone_AlreadyDisabled_Idempotent(t *testing.T) {
 	w := dzDo(h, "d1", "u1", false)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, 1, dr.flipCalls, "re-flip is idempotent")
-	assert.Equal(t, 1, ag.callCount, "pdns delete still attempted")
+	assert.Equal(t, 2, ag.callCount, "pdns delete and forward removal still attempted")
 }
 
 // --- GH #1611: re-enable DNS management (POST /domains/:id/dns/zone) ---

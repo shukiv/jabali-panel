@@ -55,6 +55,7 @@ func TestBackfillWantsForward(t *testing.T) {
 		{"enabled and verified", models.Domain{IsEnabled: true, OwnershipState: verified}, true},
 		{"enabled but pending", models.Domain{IsEnabled: true, OwnershipState: pending}, false},
 		{"disabled", models.Domain{IsEnabled: false, OwnershipState: verified}, false},
+		{"DNS hosted elsewhere", models.Domain{IsEnabled: true, DNSDisabled: true, OwnershipState: verified}, false},
 	}
 	for _, tc := range cases {
 		if got := backfillWantsForward(&tc.d); got != tc.want {

@@ -340,9 +340,10 @@ func computeBackfillPlan(desired map[string]bool, actual map[string]actualForwar
 // backfillWantsForward reports whether a domain's zone belongs in the
 // recursor's forwards: enabled, and (GH #1816 / ADR-0170) proven — no
 // process on this server resolves an unproven name from the tenant's zone,
-// so a pending domain's forward is planned for removal.
+// so a pending domain's forward is planned for removal. A domain whose DNS is
+// hosted elsewhere has no zone here, so its forward goes too.
 func backfillWantsForward(d *models.Domain) bool {
-	return d.IsEnabled && domainops.OwnershipVerified(d)
+	return d.IsEnabled && !d.DNSDisabled && domainops.OwnershipVerified(d)
 }
 
 func (o *pdnsBackfillOpts) run(ctx context.Context) error {

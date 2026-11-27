@@ -1544,8 +1544,9 @@ func (r *Reconciler) ReconcileOne(ctx context.Context, domainID string) error {
 	// seconds johnnyq saw even after the zone existed. The forwarder add is
 	// idempotent and self-heals, so running it here + on the loop is safe.
 	// Forced past the JAB-369 ledger: a domain deleted and re-created under
-	// the same name must get its forwarder re-sent at once.
-	r.reconcileRecursorForward(ctx, domain.Name, true)
+	// the same name must get its forwarder re-sent at once. A domain whose DNS
+	// is elsewhere loses it instead.
+	r.reconcileRecursorForwardFor(ctx, domain, true)
 
 	// Converge SSL state next so createDomainOnAgent picks up any
 	// newly-issued (or revoked) cert paths when it regenerates the vhost.
@@ -4626,9 +4627,7 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 		r.reconcileMTAStsForDomain(ctx, domain)
 		r.ensureTenantEmailEnabled(ctx, domain)
 		r.ensureTenantDKIMRecords(ctx, domain)
-		if !domain.DNSDisabled {
-			r.reconcileRecursorForward(ctx, name, false)
-		}
+		r.reconcileRecursorForwardFor(ctx, domain, false)
 		if err := phases.ReconcileDomainAll(ctx, domain, nil); err != nil {
 			r.log.Error("reconcile: M6.5 phase domain reconciliation failed (web-off)", "domain", name, "err", err)
 		}
@@ -4669,10 +4668,8 @@ func (r *Reconciler) reconcileEnabledDomain(ctx context.Context, name string, do
 	// local resolution hits pdns-server on loopback :5300. Idempotent.
 	// GH #1449: only when we actually host the zone — a domain on external
 	// DNS must resolve via public recursion, not be pinned to our (empty)
-	// pdns for its own name.
-	if !domain.DNSDisabled {
-		r.reconcileRecursorForward(ctx, name, false)
-	}
+	// pdns for its own name, so its forward is removed.
+	r.reconcileRecursorForwardFor(ctx, domain, false)
 
 	// M6.5: Email features (forwarders, autoresponders, catch-all, disclaimer,
 	// shared folders, logs). Each feature is registered as a Phase during init(),

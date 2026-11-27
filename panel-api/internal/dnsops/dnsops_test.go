@@ -62,18 +62,27 @@ func (r *fakeRecordRepo) DeleteByZoneID(_ context.Context, zoneID string) error 
 // recordingCall is a CallFunc that records the last command and returns a
 // configurable error.
 type recordingCall struct {
-	count       int
-	lastCommand string
-	err         error
+	count    int
+	commands []string // "<command> <zone>"
+	err      error
 }
 
 func (r *recordingCall) fn() CallFunc {
-	return func(_ context.Context, cmd string, _ any) (json.RawMessage, error) {
+	return func(_ context.Context, cmd string, params any) (json.RawMessage, error) {
 		r.count++
-		r.lastCommand = cmd
+		zone := ""
+		if p, ok := params.(map[string]string); ok {
+			zone = p["zone"]
+		}
+		r.commands = append(r.commands, cmd+" "+zone)
 		return nil, r.err
 	}
 }
+
+// teardownCommands is what a teardown of ex.com sends the agent: the zone goes,
+// and so does the box recursor's forward to it, or the box itself resolves
+// ex.com against a zone that no longer exists (empty MX/A).
+var teardownCommands = []string{"dns.zone.delete ex.com", "pdns.recursor_remove_zone ex.com"}
 
 func newDeps(dr *fakeDomainRepo, zr *fakeZoneRepo, rr *fakeRecordRepo, call *recordingCall) Deps {
 	d := Deps{Domains: dr, Zones: zr, Records: rr}
@@ -95,7 +104,7 @@ func TestTearDownFacet_HappyPath(t *testing.T) {
 	assert.Empty(t, warnings)
 	assert.Equal(t, 1, dr.flipCalls)
 	assert.True(t, dr.flippedTo, "flipped to disabled")
-	assert.Equal(t, "dns.zone.delete", call.lastCommand)
+	assert.Equal(t, teardownCommands, call.commands)
 	assert.Equal(t, "z1", rr.deletedByZone, "records cleared")
 	assert.Equal(t, "z1", zr.deletedZone, "zone row cleared")
 }
@@ -155,7 +164,7 @@ func TestTearDownFacet_NoZoneRow_NothingToClean(t *testing.T) {
 	warnings, err := TearDownFacet(context.Background(), newDeps(dr, zr, rr, call), &models.Domain{ID: "d1", Name: "ex.com"})
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
-	assert.Equal(t, 1, call.count, "pdns delete still attempted")
+	assert.Equal(t, teardownCommands, call.commands, "pdns delete and forward removal still attempted")
 	assert.Empty(t, zr.deletedZone)
 	assert.Empty(t, rr.deletedByZone)
 }
@@ -193,7 +202,7 @@ func TestDeleteZone_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, warnings)
 	assert.Equal(t, 1, dr.flipCalls)
-	assert.Equal(t, "dns.zone.delete", call.lastCommand)
+	assert.Equal(t, teardownCommands, call.commands)
 }
 
 func TestDeleteZone_AlreadyDisabled_SkipsGuards(t *testing.T) {
@@ -208,7 +217,7 @@ func TestDeleteZone_AlreadyDisabled_SkipsGuards(t *testing.T) {
 	_, err := DeleteZone(context.Background(), newDeps(dr, zr, rr, call), dom)
 	require.NoError(t, err)
 	assert.Equal(t, 1, dr.flipCalls, "idempotent re-flip")
-	assert.Equal(t, 1, call.count, "teardown runs")
+	assert.Equal(t, teardownCommands, call.commands, "teardown runs")
 }
 
 func TestDeleteZone_AgentNil_FailsClosed(t *testing.T) {
