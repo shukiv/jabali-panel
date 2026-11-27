@@ -115,8 +115,18 @@ func managedBy(rec models.DNSRecord) string {
 	return *rec.ManagedBy
 }
 
+// isApexSPF reports an SPF record at the apex. TXT content is stored with or
+// without its quotes (the CLI, the API and imports accept both), and RFC 7208's
+// version tag is case-insensitive and ends at a space or the record's end.
 func isApexSPF(rec models.DNSRecord) bool {
-	return rec.Name == "@" && rec.Type == "TXT" && strings.HasPrefix(rec.Content, `"v=spf1`)
+	if rec.Name != "@" || rec.Type != "TXT" {
+		return false
+	}
+	c := strings.TrimPrefix(rec.Content, `"`)
+	if len(c) < 6 || !strings.EqualFold(c[:6], "v=spf1") {
+		return false
+	}
+	return len(c) == 6 || c[6] == ' ' || c[6] == '"'
 }
 
 // panelAuthored reports whether rec is a row the panel wrote and still owns
