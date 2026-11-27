@@ -95,6 +95,14 @@ func TearDownFacet(ctx context.Context, d Deps, dom *models.Domain) (warnings []
 		warnings = append(warnings, "DNS zone not removed on the server; remove it manually if it lingers")
 	}
 
+	// 2b. The box's recursor forwards the name to the local PowerDNS
+	//     (ADR-0047). Left in place, the box itself resolves the name against a
+	//     zone that is gone: empty MX/A while the public DNS answers. Best
+	//     effort: the reconciler removes a DNS-disabled domain's forward too.
+	fctx, fcancel := context.WithTimeout(ctx, 10*time.Second)
+	_, _ = d.Call(fctx, "pdns.recursor_remove_zone", map[string]string{"zone": dom.Name})
+	fcancel()
+
 	// 3. Remove the panel's zone + records rows so the domain matches the
 	//    ManageDNS=false shape (no zone row). FindByDomainID → ErrNotFound simply
 	//    means there was never a row (created disabled) — nothing to clean. The

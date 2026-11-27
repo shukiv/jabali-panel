@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // reconcileRecursorForward calls pdns.recursor_add_zone on the agent for
@@ -32,6 +34,18 @@ func (r *Reconciler) reconcileRecursorForward(ctx context.Context, zone string, 
 	_, _ = r.project(ctx, PhaseDNSRecursor, zone, fingerprint(params), force, func() error {
 		return r.addRecursorForward(ctx, zone, params)
 	})
+}
+
+// reconcileRecursorForwardFor converges a domain's forward: added while the box
+// hosts its DNS, removed once it does not (DNS elsewhere). A forward left behind
+// sends the box's own lookups to a zone that is gone, so the box saw empty MX/A
+// for a domain whose public DNS answers.
+func (r *Reconciler) reconcileRecursorForwardFor(ctx context.Context, domain *models.Domain, force bool) {
+	if domain.DNSDisabled {
+		r.reconcileRecursorForwardRemove(ctx, domain.Name)
+		return
+	}
+	r.reconcileRecursorForward(ctx, domain.Name, force)
 }
 
 // dnsModuleOn reports whether the DNS module is on (server_settings.dns_enabled).
