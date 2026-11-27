@@ -482,6 +482,17 @@ type Reconciler struct {
 	// shell-outs) and re-synced every tenant's keys on every ~60s tick.
 	// Process-local, so a restart or DR promotion re-applies everything.
 	ledger applyLedger
+
+	// vhostPool holds, per domain ID, the PHP pool ID its last successful
+	// vhost write used ("" without PHP). reapOrphanVersionedPools keeps a pool
+	// a rendered vhost still points at, whatever the DB binding says.
+	vhostPool sync.Map
+
+	// releasableSince holds, per versioned pool, when the reap pass first
+	// found it releasable (no domain bound, no live vhost on it). Rebuilt on
+	// every pass, so a pool rebound in between starts its drain over.
+	releasableMu    sync.Mutex
+	releasableSince map[string]time.Time
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -1237,9 +1248,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
-	// GH #329: converge the per-domain versioned pools (apply pending, reap
-	// orphans). No-op when no user has a non-default pool.
-	r.reconcileVersionedPHPPools(ctx)
+	// GH #329: converge the per-domain versioned pools (apply pending). No-op
+	// when no user has a non-default pool. Orphans are reaped after the domain
+	// loop, once no vhost points at their socket.
+	versionedOrphans := r.reconcileVersionedPHPPools(ctx)
 
 	// GH #686: garbage-collect FPM pools orphaned by a deleted user. user.delete
 	// tears them down inline; this backstop self-heals pools orphaned before that
@@ -1402,6 +1414,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			r.createDomainOnAgent(ctx, domain, false)
 		}
 	}
+
+	// Moving a domain off a versioned pool only changes its DB row; the loop
+	// above moved its vhost. Reaping before that gave the site 502s.
+	r.reapOrphanVersionedPools(ctx, versionedOrphans, allDomains)
 
 	// JAB-236: drive pending teardown tombstones FIRST — a site being torn
 	// down through its tombstone is handled, not orphaned, and must not
@@ -1760,14 +1776,35 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 // stay comfortably inside it.
 const versionedPoolReapGrace = 5 * time.Minute
 
-func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
+// versionedPoolDrain is how long a releasable versioned pool keeps running.
+// nginx's reload returns before its old workers finish: they keep serving the
+// old config to requests in flight (and, briefly, to new ones), and FPM ends a
+// request only at the pool's request_terminate_timeout (0 renders as 330 s,
+// defaultRequestTerminateTimeoutSeconds in the agent).
+func versionedPoolDrain(p *models.PHPPool) time.Duration {
+	s := p.RequestTerminateTimeoutSeconds
+	if s == 0 {
+		s = 330
+	}
+	return time.Duration(s)*time.Second + 30*time.Second
+}
+
+// orphanPool is a versioned pool with no bound domain, past the reap grace.
+type orphanPool struct {
+	user *models.User
+	pool *models.PHPPool
+}
+
+// reconcileVersionedPHPPools applies the versioned pools and returns the
+// orphans for reapOrphanVersionedPools, which runs after the domain loop.
+func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) (orphans []orphanPool) {
 	if r.phpPools == nil {
-		return
+		return nil
 	}
 	allUsers, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		r.log.Error("failed to list users for versioned PHP pool reconciliation", "err", err)
-		return
+		return nil
 	}
 
 	processed := 0
@@ -1808,7 +1845,7 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
 				if time.Since(pool.CreatedAt) < versionedPoolReapGrace {
 					continue
 				}
-				r.reapVersionedPool(ctx, user, pool)
+				orphans = append(orphans, orphanPool{user: user, pool: pool})
 				continue
 			}
 
@@ -1825,6 +1862,57 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
 		if processed >= 50 {
 			break // bound agent work per tick, same policy as ReconcilePHPPools
 		}
+	}
+	return orphans
+}
+
+// reapOrphanVersionedPools reaps the orphans reconcileVersionedPHPPools found
+// once they have been releasable for versionedPoolDrain. Releasable: no domain
+// is bound to the pool (one may have been bound while the loop ran), and no
+// live domain's last successful vhost write used it (a failed re-render leaves
+// the vhost on disk pointing at the pool's socket).
+//
+// shortcut: vhostPool and releasableSince are process-local, so right after a
+// panel restart a domain whose re-render failed is not known to use the old
+// pool. Persist the rendered pool on the domain row if that window ever matters.
+func (r *Reconciler) reapOrphanVersionedPools(ctx context.Context, orphans []orphanPool, liveDomains []models.Domain) {
+	inUse := map[string]bool{}
+	for i := range liveDomains {
+		if p, ok := r.vhostPool.Load(liveDomains[i].ID); ok {
+			inUse[p.(string)] = true
+		}
+	}
+	r.releasableMu.Lock()
+	prev := r.releasableSince
+	r.releasableSince = map[string]time.Time{}
+	r.releasableMu.Unlock()
+
+	now := time.Now()
+	for _, o := range orphans {
+		if inUse[o.pool.ID] {
+			r.log.Info("versioned PHP pool kept: a vhost still uses it", "pool_id", o.pool.ID)
+			continue
+		}
+		cnt, err := r.domains.CountByPHPPoolID(ctx, o.pool.ID)
+		if err != nil {
+			r.log.Error("failed to count domains for pool", "pool_id", o.pool.ID, "err", err)
+			continue
+		}
+		if cnt > 0 {
+			continue
+		}
+		since, ok := prev[o.pool.ID]
+		if !ok {
+			since = now
+		}
+		// Carried even after a reap: a failed remove is retried next pass.
+		r.releasableMu.Lock()
+		r.releasableSince[o.pool.ID] = since
+		r.releasableMu.Unlock()
+		if now.Sub(since) < versionedPoolDrain(o.pool) {
+			continue
+		}
+		r.reapVersionedPool(ctx, o.user, o.pool)
 	}
 }
 
@@ -2689,6 +2777,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		return
 	}
 	r.phaseApplied(ctx, PhaseDomainVhost, domain.ID, hash, time.Now(), d)
+	r.vhostPool.Store(domain.ID, boundPoolID)
 }
 
 // redirectHTTPSForCert decides whether the agent should render the :80→:443
