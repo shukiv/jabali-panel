@@ -487,6 +487,12 @@ type Reconciler struct {
 	// vhost write used ("" without PHP). reapOrphanVersionedPools keeps a pool
 	// a rendered vhost still points at, whatever the DB binding says.
 	vhostPool sync.Map
+
+	// releasableSince holds, per versioned pool, when the reap pass first
+	// found it releasable (no domain bound, no live vhost on it). Rebuilt on
+	// every pass, so a pool rebound in between starts its drain over.
+	releasableMu    sync.Mutex
+	releasableSince map[string]time.Time
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -1770,6 +1776,19 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 // stay comfortably inside it.
 const versionedPoolReapGrace = 5 * time.Minute
 
+// versionedPoolDrain is how long a releasable versioned pool keeps running.
+// nginx's reload returns before its old workers finish: they keep serving the
+// old config to requests in flight (and, briefly, to new ones), and FPM ends a
+// request only at the pool's request_terminate_timeout (0 renders as 330 s,
+// defaultRequestTerminateTimeoutSeconds in the agent).
+func versionedPoolDrain(p *models.PHPPool) time.Duration {
+	s := p.RequestTerminateTimeoutSeconds
+	if s == 0 {
+		s = 330
+	}
+	return time.Duration(s)*time.Second + 30*time.Second
+}
+
 // orphanPool is a versioned pool with no bound domain, past the reap grace.
 type orphanPool struct {
 	user *models.User
@@ -1847,36 +1866,50 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) (orphans []
 	return orphans
 }
 
-// reapOrphanVersionedPools reaps the orphans reconcileVersionedPHPPools found,
-// unless a domain was bound to one meanwhile or a live domain's last
-// successful vhost write still used it (its re-render failed: the vhost on
-// disk still points at the pool's socket).
+// reapOrphanVersionedPools reaps the orphans reconcileVersionedPHPPools found
+// once they have been releasable for versionedPoolDrain. Releasable: no domain
+// is bound to the pool (one may have been bound while the loop ran), and no
+// live domain's last successful vhost write used it (a failed re-render leaves
+// the vhost on disk pointing at the pool's socket).
 //
-// shortcut: vhostPool is process-local, so right after a panel restart a
-// domain whose re-render failed is not known to use the old pool. Persist the
-// rendered pool on the domain row if that window ever matters.
+// shortcut: vhostPool and releasableSince are process-local, so right after a
+// panel restart a domain whose re-render failed is not known to use the old
+// pool. Persist the rendered pool on the domain row if that window ever matters.
 func (r *Reconciler) reapOrphanVersionedPools(ctx context.Context, orphans []orphanPool, liveDomains []models.Domain) {
-	if len(orphans) == 0 {
-		return
-	}
 	inUse := map[string]bool{}
 	for i := range liveDomains {
 		if p, ok := r.vhostPool.Load(liveDomains[i].ID); ok {
 			inUse[p.(string)] = true
 		}
 	}
+	r.releasableMu.Lock()
+	prev := r.releasableSince
+	r.releasableSince = map[string]time.Time{}
+	r.releasableMu.Unlock()
+
+	now := time.Now()
 	for _, o := range orphans {
 		if inUse[o.pool.ID] {
 			r.log.Info("versioned PHP pool kept: a vhost still uses it", "pool_id", o.pool.ID)
 			continue
 		}
-		// A domain may have been bound to it while the loop ran.
 		cnt, err := r.domains.CountByPHPPoolID(ctx, o.pool.ID)
 		if err != nil {
 			r.log.Error("failed to count domains for pool", "pool_id", o.pool.ID, "err", err)
 			continue
 		}
 		if cnt > 0 {
+			continue
+		}
+		since, ok := prev[o.pool.ID]
+		if !ok {
+			since = now
+		}
+		// Carried even after a reap: a failed remove is retried next pass.
+		r.releasableMu.Lock()
+		r.releasableSince[o.pool.ID] = since
+		r.releasableMu.Unlock()
+		if now.Sub(since) < versionedPoolDrain(o.pool) {
 			continue
 		}
 		r.reapVersionedPool(ctx, o.user, o.pool)

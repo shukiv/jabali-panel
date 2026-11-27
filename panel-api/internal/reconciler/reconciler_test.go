@@ -2810,7 +2810,10 @@ func TestReconcileVersionedPHPPools(t *testing.T) {
 	// Make the socket-ready check pass instantly for the applied pool.
 	r.socketReady = func(context.Context, string, time.Duration, time.Duration) bool { return true }
 
-	r.reapOrphanVersionedPools(ctx, r.reconcileVersionedPHPPools(ctx), nil)
+	orphans := r.reconcileVersionedPHPPools(ctx)
+	r.reapOrphanVersionedPools(ctx, orphans, nil) // starts pool-80's drain
+	backdateReleasable(r, "pool-80")
+	r.reapOrphanVersionedPools(ctx, orphans, nil)
 
 	var applied, removed *fakeCall
 	for i := range agent.calls {

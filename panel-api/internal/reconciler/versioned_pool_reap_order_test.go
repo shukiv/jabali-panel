@@ -61,7 +61,10 @@ func firstCallIndex(ag *fakeAgent, method string) int {
 	return -1
 }
 
-func TestReconcileAll_VersionedPoolReapedOnlyAfterVhostMovesOff(t *testing.T) {
+// nginx's reload returns before its old workers finish: on .13 they served two
+// requests on the old config after the vhost write, and both hit the removed
+// pool. So the pool must outlive the tick in which its last vhost moves off it.
+func TestReconcileAll_VersionedPoolNotRemovedInTheTickItsVhostMoves(t *testing.T) {
 	r, agent, domains, pools := versionedReapFixture(t)
 	ctx := context.Background()
 	require.NoError(t, r.ReconcileAll(ctx)) // the vhost is rendered on 8.1
@@ -71,12 +74,55 @@ func TestReconcileAll_VersionedPoolReapedOnlyAfterVhostMovesOff(t *testing.T) {
 	agent.set(func(f *fakeAgent) { f.calls = nil })
 	require.NoError(t, r.ReconcileAll(ctx))
 
-	create, remove := firstCallIndex(agent, "domain.create"), firstCallIndex(agent, "php.pool.remove")
-	require.GreaterOrEqual(t, create, 0, "the moved domain's vhost must be re-rendered")
-	require.GreaterOrEqual(t, remove, 0, "the orphan 8.1 pool must still be reaped in the same tick")
-	require.Less(t, create, remove, "the vhost must leave the 8.1 socket before the 8.1 pool is removed")
+	require.GreaterOrEqual(t, firstCallIndex(agent, "domain.create"), 0, "the moved domain's vhost must be re-rendered")
+	require.Zero(t, countMethod(agent, "php.pool.remove"),
+		"old nginx workers may still send requests to the 8.1 pool right after the reload")
 	_, err := pools.FindByID(ctx, "pool-81")
+	require.NoError(t, err)
+
+	require.NoError(t, r.ReconcileAll(ctx))
+	require.Zero(t, countMethod(agent, "php.pool.remove"), "the drain has not elapsed")
+
+	backdateReleasable(r, "pool-81")
+	require.NoError(t, r.ReconcileAll(ctx))
+	require.Equal(t, 1, countMethod(agent, "php.pool.remove"), "after the drain the orphan is reaped")
+	_, err = pools.FindByID(ctx, "pool-81")
 	require.ErrorIs(t, err, repository.ErrNotFound)
+}
+
+// backdateReleasable moves a pool's drain start an hour back, past any drain.
+func backdateReleasable(r *Reconciler, poolID string) {
+	r.releasableMu.Lock()
+	defer r.releasableMu.Unlock()
+	if _, ok := r.releasableSince[poolID]; ok {
+		r.releasableSince[poolID] = time.Now().Add(-time.Hour)
+	}
+}
+
+func releasableStamped(r *Reconciler, poolID string) bool {
+	r.releasableMu.Lock()
+	defer r.releasableMu.Unlock()
+	_, ok := r.releasableSince[poolID]
+	return ok
+}
+
+// A pool rebound during its drain and orphaned again starts a fresh drain.
+func TestReconcileAll_VersionedPoolRebindRestartsDrain(t *testing.T) {
+	r, agent, domains, _ := versionedReapFixture(t)
+	ctx := context.Background()
+	require.NoError(t, r.ReconcileAll(ctx))
+	moveToDefaultPool(domains)
+	require.NoError(t, r.ReconcileAll(ctx))
+	backdateReleasable(r, "pool-81")
+
+	p81 := "pool-81"
+	domains.domains["domain-1"].PHPPoolID = &p81 // back to 8.1
+	require.NoError(t, r.ReconcileAll(ctx))
+	require.False(t, releasableStamped(r, "pool-81"), "a bound pool is not releasable")
+
+	moveToDefaultPool(domains)
+	require.NoError(t, r.ReconcileAll(ctx))
+	require.Zero(t, countMethod(agent, "php.pool.remove"), "the old drain start must not carry over")
 }
 
 func TestReconcileAll_VersionedPoolKeptWhileVhostWriteFails(t *testing.T) {
@@ -89,10 +135,14 @@ func TestReconcileAll_VersionedPoolKeptWhileVhostWriteFails(t *testing.T) {
 	require.NoError(t, r.ReconcileAll(ctx))
 	require.Zero(t, countMethod(agent, "php.pool.remove"),
 		"the vhost on disk still uses the 8.1 socket, so the 8.1 pool must stay")
+	require.False(t, releasableStamped(r, "pool-81"), "a pool a vhost uses does not start its drain")
 	_, err := pools.FindByID(ctx, "pool-81")
 	require.NoError(t, err)
 
 	agent.set(func(f *fakeAgent) { f.calls = nil; f.failMethod = "" })
+	require.NoError(t, r.ReconcileAll(ctx)) // the vhost moves; the drain starts
+	require.Zero(t, countMethod(agent, "php.pool.remove"))
+	backdateReleasable(r, "pool-81")
 	require.NoError(t, r.ReconcileAll(ctx))
-	require.Equal(t, 1, countMethod(agent, "php.pool.remove"), "once the vhost moved, the orphan is reaped")
+	require.Equal(t, 1, countMethod(agent, "php.pool.remove"), "once the vhost moved and drained, the orphan is reaped")
 }
