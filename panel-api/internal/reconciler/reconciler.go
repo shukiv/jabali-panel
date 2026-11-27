@@ -3724,14 +3724,7 @@ func (r *Reconciler) tryACMEOrFallback(ctx context.Context, domain *models.Domai
 		// is parked with a clear reason when neither is available. Needs
 		// positive evidence on both sides (frontedByCDN) — a resolver
 		// outage or unknown public IP keeps today's HTTP-01 behaviour.
-		var ourAddrs []string
-		if srv.PublicIPv4 != "" {
-			ourAddrs = append(ourAddrs, srv.PublicIPv4)
-		}
-		if srv.PublicIPv6 != "" {
-			ourAddrs = append(ourAddrs, srv.PublicIPv6)
-		}
-		if queried && frontedByCDN(addrs, ourAddrs) {
+		if queried && frontedByCDN(addrs, r.ourAddrs(ctx, srv)) {
 			r.tryDNS01OrPark(ctx, domain, cert, srv, staging)
 			return
 		}

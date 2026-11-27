@@ -40,13 +40,7 @@ func (r *Reconciler) letsEncryptCanValidate(ctx context.Context, domain *models.
 	if err != nil || srv == nil {
 		return false
 	}
-	var ours []string
-	if srv.PublicIPv4 != "" {
-		ours = append(ours, srv.PublicIPv4)
-	}
-	if srv.PublicIPv6 != "" {
-		ours = append(ours, srv.PublicIPv6)
-	}
+	ours := r.ourAddrs(ctx, srv)
 	if len(ours) == 0 {
 		return false
 	}
