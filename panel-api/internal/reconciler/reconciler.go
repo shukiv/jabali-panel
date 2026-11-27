@@ -482,6 +482,11 @@ type Reconciler struct {
 	// shell-outs) and re-synced every tenant's keys on every ~60s tick.
 	// Process-local, so a restart or DR promotion re-applies everything.
 	ledger applyLedger
+
+	// vhostPool holds, per domain ID, the PHP pool ID its last successful
+	// vhost write used ("" without PHP). reapOrphanVersionedPools keeps a pool
+	// a rendered vhost still points at, whatever the DB binding says.
+	vhostPool sync.Map
 }
 
 // WithPanelCertificate injects the M32 panel-cert repo + routability
@@ -1237,9 +1242,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 
 	// PHP pool reconciliation first, so domain regens see latest pool state.
 	r.ReconcilePHPPools(ctx)
-	// GH #329: converge the per-domain versioned pools (apply pending, reap
-	// orphans). No-op when no user has a non-default pool.
-	r.reconcileVersionedPHPPools(ctx)
+	// GH #329: converge the per-domain versioned pools (apply pending). No-op
+	// when no user has a non-default pool. Orphans are reaped after the domain
+	// loop, once no vhost points at their socket.
+	versionedOrphans := r.reconcileVersionedPHPPools(ctx)
 
 	// GH #686: garbage-collect FPM pools orphaned by a deleted user. user.delete
 	// tears them down inline; this backstop self-heals pools orphaned before that
@@ -1402,6 +1408,10 @@ func (r *Reconciler) ReconcileAll(ctx context.Context) error {
 			r.createDomainOnAgent(ctx, domain, false)
 		}
 	}
+
+	// Moving a domain off a versioned pool only changes its DB row; the loop
+	// above moved its vhost. Reaping before that gave the site 502s.
+	r.reapOrphanVersionedPools(ctx, versionedOrphans, allDomains)
 
 	// JAB-236: drive pending teardown tombstones FIRST — a site being torn
 	// down through its tombstone is handled, not orphaned, and must not
@@ -1760,14 +1770,22 @@ func (r *Reconciler) ReconcilePHPPools(ctx context.Context) {
 // stay comfortably inside it.
 const versionedPoolReapGrace = 5 * time.Minute
 
-func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
+// orphanPool is a versioned pool with no bound domain, past the reap grace.
+type orphanPool struct {
+	user *models.User
+	pool *models.PHPPool
+}
+
+// reconcileVersionedPHPPools applies the versioned pools and returns the
+// orphans for reapOrphanVersionedPools, which runs after the domain loop.
+func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) (orphans []orphanPool) {
 	if r.phpPools == nil {
-		return
+		return nil
 	}
 	allUsers, _, err := r.users.List(ctx, repository.ListOptions{Limit: 10000})
 	if err != nil {
 		r.log.Error("failed to list users for versioned PHP pool reconciliation", "err", err)
-		return
+		return nil
 	}
 
 	processed := 0
@@ -1808,7 +1826,7 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
 				if time.Since(pool.CreatedAt) < versionedPoolReapGrace {
 					continue
 				}
-				r.reapVersionedPool(ctx, user, pool)
+				orphans = append(orphans, orphanPool{user: user, pool: pool})
 				continue
 			}
 
@@ -1825,6 +1843,43 @@ func (r *Reconciler) reconcileVersionedPHPPools(ctx context.Context) {
 		if processed >= 50 {
 			break // bound agent work per tick, same policy as ReconcilePHPPools
 		}
+	}
+	return orphans
+}
+
+// reapOrphanVersionedPools reaps the orphans reconcileVersionedPHPPools found,
+// unless a domain was bound to one meanwhile or a live domain's last
+// successful vhost write still used it (its re-render failed: the vhost on
+// disk still points at the pool's socket).
+//
+// shortcut: vhostPool is process-local, so right after a panel restart a
+// domain whose re-render failed is not known to use the old pool. Persist the
+// rendered pool on the domain row if that window ever matters.
+func (r *Reconciler) reapOrphanVersionedPools(ctx context.Context, orphans []orphanPool, liveDomains []models.Domain) {
+	if len(orphans) == 0 {
+		return
+	}
+	inUse := map[string]bool{}
+	for i := range liveDomains {
+		if p, ok := r.vhostPool.Load(liveDomains[i].ID); ok {
+			inUse[p.(string)] = true
+		}
+	}
+	for _, o := range orphans {
+		if inUse[o.pool.ID] {
+			r.log.Info("versioned PHP pool kept: a vhost still uses it", "pool_id", o.pool.ID)
+			continue
+		}
+		// A domain may have been bound to it while the loop ran.
+		cnt, err := r.domains.CountByPHPPoolID(ctx, o.pool.ID)
+		if err != nil {
+			r.log.Error("failed to count domains for pool", "pool_id", o.pool.ID, "err", err)
+			continue
+		}
+		if cnt > 0 {
+			continue
+		}
+		r.reapVersionedPool(ctx, o.user, o.pool)
 	}
 }
 
@@ -2689,6 +2744,7 @@ func (r *Reconciler) createDomainOnAgent(ctx context.Context, domain *models.Dom
 		return
 	}
 	r.phaseApplied(ctx, PhaseDomainVhost, domain.ID, hash, time.Now(), d)
+	r.vhostPool.Store(domain.ID, boundPoolID)
 }
 
 // redirectHTTPSForCert decides whether the agent should render the :80→:443
