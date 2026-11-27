@@ -2,14 +2,20 @@ package tui
 
 import (
 	"bufio"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// installWaitDelay bounds the wait for install.sh's output to close once it
+// has exited. A var so tests can shorten it.
+var installWaitDelay = 3 * time.Second
 
 // Streaming messages from the install goroutine.
 type logLineMsg string
@@ -27,29 +33,35 @@ func startInstall(installSh string, extraEnv []string, dryRun bool, events chan 
 			}
 			cmd := exec.Command("bash", args...)
 			cmd.Env = append(os.Environ(), extraEnv...)
-			stdout, _ := cmd.StdoutPipe()
-			stderr, _ := cmd.StderrPipe()
+			pr, pw := io.Pipe()
+			cmd.Stdout, cmd.Stderr = pw, pw
+			// A process install.sh started can keep its output open after
+			// install.sh exits. Waiting for that EOF left the screen on its
+			// last line forever, the error unseen (GH #2590). Bound it.
+			cmd.WaitDelay = installWaitDelay
 			if err := cmd.Start(); err != nil {
 				events <- installDoneMsg{err: err}
 				return
 			}
-			var wgReaders int
-			done := make(chan struct{})
-			pump := func(r io.Reader) {
-				sc := bufio.NewScanner(r)
-				sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-				for sc.Scan() {
-					events <- logLineMsg(sc.Text())
-				}
-				done <- struct{}{}
+			waitErr := make(chan error, 1)
+			go func() {
+				err := cmd.Wait()
+				pw.Close()
+				waitErr <- err
+			}()
+			sc := bufio.NewScanner(pr)
+			sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+			for sc.Scan() {
+				events <- logLineMsg(sc.Text())
 			}
-			wgReaders = 2
-			go pump(stdout)
-			go pump(stderr)
-			for i := 0; i < wgReaders; i++ {
-				<-done
+			// Keep reading past an over-long line: a stalled reader blocks
+			// install.sh on its next write.
+			_, _ = io.Copy(io.Discard, pr)
+			err := <-waitErr
+			if errors.Is(err, exec.ErrWaitDelay) {
+				err = nil // install.sh exited 0; only a leftover child held the output
 			}
-			events <- installDoneMsg{err: cmd.Wait()}
+			events <- installDoneMsg{err: err}
 		}()
 		// Immediately hand back the first waiter so Update starts draining.
 		return waitForEvent(events)()
