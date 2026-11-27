@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"git.jabali-panel.com/shukivaknin/jabali2/internal/dnsverify"
+	"git.jabali-panel.com/shukivaknin/jabali2/panel-api/internal/models"
 )
 
 // san_reachable.go — JAB-226.
@@ -118,17 +119,13 @@ func (r *Reconciler) reachableSANs(ctx context.Context, apex string, names []str
 		return nil
 	}
 
-	var ourAddrs []string
+	var srv *models.ServerSettings
 	if r.serverSettings != nil {
-		if srv, err := r.settingsGet(ctx); err == nil && srv != nil {
-			if srv.PublicIPv4 != "" {
-				ourAddrs = append(ourAddrs, srv.PublicIPv4)
-			}
-			if srv.PublicIPv6 != "" {
-				ourAddrs = append(ourAddrs, srv.PublicIPv6)
-			}
+		if s, err := r.settingsGet(ctx); err == nil {
+			srv = s
 		}
 	}
+	ourAddrs := r.ourAddrs(ctx, srv)
 
 	apexCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	apexAddrs := dnsverify.LookupHostExternal(apexCtx, apex)

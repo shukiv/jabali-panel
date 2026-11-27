@@ -492,19 +492,15 @@ func (r *Reconciler) apexFronted(ctx context.Context, name string) bool {
 		return entry.fronted
 	}
 
-	var ourAddrs []string
+	var srv *models.ServerSettings
 	if r.serverSettings != nil {
 		srvCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if srv, err := r.settingsGet(srvCtx); err == nil && srv != nil {
-			if srv.PublicIPv4 != "" {
-				ourAddrs = append(ourAddrs, srv.PublicIPv4)
-			}
-			if srv.PublicIPv6 != "" {
-				ourAddrs = append(ourAddrs, srv.PublicIPv6)
-			}
+		if s, err := r.settingsGet(srvCtx); err == nil {
+			srv = s
 		}
 		cancel()
 	}
+	ourAddrs := r.ourAddrs(ctx, srv)
 
 	lookupCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	addrs, queried := r.dnsPreflight(lookupCtx, name)
