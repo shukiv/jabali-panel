@@ -26,18 +26,24 @@ func (r *Reconciler) ourAddrs(ctx context.Context, srv *models.ServerSettings) [
 		}
 		out = append(out, a)
 	}
-	if srv != nil {
-		add(srv.PublicIPv4)
-		add(srv.PublicIPv6)
+	// nil means "can't tell": every caller then keeps its fail-open path. An
+	// unknown public address keeps it even with a pool, as before the pool
+	// counted; a failed pool read too, or a pool-IP domain would read as
+	// fronted (and apexFronted would cache that).
+	if srv == nil || (srv.PublicIPv4 == "" && srv.PublicIPv6 == "") {
+		return nil
 	}
+	add(srv.PublicIPv4)
+	add(srv.PublicIPv6)
 	if r.managedIPs != nil {
 		lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		rows, err := r.managedIPs.ListAll(lctx)
 		cancel()
-		if err == nil {
-			for _, ip := range rows {
-				add(ip.Address)
-			}
+		if err != nil {
+			return nil
+		}
+		for _, ip := range rows {
+			add(ip.Address)
 		}
 	}
 	return out

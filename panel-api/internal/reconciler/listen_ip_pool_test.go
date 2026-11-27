@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"encoding/json"
 	"slices"
 	"testing"
 	"time"
@@ -33,6 +34,72 @@ func TestOurAddrs_IncludesThePool(t *testing.T) {
 		if !slices.Contains(got, want) {
 			t.Errorf("ourAddrs = %v, missing %s", got, want)
 		}
+	}
+}
+
+type failingPoolIPs struct{ *fakeManagedIPs }
+
+func (failingPoolIPs) ListAll(context.Context) ([]models.ManagedIP, error) {
+	return nil, errBoom
+}
+
+// nil keeps each caller's "can't tell" path (fail open to HTTP-01, keep the
+// cached fronted value) instead of judging with a partial address list.
+func TestOurAddrs_UnknownStaysUnknown(t *testing.T) {
+	ctx := context.Background()
+	r, _, _, _ := frontedVhostFixture(t, letsEncryptCertPath, letsEncryptKeyPath, nil, true)
+
+	r.WithManagedIPs(poolIPs(frontedTestOwnIP))
+	if got := r.ourAddrs(ctx, &models.ServerSettings{}); got != nil {
+		t.Errorf("public address unknown, pool wired: ourAddrs = %v, want nil", got)
+	}
+	r.WithManagedIPs(failingPoolIPs{poolIPs(frontedTestOwnIP)})
+	if got := r.ourAddrs(ctx, &models.ServerSettings{PublicIPv4: frontedTestOwnIP}); got != nil {
+		t.Errorf("pool read failed: ourAddrs = %v, want nil", got)
+	}
+}
+
+func TestPoolIP_UnknownPublicAddressFailsOpenToHTTP01(t *testing.T) {
+	r, ag, _, dom := dns01Fixture(t, []string{"kip.ns.cloudflare.com"}, "zone123")
+	r.WithManagedIPs(poolIPs(dns01TestOwnIP))
+	r.serverSettings.(*fakeServerSettingsRepo).settings.PublicIPv4 = ""
+
+	r.reconcileSSLForDomain(context.Background(), dom)
+
+	if !agentCalled(ag, "ssl.issue") {
+		t.Fatal("without a known public IP the fronted judgement cannot be made, pool or not — must fail open to HTTP-01")
+	}
+}
+
+// A certificate the old check sent through DNS-01 keeps its dns-01 marker, so
+// the vhost still skips the redirect. A renewal (the panel's Renew button)
+// re-routes it: HTTP-01 now, and the marker follows.
+func TestPoolIP_DNS01LineageRenewMovesToHTTP01(t *testing.T) {
+	r, ag, sc, dom := dns01Fixture(t, []string{"kip.ns.cloudflare.com"}, "zone123")
+	r.WithManagedIPs(poolIPs(dns01TestOwnIP))
+	r.dnsPreflight = func(context.Context, string) ([]string, bool) {
+		return []string{poolTestIP}, true
+	}
+	cert := sc.byDomain[dom.ID]
+	cert.Status = models.SSLStatusRenewing
+	cert.IssueMethod = issueMethodDNS01
+	sc.issueMethods = map[string]string{}
+	delete(ag.errByMethod, "ssl.issue") // the fixture's nil entry would shadow the result
+	ag.resultByMethod["ssl.issue"] = json.RawMessage(`{
+		"cert_path": "/etc/letsencrypt/live/sub.example.com/fullchain.pem",
+		"key_path":  "/etc/letsencrypt/live/sub.example.com/privkey.pem",
+		"issued_at": "2026-11-26T00:00:00Z",
+		"expires_at": "2027-02-24T00:00:00Z"
+	}`)
+
+	r.reconcileSSLForDomain(context.Background(), dom)
+
+	if !agentCalled(ag, "ssl.issue") || agentCalled(ag, "ssl.issue_dns01") {
+		t.Fatalf("renewing a dns-01 lineage on a pool IP: ssl.issue=%v ssl.issue_dns01=%v, want HTTP-01 only",
+			agentCalled(ag, "ssl.issue"), agentCalled(ag, "ssl.issue_dns01"))
+	}
+	if got := sc.issueMethods[cert.ID]; got != issueMethodHTTP01 {
+		t.Errorf("issue method after renewal = %q, want %q (the vhost redirect keys off it)", got, issueMethodHTTP01)
 	}
 }
 
